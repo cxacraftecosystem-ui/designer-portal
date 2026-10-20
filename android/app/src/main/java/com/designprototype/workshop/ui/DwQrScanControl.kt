@@ -138,6 +138,8 @@ fun DwQrScanControl(
     onText: (String) -> Unit,
     onRefusal: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** The picture button's words. The top-bar scanner passes `ScanCopy.CHOOSE_PHOTO`. */
+    pictureLabel: String = "Use a picture",
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -252,7 +254,7 @@ fun DwQrScanControl(
             ) {
                 Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Use a picture", style = MaterialTheme.typography.labelLarge)
+                Text(pictureLabel, style = MaterialTheme.typography.labelLarge)
             }
             /*
              * THE WAY FORWARD, and it appears only once there is nowhere else to go.

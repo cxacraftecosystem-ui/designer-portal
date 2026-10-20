@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The top-bar scanner: camera, "Upload a picture" and the typed box, then `lib/scanDispatch.ts`, then
+ * The top-bar scanner: camera, "Choose a photo" and "Type the code", then `lib/scanDispatch.ts`, then
  * one result card with its button. Opened by `TopBarScanButton` (the mobile/tablet header), drawn
  * inline by `/scan` and by `/search`'s `RecordCodeScanPanel`, so every surface answers a code the
  * same way. It never navigates on its own: the person presses Open, Redeem, Add or Ask to join
@@ -10,8 +10,8 @@
  * The camera, the picture and the typed box are `WorkshopCodeScanner`'s, the one code-reading
  * control in this app (`e2e/qr-surfaces-unit.spec.ts`): `BarcodeDetector` where the browser has it,
  * the bundled decoder (`lib/qrDecode.ts`) where it does not. Here it hands every decoded string to
- * the dispatcher through `takeRaw`. Nothing scanned is stored, and a join card's secret never stays
- * in the typed box.
+ * the dispatcher through `takeRaw`, and takes its labels from `SCAN_COPY` so the words match the
+ * Field Repository's and Android's. Nothing scanned is stored or written into the typed box.
  */
 
 import { useCallback, useState } from "react";
@@ -21,13 +21,23 @@ import { QrCode } from "lucide-react";
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { WorkshopCodeScanner, type ScanResolution } from "@/components/designworkshop/WorkshopCodeScanner";
 import { ActionGroup } from "@/components/ui/ActionGroup";
-import { dispatchScan, type ScanOutcome } from "@/lib/scanDispatch";
+import { SCAN_COPY, dispatchScan, type ScanOutcome } from "@/lib/scanDispatch";
 import { runScanAction, scanServices } from "@/lib/scanServices";
 
 const POSITIVE = new Set(["OPEN", "REDEEM_JOIN_CARD", "JOIN_SESSION", "ADD_FROM_PEER", "JOIN_WORKSHOP", "POINTER"]);
 
 /** Never called: `takeRaw` answers every route before the scanner would resolve a reference. */
 const UNUSED_RESOLVE = async (): Promise<ScanResolution> => ({ ok: false, message: "" });
+
+/** The shared words; the heading is the dialog's or the page's, so the scanner draws none of its own. */
+const TOP_BAR_LABELS = {
+  heading: "",
+  camera: SCAN_COPY.useCamera,
+  stopCamera: SCAN_COPY.stopCamera,
+  photo: SCAN_COPY.choosePhoto,
+  photoPhrase: SCAN_COPY.choosePhoto.toLowerCase(),
+  typed: SCAN_COPY.typeCode
+};
 
 /** The dispatcher's answer, with its one button. */
 export function ScanOutcomeCard({
@@ -64,8 +74,11 @@ export function ScanOutcomeCard({
   );
 }
 
-/** The scanner's body, for the dialog or a page. `onDone` runs when the person leaves for a result. */
-export function ScanPanel({ onDone }: { onDone?: () => void }) {
+/**
+ * The scanner's body, for the dialog or a page. `onDone` runs when the person leaves for a result;
+ * `heading` titles it where nothing around it does (`/search`).
+ */
+export function ScanPanel({ onDone, heading = "" }: { onDone?: () => void; heading?: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
@@ -100,7 +113,7 @@ export function ScanPanel({ onDone }: { onDone?: () => void }) {
 
   return (
     <div className="grid gap-3" data-testid="scan-panel">
-      <WorkshopCodeScanner resolve={UNUSED_RESOLVE} takeRaw={takeRaw} description="A card, a tag or a join card." />
+      <WorkshopCodeScanner resolve={UNUSED_RESOLVE} takeRaw={takeRaw} labels={{ ...TOP_BAR_LABELS, heading }} />
       <div role="status" aria-live="polite">
         {outcome ? <ScanOutcomeCard outcome={outcome} busy={busy} onPress={(o) => void press(o)} /> : null}
       </div>
@@ -114,7 +127,7 @@ export function ScanSheet({ open, onClose }: { open: boolean; onClose: () => voi
     <FieldDialog
       open={open}
       onClose={onClose}
-      title="Scan a code"
+      title={SCAN_COPY.scanACode}
       icon={<QrCode className="h-5 w-5" aria-hidden />}
       className="max-w-lg"
     >

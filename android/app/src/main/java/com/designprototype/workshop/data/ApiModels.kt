@@ -316,6 +316,8 @@ data class CardArtisanDto(
 /**
  * `POST /artisan-cards/resolve`: FOUND (`via` LOCAL or LINK) with [artisan]; REPLACED with
  * [artisanId]; REMOTE with [issuer] and [needsConsent] (a Field Repository artisan not linked here).
+ * A REMOTE answer to a request sent with `consent` also carries the artisan's [match], the same shape
+ * `POST /cross-portal/artisans/lookup` returns, so the add-artisan form fills from it.
  */
 @Serializable
 data class ResolveCardDto(
@@ -325,6 +327,7 @@ data class ResolveCardDto(
     val artisanId: String? = null,
     val issuer: String? = null,
     val needsConsent: Boolean = false,
+    val match: CrossPortalMatchDto? = null,
 )
 
 @Serializable

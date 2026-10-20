@@ -1137,7 +1137,12 @@ private sealed interface Screen {
          * figure counted. Carried on the destination alongside [prefill] because the search screen
          * owns its own filter state and takes no initial record type.
          */
-        val searchFocus: String? = null
+        val searchFocus: String? = null,
+        /**
+         * ARTISAN only: a scanned Field Repository card the add-artisan form fills from
+         * (`ScanTarget.AddFromPeer`; web `/artisans/new?card=`).
+         */
+        val fromCard: String? = null
     ) : Screen
     data class Browse(val mode: EntryMode) : Screen
     /**
@@ -3623,10 +3628,9 @@ private fun HomeScreen(
      *
      * `designWorkshop` IS TAKEN FIRST, because it is the one type with a destination and no form. Its
      * route is [openDesignWorkshopFromSearch]; where that is null the account may not open one, and
-     * the refusal says so. This arm is unreachable from the search screen, which intercepts the type
-     * in `openRow` before the callback fires, and from the scanner, which answers a `G` card with a
-     * join — it is here so that the string cannot become a mis-route by some path added later, which
-     * is exactly how it became one the first time.
+     * the refusal says so. The search screen intercepts the type in `openRow` before the callback
+     * fires; the scanner (`data/ScanDispatch.kt`) comes here with a `G` code the account can already
+     * open, and offers "Ask to join" for one it cannot.
      */
     val openSearchRecord: (recordType: String, recordId: String) -> Unit = { recordType, recordId ->
         if (recordType == SearchRecordTypes.DESIGN_WORKSHOP) {
@@ -3705,7 +3709,11 @@ private fun HomeScreen(
             ScanTarget.DesignWorkshops -> screen = Screen.DesignWorkshops()
             ScanTarget.Questionnaires -> screen = Screen.Questionnaires
             is ScanTarget.AddFromPeer ->
-                if (canCreate(EntryMode.ARTISAN)) screen = Screen.Create(EntryMode.ARTISAN) else showMessage(ScanCopy.NOT_FOUND)
+                if (canCreate(EntryMode.ARTISAN)) {
+                    screen = Screen.Create(EntryMode.ARTISAN, fromCard = target.card)
+                } else {
+                    showMessage(ScanCopy.NOT_FOUND)
+                }
             // A Field Repository session; the dispatcher refuses it here before a target exists.
             is ScanTarget.Session -> showMessage(ScanCopy.SESSION_ELSEWHERE)
         }
@@ -4623,6 +4631,7 @@ private fun HomeScreen(
                     lookupState = lookupState,
                     craftRegister = craftRegister,
                     prefill = s.prefill,
+                    fromCard = s.fromCard,
                     adminView = adminView,
                     onArtisanCreated = { prefill ->
                         message = "Artisan saved"
@@ -11468,6 +11477,8 @@ private fun ArtisanForm(
     craftRegister: RegisterLoad = RegisterLoad(),
     editing: ArtisanDetailDto? = null,
     prefill: Prefill? = null,
+    /** A scanned Field Repository card: the Field Repository card below asks by it, and the save links from it. */
+    fromCard: String? = null,
     adminView: Boolean = false,
     onArtisanCreated: (Prefill) -> Unit = {},
     /** Opens an existing artisan from the "Already recorded?" sheet. Null: the sheet shows no Open. */
@@ -11973,7 +11984,7 @@ private fun ArtisanForm(
                 // re-checks the match from the numbers it just stored; a failure leaves it unlinked.
                 if (!isEdit) {
                     crossMatch?.let { match ->
-                        runCatching { CrossPortalClient.create(context).createLink(artisanId, match.remoteArtisanId) }
+                        runCatching { CrossPortalClient.create(context).createLink(artisanId, match.remoteArtisanId, fromCard) }
                     }
                 }
                 uploadAttachments(repository, context, media, "artisan", artisanId, name, "Field media for ${name.trim()}")
@@ -12323,7 +12334,13 @@ private fun ArtisanForm(
                 values.dateOfBirth?.let { parseFieldDate(it) }?.let { dateOfBirth = it }
             }
         } else {
-            CrossPortalFindCard(aadhaar = aadhaar, pehchanNumber = pehchanNumber, filled = crossMatch) { match ->
+            CrossPortalFindCard(
+                aadhaar = aadhaar,
+                pehchanNumber = pehchanNumber,
+                filled = crossMatch,
+                cardInput = fromCard,
+                onOpenArtisan = onOpenArtisan,
+            ) { match ->
                 // A Pehchan number already typed survives a match that has none.
                 val values = CrossPortalPrefill.keepTypedPehchan(CrossPortalPrefill.from(match), pehchanNumber)
                 values.name?.let { name = it }

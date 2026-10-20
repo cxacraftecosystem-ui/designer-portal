@@ -133,6 +133,31 @@ export type ScanResolution = { ok: true; label: string; detail?: string } | { ok
  */
 const FRAME_INTERVAL_MS = 220;
 
+/** The words on the scanner's controls; see the `labels` prop. */
+export type ScannerLabels = {
+  /** Empty when the host already titles the scanner (a dialog, a page). */
+  heading: string;
+  camera: string;
+  stopCamera: string;
+  photo: string;
+  /** The picture route as a phrase inside a sentence ("upload a picture or type the code"). */
+  photoPhrase: string;
+  typed: string;
+};
+
+const DEFAULT_SCANNER_LABELS: ScannerLabels = {
+  heading: "Scan a card or tag",
+  camera: "Scan with the camera",
+  stopCamera: "Stop the camera",
+  photo: "Upload a picture",
+  photoPhrase: "upload a picture",
+  typed: "Or type the code printed under the QR"
+};
+
+function capitalise(text: string): string {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
 export function WorkshopCodeScanner({
   resolve,
   onResolved,
@@ -140,8 +165,14 @@ export function WorkshopCodeScanner({
   resolveCard = resolveCardForScan,
   onCardResolved,
   takeRaw,
+  labels: labelOverrides,
   description
 }: {
+  /**
+   * The words on the controls. Every surface but one keeps the defaults; the top-bar scanner passes
+   * the shared `SCAN_COPY` labels so its wording matches the Field Repository's and Android's.
+   */
+  labels?: Partial<ScannerLabels>;
   /**
    * Hand every decoded string, from every route, to the host instead of answering it here. The
    * top-bar scanner (`components/scan/ScanSheet.tsx`) passes `lib/scanDispatch.ts` through this so
@@ -160,6 +191,7 @@ export function WorkshopCodeScanner({
   onResolved?: (ref: WorkshopCodeRef, resolution: ScanResolution) => void;
   description?: string;
 }) {
+  const labels: ScannerLabels = { ...DEFAULT_SCANNER_LABELS, ...labelOverrides };
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -399,7 +431,7 @@ export function WorkshopCodeScanner({
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setProblem(
-        "No camera here. Upload a picture or type the code."
+        `No camera here. ${capitalise(labels.photoPhrase)} or type the code.`
       );
       return;
     }
@@ -414,10 +446,10 @@ export function WorkshopCodeScanner({
       const name = error instanceof Error ? error.name : "";
       setProblem(
         name === "NotAllowedError" || name === "SecurityError"
-          ? "Camera blocked. Allow it in site settings, or upload a picture or type the code."
+          ? `Camera blocked. Allow it in site settings, or ${labels.photoPhrase} or type the code.`
           : name === "NotFoundError" || name === "OverconstrainedError"
-            ? "No camera found. Upload a picture or type the code."
-            : "Couldn't open the camera. Close other apps using it, or upload a picture or type the code."
+            ? `No camera found. ${capitalise(labels.photoPhrase)} or type the code.`
+            : `Couldn't open the camera. Close other apps using it, or ${labels.photoPhrase} or type the code.`
       );
       return;
     }
@@ -507,7 +539,7 @@ export function WorkshopCodeScanner({
   return (
     <section
       className="panel grid gap-3 p-4"
-      aria-label="Scan a card or tag"
+      aria-label={labels.heading || "Scan a code"}
       data-testid="workshop-code-scanner"
       onDragOver={(event) => {
         if (busy || scanning) return;
@@ -523,10 +555,12 @@ export function WorkshopCodeScanner({
         if (file) void readFromFile(file);
       }}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <ScanLine className="h-4 w-4 shrink-0 text-ink-500" aria-hidden />
-        <h2 className="text-sm font-medium text-ink-900">Scan a card or tag</h2>
-      </div>
+      {labels.heading ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <ScanLine className="h-4 w-4 shrink-0 text-ink-500" aria-hidden />
+          <h2 className="text-sm font-medium text-ink-900">{labels.heading}</h2>
+        </div>
+      ) : null}
       {description ? <p className="text-xs leading-5 text-ink-500">{description}</p> : null}
 
       {/*
@@ -544,7 +578,7 @@ export function WorkshopCodeScanner({
           data-testid="workshop-code-scan"
         >
           {scanning ? <Square className="h-4 w-4" aria-hidden /> : <Camera className="h-4 w-4" aria-hidden />}
-          {scanning ? "Stop the camera" : "Scan with the camera"}
+          {scanning ? labels.stopCamera : labels.camera}
         </button>
         <button
           type="button"
@@ -554,7 +588,7 @@ export function WorkshopCodeScanner({
           data-testid="workshop-code-upload"
         >
           <ImageUp className="h-4 w-4" aria-hidden />
-          Upload a picture
+          {labels.photo}
         </button>
       </ActionGroup>
       <div className="flex flex-wrap items-center gap-2 empty:hidden">
@@ -641,7 +675,7 @@ export function WorkshopCodeScanner({
       <div className="grid gap-1.5" onInput={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
         <label htmlFor="workshop-code-manual" className="field-label flex items-center gap-1.5">
           <Keyboard className="h-3.5 w-3.5" aria-hidden />
-          Or type the code printed under the QR
+          {labels.typed}
         </label>
         <div className="flex flex-wrap gap-2">
           <input

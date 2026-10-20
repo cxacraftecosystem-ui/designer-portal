@@ -218,8 +218,11 @@ const val DW_QR_LIVE_FRONT_LENS =
  * resolution and walks `DW_QR_SAMPLE_LADDER`, which is genuinely better than another thirty frames of
  * the same blur on a small, dim or distant code. It is a different tool, not a retry.
  */
-const val DW_QR_LIVE_STILL_TRYING =
-    "Not reading? Close and tap “Scan a code” — a photo is read at full resolution — or “Use a picture”."
+val DW_QR_LIVE_STILL_TRYING = dwQrLiveStillTrying("Use a picture")
+
+/** [DW_QR_LIVE_STILL_TRYING] naming the picture button by the label its host gave it. */
+fun dwQrLiveStillTrying(pictureLabel: String): String =
+    "Not reading? Close and tap “Scan a code” — a photo is read at full resolution — or “$pictureLabel”."
 
 /** Said when frames have stopped arriving, so a stalled pipeline does not read as a bad card. */
 const val DW_QR_LIVE_STALLED =
@@ -325,6 +328,10 @@ fun DwQrLiveScanControl(
     onText: (String) -> Unit,
     onRefusal: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** The button's words. The top-bar scanner passes `ScanCopy.USE_CAMERA`. */
+    label: String = "Scan with the camera",
+    /** What the picture button beside this one is called, for the "not reading?" hint. */
+    pictureLabel: String = "Use a picture",
 ) {
     val context = LocalContext.current
     var scanning by remember { mutableStateOf(false) }
@@ -371,7 +378,7 @@ fun DwQrLiveScanControl(
             ) {
                 Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Scan with the camera", style = MaterialTheme.typography.labelLarge)
+                Text(label, style = MaterialTheme.typography.labelLarge)
             }
             /*
              * Offered when and only when Android has stopped asking, on `DwQrScanControl`'s own
@@ -410,6 +417,7 @@ fun DwQrLiveScanControl(
                 onRefusal(message)
             },
             onDismiss = { scanning = false },
+            stillTrying = dwQrLiveStillTrying(pictureLabel),
         )
     }
 }
@@ -453,6 +461,7 @@ fun DwQrLiveScannerDialog(
     onText: (String) -> Unit,
     onRefusal: (String) -> Unit,
     onDismiss: () -> Unit,
+    stillTrying: String = DW_QR_LIVE_STILL_TRYING,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -973,7 +982,7 @@ fun DwQrLiveScannerDialog(
                 } else if (sawOutsideBox && hit == null) {
                     DwQrLiveNote(DW_QR_LIVE_OUTSIDE_BOX)
                 } else if (patienceSpent && hit == null) {
-                    DwQrLiveNote(DW_QR_LIVE_STILL_TRYING)
+                    DwQrLiveNote(stillTrying)
                 }
             }
         }

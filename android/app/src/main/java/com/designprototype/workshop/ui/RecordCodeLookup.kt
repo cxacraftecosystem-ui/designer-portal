@@ -324,8 +324,14 @@ suspend fun runDesignerScanAction(context: Context, action: ScanAction, onTarget
 @Composable
 fun DesignerScanControls(enabled: Boolean, onText: (String) -> Unit, onRefusal: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        DwQrLiveScanControl(enabled = enabled, onText = onText, onRefusal = onRefusal)
-        DwQrScanControl(enabled = enabled, onText = onText, onRefusal = onRefusal)
+        DwQrLiveScanControl(
+            enabled = enabled,
+            onText = onText,
+            onRefusal = onRefusal,
+            label = ScanCopy.USE_CAMERA,
+            pictureLabel = ScanCopy.CHOOSE_PHOTO,
+        )
+        DwQrScanControl(enabled = enabled, onText = onText, onRefusal = onRefusal, pictureLabel = ScanCopy.CHOOSE_PHOTO)
     }
 }
 

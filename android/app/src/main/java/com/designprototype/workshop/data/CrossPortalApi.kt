@@ -78,7 +78,21 @@ data class CrossPortalMatchDto(
 data class CrossPortalLookupDto(val match: CrossPortalMatchDto? = null)
 
 @Serializable
-data class CrossPortalLinkRequest(val consent: Boolean = true, val expectedRemoteArtisanId: String? = null)
+data class CrossPortalLinkRequest(
+    val consent: Boolean = true,
+    val expectedRemoteArtisanId: String? = null,
+    /** A Field Repository card the form was filled from: the server links from the card (matchedBy CARD). */
+    val cardInput: String? = null,
+)
+
+/** What a scanned Field Repository card finds here (web `lookupByCard`). */
+sealed interface CrossPortalCardAnswer {
+    /** Not linked here: the artisan's details, to fill the form. */
+    data class Match(val match: CrossPortalMatchDto) : CrossPortalCardAnswer
+    /** Already in this register (linked, or its card replaced): open it instead. */
+    data class Existing(val artisanId: String) : CrossPortalCardAnswer
+    data object NotFound : CrossPortalCardAnswer
+}
 
 @Serializable
 data class CrossPortalLinkDto(
@@ -118,6 +132,10 @@ interface CrossPortalApi {
 
     @DELETE("cross-portal/artisans/{id}/link")
     suspend fun unlink(@Path("id") id: String): CrossPortalLinkDto
+
+    /** A Field Repository card, asked with consent: REMOTE carries the match (web `lookupByCard`). */
+    @POST("artisan-cards/resolve")
+    suspend fun resolveCard(@Body body: ResolveCardRequest): ResolveCardDto
 }
 
 class CrossPortalClient(private val api: CrossPortalApi) {
@@ -137,8 +155,22 @@ class CrossPortalClient(private val api: CrossPortalApi) {
 
     suspend fun link(id: String): CrossPortalLinkDto = api.link(id)
 
-    suspend fun createLink(id: String, expected: String?): CrossPortalLinkDto =
-        api.createLink(id, CrossPortalLinkRequest(expectedRemoteArtisanId = expected))
+    /**
+     * The artisan a Field Repository card names, asked with the consent the designer just ticked.
+     * The same call and reading as the web's `lookupByCard`.
+     */
+    suspend fun lookupByCard(cardInput: String): CrossPortalCardAnswer {
+        val answer = api.resolveCard(ResolveCardRequest(cardInput.trim(), consent = true))
+        return when {
+            answer.status == "FOUND" && answer.artisan != null -> CrossPortalCardAnswer.Existing(answer.artisan.id)
+            answer.status == "REPLACED" && !answer.artisanId.isNullOrBlank() -> CrossPortalCardAnswer.Existing(answer.artisanId)
+            answer.status == "REMOTE" && answer.match != null -> CrossPortalCardAnswer.Match(answer.match)
+            else -> CrossPortalCardAnswer.NotFound
+        }
+    }
+
+    suspend fun createLink(id: String, expected: String?, cardInput: String? = null): CrossPortalLinkDto =
+        api.createLink(id, CrossPortalLinkRequest(expectedRemoteArtisanId = expected, cardInput = cardInput?.trim()?.ifBlank { null }))
 
     suspend fun refresh(id: String): CrossPortalRefreshDto = api.refresh(id)
 
@@ -259,6 +291,18 @@ object CrossPortalCopy {
     const val LINK = "Link"
     const val UPDATED = "Updated from the Field Repository."
     const val UP_TO_DATE = "Already up to date."
+
+    const val ALREADY_HERE = "This artisan is already here."
+    const val OPEN_ARTISAN = "Open the artisan"
+
+    /** The card heading when the form was opened from a scanned card (web `CrossPortalFind`). */
+    fun cardHeading(cardInput: String): String {
+        val label = when (val parsed = ArtisanCardCode.parse(cardInput)) {
+            is ArtisanCardCode.Result.Ok -> ArtisanCardCode.shortCode(parsed.card.issuer, parsed.card.code)
+            else -> cardInput.trim().uppercase()
+        }
+        return "Field Repository card $label"
+    }
 
     fun filled(summary: String) = "Filled from the Field Repository: $summary. Check it, then save."
     fun found(summary: String) = "Found: $summary"

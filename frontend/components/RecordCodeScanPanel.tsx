@@ -13,13 +13,14 @@
 import Link from "next/link";
 
 import { ScanPanel } from "@/components/scan/ScanSheet";
+import { SCAN_COPY } from "@/lib/scanDispatch";
 import type { WorkshopCodeHit } from "@/lib/workshopCodeLookup";
 import { workshopRecordTypeLabel, type WorkshopRecordType } from "@/lib/workshopCodes";
 
 export function RecordCodeScanPanel() {
   return (
     <div className="mb-5 grid gap-3">
-      <ScanPanel />
+      <ScanPanel heading={SCAN_COPY.scanACode} />
     </div>
   );
 }
