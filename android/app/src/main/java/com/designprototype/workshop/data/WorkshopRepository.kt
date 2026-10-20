@@ -5849,6 +5849,12 @@ class WorkshopRepository(
 
     suspend fun artisanCard(id: String): ArtisanCardDto = api.artisanCard(id)
 
+    /** The artisan's recording consent. Read and written live, never queued: see `ArtisanConsent.kt`. */
+    suspend fun artisanConsent(id: String): ArtisanConsentDto = api.artisanConsent(id)
+
+    suspend fun recordArtisanConsent(id: String, granted: Boolean): ArtisanConsentDto =
+        api.recordArtisanConsent(id, ArtisanConsentRequest(state = if (granted) "GRANTED" else "REFUSED"))
+
     /**
      * Whether artisan cards are on, asked once per launch and remembered for offline launches. A
      * failure that is not "no signal" reads as off; no signal reads the last answer.

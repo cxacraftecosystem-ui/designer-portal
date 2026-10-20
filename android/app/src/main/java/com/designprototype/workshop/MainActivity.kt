@@ -468,7 +468,6 @@ import com.designprototype.workshop.ui.unscopedEmptyLine
 // see the call site, which carries the argument for each arm.
 import com.designprototype.workshop.ui.loadingListLine
 import com.designprototype.workshop.ui.couldNotListLine
-import com.designprototype.workshop.ui.craftsEmptyLine
 import com.designprototype.workshop.ui.offlineListLine
 import com.designprototype.workshop.ui.atWorkshopEmptyLine
 // The register half of the same file: where a cached list came from, and the five sentences one is
@@ -485,10 +484,13 @@ import com.designprototype.workshop.ui.NO_FIELD_WORKSHOP
 import com.designprototype.workshop.ui.NO_DESIGN_WORKSHOP
 import com.designprototype.workshop.ui.workshopCapLine
 import com.designprototype.workshop.ui.RecordCodeLookupPanel
+import com.designprototype.workshop.ui.ArtisanConsentRow
 import com.designprototype.workshop.ui.DesignerScanControls
 import com.designprototype.workshop.ui.TopBarScanSheet
 import com.designprototype.workshop.ui.designerScanServices
 import com.designprototype.workshop.ui.runDesignerScanAction
+import com.designprototype.workshop.ui.designerScanOutcome
+import com.designprototype.workshop.ui.SCAN_ADD_ARTISAN_NOT_ALLOWED
 import com.designprototype.workshop.data.ScanCopy
 import com.designprototype.workshop.data.ScanTarget
 import com.designprototype.workshop.data.dispatchScan
@@ -3188,7 +3190,7 @@ internal suspend fun loadCraftRegister(
     onList: (List<CraftDto>) -> Unit,
 ): RegisterLoad {
     var load = RegisterLoad(source = RegisterSource.NONE)
-    CraftCatalogueCache.cached(context)?.let { cached ->
+    withContext(Dispatchers.IO) { CraftCatalogueCache.cached(context) }?.let { cached ->
         onList(cached.crafts.map(::catalogueCraftDto))
         load = RegisterLoad(
             source = RegisterSource.CACHED,
@@ -3744,7 +3746,7 @@ private fun HomeScreen(
                 if (canCreate(EntryMode.ARTISAN)) {
                     screen = Screen.Create(EntryMode.ARTISAN, fromCard = target.card)
                 } else {
-                    showMessage(ScanCopy.NOT_FOUND)
+                    showMessage(SCAN_ADD_ARTISAN_NOT_ALLOWED)
                 }
             // A Field Repository session; the dispatcher refuses it here before a target exists.
             is ScanTarget.Session -> showMessage(ScanCopy.SESSION_ELSEWHERE)
@@ -5298,7 +5300,8 @@ private fun HomeScreen(
                     // shared value is the only spelling of that requirement a maintainer cannot
                     // accidentally break. See [openSearchRecord].
                     onOpen = openSearchRecord,
-                    onTarget = openScanTarget
+                    onTarget = openScanTarget,
+                    canAddArtisan = canCreate(EntryMode.ARTISAN)
                 )
                 /*
                  * SAID HERE BECAUSE A DESIGNER WHO ARRIVES AT A DESTINATION NAMED "Scan a code" AND
@@ -5437,11 +5440,14 @@ private fun HomeScreen(
                 if (scanOpen) {
                     val scanServices = remember(repository) { designerScanServices(scanContext, repository) }
                     TopBarScanSheet(
-                        dispatch = { raw -> dispatchScan(raw, scanServices) },
+                        dispatch = { raw -> designerScanOutcome(dispatchScan(raw, scanServices), canCreate(EntryMode.ARTISAN)) },
                         onAction = { action ->
                             runDesignerScanAction(scanContext, action) { target ->
                                 scanOpen = false
-                                openScanTarget(target)
+                                // The header draws over every screen, forms included: Open and Add
+                                // leave the page, so they ask about unsaved work first, as the
+                                // search panel's routes do.
+                                attemptExit { openScanTarget(target) }
                             }
                         },
                         onDismiss = { scanOpen = false },
@@ -11347,7 +11353,7 @@ private fun CraftForm(
     var description by remember(editing) { mutableStateOf(editing?.description ?: "") }
     val craftCatalogue by CraftCatalogueCache.catalogue.collectAsState()
     LaunchedEffect(Unit) {
-        CraftCatalogueCache.cached(context)
+        withContext(Dispatchers.IO) { CraftCatalogueCache.cached(context) }
         runCatching { repository.craftCatalogue(context) }
     }
     var subCategoryError by remember { mutableStateOf<String?>(null) }
@@ -12470,6 +12476,8 @@ private fun ArtisanForm(
         }
         StatusControl(canSetStatus = canSetStatus, value = status) { status = it }
         if (isEdit) {
+            // Saved when pressed and outside the unsaved-changes tracking, as on the web form.
+            ArtisanConsentRow(repository = repository, artisanId = editing!!.id)
             RecordMediaSection(repository = repository, context = context, linkedType = "artisan", recordId = editing!!.id, onError = onError)
         }
         CompletenessAnchor("photo") {

@@ -343,17 +343,6 @@ internal fun narrowedEmptyLine(noun: String): String =
 internal fun unscopedEmptyLine(noun: String): String = "No $noun have been recorded yet."
 
 /**
- * THE CRAFT PICKER'S EMPTY STATE, WITH THE NEXT MOVE THE READER'S ROLE ALLOWS.
- *
- * Adding a craft — on the crafts screen or by typing a new name on the artisan form — is
- * `require_craft_manager`, Professor and above. Below that a typed name is refused on save, so the
- * sentence sends them to someone who can rather than to a box that will not work. Byte for byte
- * `craftsEmptyLine` in `frontend/lib/workshopOptions.ts`.
- */
-internal fun craftsEmptyLine(canAdd: Boolean): String =
-    if (canAdd) "No crafts yet. Type a new craft name below." else "No crafts yet. Ask a professor or admin to add one."
-
-/**
  * GENUINELY EMPTY, AT THE WORKSHOP ON SCREEN — the read succeeded, was narrowed to ONE WORKSHOP, and
  * that workshop's roster is empty. The eighth sentence, and the one the questionnaire's artisan
  * picker was forbidden to say until 2026-09-17.
@@ -521,8 +510,8 @@ internal fun registerListNotice(
     rows: Int,
     load: RegisterLoad,
     /**
-     * The caller's own sentence for a register that ANSWERED with no rows — [craftsEmptyLine] on the
-     * artisan form, which can name the next move. Null keeps [unscopedEmptyLine].
+     * The caller's own sentence for a register that ANSWERED with no rows, when it can name the next
+     * move. Null keeps [unscopedEmptyLine].
      */
     emptyLine: String? = null,
 ): String? = when {

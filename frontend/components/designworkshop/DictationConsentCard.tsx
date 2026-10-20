@@ -187,10 +187,14 @@ export function DictationConsentCard({
       </div>
 
       {/* WHAT IS ON RECORD AND WHAT IT MEANS, in one sentence — "not recorded" on its own tells a
-          designer nothing about why the controls on the stage they just left behaved as they did. */}
-      <p className={on ? "text-sm leading-6 text-ink-700" : "text-sm leading-6 text-amber-800 dark:text-amber-100"}>
-        {dictationConsentSentence(consent)}
-      </p>
+          designer nothing about why the controls on the stage they just left behaved as they did.
+          Not said for "no answer yet" above the switch, whose description already opens "On by
+          default" — one sentence, not the same one twice. */}
+      {token !== "NOT_RECORDED" || !mayRecord ? (
+        <p className={on ? "text-sm leading-6 text-ink-700" : "text-sm leading-6 text-amber-800 dark:text-amber-100"}>
+          {dictationConsentSentence(consent)}
+        </p>
+      ) : null}
 
       {token !== "NOT_RECORDED" ? (
         <p className="text-xs leading-5 text-ink-500">

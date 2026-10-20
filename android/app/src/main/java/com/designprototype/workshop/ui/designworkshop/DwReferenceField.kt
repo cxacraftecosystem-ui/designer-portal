@@ -325,7 +325,7 @@ data class DwInlineSeed(
  * said so." That was still true of the handset — the surface the designer is actually holding in the
  * room, where an empty list said only "No records on this device yet", a claim about THIS PHONE'S
  * CACHE that sends somebody looking for a tower when the craft has never been documented anywhere.
- * [dwCraftRegisterNote] is the handset's half of that remedy: a sentence, not a button, because a
+ * [DW_CRAFT_REGISTER_NOTE] is the handset's half of that remedy: a sentence, not a button, because a
  * button here would be the change this comment refuses. Adding `"Craft"` to the map above still
  * requires the web's entry to move in the same change.
  */
@@ -347,14 +347,11 @@ private val INLINE_CREATABLE: Map<String, String> = mapOf(
  * go, and everybody else knows who to ask, which is strictly better than the old sentence that named
  * neither.
  *
- * THE SECOND HALF IS THE ONE THAT UNBLOCKS THE STAGE, and it is the reason this cannot just be a
- * placeholder. `craftRef` is optional and the craft's NAME box is required, so the designer's real
- * next move is to type the name rather than to find the register — and nothing on this screen said
- * so. The name box is resolved through [FieldDto.refHydration], the server's own dictionary from the
- * Craft record's keys onto this entity's, rather than by matching a key name here; when that lookup
- * finds nothing the clause is simply dropped, so a wrong answer costs a shorter sentence and never a
- * pointer at a box that does not exist. The `pendingHydration` note inside [DwReferenceSelectField]
- * records what guessing keys on this surface cost the last time.
+ * NOTHING IS TYPED INSTEAD (REQUIREMENTS_2026-10-20 §2.4). `craftRef` is required in the shipped
+ * schema and the craft's name box is filled from the pick and locked (`dwCraftNameLocked`), so the
+ * sentence no longer calls the picker optional or points at the name box. The only routes are the
+ * list's own: add the craft (Professor and above) or ask an admin to — the web's
+ * `CRAFT_REGISTER_BLOCKED` with the handset's rank-free route in front of it.
  *
  * ── IT IS NOT THE WEB'S SENTENCE, AND THAT IS DELIBERATE. WHOEVER READS ONE FILE SHOULD KNOW ─────
  *
@@ -376,7 +373,7 @@ private val INLINE_CREATABLE: Map<String, String> = mapOf(
  *    protecting in the first place.
  *
  * SO THE CLAIM EACH SENTENCE MAKES IS THE SAME CLAIM — crafts come from the register, not from here,
- * and the stage saves regardless — and only the routing advice differs, because the two surfaces know
+ * and nothing is typed instead — and only the routing advice differs, because the two surfaces know
  * different things about who is reading. The web's own anchor USED to be gated on `refModel ===
  * "Craft" && !disabled` and on nothing else, which sent every sub-Professor designer to a page they
  * can only read; it is gated on `craftManager` now, and naming the gate in words is how this surface
@@ -384,14 +381,8 @@ private val INLINE_CREATABLE: Map<String, String> = mapOf(
  * neither sentence, which stopped being true when this one landed** — that half of the reconciliation
  * is in `frontend/`, is not this lane's to write, and is handed off.
  */
-private fun dwCraftRegisterNote(field: FieldDto, writableFields: Map<String, FieldDto>): String {
-    val nameBox = field.refHydration["craftName"]?.let { writableFields[it]?.label }
-    val fallback = "Optional — the stage saves without it."
-    val typeItIn = nameBox?.let {
-        "Optional — type the craft into “$it” above instead."
-    } ?: fallback
-    return "Craft missing? Add it from “Add craft” in the menu (Professor and above). $typeItIn"
-}
+internal const val DW_CRAFT_REGISTER_NOTE =
+    "Not on the list? Add it from “Add craft” in the menu (Professor and above), or ask an admin to add it."
 
 /** Everything the picker needs that the renderer cannot work out from the field alone. */
 @Immutable
@@ -887,7 +878,7 @@ internal fun DwReferenceSelectField(
          */
         if (field.refModel == "Craft" && selectedId.isBlank()) {
             Text(
-                dwCraftRegisterNote(field, writableFields),
+                DW_CRAFT_REGISTER_NOTE,
                 color = MaterialTheme.field.muted,
                 style = MaterialTheme.typography.bodySmall
             )

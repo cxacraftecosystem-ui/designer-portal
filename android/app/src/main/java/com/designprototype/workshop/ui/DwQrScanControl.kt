@@ -285,3 +285,47 @@ fun DwQrScanControl(
         )
     }
 }
+
+/**
+ * "Choose a photo" on its own, for a host whose camera is the live scanner (the top-bar scanner).
+ * The picked picture is read exactly as [DwQrScanControl]'s is, at full resolution; nothing is kept.
+ */
+@Composable
+fun DwQrPictureButton(
+    enabled: Boolean,
+    onText: (String) -> Unit,
+    onRefusal: (String) -> Unit,
+    label: String = "Use a picture",
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var working by remember { mutableStateOf(false) }
+    val pickPhoto = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            working = true
+            scope.launch {
+                when (val result = dwReadQrPicture(context, uri, DwQrSource.PICTURE)) {
+                    is DwQrReadResult.Found -> onText(result.text)
+                    is DwQrReadResult.NothingFound -> onRefusal(result.message)
+                    is DwQrReadResult.Unreadable -> onRefusal(result.message)
+                }
+                working = false
+            }
+        }
+    }
+    OutlinedButton(
+        onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+        enabled = enabled && !working,
+        modifier = Modifier.heightIn(min = 48.dp),
+    ) {
+        if (working) {
+            FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(6.dp))
+        Text(if (working) "Reading…" else label, style = MaterialTheme.typography.labelLarge)
+    }
+}

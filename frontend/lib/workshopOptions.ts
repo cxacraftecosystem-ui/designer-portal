@@ -1109,18 +1109,6 @@ export function cachedListLine(count: number, noun: string, refreshedOn: string)
   );
 }
 
-/**
- * THE CRAFT PICKER'S EMPTY STATE, WITH THE NEXT MOVE THE READER'S ROLE ALLOWS.
- *
- * Only for a read that ANSWERED with no crafts — a failed read keeps {@link workshopListNotice}'s
- * failure sentence. Adding a craft, on /crafts or by typing a new name on the artisan form, is
- * `require_craft_manager` (Professor and up); below that a typed name is refused on save, so the
- * sentence names who can add one instead. Byte for byte `craftsEmptyLine` in `WorkshopOptions.kt`.
- */
-export function craftsEmptyLine(canAdd: boolean): string {
-  return canAdd ? "No crafts yet. Type a new craft name below." : "No crafts yet. Ask a professor or admin to add one.";
-}
-
 /** The two "there really are none" sentences, which are two on purpose — see `WorkshopListVoice`. */
 function genuinelyEmpty(voice: WorkshopListVoice): string {
   const noun = nounFor(voice);

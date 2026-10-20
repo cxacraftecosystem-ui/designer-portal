@@ -104,10 +104,11 @@ import retrofit2.HttpException
  * camera and no argument to that contract can change it. `DwQrLiveScanner` binds
  * `CameraSelector.DEFAULT_BACK_CAMERA` explicitly, per bind.
  *
- * BOTH OF THE OLD BUTTONS ARE STILL HERE AND STILL UNCHANGED. The photograph is the better tool for
- * a small or dim code — it decodes at full resolution and walks `DW_QR_SAMPLE_LADDER` — and the
- * picked picture is the route nothing else replaces. Three doors, and the typed box below them is
- * the fourth.
+ * THE SYSTEM-CAMERA PHOTOGRAPH IS GONE FROM THIS PANEL (2026-10-20 audit). Two camera buttons, one
+ * of them repeating the sheet's own title, was one camera too many, and the handoff to another app's
+ * camera is the confusing one. The live camera and "Choose a photo" sit on one line with one hint;
+ * a picked picture still decodes at full resolution and walks `DW_QR_SAMPLE_LADDER`, so a photo taken
+ * with any camera app remains the route for a small or dim code. The typed box below is the third.
  *
  * ── AND A SCANNED DESIGN-WORKSHOP CARD NOW DOES SOMETHING ───────────────────────────────
  *
@@ -313,6 +314,21 @@ fun designerScanServices(context: Context, repository: WorkshopRepository): Scan
     }
 }
 
+/** Said instead of "Add artisan" to an account below Researcher (`require_record_creator`). */
+const val SCAN_ADD_ARTISAN_NOT_ALLOWED = "Only researchers and above can add artisans."
+
+/**
+ * A Field Repository card offers "Add artisan" only to an account that may create one. Anyone else
+ * reads the match as information, with the true reason, rather than pressing a button that can only
+ * fail and then being told no record matched.
+ */
+fun designerScanOutcome(outcome: ScanOutcome, canAddArtisan: Boolean): ScanOutcome =
+    if (!canAddArtisan && outcome.kind == ScanOutcomeKind.ADD_FROM_PEER) {
+        outcome.copy(detail = SCAN_ADD_ARTISAN_NOT_ALLOWED, action = null)
+    } else {
+        outcome
+    }
+
 /**
  * Run the action the person pressed. Returns the next outcome to show, or null once it has handed
  * [onTarget] a place to go. The join card and the ask are queued on the device when there is no
@@ -353,19 +369,28 @@ suspend fun runDesignerScanAction(context: Context, action: ScanAction, onTarget
         is ScanAction.JoinSession -> ScanOutcome(ScanOutcomeKind.REFUSED, ScanCopy.SESSION_ELSEWHERE)
     }
 
-/** This app's camera and picture controls, in the slot [TopBarScanContent] leaves for them. */
+/** The one hint under the scanner's two buttons. */
+const val DESIGNER_SCAN_HINT = "Line the code up in the box, or choose a photo of it. Works offline."
+
+/**
+ * This app's camera and picture controls, in the slot [TopBarScanContent] leaves for them: the live
+ * camera and "Choose a photo", two buttons on one line with one hint, as the Field Repository's
+ * scanner has them. No second camera button: the live scanner is the camera here.
+ */
 @Composable
 fun DesignerScanControls(enabled: Boolean, onText: (String) -> Unit, onRefusal: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        DwQrLiveScanControl(
-            enabled = enabled,
-            onText = onText,
-            onRefusal = onRefusal,
-            label = ScanCopy.USE_CAMERA,
-            pictureLabel = ScanCopy.CHOOSE_PHOTO,
-        )
-        DwQrScanControl(enabled = enabled, onText = onText, onRefusal = onRefusal, pictureLabel = ScanCopy.CHOOSE_PHOTO)
-    }
+    DwQrLiveScanControl(
+        enabled = enabled,
+        onText = onText,
+        onRefusal = onRefusal,
+        label = ScanCopy.USE_CAMERA,
+        pictureLabel = ScanCopy.CHOOSE_PHOTO,
+        captureLabel = null,
+        hint = DESIGNER_SCAN_HINT,
+        alongside = {
+            DwQrPictureButton(enabled = enabled, onText = onText, onRefusal = onRefusal, label = ScanCopy.CHOOSE_PHOTO)
+        },
+    )
 }
 
 /**
@@ -381,6 +406,8 @@ fun RecordCodeLookupPanel(
     onOpen: (recordType: String, recordId: String) -> Unit,
     modifier: Modifier = Modifier,
     onTarget: ((ScanTarget) -> Unit)? = null,
+    /** Whether this account may create an artisan; below Researcher a peer card offers no "Add". */
+    canAddArtisan: Boolean = true,
 ) {
     val context = LocalContext.current
     val services = remember(repository) { designerScanServices(context, repository) }
@@ -408,7 +435,7 @@ fun RecordCodeLookupPanel(
                 )
             }
             TopBarScanContent(
-                dispatch = { raw -> dispatchScan(raw, services) },
+                dispatch = { raw -> designerScanOutcome(dispatchScan(raw, services), canAddArtisan) },
                 onAction = { action -> runDesignerScanAction(context, action, route) },
                 onDone = {},
                 scanner = { enabled, onText, onRefusal -> DesignerScanControls(enabled, onText, onRefusal) },
