@@ -57,6 +57,8 @@ test("every craft picker is CraftSelect", () => {
   // The craft form's category is Category → Sub-category, never typed.
   expect(read("app/(protected)/crafts/page.tsx")).toContain("<CraftSubCategorySelect");
   expect(read("app/(protected)/crafts/page.tsx")).not.toContain('name="category"');
+  // No Place box on the craft form in either portal (2026-10-20); the column stays for old records.
+  expect(read("app/(protected)/crafts/page.tsx")).not.toMatch(/name="place"/);
 });
 
 test("no picker reads the paged craft list any more", () => {

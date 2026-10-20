@@ -208,6 +208,9 @@ class DesignWorkshopOversightCreateIn(BaseModel):
     workshopKind: str | None = Field(default=None, max_length=48)
     designerUserId: str | None = Field(default=None, max_length=64)
     designerUserIds: list[str] | None = Field(default=None, max_length=MAX_DESIGN_WORKSHOP_VIEWERS)
+    # The master craft list (2026-10-20), exactly as on ``DesignWorkshopCreate``: the craft is picked
+    # from the list and ``craftName`` follows it; a bare name is matched onto the list.
+    craftId: str | None = Field(default=None, max_length=64)
     craftName: str | None = Field(default=None, max_length=160)
     clusterName: str | None = Field(default=None, max_length=160)
     state: str | None = Field(default=None, max_length=80)
