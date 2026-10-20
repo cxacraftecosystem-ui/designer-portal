@@ -329,6 +329,16 @@ interface WorkshopRepositoryApi {
         @Query("search") search: String? = null
     ): PageResponse<CraftDto>
 
+    /**
+     * The craft list every picker reads (REQUIREMENTS_2026-10-20 §2.3). `If-None-Match` turns an
+     * unchanged list into a 304 with no body, so the raw response is kept: see [CraftCatalogueCache].
+     */
+    @GET("crafts/catalogue")
+    suspend fun craftCatalogue(
+        @Header("If-None-Match") ifNoneMatch: String? = null,
+        @Query("includeInactive") includeInactive: Boolean? = null,
+    ): Response<ResponseBody>
+
     @POST("artisans")
     suspend fun createArtisan(
         @Body body: ArtisanCreateRequest,

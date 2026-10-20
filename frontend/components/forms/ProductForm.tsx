@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
 import { statusLabel } from "@/components/StatusBadge";
-import { mergeById } from "@/components/data/cappedList";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { CarryContextBanner, carryScope, useCarryContext } from "@/components/forms/CarryContextBanner";
@@ -20,7 +19,12 @@ import {
 } from "@/components/forms/measurementMethods";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { seedHasArtisan, type InlineHostSeed, type InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
-import { craftChangeClearsArtisan, useCraftAndArtisanOptions, useRecordOffPage } from "@/components/forms/recordPickers";
+import { craftChangeClearsArtisan, useCraftAndArtisanOptions } from "@/components/forms/recordPickers";
+import { CraftAddDraftBoundary } from "@/components/forms/CraftAddDraftBoundary";
+import { CraftSelect } from "@/components/forms/CraftSelect";
+import { CRAFT_NOT_IN_LIST } from "@/lib/craftCatalogue";
+import { canManageCrafts } from "@/lib/permissions";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { HeldPostNotice, useRecordFilingHold } from "@/components/designworkshop/HeldPostNotice";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
@@ -39,7 +43,7 @@ import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { hasRank } from "@/lib/permissions";
-import type { Artisan, Craft, ProductDocumentation, RecordStatus } from "@/lib/types";
+import type { Artisan, ProductDocumentation, RecordStatus } from "@/lib/types";
 import { marketDemandOptions, productTypes } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { LiveCompleteness } from "@/components/records/LiveCompleteness";
@@ -267,13 +271,10 @@ export function ProductForm({
     artisans,
     crafts,
     referenceState,
-    craftCut,
     craftArtisanCut,
     artisansLoadedForCraft,
     // The four state sentences, built in the hook so this form and its twin cannot word one failure
     // two ways -- see `CraftAndArtisanOptions.craftNotice` for what each of them covers.
-    craftNotice,
-    craftEmptyLabel,
     craftArtisanNotice,
     craftArtisanEmptyLabel
   } = useCraftAndArtisanOptions({ craftId, artisanId });
@@ -294,8 +295,13 @@ export function ProductForm({
    * Same hook as `ArtisanForm`, called the same way. Do not write a variant of it: three forms
    * needed this rule, one got it, and that is precisely how the other two came to be missing it.
    */
-  const offPageCraft = useRecordOffPage<Craft>("/crafts", craftId, crafts);
-  const craftOptions = useMemo(() => (offPageCraft ? mergeById(crafts, [offPageCraft]) : crafts), [crafts, offPageCraft]);
+  // The catalogue is the whole list, so every live craft is an option; a LEGACY craft this
+  // product still points at is named from the record (`fallbackLabels` below).
+  const craftOptions = crafts;
+  const craftFallbackLabels = useMemo(
+    () => (initial?.craftId && initial.craftName ? { [initial.craftId]: initial.craftName } : undefined),
+    [initial]
+  );
   const { dirty: typedSinceMount, markDirty, resetDirty } = useUnsavedChanges();
   const [backPromptOpen, setBackPromptOpen] = useState(false);
   /**
@@ -550,6 +556,11 @@ export function ProductForm({
     // Held, and said beside Save — see `filing`. `requestSubmit()` from the unsaved-changes prompt is
     // not stopped by a disabled button, so the rule is kept here too.
     if (filing.saveHeld) return;
+    // A craft from the list, never typed (REQUIREMENTS_2026-10-20 §2.4).
+    if (!craftId) {
+      setError(CRAFT_NOT_IN_LIST);
+      return;
+    }
     // A workshop that has already ended makes this a late submission needing admin approval — say so
     // before anything is written. Resolves true immediately when there is nothing to warn about.
     if (!(await workshop.confirmSubmission())) return;
@@ -564,7 +575,6 @@ export function ProductForm({
       const recordedTimezone = recordedTimezoneFromForm(form);
       const location = locationFromForm(form);
       const payload = {
-        craftName: requiredText(form, "craftName"),
         place: requiredText(form, "place"),
         artisanName: requiredText(form, "artisanName"),
         productName: requiredText(form, "productName"),
@@ -698,7 +708,7 @@ export function ProductForm({
         artisanName: payload.artisanName,
         place: payload.place,
         craftId,
-        craftName: payload.craftName,
+        craftName,
         workshopId: workshop.workshopId,
         workshopName: workshop.workshops.find((w) => w.id === workshop.workshopId)?.title ?? null
       };
@@ -909,60 +919,37 @@ export function ProductForm({
               ))}
             </Select>
           </Field>
-          <Field label="Linked craft (fills craft name)">
-            {/* `searchable` on both link pickers: crafts and artisans are records, both lists are
-                capped (notices below), and the label is the only thing that tells two artisans of
-                one craft apart. Status / product type / market demand / maker / tradition on this
-                same form stay plain — they are fixed vocabularies of four to seven, where a filter
-                box costs a tab stop and saves nothing. */}
-            <Select
-              name="craftId"
-              searchable
-              /* Never the primitive's literal "No options", which on a read that has not landed --
-                 or one that failed -- is the claim that this repository records no crafts. */
-              emptyLabel={craftEmptyLabel || undefined}
-              value={craftId}
-              onChange={(event) => {
-                const next = event.target.value;
-                setCraftId(next);
-                const craft = craftOptions.find((c) => c.id === next);
-                if (craft) setCraftName(craft.name);
-                // Drop the artisan ONLY when this form actually knows they practise a different
-                // craft — never merely because it cannot see them. The distinction, and the silent
-                // link deletion that made it necessary, are argued in `forms/recordPickers`.
-                if (craftChangeClearsArtisan({ nextCraftId: next, artisanId, artisans })) {
-                  setArtisanId("");
-                }
+          {/* The craft is picked from the list; its name is derived from the pick, server-side too. */}
+          <FieldBlock label="Craft" required fieldKey="craft">
+            <CraftAddDraftBoundary
+              formRef={formRef}
+              onLeave={resetDirty}
+              onCraftAdded={(addedId, craft) => {
+                setCraftId(addedId);
+                setCraftName(craft?.name ?? "");
                 markDirty();
               }}
             >
-              {/* "Unlinked" must mean unlinked. It is the placeholder a browser falls back to when
-                  `value` matches no <option>, so it doubled as "linked to a craft that is not on
-                  page one" until `craftOptions` carried that craft — see `offPageCraft` above. */}
-              <option value="">Unlinked / type below</option>
-              {craftOptions.map((craft) => (
-                <option key={craft.id} value={craft.id}>
-                  {craft.name}
-                </option>
-              ))}
-            </Select>
-            <CappedListNotice cuts={[craftCut]} />
-            {/* R3: a picker that is empty because the read failed has to say so on the page, not
-                only inside a panel a reader has no reason to open. */}
-            {craftNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftNotice}</p> : null}
-          </Field>
-          <DictatedTextInput
-            name="craftName"
-            label="Craft name"
-            required
-            titleCased
-            explainWhenUnavailable={false}
-            value={craftName}
-            onChange={(next) => {
-              setCraftName(next);
-              markDirty();
-            }}
-          />
+              <CraftSelect
+                name="craftId"
+                required
+                ariaLabel="Craft"
+                value={craftId}
+                fallbackLabels={craftFallbackLabels}
+                canAddCraft={canManageCrafts(user)}
+                onDirty={markDirty}
+                onChange={(next, craft) => {
+                  setCraftId(next);
+                  setCraftName(craft?.name ?? "");
+                  // Drop the artisan ONLY when this form actually knows they practise a different
+                  // craft — never merely because it cannot see them. See `forms/recordPickers`.
+                  if (craftChangeClearsArtisan({ nextCraftId: next, artisanId, artisans })) {
+                    setArtisanId("");
+                  }
+                }}
+              />
+            </CraftAddDraftBoundary>
+          </FieldBlock>
           <Field label="Linked artisan (fills artisan + place)" fieldKey="artisan">
             <Select
               name="artisanId"

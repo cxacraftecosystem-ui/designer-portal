@@ -726,19 +726,13 @@ fun SearchScreen(
                       `DesignReviewScreen` gives its own picker and the same one the record forms now
                       give theirs.
                     */
-                    SearchDropdownField(
+                    // The craft list is the catalogue (REQUIREMENTS_2026-10-20 §2.4), searchable and offline.
+                    CraftPickerField(
                         label = "Craft",
-                        options = crafts.map { craft ->
-                            craft.id to listOfNotNull(
-                                craft.name.ifBlank { "Untitled craft" },
-                                craft.place?.takeIf { it.isNotBlank() }
-                            ).joinToString(" · ")
-                        },
-                        selectedValue = filters.craftId,
                         placeholder = "Any craft",
-                        emptyMessage = registerListNotice("crafts", crafts.size, craftRegister),
-                        enabled = crafts.isNotEmpty(),
-                        onSelect = { filters = filters.copy(craftId = it) }
+                        selectedIds = listOfNotNull(filters.craftId.ifBlank { null }),
+                        refresh = { repository.craftCatalogue(context) },
+                        onChange = { ids -> filters = filters.copy(craftId = ids.firstOrNull().orEmpty()) }
                     )
                     SearchDropdownField(
                         label = "Artisan",

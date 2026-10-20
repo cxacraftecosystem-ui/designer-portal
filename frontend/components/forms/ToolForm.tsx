@@ -50,8 +50,10 @@ import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, mediaKindWord, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { recordingFilename, splitExtension } from "@/lib/naming";
 import { saveOrQueue } from "@/lib/offline";
-import { hasRank } from "@/lib/permissions";
+import { canManageCrafts, hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
+import { CraftAddDraftBoundary } from "@/components/forms/CraftAddDraftBoundary";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import { MATERIAL_FAMILY_OPTIONS, TRADITION_OPTIONS, traditionChoice } from "@/lib/standardValues";
 import { makerOptions } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
@@ -527,14 +529,11 @@ export function ToolForm({
     artisans,
     crafts,
     referenceState,
-    craftCut,
     craftArtisanCut,
     craftRosterKey,
     artisansLoadedForCraft,
-    // The four state sentences, built in the hook so this form and its twin cannot word one failure
+    // The state sentences, built in the hook so this form and its twin cannot word one failure
     // two ways -- see `CraftAndArtisanOptions.craftNotice` for what each of them covers.
-    craftNotice,
-    craftEmptyLabel,
     craftArtisanNotice,
     craftArtisanEmptyLabel
   } = useCraftAndArtisanOptions({ craftIds, artisanIds, knownArtisans: embeddedArtisans });
@@ -572,6 +571,11 @@ export function ToolForm({
     const loaded = offPageCrafts.length ? mergeById(crafts, offPageCrafts) : crafts;
     return embeddedCrafts.length ? mergeById(loaded, embeddedCrafts) : loaded;
   }, [crafts, offPageCrafts, embeddedCrafts]);
+  /** Names for linked crafts that are not on the list (LEGACY), so a chip is never blank. */
+  const craftFallbackLabels = useMemo(
+    () => Object.fromEntries(embeddedCrafts.map((craft) => [craft.id, craft.name])),
+    [embeddedCrafts]
+  );
   /** The ticked crafts, as rows — what names the artisan list's group headings. See `craftNameForArtisan`. */
   const selectedCrafts = useMemo(
     () => craftIds.map((id) => craftOptions.find((craft) => craft.id === id)).filter((craft): craft is Craft => Boolean(craft)),
@@ -1222,7 +1226,8 @@ export function ToolForm({
       const recordedTimezone = recordedTimezoneFromForm(form);
       const location = locationFromForm(form);
       const payload = {
-        craftName: requiredText(form, "craftName"),
+        // Derived from the picks (the server derives it again from `craftIds`).
+        craftName: craftName || joinCraftNames(craftIds, craftOptions),
         place: requiredText(form, "place"),
         artisanName: requiredText(form, "artisanName"),
         toolkitName: requiredText(form, "toolkitName"),
@@ -1693,35 +1698,33 @@ export function ToolForm({
               own header says a multi-select wants `FieldBlock`. The question still reaches the
               trigger — `FieldBlock` publishes its label's id and `SearchableMultiSelect` composes
               "Linked crafts 2 selected: …" out of it. */}
-          <FieldBlock label="Linked crafts (fills craft name)">
+          <FieldBlock label="Linked crafts" required>
             {/* `searchable` on both link pickers: crafts and artisans are records, both lists are
                 capped (notices below), and the label is the only thing that tells two artisans of
                 one craft apart. Status / product type / market demand / maker / tradition on this
                 same form stay plain — they are fixed vocabularies of four to seven, where a filter
                 box costs a tab stop and saves nothing. */}
-            <MultiSelectDropdown
-              values={craftIds}
-              onChange={onCraftsChanged}
-              searchable
-              /* The refusal below is announced on the control it is about, not only drawn under it:
-                 a reader who tabs onto the trigger to find out why their tick did nothing hears the
-                 sentence, and a reader who never leaves the panel hears it from `role="alert"`.
-                 There is no `invalid` companion on this primitive by design — see `SearchableSelect`. */
-              describedBy={craftLimitNotice ? craftLimitId : undefined}
-              placeholder="Select linked crafts"
-              /* Never the primitive's literal "No options", which on a read that has not landed --
-                 or one that failed -- is the claim that this repository records no crafts. */
-              emptyLabel={craftEmptyLabel || undefined}
-              /* THERE IS NO "UNLINKED" ROW ANY MORE, AND THERE MUST NOT BE. On the single-select it
-                 was the answer `value=""`, and it doubled as the browser's fallback for "linked to a
-                 craft that is not on page one" — which is the defect `offPageCrafts` above closes. A
-                 multi-select says "unlinked" by holding nothing, so a row that meant it would be a
-                 second spelling of the empty selection, and ticking it alongside a real craft would
-                 be a state nobody can store. The Craft name box beside this one is still where a
-                 craft that is not in the register gets typed. */
-              options={craftOptions.map((craft) => ({ value: craft.id, label: craft.name }))}
-            />
-            <CappedListNotice cuts={[craftCut]} />
+            {/* Crafts come only from the list; the tool's craft name is derived from the picks. */}
+            <CraftAddDraftBoundary
+              formRef={formRef}
+              onLeave={resetDirty}
+              onCraftAdded={(addedId) => {
+                if (craftIds.includes(addedId)) return;
+                onCraftsChanged([...craftIds, addedId]);
+                markDirty();
+              }}
+            >
+              <CraftSelect
+                multiple
+                required
+                ariaLabel="Linked crafts"
+                value={craftIds}
+                onChange={(ids) => onCraftsChanged(ids)}
+                describedBy={craftLimitNotice ? craftLimitId : undefined}
+                fallbackLabels={craftFallbackLabels}
+                canAddCraft={canManageCrafts(user)}
+              />
+            </CraftAddDraftBoundary>
             {/* THE TICK THAT WAS REFUSED, AND IT IS THE ONLY SENTENCE ON THIS FIELD IN `error-600`.
                 Nothing was lost — the selection is exactly what it was — but something the designer
                 asked for did not happen, and the one failure a picker must never have is the silent
@@ -1733,20 +1736,7 @@ export function ToolForm({
             ) : null}
             {/* R3: a picker that is empty because the read failed has to say so on the page, not
                 only inside a panel a reader has no reason to open. */}
-            {craftNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftNotice}</p> : null}
           </FieldBlock>
-          <DictatedTextInput
-            name="craftName"
-            label="Craft name"
-            required
-            titleCased
-            explainWhenUnavailable={false}
-            value={craftName}
-            onChange={(next) => {
-              setCraftName(next);
-              markDirty();
-            }}
-          />
           {/* `FieldBlock` for the same reason as the craft picker above — see that note. */}
           <FieldBlock label="Linked artisans (fills artisan + place)" fieldKey="artisan">
             {/* ── THE ROWS ARE GROUPED BY CRAFT, A→Z, AND THE ORDER IS NOT DECIDED HERE ─────────

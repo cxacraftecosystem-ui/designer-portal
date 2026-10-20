@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Landmark } from "lucide-react";
 
 import { CollabDialog } from "@/components/CollabDialog";
@@ -29,8 +29,27 @@ import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
-import { apiFetch, listResource } from "@/lib/api";
-import { countNoun, formatDate } from "@/lib/format";
+import { CraftCategoriesTab } from "@/components/crafts/CraftCategoriesTab";
+import { CraftReviewQueue } from "@/components/crafts/CraftReviewQueue";
+import { CraftSubCategorySelect } from "@/components/crafts/CraftTaxonomyFields";
+import { CRAFT_STATE_OPTIONS, GI_LABEL, canAdministerCraftList, deleteCraft, loadCraftReferenceCounts } from "@/components/crafts/craftAdmin";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
+import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
+import { apiFetch } from "@/lib/api";
+import {
+  craftCategoryName,
+  craftIndex,
+  craftSubCategoryName,
+  foldCraftText,
+  invalidateCraftCatalogue,
+  searchCraftCatalogue,
+  useCraftCatalogue,
+  type CatalogueCraft,
+  type CraftCatalogue,
+  type GiStatus
+} from "@/lib/craftCatalogue";
+import { markCraftAdded, safeReturnPath } from "@/lib/craftAddDraft";
+import { countNoun } from "@/lib/format";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { requiredText, textValue } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
@@ -39,12 +58,18 @@ import { saveOrQueue } from "@/lib/offline";
 import { canManageCrafts, isAdmin } from "@/lib/permissions";
 import { UnmappedCraftsPanel } from "@/components/crafts/UnmappedCraftsPanel";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
-import type { Craft, PageResult } from "@/lib/types";
+import type { Craft } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { cn } from "@/lib/utils";
 
 /** Section id the craft media batch publishes under, so the page-level tray can aggregate it. */
 const MEDIA_SECTION = "craft-media";
 const MEDIA_SECTION_LABEL = "Craft media";
+
+/** Rows per page of the craft table — the whole list is in the browser, so this only paces reading. */
+const PAGE_SIZE = 25;
+
+type Tab = "crafts" | "categories" | "review";
 
 export default function CraftsPage() {
   return (
@@ -59,140 +84,101 @@ export default function CraftsPage() {
 }
 
 /**
- * ── DICTATION ON THIS FORM: WHICH BOXES HAVE A MICROPHONE, AND WHY THE REST DO NOT ──────────────
+ * The craft master list (REQUIREMENTS_2026-10-20 §2.6): Crafts | Categories | Needs review.
  *
- * The owner's instruction (2026-08-28): "All the record pages should have dictation options
- * available, wherever applicable so as to reduce the friction as much as possible." So the default
- * flipped — a free-text box HAS a microphone unless there is a reason it must not — and the reason
- * is written down here so a later reader can tell a decision from an oversight.
+ * The list is the catalogue (`GET /crafts/catalogue`), the one source every picker reads, so this
+ * table and every dropdown in both portals show the same crafts. Adding or editing a craft takes
+ * `canManageCrafts`; categories, merges and the review queue are content-admin work; Delete is drawn
+ * in admin view only.
  *
- * DICTATED: Craft name · Local name · Category · Place · Description.
- *
- * NOT DICTATED, and each is a rule rather than a preference:
- *
- *  - **Workshop** — a record picker behind a themed dropdown. Nothing free to speak.
- *  - **Craft media** — a file picker.
- *  - **Search crafts, categories or descriptions** — the list's own search box, and NOT part of the
- *    record form at all. It is not an answer being stored; it re-runs a query on every keystroke,
- *    and a microphone on it would fire a debounced fetch per committed phrase. If searching by voice
- *    is wanted it belongs in `SearchInput` once, for every list screen, rather than here for one.
- *
- * Category is the one judgement call on this list and it went the dictated way: there is no
- * vocabulary endpoint behind it, nothing validates it, and what researchers type into it is prose.
- * The day it becomes a dropdown it leaves this list.
+ * DICTATED: Craft name · Local name · Description. Category, sub-category, states and GI status are
+ * closed vocabularies behind dropdowns.
  */
 function CraftsPageBody() {
   const confirm = useConfirm();
   const { user } = useAuth();
   const { adminMode } = useAdminView();
   const { addCompleted } = useUploads();
+  const searchParams = useSearchParams();
   const allowManage = canManageCrafts(user);
-  const [data, setData] = useState<PageResult<Craft> | null>(null);
+  const contentAdmin = canAdministerCraftList(user);
+  const { catalogue, error: catalogueError, reload: reloadCatalogue } = useCraftCatalogue();
+  /** Reference counts per craft, for content admins (the full catalogue carries them). */
+  const [referenceCounts, setReferenceCounts] = useState<Map<string, number> | null>(null);
+  const [tab, setTab] = useState<Tab>("crafts");
+
+  // Filters over the list. All client-side: the catalogue is the whole list.
   const [query, setQuery] = useState("");
-  const [applied, setApplied] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [subCategoryFilter, setSubCategoryFilter] = useState("");
+  const [giFilter, setGiFilter] = useState("");
+  const [stateFilter, setStateFilter] = useState("");
   const [page, setPage] = useState(1);
+
   const [editing, setEditing] = useState<Craft | null>(null);
-  /*
-    ── THE FOUR DICTATED ONE-LINE BOXES, IN PAGE STATE ─────────────────────────────────────────────
-
-    `DictatedTextInput` is controlled by its caller and cannot be anything else — the argument is in
-    that file, and it is exactly this page's shape that proves it: `submit` finishes a CREATE with
-    `resetForm(null); formElement.reset();`, and `formElement.reset()` rewrites the DOM and tells
-    React nothing at all. A box that owned its own value would go on holding the craft that was just
-    saved while the DOM showed empty, and the next character typed would bring the old name back.
-
-    So `resetForm` is the ONE place these four are seeded, from the record being loaded or from
-    nothing at all, and every route into the form goes through it: the row Edit button, `?edit=`,
-    `?new=1`, Cancel edit, the saved branch and the queued branch.
-  */
+  // Page state, seeded in `resetForm` only — `formElement.reset()` reaches the DOM and not React.
   const [name, setName] = useState("");
   const [localName, setLocalName] = useState("");
-  const [category, setCategory] = useState("");
-  const [place, setPlace] = useState("");
-  /*
-    ── AND THE FORM IS REMOUNTED ON EVERY RESET, WHICH IS A BUG FIX AND NOT A TIDY-UP ──────────────
-
-    The `<form>` was keyed `editing?.id ?? "new"` alone, so creating a craft did not change the key
-    and the form was NOT rebuilt: `formElement.reset()` was the whole of the clearing. That reaches
-    uncontrolled DOM inputs and nothing else, and this form has children holding their own state —
-    `DictatedTextArea` (the description) most importantly, and `TitleCasedInput`'s typed shadow. So
-    after saving a craft the description box painted empty while the component still held the saved
-    text, and one keystroke brought the whole previous description back into the next craft. The
-    QUEUED branch was worse: it calls `resetForm(null)` and never called `formElement.reset()` at
-    all, so an offline save left every box filled with the craft that had just been banked.
-
-    Bumping a counter and putting it in the key is the same instrument `ArtisanForm` uses
-    (`formKey`), for the same reason it gives: remounting is what clears the state living inside the
-    field components, "which no amount of `form.reset()` can reach".
-  */
+  const [subCategoryId, setSubCategoryId] = useState("");
+  const [stateOfOrigin, setStateOfOrigin] = useState<string[]>([]);
+  const [stateOfPractice, setStateOfPractice] = useState<string[]>([]);
+  const [giStatus, setGiStatus] = useState<GiStatus>("NON_GI");
+  // Remounting on every reset is what clears the children that hold their own state (the
+  // description box above all), which no amount of `form.reset()` can reach.
   const [formKey, setFormKey] = useState(0);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
-  // Unsaved-changes guard: dirty is set by any form input / media change; confirmAction holds the
-  // navigation the user asked for while the dialog decides its fate.
   const router = useRouter();
   const [dirty, setDirty] = useState(false);
   const [confirmAction, setConfirmAction] = useState<(() => void) | null>(null);
   const [saving, setSaving] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const afterSaveRef = useRef<(() => void) | null>(null);
-  const skipFirstDebounce = useRef(true);
-  // The workshop this craft was documented at. One inline form edits every craft here, so `resetKey`
-  // re-seeds the picker whenever a different record is loaded into it (see forms/WorkshopSelect).
   const workshop = useWorkshopSelection({
     initialWorkshopId: editing?.workshopId,
     isEdit: Boolean(editing),
     resetKey: editing?.id ?? null
   });
 
-  async function load() {
-    try {
-      setData(await listResource<Craft>("/crafts", { search: applied || undefined, page, pageSize: 20 }));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load crafts");
-    }
-  }
-
-  /**
-   * Search, page and scroll, so Back from a craft's read-only page lands on the same rows. Recalled
-   * once before the first fetch — `placeRestored` holds that fetch until it has been.
-   */
-  const memory = useListMemory("crafts", { query, applied, page }, data !== null);
-  const [placeRestored, setPlaceRestored] = useState(false);
+  // How many records use each craft: a standard column (§2.6), and the number behind merge or delete.
   useEffect(() => {
-    if (!placeRestored) return;
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, applied, placeRestored]);
+    if (!catalogue) return;
+    let cancelled = false;
+    loadCraftReferenceCounts()
+      .then((counts) => {
+        if (!cancelled) setReferenceCounts(counts);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogue]);
 
-  // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
-  useEffect(() => {
-    if (skipFirstDebounce.current) {
-      skipFirstDebounce.current = false;
-      return;
-    }
-    const timer = setTimeout(() => {
-      setApplied(query);
-      setPage(1);
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  // AFTER the debounce effect on purpose: effects run in declaration order, so the debounce's own
-  // first run has already spent `skipFirstDebounce`, and the flag raised here is the one that stops
-  // the restored query being debounced into a page-1 reset.
+  /** Search, filters and page, so Back from a craft's read-only page lands on the same rows. */
+  const memory = useListMemory(
+    "crafts",
+    {
+      query,
+      applied: query,
+      page,
+      filters: { category: categoryFilter, subCategory: subCategoryFilter, gi: giFilter, state: stateFilter, tab }
+    },
+    catalogue !== null
+  );
   useEffect(() => {
     const remembered = memory.recall();
     if (remembered) {
-      if ((remembered.query ?? "") !== "") skipFirstDebounce.current = true;
       setQuery(remembered.query ?? "");
-      setApplied(remembered.applied ?? "");
       setPage(remembered.page ?? 1);
+      const filters = remembered.filters ?? {};
+      setCategoryFilter(filters.category ?? "");
+      setSubCategoryFilter(filters.subCategory ?? "");
+      setGiFilter(filters.gi ?? "");
+      setStateFilter(filters.state ?? "");
+      if (filters.tab === "categories" || filters.tab === "review") setTab(filters.tab);
     }
-    setPlaceRestored(true);
     // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -208,8 +194,6 @@ function CraftsPageBody() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
 
-  // Soft navigation via the round back control in the page header — the page's only back control —
-  // parks through the same mechanism, so Discard performs the navigation that was asked for.
   useLeaveGuard(dirty, () => guard(() => router.back()));
 
   /** Run `action` now, or park it behind the unsaved-changes dialog when the form is dirty. */
@@ -218,33 +202,24 @@ function CraftsPageBody() {
     else action();
   }
 
-  function resetForm(next: Craft | null) {
+  function resetForm(next: Craft | null, typedName = "") {
     setEditing(next);
     setMediaFiles([]);
     setDirty(false);
-    // The four dictated boxes are page state, so they are seeded here rather than by a `defaultValue`
-    // the remount below would re-read. `next` is the record being loaded into the form, or null for
-    // a blank one — the same source the other boxes' `defaultValue`s use.
-    setName(next?.name ?? "");
+    setName(next?.name ?? typedName);
     setLocalName(next?.localName ?? "");
-    setCategory(next?.category ?? "");
-    setPlace(next?.place ?? "");
-    // See `formKey` above: this is what actually empties the description box and every other child
-    // holding its own state. It runs on all six routes into the form, including the offline one.
+    setSubCategoryId(next?.subCategoryId ?? "");
+    setStateOfOrigin(next?.stateOfOrigin ?? []);
+    setStateOfPractice(next?.stateOfPractice ?? []);
+    setGiStatus(next?.giStatus ?? "NON_GI");
     setFormKey((key) => key + 1);
   }
 
-  // `/crafts?edit=<id>` loads that craft into the form below; `/crafts?new=1` opens a blank one.
-  // Both are how the View Data browser, the dashboard tiles and Recent submissions reach this page —
-  // before this they all linked to the bare `/crafts`, so "Update craft" landed on the create form.
+  // `/crafts?edit=<id>` loads that craft into the form; `/crafts?new=1` opens a blank one.
   const { loading: deepLinkLoading } = useEditDeepLink<Craft>({
     endpoint: "/crafts",
     basePath: "/crafts",
     targetRef: formRef,
-    // Through `guard`, exactly as the row Edit button below goes through it: the form stays typeable
-    // while the fetch is in flight, and `resetForm` remounts it (`key={editing?.id}`) and clears
-    // `dirty` — so seeding directly would throw away anything typed in those seconds with nothing
-    // asked and nothing said. Dirty means the unsaved-changes dialog decides, as everywhere else.
     onEdit: (record) => guard(() => resetForm(record)),
     onNew: () => guard(() => resetForm(null)),
     onError: setError,
@@ -252,13 +227,44 @@ function CraftsPageBody() {
     errorMessage: "Unable to load that craft"
   });
 
+  // `/crafts?new=<name>`: "Add it to the list" from a craft picker, with the name already typed.
+  const typedNew = searchParams.get("new");
+  const typedNewHandled = useRef(false);
+  /** The form the picker was on: saving the craft goes back there (lib/craftAddDraft). */
+  const returnToRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (typedNewHandled.current || !typedNew || typedNew === "1" || !allowManage) return;
+    typedNewHandled.current = true;
+    returnToRef.current = safeReturnPath(searchParams.get("return"));
+    setTab("crafts");
+    resetForm(null, typedNew);
+    router.replace("/crafts");
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ block: "start" }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typedNew, allowManage]);
+
+  async function openForUpdate(id: string) {
+    try {
+      const record = await apiFetch<Craft>(`/crafts/${encodeURIComponent(id)}`);
+      guard(() => {
+        resetForm(record);
+        requestAnimationFrame(() => formRef.current?.scrollIntoView({ block: "start" }));
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load that craft");
+    }
+  }
+
+  function afterWrite() {
+    invalidateCraftCatalogue();
+    reloadCatalogue();
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // React nulls event.currentTarget after the first await — capture it before any async work.
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    // A workshop that has already ended makes this a late submission needing admin approval — say so
-    // before anything is written. Resolves true immediately when there is nothing to warn about.
     if (!(await workshop.confirmSubmission())) {
       afterSaveRef.current = null;
       return;
@@ -268,12 +274,13 @@ function CraftsPageBody() {
       const exifItems = await collectExifMetadata(mediaFiles);
       const exifRemark = exifMetadataToRemark(exifItems);
       const description = [textValue(form, "description"), exifRemark].filter(Boolean).join("\n\n") || null;
-      // extraMetadata stays programmatic (EXIF etc.) — the raw JSON textarea is gone for good.
       const payload: Record<string, unknown> = {
         name: requiredText(form, "name"),
         localName: textValue(form, "localName"),
-        category: textValue(form, "category"),
-        place: textValue(form, "place"),
+        subCategoryId: requiredText(form, "subCategoryId"),
+        stateOfOrigin,
+        stateOfPractice,
+        giStatus,
         workshopId: workshop.workshopId || null,
         description
       };
@@ -294,19 +301,14 @@ function CraftsPageBody() {
         ]
       });
       if (outcome.queued) {
-        // OutboxBanner at the top of the page names the entry and says where it lives.
         resetForm(null);
         setSaving(false);
         if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
       const saved = outcome.saved;
+      afterWrite();
       if (mediaFiles.length) {
-        // `outcomes` AND NOT `uploaded`: one entry per file we handed over, at its position, with the
-        // `File` itself attached. That is what lets the two lines below be about the same batch —
-        // what landed goes to the tray, what did not stays in the capture card as the actual bytes,
-        // with nothing to line up between them and no name-matching (two photographs off one handset
-        // are routinely both IMG_0001.jpg).
         const { outcomes } = await uploadMediaBatch({
           files: mediaFiles,
           linkedRecordType: "craft",
@@ -316,7 +318,6 @@ function CraftsPageBody() {
           onProgress: setUploadProgress
         });
         setUploadProgress(null);
-        // The uploaded files surface twice: as chips under this section and in the page-level tray.
         addCompleted(
           MEDIA_SECTION,
           MEDIA_SECTION_LABEL,
@@ -324,39 +325,12 @@ function CraftsPageBody() {
         );
         const stranded = outcomes.filter((outcome) => outcome.failure !== null);
         if (stranded.length) {
-          /*
-            KEEP THE BYTES THAT DID NOT LAND, AND ONLY THOSE. The early return already left the whole
-            batch sitting in the capture card, so nothing was ever destroyed here — but the card was
-            then describing files that ARE attached to the craft as though they still had to be sent,
-            and a second Save would have uploaded every one of them again. Narrowing it to the
-            stranded outcomes makes the card mean what it says.
-
-            `outcome.file` and not a lookup by name: two photographs off one handset are routinely
-            both IMG_0001.jpg, so the only safe identity is the object itself, which is why this
-            reads `outcomes` rather than pairing `failed` back against `mediaFiles`.
-
-            THE SENTENCE DOES NOT SAY "NOTHING HAS BEEN LOST", AND IT DID. That reading was true of
-            this instant and false of the next move it recommended: the row's Edit button and the
-            `?edit=` deep link's `onEdit` both go through `resetForm`, which begins `setMediaFiles([])`
-            — so "re-open the craft" is the one action that discards the bytes the sentence promised
-            were safe. The unsaved-changes dialog does interpose (nothing clears `dirty` before this
-            return), which made it a false reassurance rather than a silent deletion, but a designer
-            who reads a promise and then confirms a Discard has been misled by us.
-
-            THE TWO REMEDIES THAT WOULD MAKE IT SAFE ARE BOTH OUT OF THIS BRANCH'S REACH, so it
-            states the position instead of inventing one. "Press Save again" is wrong after a CREATE:
-            `editing` is still null on this return, so a second Save POSTs a SECOND craft. Pointing
-            `editing` at `saved` would fix that and break something quieter — the EXIF remark for the
-            WHOLE batch is already appended to the saved description, and the re-mounted form would
-            append the stranded files' remark to it a second time, into a column a ministry officer
-            reads. That is a rework of the remark, not a line here.
-          */
+          // Keep only the bytes that did not land, so the capture card means what it says.
           setMediaFiles(stranded.map((outcome) => outcome.file));
           setError(
             `${stranded.length} of ${countNoun(mediaFiles.length, "file")} failed to upload: ${stranded
               .map((outcome) => outcome.file.name)
-              .join(", ")}. ` +
-              "The craft was saved. Retry them before leaving this form, or they're lost."
+              .join(", ")}. ` + "The craft was saved. Retry them before leaving this form, or they're lost."
           );
           setSaving(false);
           return;
@@ -364,13 +338,14 @@ function CraftsPageBody() {
       }
       resetForm(null);
       setConfirmAction(null);
-      // KEPT, AND NO LONGER THE THING THAT CLEARS THE FORM. `resetForm` above bumps `formKey`, so
-      // React rebuilds this form from scratch — see the `formKey` note at the top of this component
-      // for the children `.reset()` could never reach. This line still runs against the outgoing DOM
-      // node (state updates flush after the handler), which is harmless, and it is what keeps the
-      // browser's own idea of "the default values" in step for anything outside React's view.
       formElement.reset();
-      load();
+      const backTo = !editing && returnToRef.current ? markCraftAdded(saved.id) ?? returnToRef.current : null;
+      returnToRef.current = null;
+      if (backTo) {
+        afterSaveRef.current = null;
+        router.push(backTo);
+        return;
+      }
       const after = afterSaveRef.current;
       afterSaveRef.current = null;
       after?.();
@@ -384,300 +359,368 @@ function CraftsPageBody() {
     }
   }
 
-  async function remove(id: string) {
-    const ok = await confirm(
-      deleteConfirm(
-        "Delete this craft?",
-        "This permanently deletes the craft. This action cannot be undone.",
-        "Linked records keep the craft name as text."
-      )
-    );
+  async function remove(craft: CatalogueCraft) {
+    const ok = await confirm(deleteConfirm(`Delete “${craft.name}”?`, "This permanently deletes the craft. It cannot be undone."));
     if (!ok) return;
     try {
-      await apiFetch(`/crafts/${id}`, { method: "DELETE" });
-      await load();
+      await deleteCraft(craft.id);
+      reloadCatalogue();
     } catch (err) {
+      // 409 CRAFT_IN_USE carries the server's sentence: "Used by {n} records. Merge it into another craft instead."
       setError(err instanceof Error ? err.message : "Unable to delete craft");
     }
   }
 
-  // Most recent first, regardless of the API's name ordering.
-  const rows = data ? [...data.items].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")) : [];
+  const index = catalogue ? craftIndex(catalogue) : null;
+  const rows = useMemo(() => (catalogue ? filterCrafts(catalogue, { query, categoryFilter, subCategoryFilter, giFilter, stateFilter }) : []), [
+    catalogue,
+    query,
+    categoryFilter,
+    subCategoryFilter,
+    giFilter,
+    stateFilter
+  ]);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pages);
+  const pageRows = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const sortedCategories = catalogue ? [...catalogue.categories].sort((a, b) => a.sortOrder - b.sortOrder) : [];
+  const filterSubs = sortedCategories.find((category) => category.id === categoryFilter)?.subCategories ?? [];
+
+  const tabs: { key: Tab; label: string }[] = [
+    { key: "crafts", label: "Crafts" },
+    { key: "categories", label: "Categories" },
+    ...(contentAdmin ? [{ key: "review" as const, label: "Needs review" }] : [])
+  ];
 
   return (
     <>
-      <PageHeader title="Crafts" description="Maintain craft vocabulary used to link artisans, products and tools." icon={<Landmark className="h-5 w-5" aria-hidden />} />
+      <PageHeader
+        title="Crafts"
+        description={catalogue ? `${catalogue.crafts.length} crafts in ${catalogue.categories.length} categories.` : "The craft list."}
+        icon={<Landmark className="h-5 w-5" aria-hidden />}
+      />
       {/* C26: an administrator maps crafts to the shared code both portals carry. */}
       {isAdmin(user) && adminMode ? <UnmappedCraftsPanel /> : null}
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
       {deepLinkLoading ? (
-        <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-muted">
-          Loading the craft you asked to edit...
-        </div>
+        <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-muted">Loading the craft…</div>
       ) : null}
-      {allowManage ? (
-      <form
-        ref={formRef}
-        key={`${editing?.id ?? "new"}-${formKey}`}
-        onSubmit={submit}
-        onInput={() => setDirty(true)}
-        onKeyDown={handleFormEnter}
-        // scroll-mt-28 clears the island nav when `?edit=` scrolls this form into view (§AppShell pt-24).
-        className="panel mb-5 grid scroll-mt-28 gap-3 p-4 md:grid-cols-2 lg:grid-cols-4"
-      >
-        {/* WHICH craft is in the form. Arriving from ?edit= drops the researcher straight into a
-            populated form part-way down the page, and "Update craft" on the button is too far away
-            (and too generic) to answer "update WHICH one" on its own. */}
-        {editing ? (
-          <div className="flex flex-wrap items-center gap-2 md:col-span-2 lg:col-span-4">
-            <span className="rounded-full bg-field-200 px-2.5 py-1 text-xs font-medium text-ink-900">
-              Editing: {editing.name}
-            </span>
-          </div>
-        ) : null}
-        {/* The workshop leads every other dropdown: it is the context the record belongs to. */}
-        <WorkshopSelect state={workshop} onDirty={() => setDirty(true)} saving={saving} />
-        {/* TITLE-CASED, AND SAYING SO — the one record form on the web that was not.
-            `create_craft` and `update_craft` both call `clean_data(...)` with its default
-            `title_case=True`, and `records.TITLE_CASE_FIELDS` contains `name` and `place`, so a
-            researcher who typed "bagru block printing" here saved and the record silently became
-            something else. That is precisely the defect `TitleCasedInput`'s header was written for —
-            "the web showed nothing, so the value changed silently AFTER saving and the form and the
-            record disagreed" — and `ArtisanForm`, `ProductForm`, `ToolForm` and `ProcessForm` all
-            already use this control for exactly these columns, as does Android's `CraftForm`
-            (`titleCased = true` on both boxes).
 
-            IT IS STILL THAT COMPONENT, reached through `DictatedTextInput`'s `titleCased` prop
-            rather than mounted directly: the dictation sweep of 2026-08-28 put a microphone under
-            these boxes, and the one thing it was not allowed to do on the way was drop the "Will be
-            saved as …" sentence this comment exists for. The prop mounts `TitleCasedInput` itself,
-            not a copy of its hint.
-
-            NOT `localName`, and never: it is Devanagari or Gujarati, where capitalising means
-            nothing, and `TITLE_CASE_FIELDS` leaves it out for that reason. `category` is left alone
-            too — it is not in that set, so a hint here would promise a normalisation the API does not
-            perform, which is worse than no hint. Each of the two says so at its own call site. */}
-        {/*
-          THE ONE PLACE THIS FORM EXPLAINS A MISSING MICROPHONE — see `DictationUnavailableNotice`.
-          Every dictated box below passes `explainWhenUnavailable={false}`, because on Firefox the
-          same honest paragraph printed five times across one four-column row is grey text nobody
-          reads. It spans the whole grid so it reads as a sentence about the form rather than as the
-          first field's caption.
-        */}
-        <DictationUnavailableNotice className="md:col-span-2 lg:col-span-4" />
-        <DictatedTextInput
-          name="name"
-          label="Craft name"
-          required
-          titleCased
-          explainWhenUnavailable={false}
-          value={name}
-          onChange={(next) => {
-            setName(next);
-            setDirty(true);
-          }}
-        />
-        {/* NOT title-cased, and never — see the block above: it is Devanagari or Gujarati, where
-            capitalising means nothing, and `TITLE_CASE_FIELDS` leaves it out for that reason. It
-            still gets a microphone: the recogniser takes whichever language it is set to, and Hindi,
-            Odia and Gujarati are all in `DICTATION_LANGUAGES`. */}
-        <DictatedTextInput
-          name="localName"
-          label="Local name"
-          explainWhenUnavailable={false}
-          value={localName}
-          onChange={(next) => {
-            setLocalName(next);
-            setDirty(true);
-          }}
-        />
-        {/* CATEGORY IS FREE TEXT ON THIS SCREEN AND NOT A CLOSED LIST — there is no vocabulary
-            endpoint behind it and nothing validates it, so it is prose a researcher types ("textile,
-            hand block printed"). That is what makes it dictatable; if it ever becomes a dropdown it
-            leaves this list, like every other closed vocabulary here. Also NOT title-cased: it is
-            not in `TITLE_CASE_FIELDS`, so a hint would promise a normalisation the API does not
-            perform. */}
-        <DictatedTextInput
-          name="category"
-          label="Category"
-          explainWhenUnavailable={false}
-          value={category}
-          onChange={(next) => {
-            setCategory(next);
-            setDirty(true);
-          }}
-        />
-        <DictatedTextInput
-          name="place"
-          label="Place"
-          titleCased
-          explainWhenUnavailable={false}
-          value={place}
-          onChange={(next) => {
-            setPlace(next);
-            setDirty(true);
-          }}
-        />
-        <div className="md:col-span-2 lg:col-span-4">
-          {/*
-            DICTATION BUT NOT RICH TEXT, and the second half of that is a decision rather than an
-            omission.
-
-            Android's `CraftForm` draws this column as `TextInput("Description", …, dictate = true,
-            rich = true)` and the web drew it as a bare `<TextArea>`, so the web record form was the
-            poorer of the two for the same fact — a researcher who would rather speak three sentences
-            about a technique than thumb them in had no microphone here at all. `DictatedTextArea`
-            closes that half and changes nothing about what is stored: plain text in, plain text out,
-            exactly as Android's `recordStoredFromDoc` writes (`toPlain(doc)`, never JSON).
-
-            THE LIST AFFORDANCE IS NOT CLOSED HERE ON PURPOSE. Pointing `RichTextField` at this box
-            would make `Craft.description` a NINTH `String?` column holding `{"blocks":…}`, and
-            `RecordProseText.kt`'s storage block spells out what that costs in this repository
-            specifically: `record_fields.cell()`, the `/data/report` workbook, `details.txt`, both
-            `/export` CSVs and the review diff all read these columns as prose, so the braces print
-            verbatim into an exported cell and nothing crashes to say so. That is a storage decision
-            across three languages, not an input-method fix, and it belongs with the other eight —
-            `_reference_data`'s docstring names them — or nowhere.
-          */}
-          <DictatedTextArea
-            name="description"
-            label="Description"
-            defaultValue={editing?.description ?? ""}
-            /* The form says it once, at the top of the grid — see `DictationUnavailableNotice`. */
-            explainWhenUnavailable={false}
-            onDirty={() => setDirty(true)}
-          />
-        </div>
-        <div className="md:col-span-2 lg:col-span-4">
-          <MediaCaptureField
-            files={mediaFiles}
-            onFilesChange={(files) => {
-              setMediaFiles(files);
-              setDirty(true);
-            }}
-            title="Craft media"
-            description="Attach or capture craft reference images, audio notes, video, and documents."
-          />
-        </div>
-        <UploadProgress
-          progress={uploadProgress}
-          sectionId={MEDIA_SECTION}
-          label={MEDIA_SECTION_LABEL}
-          files={mediaFiles}
-          className="md:col-span-2 lg:col-span-4"
-        />
-        {/* Editing an existing craft: everything already attached to it, with playback and per-file
-            delete — the same surface the artisan/product/tool/workshop forms carry. */}
-        {editing ? (
-          <div className="md:col-span-2 lg:col-span-4">
-            {/* `recordHold={null}`: a craft is never filed under a design workshop, so only a file's
-                own workshop columns can hold it — which the panel reads for itself. */}
-            <ExistingMedia
-              linkedRecordType="craft"
-              linkedRecordId={editing.id}
-              recordHold={null}
-              title="Previously uploaded craft media"
-            />
-          </div>
-        ) : null}
-        <ActionGroup className="md:col-span-2 lg:col-span-4">
-          <button className="field-button" disabled={saving}>
-            {saving ? "Saving..." : editing ? "Update craft" : "Create craft"}
+      {/* Segmented tabs, not an action row. */}
+      <div role="tablist" aria-label="Craft list" className="mb-4 inline-flex rounded-full border border-line-200 bg-card p-1">
+        {tabs.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === item.key}
+            onClick={() => setTab(item.key)}
+            className={cn(
+              "rounded-full px-4 py-1.5 text-sm font-medium transition pointer-coarse:py-2.5",
+              tab === item.key ? "bg-purple-700 text-white" : "text-ink-700 hover:bg-purple-50"
+            )}
+          >
+            {item.label}
           </button>
-          {editing ? (
-            <button type="button" className="field-button-secondary" onClick={() => guard(() => resetForm(null))}>
-              Cancel edit
+        ))}
+      </div>
+
+      {!catalogue ? (
+        <div className="panel flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-ink-700">
+          <span>{catalogueError ?? "Loading…"}</span>
+          {catalogueError ? (
+            <button type="button" className="field-button-secondary" onClick={reloadCatalogue}>
+              Try again
             </button>
           ) : null}
-        </ActionGroup>
-      </form>
+        </div>
+      ) : tab === "categories" ? (
+        <CraftCategoriesTab catalogue={catalogue} canEdit={contentAdmin} canDelete={contentAdmin && adminMode} onChanged={reloadCatalogue} />
+      ) : tab === "review" && contentAdmin ? (
+        <CraftReviewQueue catalogue={catalogue} onChanged={reloadCatalogue} />
       ) : (
-        <div className="panel mb-5 p-4 text-sm text-ink-muted">
-          Adding or editing crafts needs Professor access.
-        </div>
+        <>
+          {allowManage ? (
+            <form
+              ref={formRef}
+              key={`${editing?.id ?? "new"}-${formKey}`}
+              onSubmit={submit}
+              onInput={() => setDirty(true)}
+              onKeyDown={handleFormEnter}
+              // scroll-mt-28 clears the island nav when the form is scrolled into view.
+              className="panel mb-5 grid scroll-mt-28 gap-3 p-4 md:grid-cols-2 lg:grid-cols-4"
+            >
+              <div className="flex flex-wrap items-center gap-2 md:col-span-2 lg:col-span-4">
+                <span className="rounded-full bg-field-200 px-2.5 py-1 text-xs font-medium text-ink-900">
+                  {editing ? `Editing: ${editing.name}` : "Add craft"}
+                </span>
+              </div>
+              <WorkshopSelect state={workshop} onDirty={() => setDirty(true)} saving={saving} />
+              <DictationUnavailableNotice className="md:col-span-2 lg:col-span-4" />
+              <DictatedTextInput
+                name="name"
+                label="Craft name"
+                required
+                titleCased
+                explainWhenUnavailable={false}
+                value={name}
+                onChange={(next) => {
+                  setName(next);
+                  setDirty(true);
+                }}
+              />
+              {/* Not title-cased: a local script has no capitals. */}
+              <DictatedTextInput
+                name="localName"
+                label="Local name"
+                explainWhenUnavailable={false}
+                value={localName}
+                onChange={(next) => {
+                  setLocalName(next);
+                  setDirty(true);
+                }}
+              />
+              <CraftSubCategorySelect
+                catalogue={catalogue}
+                name="subCategoryId"
+                required
+                value={subCategoryId}
+                disabled={saving}
+                onChange={(next) => {
+                  setSubCategoryId(next);
+                  setDirty(true);
+                }}
+              />
+              <FieldBlock label="State of origin">
+                <MultiSelectDropdown
+                  ariaLabel="State of origin"
+                  values={stateOfOrigin}
+                  confirmOnSelect={false}
+                  bulk={false}
+                  searchable
+                  placeholder="Choose states"
+                  options={CRAFT_STATE_OPTIONS.map((state) => ({ value: state, label: state }))}
+                  onChange={(next) => {
+                    setStateOfOrigin(next);
+                    setDirty(true);
+                  }}
+                />
+              </FieldBlock>
+              <FieldBlock label="State of practice">
+                <MultiSelectDropdown
+                  ariaLabel="State of practice"
+                  values={stateOfPractice}
+                  confirmOnSelect={false}
+                  bulk={false}
+                  searchable
+                  placeholder="Choose states"
+                  options={CRAFT_STATE_OPTIONS.map((state) => ({ value: state, label: state }))}
+                  onChange={(next) => {
+                    setStateOfPractice(next);
+                    setDirty(true);
+                  }}
+                />
+              </FieldBlock>
+              <FieldBlock label="GI status" required>
+                {/* Two named modes, a segmented choice — not an on/off setting. */}
+                <div role="radiogroup" aria-label="GI status" className="inline-flex w-fit rounded-full border border-line-200 bg-card p-1">
+                  {(["GI", "NON_GI"] as const).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={giStatus === value}
+                      onClick={() => {
+                        setGiStatus(value);
+                        setDirty(true);
+                      }}
+                      className={cn(
+                        "rounded-full px-4 py-1.5 text-sm font-medium transition pointer-coarse:py-2.5",
+                        giStatus === value ? "bg-purple-700 text-white" : "text-ink-700 hover:bg-purple-50"
+                      )}
+                    >
+                      {GI_LABEL[value]}
+                    </button>
+                  ))}
+                </div>
+              </FieldBlock>
+              <div className="md:col-span-2 lg:col-span-4">
+                <DictatedTextArea
+                  name="description"
+                  label="Description"
+                  defaultValue={editing?.description ?? ""}
+                  explainWhenUnavailable={false}
+                  onDirty={() => setDirty(true)}
+                />
+              </div>
+              <div className="md:col-span-2 lg:col-span-4">
+                <MediaCaptureField
+                  files={mediaFiles}
+                  onFilesChange={(files) => {
+                    setMediaFiles(files);
+                    setDirty(true);
+                  }}
+                  title="Craft media"
+                  description="Reference images, audio notes, video and documents."
+                />
+              </div>
+              <UploadProgress
+                progress={uploadProgress}
+                sectionId={MEDIA_SECTION}
+                label={MEDIA_SECTION_LABEL}
+                files={mediaFiles}
+                className="md:col-span-2 lg:col-span-4"
+              />
+              {editing ? (
+                <div className="md:col-span-2 lg:col-span-4">
+                  {/* `recordHold={null}`: a craft is never filed under a design workshop. */}
+                  <ExistingMedia linkedRecordType="craft" linkedRecordId={editing.id} recordHold={null} title="Previously uploaded craft media" />
+                </div>
+              ) : null}
+              <ActionGroup className="md:col-span-2 lg:col-span-4">
+                <button className="field-button" disabled={saving}>
+                  {saving ? "Saving..." : editing ? "Update craft" : "Add craft"}
+                </button>
+                {editing ? (
+                  <button type="button" className="field-button-secondary" onClick={() => guard(() => resetForm(null))}>
+                    Cancel
+                  </button>
+                ) : null}
+              </ActionGroup>
+            </form>
+          ) : null}
+          {editing ? <RecordCodeCard recordType="craft" id={editing.id} title={editing.name} className="mb-5" /> : null}
+          {editing ? (
+            <div className="mb-5 empty:hidden">
+              <FieldProvenance extraMetadata={editing.extraMetadata} title="Craft field contributions" />
+            </div>
+          ) : null}
+
+          <div className="mb-4 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+            <div className="md:col-span-2 lg:col-span-1">
+              <SearchInput
+                value={query}
+                onChange={(next) => {
+                  setQuery(next);
+                  setPage(1);
+                }}
+                placeholder="Search crafts"
+                ariaLabel="Search crafts"
+              />
+            </div>
+            <Dropdown
+              ariaLabel="Category"
+              value={categoryFilter}
+              advanceOnSelect={false}
+              onChange={(next) => {
+                setCategoryFilter(next);
+                setSubCategoryFilter("");
+                setPage(1);
+              }}
+              options={[{ value: "", label: "All categories" }, ...sortedCategories.map((category) => ({ value: category.id, label: category.name }))]}
+            />
+            <Dropdown
+              ariaLabel="Sub-category"
+              value={subCategoryFilter}
+              advanceOnSelect={false}
+              disabled={!categoryFilter}
+              onChange={(next) => {
+                setSubCategoryFilter(next);
+                setPage(1);
+              }}
+              options={[
+                { value: "", label: "All sub-categories" },
+                ...[...filterSubs].sort((a, b) => a.sortOrder - b.sortOrder).map((sub) => ({ value: sub.id, label: sub.name }))
+              ]}
+            />
+            <Dropdown
+              ariaLabel="GI status"
+              value={giFilter}
+              advanceOnSelect={false}
+              onChange={(next) => {
+                setGiFilter(next);
+                setPage(1);
+              }}
+              options={[
+                { value: "", label: "GI and Non GI" },
+                { value: "GI", label: "GI" },
+                { value: "NON_GI", label: "Non GI" }
+              ]}
+            />
+            <Dropdown
+              ariaLabel="State"
+              value={stateFilter}
+              advanceOnSelect={false}
+              searchable
+              onChange={(next) => {
+                setStateFilter(next);
+                setPage(1);
+              }}
+              options={[{ value: "", label: "All states" }, ...CRAFT_STATE_OPTIONS.map((state) => ({ value: state, label: state }))]}
+            />
+          </div>
+          <section className="panel overflow-hidden">
+            {rows.length === 0 ? (
+              <div className="p-4">
+                <EmptyState title="No crafts match" />
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1100px] text-left text-sm">
+                  <thead className="bg-surface-50 text-xs uppercase text-ink-500">
+                    <tr>
+                      <ResizableTh>Serial</ResizableTh>
+                      <ResizableTh>Craft</ResizableTh>
+                      <ResizableTh>Sub-category</ResizableTh>
+                      <ResizableTh>Category</ResizableTh>
+                      <ResizableTh>GI</ResizableTh>
+                      <ResizableTh>State of origin</ResizableTh>
+                      <ResizableTh>State of practice</ResizableTh>
+                      <ResizableTh>Records</ResizableTh>
+                      <ResizableTh className="text-right">Actions</ResizableTh>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line-200">
+                    {pageRows.map((craft) => (
+                      // The whole row opens the craft read-only; Update loads it into the form above.
+                      <OpenableRow key={craft.id} href={RECORD_VIEW_HREF.craft(craft.id)}>
+                        <td className="px-4 py-3 tabular-nums text-ink-500">{craft.sourceSerial ?? "—"}</td>
+                        <td className="px-4 py-3">
+                          <OpenableRowLink href={RECORD_VIEW_HREF.craft(craft.id)}>{craft.name}</OpenableRowLink>
+                        </td>
+                        <td className="px-4 py-3 text-ink-700">{index ? craftSubCategoryName(index, craft) : ""}</td>
+                        <td className="px-4 py-3 text-ink-700">{index ? craftCategoryName(index, craft) : ""}</td>
+                        <td className="px-4 py-3 text-ink-700">{craft.giStatus ? GI_LABEL[craft.giStatus] : "—"}</td>
+                        <td className="max-w-xs px-4 py-3 text-ink-700">{craft.stateOfOrigin.join(", ") || "—"}</td>
+                        <td className="max-w-xs px-4 py-3 text-ink-700">{craft.stateOfPractice.join(", ") || "—"}</td>
+                        <td className="px-4 py-3 tabular-nums text-ink-700">{referenceCounts ? (referenceCounts.get(craft.id) ?? 0) : "—"}</td>
+                        <td className="px-4 py-3 text-right">
+                          <RowActions>
+                            {allowManage ? (
+                              <button className={rowAction("edit")} onClick={() => void openForUpdate(craft.id)}>
+                                Update
+                              </button>
+                            ) : null}
+                            <button className={rowAction("neutral")} onClick={() => setCollabId(craft.id)}>
+                              Discuss
+                            </button>
+                            {adminMode ? (
+                              <button data-danger className={rowAction("danger")} onClick={() => void remove(craft)}>
+                                Delete
+                              </button>
+                            ) : null}
+                          </RowActions>
+                        </td>
+                      </OpenableRow>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <Pagination page={currentPage} pages={pages} total={rows.length} onPage={setPage} />
+          </section>
+        </>
       )}
-      {/* The craft's own code, drawn live for the craft in the form. A craft is edited INLINE on this
-          list rather than at a /[id]/edit route, so this is the record's detail view and this is
-          where its code belongs. */}
-      {editing ? <RecordCodeCard recordType="craft" id={editing.id} title={editing.name} className="mb-5" /> : null}
-      {/* Same provenance block the artisan/product/tool/workshop edit surfaces carry, for the craft
-          being edited. empty:hidden — FieldProvenance renders nothing without provenance access. */}
-      {editing ? (
-        <div className="mb-5 empty:hidden">
-          <FieldProvenance extraMetadata={editing.extraMetadata} title="Craft field contributions" />
-        </div>
-      ) : null}
-      <div className="mb-4">
-        <SearchInput
-          value={query}
-          onChange={setQuery}
-          onSubmit={() => {
-            setApplied(query);
-            setPage(1);
-          }}
-          placeholder="Search crafts, categories or descriptions"
-        />
-      </div>
-      <section className="panel overflow-hidden">
-        {!data ? (
-          <div className="p-4 text-sm text-ink-700">Loading...</div>
-        ) : rows.length === 0 ? (
-          <div className="p-4">
-            <EmptyState title="No crafts found" />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1000px] text-left text-sm">
-              <thead className="bg-surface-50 text-xs uppercase text-ink-500">
-                <tr>
-                  <ResizableTh>Name</ResizableTh>
-                  <ResizableTh>Local name</ResizableTh>
-                  <ResizableTh>Category</ResizableTh>
-                  <ResizableTh>Place</ResizableTh>
-                  <ResizableTh>Description</ResizableTh>
-                  <ResizableTh>Created</ResizableTh>
-                  <ResizableTh className="text-right">Actions</ResizableTh>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line-200">
-                {rows.map((craft) => (
-                  // The whole row opens the craft read-only; Update loads it into the form above.
-                  <OpenableRow key={craft.id} href={RECORD_VIEW_HREF.craft(craft.id)}>
-                    <td className="px-4 py-3">
-                      <OpenableRowLink href={RECORD_VIEW_HREF.craft(craft.id)}>{craft.name}</OpenableRowLink>
-                    </td>
-                    <td className="px-4 py-3 text-ink-700">{craft.localName ?? "-"}</td>
-                    <td className="px-4 py-3 text-ink-700">{craft.category ?? "-"}</td>
-                    <td className="px-4 py-3 text-ink-700">{craft.place ?? "-"}</td>
-                    <td className="max-w-md px-4 py-3 text-ink-700">{craft.description ?? "-"}</td>
-                    <td className="px-4 py-3 text-ink-700">{craft.createdAt ? formatDate(craft.createdAt) : "-"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <RowActions>
-                        {allowManage ? (
-                          <button className={rowAction("edit")} onClick={() => guard(() => resetForm(craft))}>
-                            Update
-                          </button>
-                        ) : null}
-                        <button className={rowAction("neutral")} onClick={() => setCollabId(craft.id)}>
-                          Discuss
-                        </button>
-                        {adminMode ? (
-                          <button data-danger className={rowAction("danger")} onClick={() => remove(craft.id)}>
-                            Delete
-                          </button>
-                        ) : null}
-                      </RowActions>
-                    </td>
-                  </OpenableRow>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
-      </section>
-      {/* The hand-rolled overlay this replaces was pre-FieldDialog legacy: no focus trap, no Escape,
-          no focus restoration and no scroll lock. /workshops already used the shared component. */}
       <CollabDialog recordType="craft" recordId={collabId} onClose={() => setCollabId(null)} />
       <UnsavedChangesDialog
         open={confirmAction !== null}
@@ -696,4 +739,23 @@ function CraftsPageBody() {
       />
     </>
   );
+}
+
+/** The table's rows: the catalogue narrowed by the filters, ranked by the search when there is one. */
+function filterCrafts(
+  catalogue: CraftCatalogue,
+  filters: { query: string; categoryFilter: string; subCategoryFilter: string; giFilter: string; stateFilter: string }
+): CatalogueCraft[] {
+  const index = craftIndex(catalogue);
+  const state = foldCraftText(filters.stateFilter);
+  return searchCraftCatalogue(catalogue, filters.query).filter((craft) => {
+    if (filters.subCategoryFilter && craft.subCategoryId !== filters.subCategoryFilter) return false;
+    if (filters.categoryFilter) {
+      const categoryId = craft.categoryId ?? (craft.subCategoryId ? index.subCategoryById.get(craft.subCategoryId)?.categoryId : null);
+      if (categoryId !== filters.categoryFilter) return false;
+    }
+    if (filters.giFilter && craft.giStatus !== filters.giFilter) return false;
+    if (state && ![...craft.stateOfOrigin, ...craft.stateOfPractice].some((value) => foldCraftText(value) === state)) return false;
+    return true;
+  });
 }

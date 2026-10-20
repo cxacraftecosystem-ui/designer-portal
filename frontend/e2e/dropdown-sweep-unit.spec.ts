@@ -2288,9 +2288,9 @@ test("the record pickers say a failed read failed, on both forms, from one place
   // in it too, or it is one sentence written twice and eventually two sentences about one fact.
   for (const form of ["ProductForm.tsx", "ToolForm.tsx"]) {
     const formSource = withoutComments(read("components", "forms", form));
-    expect(formSource, form).toContain("emptyLabel={craftEmptyLabel || undefined}");
+    // The craft list is the catalogue, drawn by `CraftSelect`, which says its own load state.
+    expect(formSource, form).toContain("<CraftSelect");
     expect(formSource, form).toContain("emptyLabel={craftArtisanEmptyLabel || undefined}");
-    expect(formSource, form).toContain("{craftNotice ?");
     expect(formSource, form).toContain("{craftArtisanNotice ?");
     /*
       The claim about the craft still waits for the craft's own answer — unchanged in substance, and
@@ -2317,10 +2317,8 @@ test("the pickers that used to assert non-existence now name the state they are 
   expect(workshops, "a claim about the register").not.toContain('emptyLabel="No artisans recorded yet"');
   expect(workshops).not.toContain('emptyLabel="No crafts available yet"');
   expect(workshops).toContain("emptyLabel={workshopEmptyLabel(artisanList, artisanVoice)}");
-  expect(workshops).toContain("emptyLabel={workshopEmptyLabel(craftList, craftVoice)}");
-  // "Create a craft first." is the right sentence for an empty register and the wrong one for a
-  // request still in flight; it is now gated on the read having answered.
-  expect(workshops).toContain('{craftList.kind === "ok" && crafts.length === 0 ? (');
+  // "Crafts covered" picks from the catalogue (REQUIREMENTS_2026-10-20 §2.4).
+  expect(workshops).toContain("<CraftSelect");
 
   const tasks = withoutComments(read("components", "tasks", "AssignmentBuilder.tsx"));
   expect(tasks, "three claims from one failed read").not.toContain('emptyLabel="No active questionnaire sections"');
@@ -2375,7 +2373,7 @@ test("a picker's fetch asks for exactly the number of rows the panel can draw", 
   );
   const workshops = withoutComments(read("app", "(protected)", "workshops", "page.tsx"));
   expect(workshops).toContain('listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })');
-  expect(workshops).toContain('listResource<Craft>("/crafts", { pageSize: RENDER_CAP })');
+  expect(workshops, "crafts are the catalogue, not a page").not.toContain('listResource<Craft>("/crafts"');
 
   /*
     AND WHERE THERE IS NO DROPDOWN, `RENDER_CAP` IS THE WRONG NUMBER AND CUTTING TO IT WOULD BE A

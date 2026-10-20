@@ -105,7 +105,10 @@ export function ReviewEditPanel({
   }, [recordType, recordId]);
 
   const changedKeys = baseline
-    ? fields.map((field) => field.key).filter((key) => (values[key] ?? "") !== (baseline[key] ?? ""))
+    ? fields
+        .filter((field) => !field.readOnly)
+        .map((field) => field.key)
+        .filter((key) => (values[key] ?? "") !== (baseline[key] ?? ""))
     : [];
   /** A column the schema declares `min_length=1` cannot be blanked — catch it before the 422. */
   const blanked = fields.filter((field) => field.required && changedKeys.includes(field.key) && !values[field.key]?.trim());
@@ -175,6 +178,15 @@ export function ReviewEditPanel({
       control's accessible name. So this branch returns early with a `FieldBlock`, which names the
       slot through `role="group"` instead — the same treatment the record forms give their pickers.
     */
+    if (field.readOnly) {
+      // Derived from the craft picked on the record's own form; never typed here.
+      return (
+        <label key={field.key} className="grid gap-1">
+          <span className="field-label">{field.label}</span>
+          <input className="field-input" value={value || "—"} readOnly disabled />
+        </label>
+      );
+    }
     if (field.vocabulary === "interviewLanguage") {
       return (
         <FieldBlock

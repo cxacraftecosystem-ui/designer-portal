@@ -32,6 +32,8 @@ import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import { WorkshopMappingPanel } from "@/components/settings/WorkshopMappingPanel";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
+import { CraftSelect } from "@/components/forms/CraftSelect";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { useAdminView } from "@/components/AdminViewProvider";
@@ -72,7 +74,16 @@ import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 // The API includes the workshop's linked crafts (not yet in the Workshop TS type); used to pre-fill
 // the "Crafts covered" selection when editing.
-type WorkshopWithCrafts = Workshop & { crafts?: Array<{ craftId?: string; craft?: { id: string } }> };
+type WorkshopWithCrafts = Workshop & { crafts?: Array<{ craftId?: string; craft?: { id: string; name?: string } }> };
+
+/** Names of the crafts a workshop covers, for a covered craft that is no longer on the list. */
+function linkedCraftNames(workshop: Workshop | null): Record<string, string> {
+  const names: Record<string, string> = {};
+  for (const item of (workshop as WorkshopWithCrafts | null)?.crafts ?? []) {
+    if (item.craft?.id && item.craft.name) names[item.craft.id] = item.craft.name;
+  }
+  return names;
+}
 
 /** The artisan ids a workshop is already linked to, for pre-filling the picker on edit. */
 function linkedArtisanIds(workshop: Workshop | null): string[] {
@@ -151,7 +162,6 @@ function WorkshopsPageBody() {
   const canSetStatus = hasRank(user, "PROFESSOR");
   const [data, setData] = useState<PageResult<Workshop> | null>(null);
   const [artisans, setArtisans] = useState<Artisan[]>([]);
-  const [crafts, setCrafts] = useState<Craft[]>([]);
   /**
    * DID THE PICKERS LOAD? Three answers, because two of them used to render identically.
    *
@@ -170,6 +180,7 @@ function WorkshopsPageBody() {
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<Workshop | null>(null);
+  const editingCraftNames = linkedCraftNames(editing);
   // Both link pickers are themed MultiSelectDropdowns, which are React state rather than form
   // controls, so the selections live here and are read straight out of state at submit time. They
   // are re-seeded in `resetForm` — the one place a different workshop is ever loaded into the form.
@@ -297,18 +308,17 @@ function WorkshopsPageBody() {
   useEffect(() => {
     (async () => {
       try {
-        const [artisanResult, craftResult] = await Promise.all([
+        // Crafts come from the catalogue inside `CraftSelect` (REQUIREMENTS_2026-10-20 §2.4).
+        const [artisanResult] = await Promise.all([
           // `RENDER_CAP`, not the round `100`. Both lists go straight into a
           // `MultiSelectDropdown`, which draws at most `RENDER_CAP` rows and prints its own
           // truncation sentence from what it was handed -- so a hundred-row page fetched twenty
           // artisans and twenty crafts that no reader could reach, and made the panel's total and
           // any notice beside it two different numbers about one list. The workshop pickers have
           // used this alias (as `WORKSHOP_OPTION_PAGE_SIZE`) since the same defect was closed there.
-          listResource<Artisan>("/artisans", { pageSize: RENDER_CAP }),
-          listResource<Craft>("/crafts", { pageSize: RENDER_CAP })
+          listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })
         ]);
         setArtisans(artisanResult.items);
-        setCrafts(craftResult.items);
         setPickerLoad("ok");
       } catch {
         // The workshop list still loads. The pickers no longer degrade SILENTLY to an empty list:
@@ -561,10 +571,6 @@ function WorkshopsPageBody() {
   }
 
   const artisanOptions = artisans.map((artisan) => ({ value: artisan.id, label: `${artisan.name} · ${artisan.place}` }));
-  const craftOptions = crafts.map((craft) => ({
-    value: craft.id,
-    label: craft.place ? `${craft.name} · ${craft.place}` : craft.name
-  }));
 
   /*
     The two lists as the shared vocabulary sees them, so the four sentences under and inside these
@@ -576,8 +582,6 @@ function WorkshopsPageBody() {
   */
   const artisanList: WorkshopListState<Artisan> =
     pickerLoad === "ok" ? { kind: "ok", rows: artisans, total: artisans.length } : { kind: pickerLoad };
-  const craftList: WorkshopListState<Craft> =
-    pickerLoad === "ok" ? { kind: "ok", rows: crafts, total: crafts.length } : { kind: pickerLoad };
   const listsOnline = !deviceLooksOffline();
   const artisanVoice: WorkshopListVoice = {
     table: "field",
@@ -586,22 +590,7 @@ function WorkshopsPageBody() {
     accessList: false,
     online: listsOnline
   };
-  const craftVoice: WorkshopListVoice = {
-    table: "field",
-    noun: "crafts",
-    scoped: false,
-    accessList: false,
-    online: listsOnline
-  };
   const artisanNotice = workshopListNotice(artisanList, artisanVoice);
-  /*
-    "" for every state the paragraph beside the craft picker already answers in better words. The
-    shared genuinely-empty sentence is "No crafts have been recorded yet", which is true and stops
-    one sentence short of the next move; this page's own "Create a craft first." names it. So the
-    shared sentence is drawn only for the state the page has nothing of its own to say about, which
-    is the failed read -- the one it used to answer with a claim about the repository.
-  */
-  const craftNotice = craftList.kind === "ok" ? "" : workshopListNotice(craftList, craftVoice);
 
   // The API already returns workshops createdAt-descending; re-sorting keeps the guarantee local
   // so the list stays newest-first even if a caller ever changes the server ordering.
@@ -793,32 +782,19 @@ function WorkshopsPageBody() {
             />
           </Field>
           {artisanNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{artisanNotice}</p> : null}
-          <Field label="Crafts covered" fieldKey="crafts">
-            {/* The paragraph is THE ANSWER TO AN EMPTY REGISTER and is now gated on the read having
-                actually answered. Ungated it replaced the control while the request was still in
-                flight and again when it failed, telling a researcher to go and create a craft over
-                a register that may well be full. */}
-            {craftList.kind === "ok" && crafts.length === 0 ? (
-              <p className="rounded-md border border-line-200 bg-field-50 px-3 py-2 text-sm text-ink-muted">
-                No crafts available yet. Create a craft first.
-              </p>
-            ) : (
-              <MultiSelectDropdown
-                values={craftIds}
-                onChange={(next) => {
-                  setCraftIds(next);
-                  setDirty(true);
-                }}
-                options={craftOptions}
-                searchable
-                placeholder="Pick the crafts this workshop covered"
-                emptyLabel={workshopEmptyLabel(craftList, craftVoice)}
-                confirmLabel="Add crafts"
-                disabled={pickerLoad === "failed"}
-              />
-            )}
-          </Field>
-          {craftNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftNotice}</p> : null}
+          <FieldBlock label="Crafts covered" fieldKey="crafts">
+            <CraftSelect
+              multiple
+              ariaLabel="Crafts covered"
+              placeholder="Pick the crafts this workshop covered"
+              value={craftIds}
+              fallbackLabels={editingCraftNames}
+              onChange={(next) => {
+                setCraftIds(next);
+                setDirty(true);
+              }}
+            />
+          </FieldBlock>
         </div>
         <div data-field="photo" className="grid min-w-0">
           <MediaCaptureField

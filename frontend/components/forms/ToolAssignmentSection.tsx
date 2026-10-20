@@ -11,12 +11,13 @@ import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import {
   artisanToOption,
   craftRosterCacheKey,
-  craftToOption,
   optionToArtisan,
-  optionToCraft,
   optionToTool,
-  toolToOption
+  toolToOption,
+  useCatalogueCrafts
 } from "@/components/forms/recordPickers";
+import { CraftSelect } from "@/components/forms/CraftSelect";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { apiFetch, listResource } from "@/lib/api";
 import { countNoun, formatDate } from "@/lib/format";
 import { loadCachedRegister } from "@/lib/referenceCache";
@@ -27,7 +28,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
-import type { Artisan, Craft, ToolDocumentation } from "@/lib/types";
+import type { Artisan, ToolDocumentation } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 /**
@@ -37,7 +38,8 @@ import { ActionGroup } from "@/components/ui/ActionGroup";
  */
 export function ToolAssignmentSection() {
   const [tools, setTools] = useState<ToolDocumentation[]>([]);
-  const [crafts, setCrafts] = useState<Craft[]>([]);
+  // The craft list is the catalogue (REQUIREMENTS_2026-10-20 §2.4).
+  const { crafts, state: craftState } = useCatalogueCrafts();
   const [artisans, setArtisans] = useState<Artisan[]>([]);
   /**
    * ISO-8601 when the TOOL register came out of storage, null once the network confirms it.
@@ -58,7 +60,13 @@ export function ToolAssignmentSection() {
   // "Can I see this artisan?" and "is there any signal?" are different answers, and the carry-
   // forward prefill treats them differently — see useCarryContext. All three lists land together,
   // so one state covers every scope built from them.
-  const [referenceState, setReferenceState] = useState<CarryScopeState>("pending");
+  const [registerState, setRegisterState] = useState<CarryScopeState>("pending");
+  const referenceState: CarryScopeState =
+    registerState === "unavailable" || craftState === "unavailable"
+      ? "unavailable"
+      : registerState === "pending" || craftState === "pending"
+        ? "pending"
+        : "loaded";
   /**
    * WHAT EACH OF THE THREE DROPDOWNS IS NOT SHOWING — see `components/data/cappedList`.
    *
@@ -133,7 +141,7 @@ export function ToolAssignmentSection() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [toolOutcome, craftOutcome, artisanOutcome] = await Promise.all([
+      const [toolOutcome, artisanOutcome] = await Promise.all([
         loadCachedRegister<ToolDocumentation>({
           model: "tool",
           decode: optionToTool,
@@ -149,19 +157,6 @@ export function ToolAssignmentSection() {
             if (cancelled) return;
             setTools(rows);
             setToolCachedAt(cachedAt);
-          }
-        }),
-        loadCachedRegister<Craft>({
-          model: "craft",
-          decode: optionToCraft,
-          encode: craftToOption,
-          fetch: async () => {
-            const page = await listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING });
-            if (!cancelled) setCuts((previous) => ({ ...previous, crafts: listCut(page, "crafts") }));
-            return page.items;
-          },
-          onList: (rows) => {
-            if (!cancelled) setCrafts(rows);
           }
         }),
         loadCachedRegister<Artisan>({
@@ -186,8 +181,8 @@ export function ToolAssignmentSection() {
         })
       ]);
       if (cancelled) return;
-      const missing = [toolOutcome, craftOutcome, artisanOutcome].some((outcome) => outcome.source === "none");
-      setReferenceState(missing ? "unavailable" : "loaded");
+      const missing = [toolOutcome, artisanOutcome].some((outcome) => outcome.source === "none");
+      setRegisterState(missing ? "unavailable" : "loaded");
       if (missing) {
         setError("Couldn't load the options. Check your connection and reload.");
       }
@@ -473,17 +468,9 @@ export function ToolAssignmentSection() {
           ) : null}
           <CappedListNotice cuts={[cuts.tools]} />
         </Field>
-        <Field label="Crafts">
-          <MultiSelectDropdown
-            values={craftIds}
-            onChange={setCraftIds}
-            placeholder="Select crafts"
-            emptyLabel={emptyLabelFor("crafts", "No crafts have been recorded yet")}
-            searchable
-            options={crafts.map((craft) => ({ value: craft.id, label: craft.name }))}
-          />
-          <CappedListNotice cuts={[cuts.crafts]} />
-        </Field>
+        <FieldBlock label="Crafts">
+          <CraftSelect multiple ariaLabel="Crafts" value={craftIds} onChange={(ids) => setCraftIds(ids)} />
+        </FieldBlock>
         <Field label="Artisans of selected crafts">
           <MultiSelectDropdown
             values={artisanIds}

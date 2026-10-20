@@ -45,6 +45,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { apiFetch } from "@/lib/api";
+import { useCraftCatalogue } from "@/lib/craftCatalogue";
 import { formatDateTime } from "@/lib/format";
 import {
   canCreateRecords,
@@ -264,6 +265,7 @@ export default function DashboardPage() {
 function DashboardView() {
   const { user } = useAuth();
   const { adminMode } = useAdminView();
+  const craftCatalogue = useCraftCatalogue();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -648,6 +650,16 @@ function DashboardView() {
     ? [
         { label: "Artisans", value: stats.totalArtisans, icon: Users, href: "/search?type=artisans" },
         { label: "Workshops", value: stats.totalWorkshops, icon: MapPinned, href: "/search?type=workshops" },
+        // The craft master list's live counts: ACTIVE crafts only (REQUIREMENTS_2026-10-20 §2.7).
+        // Always drawn ("—" until the list arrives) so the grid never shifts, and two of them so the
+        // grid is eight cards: four by two on a laptop, two by four on a phone, none alone on a row.
+        { label: "Crafts", value: craftCatalogue.catalogue?.crafts.length ?? "—", icon: Brush, href: "/crafts" },
+        {
+          label: "Craft categories",
+          value: craftCatalogue.catalogue?.categories.length ?? "—",
+          icon: Layers,
+          href: "/crafts"
+        },
         { label: "Products", value: stats.totalProductRecords, icon: Boxes, href: "/search?type=products" },
         { label: "Tools", value: stats.totalToolRecords, icon: Hammer, href: "/search?type=tools" },
         { label: "Media files", value: stats.totalMediaFiles, icon: Camera, href: "/search?type=media" },
@@ -885,7 +897,7 @@ function DashboardView() {
         ) : (
           // Two-up on a phone, like "Your contribution" below it (UX audit DW-19): six full-width
           // number cards were ~600px of scrolling before the work.
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {statCards.map((card) => {
               const body = (
                 <>

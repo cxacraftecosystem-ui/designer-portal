@@ -111,6 +111,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { useAdminView } from "@/components/AdminViewProvider";
@@ -428,6 +429,8 @@ function DesignWorkshopsPageBody() {
    * once, at the point it is needed, and never silently invented.
    */
   const [workshopKind, setWorkshopKind] = useState("");
+  // The craft, picked from the list (REQUIREMENTS_2026-10-20 §2.4); its name is sent beside the id.
+  const [craftPick, setCraftPick] = useState<{ id: string; name: string }>({ id: "", name: "" });
   /** The stage registry, for the workshop-kind vocabulary. Null until it lands; see the floor. */
   const [registry, setRegistry] = useState<DwRegistry | null>(() => peekStageRegistry());
   /** The list's own type filter. Empty means every kind, by absence — the `filters.types` rule. */
@@ -1027,7 +1030,8 @@ function DesignWorkshopsPageBody() {
         workshopKind: workshopKind || undefined,
         designerUserId: designers.lead || undefined,
         designerUserIds: designers.team,
-        craftName: text("craftName"),
+        craftName: craftPick.name || undefined,
+        craftId: craftPick.id || undefined,
         clusterName: text("clusterName"),
         state: text("state"),
         district: text("district"),
@@ -1737,9 +1741,14 @@ function DesignWorkshopsPageBody() {
                 placeholder="Not stated"
               />
             </FieldBlock>
-            <Field label="Craft">
-              <TextInput name="craftName" maxLength={160} />
-            </Field>
+            <FieldBlock label="Craft">
+              <CraftSelect
+                ariaLabel="Craft"
+                value={craftPick.id}
+                onDirty={markDirty}
+                onChange={(id, craft) => setCraftPick({ id, name: craft?.name ?? "" })}
+              />
+            </FieldBlock>
             <Field label="Cluster">
               <TextInput name="clusterName" maxLength={160} />
             </Field>

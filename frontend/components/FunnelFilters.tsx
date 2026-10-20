@@ -5,9 +5,10 @@ import { useEffect, useRef, useState } from "react";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/cappedList";
 import { workshopOccurrenceDate } from "@/components/forms/WorkshopSelect";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { listResource } from "@/lib/api";
-import type { Artisan, Craft, Workshop } from "@/lib/types";
+import type { Artisan, Workshop } from "@/lib/types";
 
 /** Workshop rows from the list API include linked artisans and crafts (crafts not yet in the TS type). */
 export type FunnelWorkshop = Workshop & {
@@ -47,7 +48,6 @@ export function FunnelFilters({
   showArtisan?: boolean;
 }) {
   const [workshops, setWorkshops] = useState<FunnelWorkshop[]>([]);
-  const [crafts, setCrafts] = useState<Craft[]>([]);
   const [artisans, setArtisans] = useState<Artisan[]>([]);
   /**
    * WHAT EACH DROPDOWN IS NOT SHOWING — see `components/data/cappedList`.
@@ -59,9 +59,8 @@ export function FunnelFilters({
    * neither could anybody reading it: "Filter by artisan" offered a hundred names out of 749 and
    * looked exactly like a repository with a hundred artisans in it.
    */
-  const [cuts, setCuts] = useState<{ workshops: ListCut | null; crafts: ListCut | null; artisans: ListCut | null }>({
+  const [cuts, setCuts] = useState<{ workshops: ListCut | null; artisans: ListCut | null }>({
     workshops: null,
-    crafts: null,
     artisans: null
   });
   const initialised = useRef(false);
@@ -80,12 +79,9 @@ export function FunnelFilters({
     initialised.current = true;
     (async () => {
       let workshopRows: FunnelWorkshop[] = [];
-      let craftRows: Craft[] = [];
       try {
-        const [workshopResult, craftResult] = await Promise.all([
-          listResource<FunnelWorkshop>("/workshops", { pageSize: LIST_PAGE_CEILING }),
-          listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING })
-        ]);
+        // Crafts come from the catalogue inside `CraftSelect`; only workshops are read here.
+        const workshopResult = await listResource<FunnelWorkshop>("/workshops", { pageSize: LIST_PAGE_CEILING });
         // The API orders workshops by createdAt; the filter wants the most recently HELD workshop
         // first, so re-sort on the occurrence date (startDate ?? date ?? createdAt), newest first.
         //
@@ -95,17 +91,11 @@ export function FunnelFilters({
         // which is very probably the most recent overall and is why nobody has noticed — but the
         // notice this now records is the only thing that will say so when it is not.
         workshopRows = [...workshopResult.items].sort((a, b) => occurredAt(b).localeCompare(occurredAt(a)));
-        craftRows = craftResult.items;
-        setCuts((previous) => ({
-          ...previous,
-          workshops: listCut(workshopResult, "workshops"),
-          crafts: listCut(craftResult, "crafts")
-        }));
+        setCuts((previous) => ({ ...previous, workshops: listCut(workshopResult, "workshops") }));
       } catch {
         // Filters degrade to "All" — the parent list still loads unfiltered.
       }
       setWorkshops(workshopRows);
-      setCrafts(craftRows);
       const latest = workshopRows[0] ?? null;
       onChange({ workshopId: latest?.id ?? "", craftId: "", artisanId: "" }, latest);
     })();
@@ -180,18 +170,11 @@ export function FunnelFilters({
    * failure this component's own header comment was written about.
    */
   const workshopCraftLinks = selectedWorkshop?.crafts ?? [];
-  const craftOptions = workshopCraftLinks.length
-    ? workshopCraftLinks
-        .map((link) => {
-          if (link.craft) return { id: link.craft.id, name: link.craft.name };
-          const known = link.craftId ? crafts.find((craft) => craft.id === link.craftId) : undefined;
-          return known ? { id: known.id, name: known.name } : null;
-        })
-        .filter((craft): craft is { id: string; name: string } => craft !== null)
-        // The crafts endpoint answers name-ascending on purpose (a picker is scanned by name, see
-        // the ordering comment in routes/crafts.py); join order is arbitrary, so restore it.
-        .sort((a, b) => a.name.localeCompare(b.name))
-    : crafts;
+  const workshopCraftIds = workshopCraftLinks
+    .map((link) => link.craft?.id ?? link.craftId ?? "")
+    .filter((id) => id !== "");
+  // Narrowed to the workshop's own crafts when it has any; every craft on the list otherwise.
+  const allowedCraftIds = workshopCraftIds.length ? workshopCraftIds : undefined;
 
   // The artisan dropdown draws exactly what the request returned — the workshop is in the WHERE
   // clause now (see the loader above), so there is no second narrowing here and no cut page to
@@ -224,7 +207,6 @@ export function FunnelFilters({
    */
   const reportedCuts = [
     cuts.workshops,
-    craftOptions === crafts ? cuts.crafts : null,
     showArtisan ? cuts.artisans : null
   ];
 
@@ -254,13 +236,12 @@ export function FunnelFilters({
           ...workshops.map((workshop) => ({ value: workshop.id, label: workshop.title }))
         ]}
       />
-      <Dropdown
+      <CraftSelect
         ariaLabel="Filter by craft"
+        placeholder="All crafts"
         value={value.craftId}
-        onChange={selectCraft}
-        advanceOnSelect={false}
-        searchable
-        options={[{ value: "", label: "All crafts" }, ...craftOptions.map((craft) => ({ value: craft.id, label: craft.name }))]}
+        allowedIds={allowedCraftIds}
+        onChange={(craftId) => selectCraft(craftId)}
       />
       {showArtisan ? (
         <Dropdown

@@ -650,11 +650,10 @@ const QUEUED_OFFLINE_NOTICE =
  * a designer looking for signal instead of at the craft register. When the handset gains its half it
  * must carry these words, not a second phrasing of them.
  */
-const CRAFT_REGISTER_LINK = "Edit crafts (new tab)";
+const CRAFT_REGISTER_LINK = "Add it to the list (new tab)";
 
-const CRAFT_REGISTER_BLOCKED =
-  "Adding a craft to the register needs craft-creation access — ask the master admin. This link is optional: type " +
-  "the craft's name in the Craft box above and the stage still saves.";
+/** The craft list is the database's (REQUIREMENTS_2026-10-20 §2.4): nothing is typed instead. */
+const CRAFT_REGISTER_BLOCKED = "Not on the list? Ask an admin to add it.";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Scanning a card or tag straight into this box
@@ -1962,13 +1961,13 @@ export function StageReferenceSelect({
               keeps it open for the other four models. Navigating in place would be the same defect
               this file's Cancel button had.
 
-              `craftRef` is OPTIONAL and stage 1's `craftName` is typeable, so this is a way
-              forward and never a gate.
+              Stage 1's craft name is derived from `craftRef`, so a craft missing from the list is
+              added to the list — never typed.
             */}
             {field.refModel === "Craft" && !disabled ? (
               craftManager ? (
                 <a
-                  href="/crafts"
+                  href={query.trim() ? `/crafts?new=${encodeURIComponent(query.trim())}` : "/crafts"}
                   target="_blank"
                   rel="noopener"
                   className="flex w-full items-center gap-2 border-t border-line-200 px-3 py-2.5 text-left text-sm font-medium text-purple-700 dark:text-purple-300 transition hover:bg-purple-50"
@@ -1990,10 +1989,8 @@ export function StageReferenceSelect({
                  * sending them somewhere they cannot act — at the first control they ever touch in
                  * this app.
                  *
-                 * A SENTENCE THEY CAN ACT ON, not an absence: the way forward for a craft that is
-                 * not in the register is the typed `craftName` box, and `craftRef` is optional, so
-                 * saying so keeps stage 1 unblocked without sending anybody looking for signal or
-                 * for a page they cannot use.
+                 * A SENTENCE THEY CAN ACT ON, not an absence: the craft list is the database's and
+                 * an admin adds to it.
                  */
                 <p className="border-t border-line-200 px-3 py-2.5 text-xs leading-5 text-ink-500">{CRAFT_REGISTER_BLOCKED}</p>
               )

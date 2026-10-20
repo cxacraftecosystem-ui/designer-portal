@@ -57,6 +57,36 @@ import {
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
 import type { Artisan, Craft, ProductDocumentation, ToolDocumentation } from "@/lib/types";
+import { useCraftCatalogue, type CatalogueCraft } from "@/lib/craftCatalogue";
+
+/**
+ * A catalogue row as the `Craft` shape the record forms already read. The catalogue
+ * (`GET /crafts/catalogue`) is the one craft list (REQUIREMENTS_2026-10-20 §2.4); this only renames.
+ */
+export function catalogueCraftAsCraft(craft: CatalogueCraft): Craft {
+  return {
+    id: craft.id,
+    name: craft.name,
+    localName: craft.localName,
+    slug: craft.slug,
+    categoryId: craft.categoryId,
+    subCategoryId: craft.subCategoryId,
+    sourceSerial: craft.sourceSerial,
+    stateOfOrigin: craft.stateOfOrigin,
+    stateOfPractice: craft.stateOfPractice,
+    giStatus: craft.giStatus,
+    isCatchAll: craft.isCatchAll,
+    craftCode: craft.craftCode,
+    status: craft.status ?? "ACTIVE"
+  };
+}
+
+/** Every craft on the list, as `Craft` rows, plus the load state a carry scope reads. */
+export function useCatalogueCrafts(): { crafts: Craft[]; state: CarryScopeState } {
+  const { catalogue, loading } = useCraftCatalogue();
+  const crafts = useMemo(() => (catalogue ? catalogue.crafts.map(catalogueCraftAsCraft) : []), [catalogue]);
+  return { crafts, state: catalogue ? "loaded" : loading ? "pending" : "unavailable" };
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * The register codecs
@@ -445,9 +475,16 @@ export function useCraftAndArtisanOptions({
   // See `CraftAndArtisanOptions.craftRosterKey` for why it is sorted and why it is a string.
   const craftRosterKey = [...rosterCraftIds].sort().join(",");
   const [artisans, setArtisans] = useState<Artisan[]>([]);
-  const [crafts, setCrafts] = useState<Craft[]>([]);
-  const [referenceState, setReferenceState] = useState<CarryScopeState>("pending");
-  const [craftCut, setCraftCut] = useState<ListCut | null>(null);
+  // The craft list is the catalogue: every craft, no cut (REQUIREMENTS_2026-10-20 §2.4).
+  const { crafts, state: craftState } = useCatalogueCrafts();
+  const [artisanState, setArtisanState] = useState<CarryScopeState>("pending");
+  const referenceState: CarryScopeState =
+    artisanState === "unavailable" || craftState === "unavailable"
+      ? "unavailable"
+      : artisanState === "pending" || craftState === "pending"
+        ? "pending"
+        : "loaded";
+  const craftCut: ListCut | null = null;
   const [craftArtisanCut, setCraftArtisanCut] = useState<ListCut | null>(null);
   const [artisansLoadedForCraft, setArtisansLoadedForCraft] = useState<string | null>(null);
   /**
@@ -466,7 +503,7 @@ export function useCraftAndArtisanOptions({
    * carries the date the register last crossed the wire), so the source travels beside the state
    * rather than inside it.
    */
-  const [craftSource, setCraftSource] = useState<RegisterLoadOutcome>({ source: "none", cachedAt: null });
+  const craftSource: RegisterLoadOutcome = { source: craftState === "loaded" ? "live" : "none", cachedAt: null };
   /**
    * THE CRAFT-SCOPED ROSTER'S OWN PROVENANCE, CARRYING THE ROSTER KEY — never a bare stamp.
    *
@@ -501,7 +538,7 @@ export function useCraftAndArtisanOptions({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [artisanOutcome, craftOutcome] = await Promise.all([
+      const [artisanOutcome] = await Promise.all([
         loadCachedRegister<Artisan>({
           model: "artisan",
           decode: optionToArtisan,
@@ -518,28 +555,10 @@ export function useCraftAndArtisanOptions({
           onList: (rows, cachedAt) => {
             if (!cancelled) setArtisans((previous) => (cachedAt ? mergeById(previous, rows) : mergeById(rows, previous)));
           }
-        }),
-        loadCachedRegister<Craft>({
-          model: "craft",
-          decode: optionToCraft,
-          encode: craftToOption,
-          fetch: async () => {
-            const page = await listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING });
-            // THE CUT IS SET ONLY FROM A LIVE PAGE, and never from storage. `listCut` reports "80 of
-            // 178" from the envelope's `total`, and a cached document has no envelope — printing a
-            // truncation sentence off one would be a number invented on this device about a corpus
-            // it cannot see. R4 asks for the number to be stated where it is known, not guessed.
-            if (!cancelled) setCraftCut(listCut(page, "crafts"));
-            return page.items;
-          },
-          onList: (rows) => {
-            if (!cancelled) setCrafts(rows);
-          }
         })
       ]);
       if (cancelled) return;
-      setCraftSource(craftOutcome);
-      setReferenceState(artisanOutcome.source === "none" || craftOutcome.source === "none" ? "unavailable" : "loaded");
+      setArtisanState(artisanOutcome.source === "none" ? "unavailable" : "loaded");
     })();
     return () => {
       cancelled = true;
@@ -679,7 +698,7 @@ export function useCraftAndArtisanOptions({
         : {
             kind: "ok",
             rows: crafts,
-            total: craftCut?.total ?? crafts.length,
+            total: crafts.length,
             // Only when the NETWORK has not answered. `loadCachedRegister` reports `live` the moment
             // it does, so the cached-and-stale sentence disappears by itself the instant the register
             // is confirmed — it never lingers over a list that has just been refreshed.

@@ -107,6 +107,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { SearchInput } from "@/components/SearchInput";
 import { StatusBadge } from "@/components/StatusBadge";
 import { DropCard } from "@/components/sketches/upload/DropCard";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import { DateRangePicker, toIsoDate } from "@/components/forms/DateTimeField";
 import { Field, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
@@ -749,6 +750,9 @@ function StartWorkshopForm({
     };
   }, []);
 
+  // The craft is picked from the list, never typed (REQUIREMENTS_2026-10-20 §2.4).
+  const [craftPick, setCraftPick] = useState({ id: "", name: "" });
+
   const kindChoices = useMemo(() => workshopKindOptions(registry), [registry]);
   const kindRows = useMemo<DropdownOption[]>(
     () => kindChoices.options.map((option) => ({ value: option.value, label: option.label })),
@@ -779,7 +783,8 @@ function StartWorkshopForm({
         // picker printed about who leads it and the body on the wire cannot disagree.
         designerUserIds,
         lead: leadDesignerId,
-        craftName: text("craftName"),
+        // This door takes the name only; it is the picked craft's own name, so it matches the list.
+        craftName: craftPick.name || undefined,
         clusterName: text("clusterName"),
         state: text("state"),
         district: text("district"),
@@ -823,9 +828,13 @@ function StartWorkshopForm({
             value={workshopKind}
           />
         </FieldBlock>
-        <Field label="Craft">
-          <TextInput name="craftName" maxLength={160} />
-        </Field>
+        <FieldBlock label="Craft">
+          <CraftSelect
+            ariaLabel="Craft"
+            value={craftPick.id}
+            onChange={(id, craft) => setCraftPick({ id, name: craft?.name ?? "" })}
+          />
+        </FieldBlock>
         <Field label="Cluster">
           <TextInput name="clusterName" maxLength={160} />
         </Field>
