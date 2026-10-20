@@ -16,7 +16,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import retrofit2.HttpException
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Query
 import java.io.File
 import java.time.Instant
 import kotlin.math.abs
@@ -119,7 +121,31 @@ data class DwWorkshopJoinAck(
 interface DwWorkshopJoinApi {
     @POST("design-workshop-access/requests")
     suspend fun requestDesignWorkshopAccess(@Body body: DwWorkshopJoinBody): DwWorkshopJoinAck
+
+    /** The title of the workshop a scanned `DPW1:G` code names (owner decision 2026-10-20, D34). */
+    @GET("design-workshop-access/preview")
+    suspend fun scannedWorkshopTitle(@Query("code") code: String): DwScannedWorkshopTitle
 }
+
+/** `GET /design-workshop-access/preview`: the title only, for "Ask to join {title}". */
+@Serializable
+data class DwScannedWorkshopTitle(
+    val workshopId: String = "",
+    val title: String = "",
+)
+
+/**
+ * The title of a design workshop this account cannot open yet, for the scanner's "Ask to join
+ * {title}". Null offline, for a missing or deleted workshop, and on any failure: the scanner then
+ * says "this workshop".
+ */
+suspend fun dwScannedWorkshopTitle(context: Context, code: String): String? =
+    withContext(Dispatchers.IO) {
+        if (!ConnectivityObserver.isOnline(context)) return@withContext null
+        runCatching {
+            ApiClient.retrofit(TokenStore(context)).create(DwWorkshopJoinApi::class.java).scannedWorkshopTitle(code)
+        }.getOrNull()?.title?.trim()?.ifEmpty { null }
+    }
 
 // --------------------------------------------------------------------------------------
 // The queue

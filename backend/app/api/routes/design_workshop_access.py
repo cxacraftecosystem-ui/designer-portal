@@ -1,7 +1,7 @@
 """The design-workshop access queue on the wire: one ask, one list, one decision — and the join
 card that replaces asking with joining.
 
-Seven routes. Every rule they enforce — what a scanned code is worth, why the ask answers the same
+Eight routes. Every rule they enforce — what a scanned code is worth, why the ask answers the same
 thing whatever happened, why granting goes through the viewer mechanism and nothing else — lives in
 ``app/services/design_workshop_access.py``; this module is only the wire, and each refusal below
 defers to that module rather than restating one.
@@ -55,6 +55,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import get_current_user, require_admin
 from app.schemas.design_workshop_access import (
+    MAX_SCANNED_CODE,
     DesignWorkshopAccessDecisionIn,
     DesignWorkshopAccessRequestIn,
 )
@@ -136,6 +137,27 @@ async def request_access(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=refusal.detail
         ) from refusal
     return {"received": True, "detail": RECEIVED_DETAIL}
+
+
+@router.get("/preview")
+async def preview_scanned_workshop(
+    code: str = Query(..., min_length=1, max_length=MAX_SCANNED_CODE),
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, str]:
+    """The title of the workshop a scanned ``DPW1:G`` code names, for "Ask to join {title}".
+
+    Owner decision 2026-10-20 (D34): a code holder may see the title, and only the title. A damaged
+    code is a 422 about the body; a workshop that is missing or deleted is the ordinary 404.
+    """
+    try:
+        answer = await design_workshop_access.scanned_workshop_title(code)
+    except ScannedCodeRefused as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=refusal.detail
+        ) from refusal
+    if answer is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    return answer
 
 
 @router.get("/requests")

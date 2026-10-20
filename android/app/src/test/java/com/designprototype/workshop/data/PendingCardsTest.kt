@@ -83,4 +83,31 @@ class PendingCardsTest {
         assertEquals(emptySet<String>(), pendingCardsInPayload("""{"artisanIds":["cart0000000000000000001"]}"""))
         assertEquals(emptySet<String>(), pendingCardsInPayload("not json"))
     }
+
+    @Test
+    fun `a card already queued on this phone is known offline as waiting to sync`() {
+        val card = (ArtisanCardCode.parse("D-7K3QM-9XA2F-HQ") as ArtisanCardCode.Result.Ok).card
+        val queued = """{"artisanId":"$pending","productName":"Indigo saree"}"""
+        assertTrue(cardWaitingToSync(card, listOf("""{"name":"x"}""", queued)))
+        assertTrue(!cardWaitingToSync(card, listOf("""{"artisanId":"cart0000000000000000001"}""")))
+        assertTrue(!cardWaitingToSync(card, listOf("not json")))
+    }
+
+    @Test
+    fun `a card scanned offline into a design-workshop stage is known offline as waiting to sync`() {
+        val card = (ArtisanCardCode.parse("D-7K3QM-9XA2F-HQ") as ArtisanCardCode.Result.Ok).card
+        val inCore = WorkshopDraft(workshopId = "w1", stages = mapOf("participants" to StageDraft(stageId = "participants", values = stage)))
+        val inCustom = WorkshopDraft(
+            workshopId = "w2",
+            stages = mapOf("extra" to StageDraft(stageId = "extra", custom = mapOf("maker" to JsonPrimitive(pending)))),
+        )
+        val other = WorkshopDraft(
+            workshopId = "w3",
+            stages = mapOf("extra" to StageDraft(stageId = "extra", values = mapOf("maker" to JsonPrimitive("cart0000000000000000001")))),
+        )
+        assertEquals(setOf(pending), pendingCardsInDraft(inCore))
+        assertTrue(cardWaitingToSync(card, emptyList(), listOf(other, inCore)))
+        assertTrue(cardWaitingToSync(card, emptyList(), listOf(inCustom)))
+        assertTrue(!cardWaitingToSync(card, emptyList(), listOf(other)))
+    }
 }

@@ -5,7 +5,7 @@
  * action the person pressed.
  */
 
-import { ApiError } from "@/lib/api";
+import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { resolveArtisanCard } from "@/lib/artisanCardApi";
 import {
   JOIN_CARD_REDEEM_OFFLINE_MESSAGE,
@@ -50,9 +50,30 @@ async function resolveCard(raw: string): Promise<CardAnswer> {
   }
 }
 
-async function lookUpRecord(recordType: Parameters<ScanServices["lookUpRecord"]>[0], id: string): Promise<RecordAnswer> {
+/**
+ * The title of a design workshop the reader cannot open yet, for "Ask to join {title}"
+ * (`GET /design-workshop-access/preview`, owner decision D34). Null when the server does not name it.
+ */
+async function scannedWorkshopTitle(code: string): Promise<string | null> {
+  try {
+    const answer = await apiFetch<{ title?: string }>(`/design-workshop-access/preview${buildQuery({ code })}`);
+    return answer?.title?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function lookUpRecord(
+  recordType: Parameters<ScanServices["lookUpRecord"]>[0],
+  id: string,
+  code: string
+): Promise<RecordAnswer> {
   if (recordType === "prototype") return { status: "missing" };
   const answer = await findWorkshopCodeRecord({ recordType, id });
+  if (answer.status === "missing" && recordType === "designWorkshop") {
+    const title = await scannedWorkshopTitle(code);
+    return title ? { status: "missing", title } : answer;
+  }
   if (answer.status !== "found") return answer;
   return { status: "found", label: answer.hit.label, detail: answer.hit.detail, href: answer.hit.href, external: answer.hit.external };
 }

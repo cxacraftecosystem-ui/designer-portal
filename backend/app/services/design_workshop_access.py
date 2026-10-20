@@ -432,6 +432,32 @@ def decode_design_workshop_code(raw: str) -> tuple[str, str]:
 
 
 # --------------------------------------------------------------------------------------
+# Naming the workshop a scanned code points at
+# --------------------------------------------------------------------------------------
+
+
+async def scanned_workshop_title(scanned_code: str) -> dict[str, str] | None:
+    """The title of the workshop a valid ``DPW1:G`` code names, or ``None``.
+
+    OWNER DECISION, 2026-10-20 (DEFERRED_FOR_LAUNCH D34): a person holding a workshop's code may see
+    its TITLE before they have access, so the scanner can say "Ask to join {title}". Only the title
+    and the id leave here — never the team, the stages or anything else about the workshop. A
+    soft-deleted workshop and an id naming nothing answer the same ``None``.
+
+    The code is decoded first, exactly as the ask decodes it, so a damaged code is refused about the
+    body before any row is read. A workshop id is a cuid, so this is not a way to walk the repository.
+    """
+    workshop_id, _code = decode_design_workshop_code(scanned_code)
+    workshop = await db.designworkshop.find_unique(where={"id": workshop_id})
+    if workshop is None or getattr(workshop, "deletedAt", None) is not None:
+        return None
+    title = plain(getattr(workshop, "title", "") or "").strip()
+    if not title:
+        return None
+    return {"workshopId": workshop.id, "title": title}
+
+
+# --------------------------------------------------------------------------------------
 # Filing an ask
 # --------------------------------------------------------------------------------------
 
