@@ -5,18 +5,19 @@ import { expect, test } from "@playwright/test";
 
 import { decodePolyline, indiaRings } from "@/components/map/indiaGeometry";
 import { decodeRing, decodeShapes } from "@/components/map/shapeGeometry";
-import { clusterMarkers, shadeShapes } from "@/components/map/coverage/coverageShade";
+import { clusterMarkers } from "@/components/map/coverage/CoverageMap";
 import {
-  binLabel,
+  binLabels,
   binOf,
-  fillIndex,
+  coverageHref,
+  coverageQueryFromParams,
   fyLabel,
-  fyOf,
+  metricFromParams,
   metricValue,
-  quantileBreaks,
-  type CoverageUnit
-} from "@/components/map/coverage/coverageTypes";
-import { filtersFromParams, paramsFromFilters } from "@/components/map/coverage/coverageUrl";
+  polygonFills,
+  quantileBreaks
+} from "@/components/map/coverage/coverageMath";
+import type { CoverageUnit } from "@/components/map/coverage/coverageTypes";
 
 /*
   THE COVERAGE MAP'S PURE HALF: the shape decoder (the outline's own scheme, reused rather than
@@ -92,20 +93,14 @@ test("quantile bins: zero is never a bin, duplicates collapse, five at most", ()
   expect(binOf(1, breaks)).toBe(0);
   expect(binOf(5, breaks)).toBe(2);
   expect(binOf(99, breaks)).toBe(4);
-  expect(binLabel(0, breaks)).toBe("1–2");
-  expect(binLabel(4, breaks)).toBe("9–10");
-  expect(binLabel(0, [1])).toBe("1");
-  // Fewer bins than fills take the dark end, so a single figure is not drawn in the palest step.
-  expect(fillIndex(0, [1])).toBe(4);
-  expect(fillIndex(0, breaks)).toBe(0);
-  expect(fillIndex(-1, breaks)).toBe(-1);
+  expect(binLabels(breaks)[0]).toBe("1–2");
+  expect(binLabels(breaks)[4]).toBe("9–10");
+  expect(binLabels([1])).toEqual(["1"]);
 });
 
-test("financial years: start-year labels, and the turn at 00:00 IST on 1 April", () => {
+test("financial years: start-year labels", () => {
   expect(fyLabel(2025)).toBe("2025-26");
   expect(fyLabel(2099)).toBe("2099-00");
-  expect(fyOf(new Date("2026-03-31T18:29:00Z"))).toBe(2025);
-  expect(fyOf(new Date("2026-03-31T18:30:00Z"))).toBe(2026);
 });
 
 const unit = (patch: Partial<CoverageUnit>): CoverageUnit => ({
@@ -123,42 +118,49 @@ const unit = (patch: Partial<CoverageUnit>): CoverageUnit => ({
 });
 
 test("planned workshops and the Field Repository are never added into a shade", () => {
-  expect(metricValue(unit({}), "workshops")).toBe(3);
-  expect(metricValue(unit({}), "artisans")).toBe(14);
-  expect(metricValue(unit({}), "records")).toBe(2 + 1 + 14 + 5 + 3 + 40);
+  expect(metricValue(unit({}).counts, "workshops")).toBe(3);
+  expect(metricValue(unit({}).counts, "artisans")).toBe(14);
+  expect(metricValue(unit({}).counts, "all")).toBe(2 + 1 + 14 + 5 + 3 + 40);
 });
 
-test("a district without a polygon is drawn inside its parent and named as a guest", () => {
-  const shapes = [{ lgd: 90, stateLgd: 8, rings: [], centroid: [71.6, 25.9] as [number, number] }];
+test("a district without a polygon is drawn inside its parent", () => {
+  const shapes = [{ lgd: 90, stateLgd: 8 }];
   const guest = unit({ districtLgd: 775, district: "Balotra", polygon: "PARENT", parentLgd: 90 });
-  const shaded = shadeShapes(shapes, [unit({}), guest], "workshops", [6], "DISTRICT");
-  expect(shaded[0].value).toBe(6);
-  expect(shaded[0].guests.map((g) => g.district)).toEqual(["Balotra"]);
-  const empty = shadeShapes(shapes, [], "workshops", [], "DISTRICT");
-  expect(empty[0].noWorkshop).toBe(true);
-  expect(empty[0].bin).toBe(-1);
+  const fills = polygonFills([unit({}), guest], "DISTRICT", "workshops", shapes);
+  expect(fills.get(90)).toEqual({ value: 6, hostsChild: true });
+  expect(polygonFills([], "DISTRICT", "workshops", shapes).size).toBe(0);
 });
 
-test("markers fold where they crowd", () => {
+test("markers fold where they crowd, at their averaged position", () => {
   const marker = (id: string, lon: number) => ({
     kind: "DESIGN_WORKSHOP" as const, id, title: id, clusterName: null, craftCode: null,
     stateLgd: 8, districtLgd: 90, lon, lat: 25.9, precision: "DISTRICT_CENTROID" as const, href: `/design-workshops/${id}`
   });
-  expect(clusterMarkers([marker("a", 71.6), marker("b", 71.6001)])).toHaveLength(1);
+  const folded = clusterMarkers([marker("a", 71.6), marker("b", 71.6001)]);
+  expect(folded).toHaveLength(1);
+  expect(folded[0].markers).toHaveLength(2);
   expect(clusterMarkers([marker("a", 71.6), marker("b", 80)])).toHaveLength(2);
 });
 
 test("the URL round-trips every filter and keeps view=coverage", () => {
   const params = new URLSearchParams("view=coverage&craftCode=ajrakh,bagru&fy=2025&scheme=OTHER&stateLgd=8&level=STATE&metric=artisans&peer=1");
-  const filters = filtersFromParams(params);
-  expect(filters).toEqual({
-    craftCode: ["ajrakh", "bagru"], scheme: ["OTHER"], fy: [2025], stateLgd: 8,
-    level: "STATE", metric: "artisans", peer: true
+  const query = coverageQueryFromParams(params);
+  expect(query).toEqual({
+    craftCode: ["ajrakh", "bagru"], scheme: ["OTHER"], fy: [2025], stateLgd: 8, level: "STATE", peer: true
   });
-  const back = paramsFromFilters(filters);
+  const metric = metricFromParams(params);
+  expect(metric).toBe("artisans");
+  const back = new URL(coverageHref(query, metric), "http://x").searchParams;
   expect(back.get("view")).toBe("coverage");
-  expect(filtersFromParams(back)).toEqual(filters);
-  expect(paramsFromFilters(filtersFromParams(new URLSearchParams())).toString()).toBe("view=coverage");
+  expect(coverageQueryFromParams(back)).toEqual(query);
+  expect(metricFromParams(back)).toBe("artisans");
+  expect(coverageHref(coverageQueryFromParams(new URLSearchParams()), "workshops")).toBe("/map?view=coverage");
+});
+
+test("a saved ?metric=records link opens on All records, and is written back as metric=all", () => {
+  const params = new URLSearchParams("view=coverage&metric=records");
+  expect(metricFromParams(params)).toBe("all");
+  expect(coverageHref(coverageQueryFromParams(params), metricFromParams(params))).toBe("/map?view=coverage&metric=all");
 });
 
 test("the coverage bundle reaches for no tile server and no mapping library", () => {

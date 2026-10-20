@@ -1,152 +1,176 @@
 "use client";
 
+/**
+ * The coverage filters: which crafts, which kind of workshop, which financial year, which state,
+ * and what the map is coloured by — the Field Repository's markup, plus the designer portal's
+ * "Field Repository" switch when cross-portal coverage is on. Every value lives in the URL
+ * (`CoverageView`), so a filtered view can be linked.
+ */
+
 import { SearchableMultiSelect, SearchableSelect } from "@/components/ui/SearchableSelect";
 import { Toggle } from "@/components/ui/Toggle";
-import {
-  METRIC_LABEL,
-  METRICS,
-  type CoverageResponse,
-  type Metric
+import { METRICS, type RegisterState } from "@/components/map/coverage/coverageMath";
+import type {
+  CoverageMetric,
+  CoverageQuery,
+  CoverageResponse
 } from "@/components/map/coverage/coverageTypes";
 
-export type CoverageFilterState = {
-  craftCode: string[];
-  scheme: string[];
-  fy: number[];
-  stateLgd: number | null;
-  level: "STATE" | "DISTRICT";
-  metric: Metric;
-  peer: boolean;
-};
+function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="grid min-w-0 content-start gap-1.5">
+      <span className="field-label">{label}</span>
+      <div
+        role="group"
+        aria-label={label}
+        className="inline-flex w-fit max-w-full overflow-hidden rounded-md border border-line-200 bg-card"
+      >
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={value === option.value}
+            onClick={() => onChange(option.value)}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+              value === option.value
+                ? "bg-purple-700 text-white"
+                : "text-ink-700 hover:bg-purple-50 hover:text-purple-700"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-type Props = {
-  value: CoverageFilterState;
-  onChange: (next: CoverageFilterState) => void;
+export function CoverageFilters({
+  query,
+  metric,
+  catalogue,
+  states,
+  onChange,
+  onMetric,
+  peerAvailable = false
+}: {
+  query: CoverageQuery;
+  metric: CoverageMetric;
   catalogue: CoverageResponse["catalogue"] | null;
-  states: Array<{ lgd: number; name: string }>;
-  peerAvailable: boolean;
-};
+  states: RegisterState[];
+  onChange: (next: CoverageQuery) => void;
+  onMetric: (metric: CoverageMetric) => void;
+  peerAvailable?: boolean;
+}) {
+  const crafts = (catalogue?.crafts ?? []).map((craft) => ({ value: craft.code, label: craft.name }));
+  const years = [
+    { value: "", label: "All years" },
+    ...(catalogue?.years ?? []).map((year) => ({ value: String(year.fy), label: `FY ${year.label}` }))
+  ];
+  const stateOptions = [
+    { value: "", label: "All of India" },
+    ...states.map((state) => ({ value: String(state.lgd), label: state.name }))
+  ];
+  const schemes = catalogue?.schemes ?? [];
 
-const pill = (on: boolean) =>
-  `min-h-9 rounded-full border px-3 text-sm transition ${
-    on
-      ? "border-purple-700 bg-purple-700 text-white dark:border-purple-400 dark:bg-purple-400 dark:text-purple-950"
-      : "border-line-200 bg-card text-ink-900 hover:border-purple-300 hover:bg-purple-50"
-  }`;
-
-export function CoverageFilters({ value, onChange, catalogue, states, peerAvailable }: Props) {
-  const set = (patch: Partial<CoverageFilterState>) => onChange({ ...value, ...patch });
-  const crafts = (catalogue?.crafts ?? []).map((c) => ({ value: c.code, label: c.name }));
-  const years = (catalogue?.years ?? []).map((y) => ({ value: String(y.fy), label: `FY ${y.label}` }));
-  const stateOptions = states.map((s) => ({ value: String(s.lgd), label: s.name }));
+  const toggleScheme = (value: string) => {
+    const next = query.scheme.includes(value)
+      ? query.scheme.filter((item) => item !== value)
+      : [...query.scheme, value];
+    onChange({ ...query, scheme: next });
+  };
 
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-4 rounded-md border border-line-200 bg-surface-50 p-3" data-testid="coverage-filters">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <div className="grid min-w-0 gap-1.5">
-          <span className="field-label">Craft</span>
+    <div className="grid gap-4 rounded-md border border-line-200 bg-surface-50 p-3" data-testid="coverage-filters">
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid min-w-0 content-start gap-1.5">
+          <span className="field-label">Crafts</span>
           <SearchableMultiSelect
-            values={value.craftCode}
-            onChange={(craftCode) => set({ craftCode })}
+            values={query.craftCode}
             options={crafts}
+            onChange={(craftCode) => onChange({ ...query, craftCode })}
             placeholder="All crafts"
-            ariaLabel="Craft"
+            ariaLabel="Crafts"
             searchable
-            bulk={false}
+            confirmOnSelect={false}
           />
         </div>
-        <div className="grid min-w-0 gap-1.5">
+        <div className="grid min-w-0 content-start gap-1.5">
           <span className="field-label">Financial year</span>
           <SearchableSelect
-            value={value.fy[0] ? String(value.fy[0]) : ""}
-            onChange={(fy) => set({ fy: fy ? [Number(fy)] : [] })}
+            value={query.fy.length === 1 ? String(query.fy[0]) : ""}
             options={years}
-            placeholder="All years"
+            onChange={(value) => onChange({ ...query, fy: value ? [Number(value)] : [] })}
             ariaLabel="Financial year"
-            clearable
             advanceOnSelect={false}
           />
         </div>
-        <div className="grid min-w-0 gap-1.5">
+        <div className="grid min-w-0 content-start gap-1.5">
           <span className="field-label">State</span>
           <SearchableSelect
-            value={value.stateLgd ? String(value.stateLgd) : ""}
-            onChange={(code) => set({ stateLgd: code ? Number(code) : null })}
+            value={query.stateLgd ? String(query.stateLgd) : ""}
             options={stateOptions}
-            placeholder="All of India"
+            onChange={(value) => onChange({ ...query, stateLgd: value ? Number(value) : null })}
             ariaLabel="State"
-            clearable
+            searchable
             advanceOnSelect={false}
           />
         </div>
       </div>
 
-      {catalogue?.schemes.length ? (
-        <div className="grid gap-1.5">
-          <span className="field-label">Scheme</span>
-          <div role="group" aria-label="Scheme" className="flex flex-wrap gap-2">
-            {catalogue.schemes.map((scheme) => {
-              const on = value.scheme.includes(scheme.value);
-              return (
-                <button
-                  key={scheme.value}
-                  type="button"
-                  aria-pressed={on}
-                  className={pill(on)}
-                  onClick={() =>
-                    set({
-                      scheme: on ? value.scheme.filter((s) => s !== scheme.value) : [...value.scheme, scheme.value]
-                    })
-                  }
-                >
-                  {scheme.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
       <div className="flex flex-wrap items-end gap-x-6 gap-y-3">
-        <div className="grid gap-1.5">
-          <span className="field-label">Shade by</span>
-          <div role="group" aria-label="Shade by" className="flex flex-wrap gap-2">
-            {METRICS.map((metric) => (
-              <button
-                key={metric}
-                type="button"
-                aria-pressed={value.metric === metric}
-                className={pill(value.metric === metric)}
-                onClick={() => set({ metric })}
-              >
-                {METRIC_LABEL[metric]}
-              </button>
-            ))}
+        {schemes.length ? (
+          <div className="grid min-w-0 content-start gap-1.5">
+            <span className="field-label">Workshop type</span>
+            <div role="group" aria-label="Workshop type" className="flex flex-wrap gap-2">
+              {schemes.map((scheme) => {
+                const on = query.scheme.includes(scheme.value);
+                return (
+                  <button
+                    key={scheme.value}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => toggleScheme(scheme.value)}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      on
+                        ? "border-purple-700 bg-purple-700 text-white"
+                        : "border-line-200 bg-card text-ink-700 hover:border-purple-300 hover:bg-purple-50"
+                    }`}
+                  >
+                    {scheme.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-        <div className="grid gap-1.5">
-          <span className="field-label">Group by</span>
-          <div role="group" aria-label="Group by" className="flex flex-wrap gap-2">
-            {(["DISTRICT", "STATE"] as const).map((level) => (
-              <button
-                key={level}
-                type="button"
-                aria-pressed={value.level === level}
-                className={pill(value.level === level)}
-                onClick={() => set({ level })}
-              >
-                {level === "DISTRICT" ? "District" : "State"}
-              </button>
-            ))}
-          </div>
-        </div>
+        ) : null}
+        <Segmented label="Colour by" value={metric} options={METRICS} onChange={onMetric} />
+        <Segmented
+          label="Detail"
+          value={query.level}
+          options={[
+            { value: "DISTRICT", label: "District" },
+            { value: "STATE", label: "State" }
+          ]}
+          onChange={(level) => onChange({ ...query, level })}
+        />
         {peerAvailable ? (
           <Toggle
             className="min-w-[16rem] flex-1"
             label="Field Repository"
             description="Show its figures beside ours."
-            checked={value.peer}
-            onChange={(peer) => set({ peer })}
+            checked={Boolean(query.peer)}
+            onChange={(peer) => onChange({ ...query, peer })}
             testId="coverage-peer-toggle"
           />
         ) : null}

@@ -1,282 +1,360 @@
 "use client";
 
+/** @jsxImportSource react */
+// The pragma above is React's own default; it is spelled out so the unit specs, whose test runner
+// compiles JSX for its own component harness, render this file with React (`coverage-map-unit`).
+
 /**
- * The coverage choropleth: one SVG, on the same projection as the Places map, with no mapping
- * library and no tiles.
+ * The coverage choropleth: districts filled by how much documented work each holds.
  *
- * LAYERS, bottom to top:
- *   1. the national outline (`indiaGeometry.ts`, verified against the Survey of India depiction) as
- *      a neutral base fill — so any part of India without a district polygon reads as India, in the
- *      "no data" tone, and never as blank;
- *   2. district fills, each clipped to that outline;
- *   3. the state borders;
- *   4. markers for workshops and clusters, folded into a count where they crowd.
+ * The Field Repository's `CoverageMap.tsx` (the reference), with the designer portal's markers
+ * layered back on: design workshops as a filled purple disc, PLANNED workshops with a dashed rim and
+ * CLUSTERs with a double rim.
  *
- * Like `IndiaMap`, the SVG is `aria-hidden`: `CoverageTable` is the text version and the keyboard
- * route to every district. Clicking a district is a pointer shortcut to the same panel.
+ * WHAT SHOWS INDIA'S EXTENT. The verified national outline (`indiaGeometry.ts`, the official
+ * depiction) is drawn first as a neutral base fill, and every district fill is clipped to it with an
+ * SVG `clipPath`. So a part of Jammu & Kashmir or Ladakh the district data has no polygon for still
+ * reads as India, in the "no record" tone — never as blank. State borders sit on top, outside the
+ * clip. No tiles, no mapping library: the same hand-drawn SVG and the same `projection.ts` as the
+ * Places view.
+ *
+ * A district with no polygon of its own is drawn inside the parent it was carved from, so the
+ * parent's fill carries both and gets a dashed outline; the legend and the unit panel say so.
+ *
+ * The only zoom is the state focus, which fits the viewBox to that state. Markers, the hover label
+ * and the cluster cell are scaled by the viewBox so they keep one on-screen size at every focus.
+ *
+ * `aria-hidden`, like `IndiaMap`: `CoverageTable` is the text version of everything drawn here.
  */
 
 import { memo, useEffect, useId, useMemo, useState } from "react";
 
-import { loadBorders, type BorderLine } from "@/components/map/borderGeometry";
+import { loadBorders } from "@/components/map/borderGeometry";
+import { binOf, type PolygonFill } from "@/components/map/coverage/coverageMath";
+import type { CoverageMarker } from "@/components/map/coverage/coverageTypes";
 import { bordersToPath, indiaOutlinePath, project, VIEW_BOX } from "@/components/map/projection";
-import { shapePath } from "@/components/map/shapeGeometry";
-import { clusterMarkers, type ShadedShape } from "@/components/map/coverage/coverageShade";
-import type { CoverageMarker, Metric } from "@/components/map/coverage/coverageTypes";
+import { shapePath, type DistrictShape } from "@/components/map/shapeGeometry";
 
-/** Sequential fills, one hue light to dark; dark mode runs its own steps from the same ramp. */
-export const BIN_FILL = [
-  "fill-purple-100 dark:fill-purple-900",
-  "fill-purple-200 dark:fill-purple-800",
-  "fill-purple-400 dark:fill-purple-600",
-  "fill-purple-600 dark:fill-purple-400",
-  "fill-purple-800 dark:fill-purple-200"
+export type { PolygonFill } from "@/components/map/coverage/coverageMath";
+
+/** Five sequential steps, one hue, light to dark — reversed in dark mode so "more" is brighter. */
+export const BIN_CLASSES = [
+  "fill-purple-300 dark:fill-purple-800",
+  "fill-purple-400 dark:fill-purple-700",
+  "fill-purple-500 dark:fill-purple-600",
+  "fill-purple-700 dark:fill-purple-400",
+  "fill-purple-900 dark:fill-purple-200"
 ] as const;
 
-const Base = memo(function Base() {
-  return (
-    <path
-      d={indiaOutlinePath()}
-      fillRule="evenodd"
-      className="fill-field-200 stroke-ink-300"
-      strokeWidth={1.2}
-      strokeLinejoin="round"
-      vectorEffect="non-scaling-stroke"
-    />
-  );
-});
+/** Markers closer than this (on-screen user units at national scale) are drawn as one counted mark. */
+export const CLUSTER_CELL = 22;
 
-type Props = {
-  shaded: ShadedShape[];
+/** The hover label's type size at national scale; divided by the zoom so it never grows. */
+const LABEL_FONT = 12;
+
+export type CoverageMapProps = {
+  shapes: DistrictShape[];
+  fills: Map<number, PolygonFill>;
+  breaks: number[];
+  /** Polygons (by LGD) whose districts have no workshop: hatched. */
+  noWorkshop: Set<number>;
   markers: CoverageMarker[];
-  metric: Metric;
-  focusState: number | null;
-  selected: { stateLgd: number; districtLgd: number | null } | null;
-  onSelectShape: (shaded: ShadedShape) => void;
-  className?: string;
+  selectedLgd: number | null;
+  /** Narrow the drawing to one state's districts. */
+  stateLgd: number | null;
+  names: Map<number, string>;
+  onSelectPolygon: (lgd: number) => void;
+  /** The state borders, when the caller already has them (tests, a cached render). */
+  statePath?: string | null;
 };
 
-export function CoverageMap({ shaded, markers, metric, focusState, selected, onSelectShape, className = "" }: Props) {
-  const clipId = useId().replace(/:/g, "");
-  const hatchId = `${clipId}-hatch`;
-  const [statePath, setStatePath] = useState<string | null>(null);
-  const [hover, setHover] = useState<{ x: number; y: number; label: string } | null>(null);
+export type MarkerCluster = { x: number; y: number; markers: CoverageMarker[] };
 
-  useEffect(() => {
-    let cancelled = false;
-    loadBorders("state")
-      .then((lines: BorderLine[]) => {
-        if (!cancelled) setStatePath(bordersToPath(lines));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+/** Markers closer than `cell` user units fold into one mark, drawn at the members' averaged position. */
+export function clusterMarkers(markers: CoverageMarker[], cell: number = CLUSTER_CELL): MarkerCluster[] {
+  const cells = new Map<string, MarkerCluster>();
+  for (const marker of markers) {
+    const { x, y } = project(marker.lon, marker.lat);
+    const key = `${Math.floor(x / cell)}:${Math.floor(y / cell)}`;
+    const found = cells.get(key);
+    if (found) {
+      found.markers.push(marker);
+      found.x = (found.x * (found.markers.length - 1) + x) / found.markers.length;
+      found.y = (found.y * (found.markers.length - 1) + y) / found.markers.length;
+    } else {
+      cells.set(key, { x, y, markers: [marker] });
+    }
+  }
+  return [...cells.values()];
+}
 
-  const paths = useMemo(
-    () => shaded.map((entry) => ({ entry, d: shapePath(entry.shape) })),
-    [shaded]
-  );
-
-  // Narrowing to one state is the only zoom: fit the view to that state's districts.
-  const viewBox = useMemo(() => {
-    if (!focusState) return `0 0 ${VIEW_BOX.width} ${VIEW_BOX.height}`;
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const { shape } of shaded) {
-      if (shape.stateLgd !== focusState) continue;
-      for (const ring of shape.rings) {
-        for (const [lon, lat] of ring) {
-          const { x, y } = project(lon, lat);
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
-        }
+/** The viewBox for a state focus: that state's districts, padded. The whole country otherwise. */
+export function stateBox(shapes: DistrictShape[], stateLgd: number | null): string {
+  const full = `0 0 ${VIEW_BOX.width} ${VIEW_BOX.height}`;
+  if (stateLgd === null) return full;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const shape of shapes) {
+    if (shape.stateLgd !== stateLgd) continue;
+    for (const ring of shape.rings) {
+      for (const [longitude, latitude] of ring) {
+        const { x, y } = project(longitude, latitude);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
       }
     }
-    if (!Number.isFinite(minX)) return `0 0 ${VIEW_BOX.width} ${VIEW_BOX.height}`;
-    const pad = Math.max(maxX - minX, maxY - minY) * 0.08 + 8;
-    return `${minX - pad} ${minY - pad} ${maxX - minX + pad * 2} ${maxY - minY + pad * 2}`;
-  }, [focusState, shaded]);
+  }
+  if (!Number.isFinite(minX)) return full;
+  const pad = Math.max(maxX - minX, maxY - minY) * 0.08 + 8;
+  return `${(minX - pad).toFixed(1)} ${(minY - pad).toFixed(1)} ${(maxX - minX + pad * 2).toFixed(1)} ${(
+    maxY - minY + pad * 2
+  ).toFixed(1)}`;
+}
 
-  const scale = useMemo(() => {
-    const width = Number(viewBox.split(" ")[2]);
-    return Math.max(0.25, Math.min(1, width / VIEW_BOX.width));
-  }, [viewBox]);
+/** How much smaller one user unit is on screen than at national scale (1 = the whole country). */
+export function viewScale(viewBox: string): number {
+  const width = Number(viewBox.split(" ")[2]);
+  if (!Number.isFinite(width) || width <= 0) return 1;
+  return Math.max(0.05, Math.min(1, width / VIEW_BOX.width));
+}
 
-  const clusters = useMemo(() => clusterMarkers(markers, 16 * scale), [markers, scale]);
+type MarkerStyle = "design" | "planned" | "cluster" | "field";
+
+function markerStyle(markers: CoverageMarker[]): MarkerStyle {
+  if (markers.every((marker) => marker.kind === "PLANNED")) return "planned";
+  if (markers.every((marker) => marker.kind === "CLUSTER")) return "cluster";
+  if (markers.some((marker) => marker.kind === "DESIGN_WORKSHOP")) return "design";
+  return "field";
+}
+
+function CoverageMapImpl({
+  shapes,
+  fills,
+  breaks,
+  noWorkshop,
+  markers,
+  selectedLgd,
+  stateLgd,
+  names,
+  onSelectPolygon,
+  statePath: givenStatePath = null
+}: CoverageMapProps) {
+  const id = useId().replace(/:/g, "");
+  const clipId = `cov-clip-${id}`;
+  const hatchId = `cov-hatch-${id}`;
+  const outline = useMemo(() => indiaOutlinePath(), []);
+  const [loadedStatePath, setStatePath] = useState<string | null>(null);
+  const statePath = givenStatePath ?? loadedStatePath;
+  const [hovered, setHovered] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (givenStatePath) return;
+    let live = true;
+    loadBorders("state")
+      .then((lines) => {
+        if (live) setStatePath(bordersToPath(lines));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [givenStatePath]);
+
+  const visible = useMemo(
+    () => (stateLgd === null ? shapes : shapes.filter((shape) => shape.stateLgd === stateLgd)),
+    [shapes, stateLgd]
+  );
+  const paths = useMemo(() => new Map(visible.map((shape) => [shape.lgd, shapePath(shape)])), [visible]);
+  const hatchPath = useMemo(
+    () =>
+      visible
+        .filter((shape) => noWorkshop.has(shape.lgd))
+        .map((shape) => paths.get(shape.lgd) ?? "")
+        .join(""),
+    [visible, noWorkshop, paths]
+  );
+  const viewBox = useMemo(() => stateBox(shapes, stateLgd), [shapes, stateLgd]);
+  const scale = viewScale(viewBox);
+  const clusters = useMemo(() => clusterMarkers(markers, CLUSTER_CELL * scale), [markers, scale]);
+  const hoveredShape = hovered !== null ? visible.find((shape) => shape.lgd === hovered) : undefined;
 
   return (
-    <svg
-      viewBox={viewBox}
-      className={`h-auto w-full max-w-full ${className}`}
-      role="presentation"
-      aria-hidden="true"
-      focusable="false"
-      data-testid="coverage-map"
-    >
+    <svg viewBox={viewBox} className="block h-auto w-full" aria-hidden data-testid="coverage-map">
       <defs>
         <clipPath id={clipId}>
-          <path d={indiaOutlinePath()} clipRule="evenodd" />
+          <path d={outline} clipRule="evenodd" />
         </clipPath>
         <pattern id={hatchId} width={6} height={6} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1={0} y1={0} x2={0} y2={6} className="stroke-ink-300" strokeWidth={1.4} />
+          <line x1={0} y1={0} x2={0} y2={6} className="stroke-ink-300" strokeWidth={1.2} />
         </pattern>
       </defs>
 
-      <Base />
+      {/* The base: all of India, in the "no record" tone. */}
+      <path d={outline} fillRule="evenodd" className="fill-field-100 stroke-line-200" strokeWidth={1} />
 
-      <g clipPath={`url(#${clipId})`} strokeLinejoin="round">
-        {paths.map(({ entry, d }) => {
-          const isSelected =
-            selected !== null &&
-            entry.shape.stateLgd === selected.stateLgd &&
-            (selected.districtLgd === null || selected.districtLgd === entry.shape.lgd);
-          const hatched = metric === "workshops" && entry.noWorkshop;
-          const label = entry.unit
-            ? `${entry.unit.district ?? entry.unit.state}: ${entry.value}`
-            : entry.guests.length
-              ? `${entry.guests.map((g) => g.district).join(", ")}: ${entry.value}`
-              : `${entry.value}`;
+      <g clipPath={`url(#${clipId})`} data-testid="coverage-districts">
+        {visible.map((shape) => {
+          const fill = fills.get(shape.lgd);
+          const bin = fill ? binOf(fill.value, breaks) : -1;
+          const selected = selectedLgd === shape.lgd;
           return (
-            <g
-              key={entry.shape.lgd}
-              className="cursor-pointer"
-              data-lgd={entry.shape.lgd}
-              onClick={() => onSelectShape(entry)}
-              onPointerEnter={() => {
-                const { x, y } = project(entry.shape.centroid[0], entry.shape.centroid[1]);
-                setHover({ x, y, label });
-              }}
-              onPointerLeave={() => setHover(null)}
-            >
-              <path
-                d={d}
-                fillRule="evenodd"
-                className={`${entry.fill >= 0 ? BIN_FILL[entry.fill] : "fill-field-200"} stroke-card`}
-                strokeWidth={0.5}
-                vectorEffect="non-scaling-stroke"
-              />
-              {hatched ? <path d={d} fill={`url(#${hatchId})`} className="pointer-events-none" /> : null}
-              {entry.guests.length ? (
-                <path
-                  d={d}
-                  fill="none"
-                  className="pointer-events-none stroke-ink-700"
-                  strokeWidth={1}
-                  strokeDasharray="3 2"
-                  vectorEffect="non-scaling-stroke"
-                />
-              ) : null}
-              {isSelected ? (
-                <path
-                  d={d}
-                  fill="none"
-                  className="pointer-events-none stroke-ink-900"
-                  strokeWidth={2}
-                  vectorEffect="non-scaling-stroke"
-                />
-              ) : null}
-            </g>
+            <path
+              key={shape.lgd}
+              d={paths.get(shape.lgd)}
+              fillRule="evenodd"
+              data-lgd={shape.lgd}
+              className={`cursor-pointer transition-opacity ${
+                bin >= 0 ? BIN_CLASSES[bin] : "fill-transparent"
+              } ${selected ? "stroke-ink-900" : fill?.hostsChild ? "stroke-ink-500" : "stroke-line-200"} hover:opacity-80`}
+              strokeWidth={selected ? 2 : fill?.hostsChild ? 1 : 0.5}
+              strokeDasharray={fill?.hostsChild && !selected ? "3 2" : undefined}
+              onClick={() => onSelectPolygon(shape.lgd)}
+              onMouseEnter={() => setHovered(shape.lgd)}
+              onMouseLeave={() => setHovered((current) => (current === shape.lgd ? null : current))}
+            />
           );
         })}
-        {statePath ? (
+        {hatchPath ? (
           <path
-            d={statePath}
-            fill="none"
-            className="pointer-events-none stroke-ink-500"
-            strokeWidth={1}
-            vectorEffect="non-scaling-stroke"
+            d={hatchPath}
+            fillRule="evenodd"
+            fill={`url(#${hatchId})`}
+            className="pointer-events-none"
+            data-testid="coverage-hatch"
           />
         ) : null}
       </g>
 
-      <g>
-        {clusters.map((cluster) => {
-          const first = cluster.markers[0];
-          const count = cluster.markers.length;
-          const planned = cluster.markers.every((m) => m.kind === "PLANNED");
-          const isCluster = cluster.markers.every((m) => m.kind === "CLUSTER");
-          const r = (count > 1 ? 7 + Math.min(6, Math.log2(count) * 1.6) : 4.5) * scale;
-          return (
-            <g
-              key={`${first.kind}:${first.id}`}
-              className="cursor-pointer"
-              onClick={() => {
-                const target = shaded.find((s) => s.shape.lgd === first.districtLgd);
-                if (target) onSelectShape(target);
-              }}
-              onPointerEnter={() =>
-                setHover({
-                  x: cluster.x,
-                  y: cluster.y,
-                  label: count > 1 ? `${count} workshops and clusters` : first.title
-                })
-              }
-              onPointerLeave={() => setHover(null)}
-            >
-              {isCluster ? (
-                <rect
-                  x={cluster.x - r}
-                  y={cluster.y - r}
-                  width={r * 2}
-                  height={r * 2}
-                  rx={2 * scale}
-                  className="fill-card stroke-ink-900"
-                  strokeWidth={1.5}
-                  vectorEffect="non-scaling-stroke"
-                />
-              ) : (
-                <circle
-                  cx={cluster.x}
-                  cy={cluster.y}
-                  r={r}
-                  className={planned ? "fill-card stroke-ink-900" : "fill-ink-900 stroke-card"}
-                  strokeWidth={1.5}
-                  strokeDasharray={planned ? "2 1.5" : undefined}
-                  vectorEffect="non-scaling-stroke"
-                />
-              )}
-              {count > 1 ? (
-                <text
-                  x={cluster.x}
-                  y={cluster.y + 3.5 * scale}
-                  textAnchor="middle"
-                  className={`pointer-events-none font-sans font-semibold ${planned || isCluster ? "fill-ink-900" : "fill-card"}`}
-                  style={{ fontSize: `${10 * scale}px` }}
-                >
-                  {count}
-                </text>
-              ) : null}
-            </g>
-          );
-        })}
-      </g>
+      {statePath ? (
+        <path
+          d={statePath}
+          className="pointer-events-none fill-none stroke-ink-500"
+          strokeWidth={1.1}
+          data-testid="coverage-state-borders"
+        />
+      ) : null}
+      <path d={outline} fillRule="evenodd" className="pointer-events-none fill-none stroke-ink-700" strokeWidth={1.2} />
 
-      {hover ? (
-        <g className="pointer-events-none">
-          <rect
-            x={hover.x + 8 * scale}
-            y={hover.y - 26 * scale}
-            width={Math.max(60, hover.label.length * 7.4) * scale}
-            height={22 * scale}
-            rx={6 * scale}
-            className="fill-ink-900"
-          />
-          <text
-            x={hover.x + 16 * scale}
-            y={hover.y - 11 * scale}
-            className="fill-card font-sans font-medium"
-            style={{ fontSize: `${13 * scale}px` }}
-          >
-            {hover.label}
-          </text>
-        </g>
+      {clusters.map((cluster) => (
+        <MarkerMark
+          key={`${cluster.markers[0].kind}-${cluster.markers[0].id}`}
+          cluster={cluster}
+          scale={scale}
+          onSelect={onSelectPolygon}
+        />
+      ))}
+
+      {hoveredShape ? (
+        <HoverLabel
+          shape={hoveredShape}
+          name={names.get(hoveredShape.lgd) ?? ""}
+          value={fills.get(hoveredShape.lgd)?.value ?? 0}
+          scale={scale}
+        />
       ) : null}
     </svg>
   );
 }
+
+function MarkerMark({
+  cluster,
+  scale,
+  onSelect
+}: {
+  cluster: MarkerCluster;
+  scale: number;
+  onSelect: (lgd: number) => void;
+}) {
+  const many = cluster.markers.length > 1;
+  const first = cluster.markers[0];
+  const style = markerStyle(cluster.markers);
+  const r = (many ? 9 : 4.5) * scale;
+  const rim = 2 * scale;
+  const disc =
+    style === "design"
+      ? "fill-purple-700 stroke-white dark:fill-purple-300 dark:stroke-purple-950"
+      : "fill-white stroke-purple-700 dark:fill-purple-950 dark:stroke-purple-300";
+  const ink =
+    style === "design" ? "fill-white dark:fill-purple-950" : "fill-purple-800 dark:fill-purple-200";
+  return (
+    <g
+      className="cursor-pointer"
+      data-marker={style}
+      onClick={() => {
+        if (first.districtLgd !== null) onSelect(first.districtLgd);
+      }}
+    >
+      <circle
+        cx={cluster.x}
+        cy={cluster.y}
+        r={r}
+        className={disc}
+        strokeWidth={rim}
+        strokeDasharray={style === "planned" ? `${2.2 * scale} ${1.6 * scale}` : undefined}
+      />
+      {style === "cluster" ? (
+        <circle
+          cx={cluster.x}
+          cy={cluster.y}
+          r={r + rim * 1.5}
+          className="fill-none stroke-purple-700 dark:stroke-purple-300"
+          strokeWidth={rim * 0.6}
+        />
+      ) : null}
+      {many ? (
+        <text
+          x={cluster.x}
+          y={cluster.y + 3.5 * scale}
+          textAnchor="middle"
+          className={`pointer-events-none font-sans font-semibold ${ink}`}
+          style={{ fontSize: `${10 * scale}px` }}
+        >
+          {cluster.markers.length}
+        </text>
+      ) : null}
+    </g>
+  );
+}
+
+/**
+ * "Barmer · 6", centred above the district's centroid. Every size is multiplied by the view scale, so
+ * a focused state does not blow the label up to a headline.
+ */
+export function HoverLabel({
+  shape,
+  name,
+  value,
+  scale = 1
+}: {
+  shape: DistrictShape;
+  name: string;
+  value: number;
+  scale?: number;
+}) {
+  if (!name) return null;
+  const { x, y } = project(shape.centroid[0], shape.centroid[1]);
+  const text = `${name} · ${value}`;
+  const width = (text.length * 7.4 + 16) * scale;
+  const height = 24 * scale;
+  const lift = 10 * scale;
+  return (
+    <g className="pointer-events-none" data-testid="coverage-hover-label">
+      <rect x={x - width / 2} y={y - lift - height} width={width} height={height} rx={6 * scale} className="fill-ink-900" />
+      <text
+        x={x}
+        y={y - lift - height / 2 + (LABEL_FONT * scale) / 3}
+        textAnchor="middle"
+        className="fill-card font-sans font-medium"
+        style={{ fontSize: `${LABEL_FONT * scale}px` }}
+      >
+        {text}
+      </text>
+    </g>
+  );
+}
+
+export const CoverageMap = memo(CoverageMapImpl);

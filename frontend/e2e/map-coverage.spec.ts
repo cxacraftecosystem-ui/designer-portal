@@ -155,11 +155,34 @@ test("switching views keeps the URL in sync", async ({ page }) => {
   await stub(page);
   await page.goto("/map");
   const toggle = page.getByTestId("map-view-switch");
-  await toggle.getByRole("button", { name: "Coverage" }).click();
+  await toggle.getByRole("link", { name: "Coverage" }).click();
   await expect(page).toHaveURL(/view=coverage/);
   await expect(page.getByTestId("coverage-view")).toBeVisible();
-  await toggle.getByRole("button", { name: "Places" }).click();
+  await expect(toggle.getByRole("link", { name: "Coverage" })).toHaveAttribute("aria-current", "page");
+  await toggle.getByRole("link", { name: "Places" }).click();
   await expect(page).not.toHaveURL(/view=coverage/);
+});
+
+test("a saved metric=records link opens on All records", async ({ page }) => {
+  await stub(page);
+  await page.goto("/map?view=coverage&metric=records");
+  await expect(page.getByRole("group", { name: "Colour by" }).getByRole("button", { name: "All records" })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+});
+
+test("at 1440x900 the whole map is on screen with the side column beside it", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stub(page);
+  await page.goto("/map?view=coverage");
+  await expect(page.getByTestId("coverage-table")).toBeVisible();
+  const map = await page.getByTestId("coverage-map-panel").boundingBox();
+  const side = await page.getByTestId("coverage-side").boundingBox();
+  expect(map && side).toBeTruthy();
+  expect(map!.y + map!.height).toBeLessThanOrEqual(900);
+  expect(side!.x).toBeGreaterThanOrEqual(map!.x + map!.width);
+  expect(side!.y).toBeLessThan(900);
 });
 
 test("filters change the map and travel in the URL", async ({ page }) => {

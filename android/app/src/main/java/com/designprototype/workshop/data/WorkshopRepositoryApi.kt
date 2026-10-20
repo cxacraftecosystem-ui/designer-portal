@@ -20,6 +20,7 @@ import retrofit2.http.PUT
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.QueryMap
 import retrofit2.http.Streaming
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -1314,6 +1315,25 @@ interface WorkshopRepositoryApi {
         @Query("workshopIds") workshopIds: String? = null,
         @Query("level") level: String? = null
     ): MapPointRecordsDto
+
+    // --- Coverage map: districts shaded by how much of the programme reached them (ministry readers) ---
+    // The query is the web's `coverageParams`, built by `CoverageQuery.params()`: arrays comma-joined,
+    // defaults left out. The server accepts that and repeated parameters alike.
+    @GET("map/coverage")
+    suspend fun coverage(@QueryMap query: Map<String, String>): CoverageResponse
+
+    // One unit's records, a page per bucket. `district` is 0 for a state-level unit.
+    @GET("map/coverage/units/{state}/{district}/records")
+    suspend fun coverageUnitRecords(
+        @Path("state") state: Int,
+        @Path("district") district: Int,
+        @QueryMap query: Map<String, String>
+    ): CoverageUnitRecords
+
+    // What this account may open on the ministry surfaces; `coverageMap` gates the Coverage view.
+    // A 403 means "not a ministry reader", which the caller reads as "no Coverage".
+    @GET("ministry-dashboard/entitlements")
+    suspend fun entitlements(): MinistryEntitlementsDto
 
     // --- Data browser (needs the dataset-download permission; rows are visibility-filtered) ---
     // ONE level of the virtual tree. path="" is the taxonomy chooser, not a folder listing.
@@ -2699,3 +2719,11 @@ data class WorkshopTypeOptionDto(
     val updatedAt: String? = null,
 )
 
+/**
+ * `GET ministry-dashboard/entitlements`, the one key the handset reads: whether this account may open
+ * the coverage map. Every other key is ignored by the decoder.
+ */
+@Serializable
+data class MinistryEntitlementsDto(
+    val coverageMap: Boolean = false
+)

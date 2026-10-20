@@ -548,6 +548,12 @@ dependencies {
     // Instrumented-test only: nothing here reaches the shipped APK, so it costs no download size.
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
+    // Compose UI tests (the map's pinch, reset and coverage sheet), versioned by the BOM above.
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    // ui-test-junit4 idles through Espresso; the version it pulls in by itself still calls
+    // InputManager.getInstance, which API 37 removed, so every Compose test failed before it ran.
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.core:core-ktx:1.19.1")
