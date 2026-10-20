@@ -1,74 +1,91 @@
 "use client";
 
+/**
+ * The coverage map as text: every unit with a record, state then district, with its counts. It
+ * stands in for the SVG (which is `aria-hidden`) the way `MapPlaceList` does for the Places map,
+ * and a row opens the same unit panel a click on the map does.
+ *
+ * The Field Repository's table. "Workshops" here is held design workshops plus field workshops (the
+ * map's own metric); a Planned column appears when any place has one, and the Field Repository's
+ * figures sit on their own row under ours, never added in.
+ */
+
+import { unitTitle } from "@/components/map/coverage/CoverageUnitPanel";
+import { metricValue } from "@/components/map/coverage/coverageMath";
 import type { CoverageUnit } from "@/components/map/coverage/coverageTypes";
 
-type Props = {
-  units: CoverageUnit[];
-  showPeer: boolean;
-  onOpen: (unit: CoverageUnit) => void;
-};
+export function unitKey(unit: Pick<CoverageUnit, "stateLgd" | "districtLgd">): string {
+  return `${unit.stateLgd}:${unit.districtLgd ?? 0}`;
+}
 
-/**
- * The text version of the map, standing in for the `aria-hidden` SVG the way `MapPlaceList` does:
- * every unit with a count, state then district, each a button that opens the same panel a click on
- * the map opens. The Field Repository's figures are their own row, never added to ours.
- */
-export function CoverageTable({ units, showPeer, onOpen }: Props) {
+export function CoverageTable({
+  units,
+  selectedKey,
+  level,
+  onSelect,
+  showPeer = false
+}: {
+  units: CoverageUnit[];
+  level: "STATE" | "DISTRICT";
+  selectedKey: string | null;
+  onSelect: (unit: CoverageUnit) => void;
+  showPeer?: boolean;
+}) {
   if (!units.length) {
-    return <p className="text-sm text-ink-500">Nothing recorded under these filters.</p>;
+    return <p className="text-xs text-ink-500">No records under these filters.</p>;
   }
-  const sorted = [...units].sort(
-    (a, b) => a.state.localeCompare(b.state) || (a.district ?? "").localeCompare(b.district ?? "")
-  );
+  const planned = units.some((unit) => (unit.counts.plannedWorkshops ?? 0) > 0);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[36rem] text-sm" data-testid="coverage-table">
-        <caption className="sr-only">Coverage by state and district</caption>
-        <thead>
-          <tr className="border-b border-line-200 text-left text-xs text-ink-500">
-            <th scope="col" className="py-2 pr-3 font-medium">Place</th>
-            <th scope="col" className="px-2 py-2 text-right font-medium">Held</th>
-            <th scope="col" className="px-2 py-2 text-right font-medium">Planned</th>
-            <th scope="col" className="px-2 py-2 text-right font-medium">Field workshops</th>
-            <th scope="col" className="px-2 py-2 text-right font-medium">Artisans</th>
-            <th scope="col" className="px-2 py-2 text-right font-medium">Crafts</th>
-            <th scope="col" className="px-2 py-2 text-right font-medium">Records</th>
+      <table className="w-full text-left text-sm" data-testid="coverage-table">
+        <caption className="sr-only">Records per place</caption>
+        <thead className="text-[11px] uppercase tracking-wide text-ink-500">
+          <tr>
+            <th scope="col" className="py-1.5 pr-2 font-medium">Place</th>
+            <th scope="col" className="px-1 py-1.5 text-right font-medium">Workshops</th>
+            {planned ? <th scope="col" className="px-1 py-1.5 text-right font-medium">Planned</th> : null}
+            <th scope="col" className="px-1 py-1.5 text-right font-medium">Artisans</th>
+            <th scope="col" className="px-1 py-1.5 text-right font-medium">Crafts</th>
+            <th scope="col" className="py-1.5 pl-1 text-right font-medium">Records</th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map((unit) => {
-            const c = unit.counts;
-            const key = `${unit.stateLgd}:${unit.districtLgd ?? 0}`;
+          {units.map((unit) => {
+            const key = unitKey(unit);
+            const records = unit.counts.products + unit.counts.tools + unit.counts.media;
+            const peer = showPeer ? unit.peer : null;
             return [
-              <tr key={key} className="border-b border-line-200">
-                <th scope="row" className="py-1.5 pr-3 text-left font-normal">
+              <tr
+                key={key}
+                className={`border-t border-line-200 ${selectedKey === key ? "bg-purple-50 dark:bg-purple-950/40" : ""}`}
+              >
+                <th scope="row" className="py-1.5 pr-2 font-normal">
                   <button
                     type="button"
-                    className="text-left text-ink-900 underline-offset-2 hover:underline"
-                    onClick={() => onOpen(unit)}
+                    onClick={() => onSelect(unit)}
+                    className="text-left text-purple-700 hover:underline dark:text-purple-300"
                   >
-                    {unit.district ? `${unit.district}, ${unit.state}` : unit.state}
+                    {level === "STATE" ? unit.state : unitTitle(unit)}
                   </button>
-                  {unit.polygon === "PARENT" ? <span className="ml-1 text-xs text-ink-500">(in parent)</span> : null}
                 </th>
-                <td className="px-2 text-right tabular-nums">{c.designWorkshops}</td>
-                <td className="px-2 text-right tabular-nums">{c.plannedWorkshops}</td>
-                <td className="px-2 text-right tabular-nums">{c.workshops}</td>
-                <td className="px-2 text-right tabular-nums">{c.artisans}</td>
-                <td className="px-2 text-right tabular-nums">{c.crafts}</td>
-                <td className="px-2 text-right tabular-nums">{c.products + c.tools + c.media}</td>
+                <td className="px-1 py-1.5 text-right tabular-nums text-ink-700">
+                  {metricValue(unit.counts, "workshops")}
+                </td>
+                {planned ? (
+                  <td className="px-1 py-1.5 text-right tabular-nums text-ink-700">{unit.counts.plannedWorkshops ?? 0}</td>
+                ) : null}
+                <td className="px-1 py-1.5 text-right tabular-nums text-ink-700">{unit.counts.artisans}</td>
+                <td className="px-1 py-1.5 text-right tabular-nums text-ink-700">{unit.counts.crafts}</td>
+                <td className="py-1.5 pl-1 text-right tabular-nums text-ink-700">{records}</td>
               </tr>,
-              showPeer && unit.peer ? (
-                <tr key={`${key}:peer`} className="border-b border-line-200 bg-surface-50 text-ink-500">
-                  <th scope="row" className="py-1 pr-3 pl-4 text-left text-xs font-normal">Field Repository</th>
-                  <td className="px-2 text-right text-xs">–</td>
-                  <td className="px-2 text-right text-xs">–</td>
-                  <td className="px-2 text-right text-xs tabular-nums">{unit.peer.workshops}</td>
-                  <td className="px-2 text-right text-xs tabular-nums">{unit.peer.artisans}</td>
-                  <td className="px-2 text-right text-xs">–</td>
-                  <td className="px-2 text-right text-xs tabular-nums">
-                    {unit.peer.products + unit.peer.tools + unit.peer.media}
-                  </td>
+              peer ? (
+                <tr key={`${key}:peer`} className="bg-surface-50 text-xs text-ink-500">
+                  <th scope="row" className="py-1 pr-2 pl-3 font-normal">Field Repository</th>
+                  <td className="px-1 py-1 text-right tabular-nums">{peer.workshops}</td>
+                  {planned ? <td className="px-1 py-1 text-right">–</td> : null}
+                  <td className="px-1 py-1 text-right tabular-nums">{peer.artisans}</td>
+                  <td className="px-1 py-1 text-right">–</td>
+                  <td className="py-1 pl-1 text-right tabular-nums">{peer.products + peer.tools + peer.media}</td>
                 </tr>
               ) : null
             ];

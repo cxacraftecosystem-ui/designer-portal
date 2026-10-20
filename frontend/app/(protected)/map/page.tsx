@@ -47,7 +47,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Crosshair, Info, Map as MapIcon, MapPin } from "lucide-react";
 
 import { EmptyState } from "@/components/EmptyState";
@@ -804,7 +804,6 @@ function Stat({
  */
 export default function MapPage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const { user } = useAuth();
   const [allowed, setAllowed] = useState(false);
   const wantsCoverage = searchParams.get("view") === "coverage";
@@ -824,12 +823,8 @@ export default function MapPage() {
   }, [user]);
 
   const view = wantsCoverage && allowed ? "coverage" : "places";
-  const viewSwitch = allowed ? (
-    <ViewSwitch
-      view={view}
-      onChange={(next) => router.replace(next === "coverage" ? "/map?view=coverage" : "/map", { scroll: false })}
-    />
-  ) : null;
+  // The Coverage link is not rendered at all for an account without the entitlement.
+  const viewSwitch = allowed ? <ViewSwitch view={view} /> : null;
 
   if (view === "places") return <PlacesView viewSwitch={viewSwitch} />;
   return (
@@ -845,27 +840,34 @@ export default function MapPage() {
   );
 }
 
-function ViewSwitch({ view, onChange }: { view: "places" | "coverage"; onChange: (view: "places" | "coverage") => void }) {
+/** Places | Coverage — two readings of one corpus, chosen by `?view=coverage`. Links, as on the Field Repository. */
+function ViewSwitch({ view }: { view: "places" | "coverage" }) {
   // A segmented choice between two named views, not an action row.
+  const options: Array<{ value: "places" | "coverage"; label: string; href: string }> = [
+    { value: "places", label: "Places", href: "/map" },
+    { value: "coverage", label: "Coverage", href: "/map?view=coverage" }
+  ];
   return (
     <div
       role="group"
       aria-label="Map view"
-      className="inline-flex overflow-hidden rounded-md border border-line-200 bg-card"
+      className="inline-flex w-fit max-w-full overflow-hidden rounded-md border border-line-200 bg-card"
       data-testid="map-view-switch"
     >
-      {(["places", "coverage"] as const).map((option) => (
-        <button
-          key={option}
-          type="button"
-          aria-pressed={view === option}
-          onClick={() => onChange(option)}
-          className={`min-h-10 px-4 text-sm font-medium transition ${
-            view === option ? "bg-purple-700 text-white dark:bg-purple-400 dark:text-purple-950" : "text-ink-900 hover:bg-purple-50"
+      {options.map((option) => (
+        <Link
+          key={option.value}
+          href={option.href}
+          scroll={false}
+          aria-current={view === option.value ? "page" : undefined}
+          className={`inline-flex min-h-10 items-center px-4 text-sm font-medium transition-colors ${
+            view === option.value
+              ? "bg-purple-700 text-white"
+              : "text-ink-700 hover:bg-purple-50 hover:text-purple-700"
           }`}
         >
-          {option === "places" ? "Places" : "Coverage"}
-        </button>
+          {option.label}
+        </Link>
       ))}
     </div>
   );

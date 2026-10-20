@@ -1,259 +1,350 @@
 "use client";
 
 /**
- * The Coverage view of `/map`: which districts the programme has reached, and where the gaps are.
+ * COVERAGE — which districts the programme reaches, and which it has not reached yet.
  *
- * Every filter lives in the URL (`?view=coverage&craftCode=…&fy=…&scheme=…&stateLgd=…&level=…&metric=…
- * &peer=1`), so a link reproduces the view. The district shapes load only when this view opens.
- * Nothing here talks to a tile server or a mapping library.
+ * The Field Repository's view (layout, fills and panels) with the designer portal's layers on top:
+ * the Field Repository's figures beside ours (`peer`), planned workshops and clusters on the map, and
+ * design workshops counted as workshops. The ministry entitlement gate is the page's
+ * (`app/(protected)/map/page.tsx`); this view is never mounted without it.
+ *
+ * Every filter lives in the URL (`?view=coverage&craftCode=..&fy=..&peer=1`), so a view can be linked
+ * and Back restores it. The district polygons are fetched only here (`shapeGeometry.loadShapes`);
+ * nothing in this folder imports a mapping library or calls a tile server.
  */
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
+import { EmptyState } from "@/components/EmptyState";
 import { readableError } from "@/components/review/reviewErrors";
-import { CoverageFilters, type CoverageFilterState } from "@/components/map/coverage/CoverageFilters";
-import { filtersFromParams, paramsFromFilters } from "@/components/map/coverage/coverageUrl";
+import { fetchCoverage, peerCoverageEnabled } from "@/components/map/coverage/coverageApi";
+import { CoverageFilters } from "@/components/map/coverage/CoverageFilters";
 import { CoverageGapsPanel } from "@/components/map/coverage/CoverageGapsPanel";
 import { CoverageLegend } from "@/components/map/coverage/CoverageLegend";
 import { CoverageMap } from "@/components/map/coverage/CoverageMap";
-import { shadeShapes, type ShadedShape } from "@/components/map/coverage/coverageShade";
-import { CoverageTable } from "@/components/map/coverage/CoverageTable";
+import {
+  coverageHref,
+  coverageQueryFromParams,
+  EMPTY_COVERAGE_QUERY,
+  METRICS,
+  metricFromParams,
+  polygonFills,
+  quantileBreaks,
+  registerFromCoverage,
+  type RegisterState
+} from "@/components/map/coverage/coverageMath";
+import { CoverageTable, unitKey } from "@/components/map/coverage/CoverageTable";
+import type {
+  CoverageMetric,
+  CoverageQuery,
+  CoverageResponse,
+  CoverageUnit
+} from "@/components/map/coverage/coverageTypes";
 import { CoverageUnitPanel } from "@/components/map/coverage/CoverageUnitPanel";
 import { UnmatchedPlacesPanel } from "@/components/map/coverage/UnmatchedPlacesPanel";
-import {
-  fetchCoverage,
-  peerCoverageEnabled,
-  type CoverageQuery
-} from "@/components/map/coverage/coverageApi";
-import {
-  metricValue,
-  quantileBreaks,
-  type CoverageResponse,
-  type CoverageUnit
-} from "@/components/map/coverage/coverageTypes";
 import { loadShapes, type DistrictShape } from "@/components/map/shapeGeometry";
 
-export const COVERAGE_CAPTION =
+export const DEPICTION_CAPTION =
   "External boundaries of India as depicted by Survey of India. District boundaries are indicative.";
 
-type Selection = { stateLgd: number; districtLgd: number | null; note: string | null; title: string };
+const ZERO_COUNTS = {
+  workshops: 0,
+  artisans: 0,
+  crafts: 0,
+  products: 0,
+  tools: 0,
+  media: 0,
+  designWorkshops: 0,
+  plannedWorkshops: 0
+};
+
+function isWholeRegister(body: CoverageResponse): boolean {
+  return body.filters.level === "DISTRICT" && body.filters.stateLgd === null;
+}
 
 export function CoverageView() {
-  const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [filters, setFilters] = useState<CoverageFilterState>(() =>
-    filtersFromParams(new URLSearchParams(searchParams.toString()))
+  const router = useRouter();
+
+  const [peerAvailable, setPeerAvailable] = useState(false);
+  const urlQuery = useMemo(
+    () => coverageQueryFromParams(new URLSearchParams(searchParams.toString())),
+    [searchParams]
   );
+  // The Field Repository is asked only when cross-portal coverage is switched on.
+  const query = useMemo(
+    () => ({ ...urlQuery, peer: Boolean(urlQuery.peer) && peerAvailable }),
+    [urlQuery, peerAvailable]
+  );
+  const metric = metricFromParams(new URLSearchParams(searchParams.toString()));
+
   const [data, setData] = useState<CoverageResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [shapes, setShapes] = useState<DistrictShape[] | null>(null);
   const [shapesError, setShapesError] = useState(false);
-  const [peerAvailable, setPeerAvailable] = useState(false);
-  const [selection, setSelection] = useState<Selection | null>(null);
+  const [register, setRegister] = useState<RegisterState[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [placeholder, setPlaceholder] = useState<CoverageUnit | null>(null);
   const [reload, setReload] = useState(0);
-  const [stateNames, setStateNames] = useState<Record<number, string>>({});
 
-  const query: CoverageQuery = useMemo(
-    () => ({
-      level: filters.level,
-      craftCode: filters.craftCode,
-      scheme: filters.scheme,
-      fy: filters.fy,
-      stateLgd: filters.stateLgd,
-      peer: filters.peer && peerAvailable
-    }),
-    [filters, peerAvailable]
-  );
-
-  const change = useCallback(
-    (next: CoverageFilterState) => {
-      setFilters(next);
-      setSelection(null);
-      router.replace(`${pathname}?${paramsFromFilters(next).toString()}`, { scroll: false });
+  const navigate = useCallback(
+    (next: CoverageQuery, nextMetric: CoverageMetric = metric) => {
+      router.replace(coverageHref(next, nextMetric), { scroll: false });
     },
-    [pathname, router]
+    [router, metric]
   );
 
   useEffect(() => {
-    let cancelled = false;
+    let live = true;
     loadShapes()
-      .then((loaded) => {
-        if (!cancelled) setShapes(loaded);
+      .then((rows) => {
+        if (live) setShapes(rows);
       })
       .catch(() => {
-        if (!cancelled) setShapesError(true);
+        if (live) setShapesError(true);
       });
     peerCoverageEnabled().then((on) => {
-      if (!cancelled) setPeerAvailable(on);
+      if (live) setPeerAvailable(on);
     });
     return () => {
-      cancelled = true;
+      live = false;
     };
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
+    setLoading(true);
     setError(null);
     fetchCoverage(query, controller.signal)
-      .then((answer) => {
-        // Remembered across loads, so narrowing to one state keeps every state in the picker.
-        setStateNames((known) => {
-          const next = { ...known };
-          for (const unit of answer.units) next[unit.stateLgd] = unit.state;
-          for (const row of answer.gaps.districtsWithoutWorkshop.byState) next[row.stateLgd] = row.state;
-          for (const row of answer.gaps.statesWithoutWorkshop) {
-            if (row.lgd !== null) next[row.lgd] = row.name;
-          }
-          return next;
-        });
-        setData(answer);
+      .then((body) => {
+        setData(body);
+        if (isWholeRegister(body)) setRegister(registerFromCoverage(body));
       })
       .catch((cause: unknown) => {
-        if (!controller.signal.aborted) setError(readableError(cause, "Couldn't load the coverage map."));
+        if (!controller.signal.aborted) setError(readableError(cause, "Coverage could not be loaded."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
   }, [query, reload]);
 
-  const breaks = useMemo(() => {
-    if (!data) return [];
-    return quantileBreaks(
-      data.units.filter((u) => (filters.level === "STATE" ? u.districtLgd === null : u.districtLgd !== null)).map((u) => metricValue(u, filters.metric))
+  // The state picker needs the whole register; a narrowed first view asks once.
+  useEffect(() => {
+    if (register.length || !data || isWholeRegister(data)) return;
+    const controller = new AbortController();
+    fetchCoverage(EMPTY_COVERAGE_QUERY, controller.signal)
+      .then((body) => setRegister(registerFromCoverage(body)))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [register.length, data]);
+
+  useEffect(() => {
+    setSelectedKey(null);
+    setPlaceholder(null);
+  }, [query]);
+
+  const units = useMemo(() => data?.units ?? [], [data]);
+  const level = data?.filters.level ?? query.level;
+
+  const names = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const state of register) for (const district of state.districts) map.set(district.lgd, district.name);
+    for (const row of data?.gaps.districtsWithoutWorkshop.byState ?? []) {
+      for (const district of row.without) if (district.lgd !== null) map.set(district.lgd, district.name);
+    }
+    for (const unit of units) if (unit.districtLgd !== null && unit.district) map.set(unit.districtLgd, unit.district);
+    return map;
+  }, [register, data, units]);
+
+  const stateNames = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const state of register) map.set(state.lgd, state.name);
+    for (const unit of units) map.set(unit.stateLgd, unit.state);
+    return map;
+  }, [register, units]);
+
+  const fills = useMemo(() => polygonFills(units, level, metric, shapes ?? []), [units, metric, level, shapes]);
+
+  const breaks = useMemo(() => quantileBreaks([...fills.values()].map((fill) => fill.value)), [fills]);
+
+  const noWorkshop = useMemo(() => {
+    const set = new Set<number>();
+    if (!data) return set;
+    if (level === "STATE") {
+      const states = new Set(data.gaps.statesWithoutWorkshop.map((state) => state.lgd));
+      for (const shape of shapes ?? []) if (states.has(shape.stateLgd)) set.add(shape.lgd);
+      return set;
+    }
+    for (const row of data.gaps.districtsWithoutWorkshop.byState) {
+      for (const district of row.without) if (district.lgd !== null) set.add(district.lgd);
+    }
+    return set;
+  }, [data, level, shapes]);
+
+  const selected = useMemo(() => {
+    if (!selectedKey) return null;
+    return (
+      units.find((unit) => unitKey(unit) === selectedKey) ??
+      (placeholder && unitKey(placeholder) === selectedKey ? placeholder : null)
     );
-  }, [data, filters.level, filters.metric]);
+  }, [units, selectedKey, placeholder]);
 
-  const shaded = useMemo(
-    () => (shapes && data ? shadeShapes(shapes, data.units, filters.metric, breaks, filters.level) : []),
-    [shapes, data, filters.metric, breaks, filters.level]
-  );
-
-  const parentNote = useMemo(() => {
-    const host = shaded.find((s) => s.guests.length);
-    if (!host) return null;
-    const parent = data?.units.find((u) => u.districtLgd === host.shape.lgd)?.district;
-    const guest = host.guests[0].district;
-    return parent ? `${guest}: shown inside ${parent} (parent)` : "Shown inside the parent district";
-  }, [shaded, data]);
-
-  const openUnit = useCallback((unit: CoverageUnit) => {
-    const parent =
-      unit.polygon === "PARENT" && unit.parentLgd
-        ? `Shown inside ${data?.units.find((u) => u.districtLgd === unit.parentLgd)?.district ?? "its parent district"} (parent)`
-        : null;
-    setSelection({
-      stateLgd: unit.stateLgd,
-      districtLgd: unit.districtLgd,
-      note: parent,
-      title: unit.district ? `${unit.district}, ${unit.state}` : unit.state
-    });
-  }, [data]);
-
-  const openShape = useCallback(
-    (entry: ShadedShape) => {
-      if (filters.level === "STATE") {
-        setSelection({ stateLgd: entry.shape.stateLgd, districtLgd: null, note: null, title: "" });
+  const selectPolygon = useCallback(
+    (lgd: number) => {
+      const shape = shapes?.find((row) => row.lgd === lgd);
+      if (!shape) return;
+      if (level === "STATE") {
+        const unit = units.find((row) => row.stateLgd === shape.stateLgd);
+        const chosen: CoverageUnit = unit ?? {
+          stateLgd: shape.stateLgd,
+          districtLgd: null,
+          state: stateNames.get(shape.stateLgd) ?? "",
+          district: null,
+          polygon: "STATE",
+          parentLgd: null,
+          counts: ZERO_COUNTS,
+          peer: null,
+          craftCodes: [],
+          clusters: []
+        };
+        setPlaceholder(unit ? null : chosen);
+        setSelectedKey(unitKey(chosen));
         return;
       }
-      const guests = entry.guests.map((g) => g.district).filter(Boolean);
-      setSelection({
-        stateLgd: entry.shape.stateLgd,
-        districtLgd: entry.shape.lgd,
-        note: guests.length ? `Also drawn here: ${guests.join(", ")}` : null,
-        title: ""
-      });
+      const unit = units.find((row) => row.districtLgd === lgd) ?? units.find((row) => row.parentLgd === lgd);
+      const chosen: CoverageUnit = unit ?? {
+        stateLgd: shape.stateLgd,
+        districtLgd: lgd,
+        state: stateNames.get(shape.stateLgd) ?? "",
+        district: names.get(lgd) ?? null,
+        polygon: "OWN",
+        parentLgd: null,
+        counts: ZERO_COUNTS,
+        peer: null,
+        craftCodes: [],
+        clusters: []
+      };
+      setPlaceholder(unit ? null : chosen);
+      setSelectedKey(unitKey(chosen));
     },
-    [filters.level]
+    [shapes, units, level, names, stateNames]
   );
 
-  const stateList = useMemo(
-    () =>
-      Object.entries(stateNames)
-        .map(([lgd, name]) => ({ lgd: Number(lgd), name }))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [stateNames]
-  );
-
-  const isAdmin = Boolean(data?.unmatched.sample);
-  const peerOn = query.peer && data?.peer?.status === "OK";
+  const showParent = useMemo(() => [...fills.values()].some((fill) => fill.hostsChild), [fills]);
+  const metricLabel = METRICS.find((option) => option.value === metric)?.label ?? "Workshops";
+  const peerOn = Boolean(query.peer) && data?.peer?.status === "OK";
+  const showPlanned = Boolean(data?.markers.some((marker) => marker.kind === "PLANNED")) || peerOn;
+  const placeMapper = Boolean(data?.unmatched.sample);
 
   return (
-    <div className="grid grid-cols-1 gap-4" data-testid="coverage-view">
+    <div className="grid gap-4" data-testid="coverage-view">
       <CoverageFilters
-        value={filters}
-        onChange={change}
+        query={urlQuery}
+        metric={metric}
         catalogue={data?.catalogue ?? null}
-        states={stateList}
+        states={register}
+        onChange={(next) => navigate(next)}
+        onMetric={(next) => navigate(urlQuery, next)}
         peerAvailable={peerAvailable}
       />
 
-      {error ? (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
-      ) : null}
-      {data?.truncated ? (
-        <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm text-amber-800">
-          Counts stop at 20,000 rows per kind of record.
-        </p>
-      ) : null}
       {query.peer && data?.peer?.status === "UNAVAILABLE" ? (
         <p className="rounded-md border border-amber-500 bg-amber-100 px-3 py-2 text-sm text-amber-800">
           The Field Repository can&apos;t be reached. Showing this portal only.
         </p>
       ) : null}
-      {peerOn && filters.scheme.length ? (
+      {peerOn && query.scheme.length ? (
         <p className="text-xs text-ink-500">The Field Repository has no scheme, so its figures ignore that filter.</p>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <div className="grid min-w-0 grid-cols-1 content-start gap-3">
-          <figure className="panel grid min-w-0 grid-cols-1 gap-3 p-3">
-            {shapesError ? (
-              <p className="text-sm text-ink-500">District shapes didn&apos;t load. The table below has every figure.</p>
-            ) : !shapes || !data ? (
-              <div className="aspect-[1/1.05] w-full animate-pulse rounded-md bg-surface-50" />
-            ) : (
-              <CoverageMap
-                shaded={shaded}
-                markers={data.markers}
-                metric={filters.metric}
-                focusState={filters.stateLgd}
-                selected={selection}
-                onSelectShape={openShape}
+      {error ? (
+        <EmptyState title="Coverage could not be loaded" body={error} />
+      ) : loading && !data ? (
+        <section className="panel p-6 text-sm text-ink-500">Counting the records…</section>
+      ) : !data ? null : (
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,23rem)]">
+          <section
+            aria-label="Coverage map of India"
+            data-testid="coverage-map-panel"
+            className="panel min-w-0 overflow-hidden p-3 sm:p-4 lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7.5rem)] lg:overflow-y-auto lg:overscroll-contain"
+          >
+            <div className="mb-3">
+              <CoverageLegend
+                breaks={breaks}
+                metricLabel={metricLabel}
+                showParent={showParent}
+                showPlanned={showPlanned}
               />
-            )}
-            <figcaption className="grid gap-3">
-              <CoverageLegend metric={filters.metric} breaks={breaks} parentNote={parentNote} level={filters.level} />
-              {data?.markersTruncated ? (
-                <p className="text-xs text-ink-500">Showing the first 500 markers.</p>
-              ) : null}
-              <p className="text-xs text-ink-500" data-testid="coverage-caption">
-                {COVERAGE_CAPTION}
+            </div>
+            {shapes ? (
+              <CoverageMap
+                shapes={shapes}
+                fills={fills}
+                breaks={breaks}
+                noWorkshop={noWorkshop}
+                markers={data.markers}
+                selectedLgd={selected?.districtLgd ?? null}
+                stateLgd={query.stateLgd}
+                names={names}
+                onSelectPolygon={selectPolygon}
+              />
+            ) : (
+              <p className="px-2 py-12 text-center text-sm text-ink-500">
+                {shapesError ? "District shapes could not be loaded. The table lists every figure." : "Drawing districts…"}
               </p>
-            </figcaption>
-          </figure>
-
-          <section className="panel p-4" aria-label="Coverage table">
-            {data ? <CoverageTable units={data.units} showPeer={Boolean(peerOn)} onOpen={openUnit} /> : null}
+            )}
+            <p className="mt-2 text-[11px] leading-4 text-ink-500" data-testid="coverage-caption">
+              {DEPICTION_CAPTION}
+            </p>
+            <div className="mt-1 grid gap-0.5 text-[11px] leading-4 text-ink-500">
+              {data.truncated ? <p>Showing the first 20,000 records of each kind.</p> : null}
+              {data.markersTruncated ? <p>Showing 500 workshop markers.</p> : null}
+              {data.unmatched.count ? (
+                <p>
+                  {data.unmatched.count} {data.unmatched.count === 1 ? "record has" : "records have"} a place no
+                  district matches.
+                </p>
+              ) : null}
+            </div>
           </section>
-        </div>
 
-        <div className="grid min-w-0 grid-cols-1 content-start gap-4">
-          {selection ? (
-            <CoverageUnitPanel
-              query={query}
-              stateLgd={selection.stateLgd}
-              districtLgd={selection.districtLgd ?? 0}
-              title={selection.title}
-              note={selection.note}
-              onClose={() => setSelection(null)}
-            />
-          ) : null}
-          {data ? <CoverageGapsPanel gaps={data.gaps} peerIncluded={Boolean(peerOn)} /> : null}
-          {isAdmin && data && data.unmatched.count > 0 ? (
-            <UnmatchedPlacesPanel onMapped={() => setReload((n) => n + 1)} />
-          ) : null}
+          <div
+            data-testid="coverage-side"
+            className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-4 lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7.5rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1"
+          >
+            {selected ? (
+              <CoverageUnitPanel
+                unit={selected}
+                query={query}
+                parentName={selected.polygon === "PARENT" ? names.get(selected.parentLgd ?? -1) ?? null : null}
+                onClose={() => setSelectedKey(null)}
+              />
+            ) : null}
+            <CoverageGapsPanel gaps={data.gaps} peerIncluded={peerOn} />
+            <section className="panel p-4" aria-labelledby="coverage-table-heading">
+              <h2 id="coverage-table-heading" className="mb-2 font-display text-sm font-bold text-ink-900">
+                Every place with a record
+              </h2>
+              <CoverageTable
+                units={units}
+                level={level}
+                selectedKey={selectedKey}
+                showPeer={peerOn}
+                onSelect={(unit) => {
+                  setPlaceholder(null);
+                  setSelectedKey(unitKey(unit));
+                }}
+              />
+            </section>
+            {placeMapper && data.unmatched.count > 0 ? (
+              <UnmatchedPlacesPanel onMapped={() => setReload((value) => value + 1)} />
+            ) : null}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

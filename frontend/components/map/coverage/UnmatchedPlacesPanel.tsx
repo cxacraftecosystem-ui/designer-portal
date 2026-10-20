@@ -68,7 +68,9 @@ function UnmatchedRow({
   onSaved: () => void;
 }) {
   const [stateLgd, setStateLgd] = useState(item.suggestion ? String(item.suggestion.stateLgd) : "");
-  const [districtLgd, setDistrictLgd] = useState(item.suggestion ? String(item.suggestion.districtLgd) : "");
+  const [districtLgd, setDistrictLgd] = useState(
+    item.suggestion?.districtLgd != null ? String(item.suggestion.districtLgd) : ""
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

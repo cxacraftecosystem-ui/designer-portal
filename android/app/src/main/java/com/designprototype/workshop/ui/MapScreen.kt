@@ -10,12 +10,12 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -45,17 +45,24 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.PathFillType
@@ -66,9 +73,9 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -356,6 +363,89 @@ fun MapScreen(
     focusType: String? = null,
     focusId: String? = null,
     onOpenRecord: ((recordType: String, recordId: String) -> Unit)? = null
+) {
+    // Places | Coverage, the web's two views of /map. Coverage is the ministry's reading, so the switch
+    // is drawn only when `ministry-dashboard/entitlements` says `coverageMap` for this account (asked
+    // once per session); without it the screen is the Places map exactly as before.
+    val coverageAllowed = rememberCoverageAllowed(repository)
+    var view by rememberSaveable { mutableStateOf(MAP_VIEW_PLACES) }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+        if (coverageAllowed) {
+            MapViewSwitch(view = view, onChange = { view = it })
+        }
+        if (coverageAllowed && view == MAP_VIEW_COVERAGE) {
+            CoverageScreen(
+                fetchCoverage = { query -> repository.coverage(query) },
+                fetchUnitRecords = { query, state, district, bucket, cursor ->
+                    repository.coverageUnitRecords(query, state, district, bucket, cursor)
+                },
+                errorMessage = { failure, fallback -> failure.apiErrorMessage(fallback) },
+                onError = onError,
+                onOpenRecord = onOpenRecord
+            )
+        } else {
+            PlacesMapSection(
+                repository = repository,
+                onError = onError,
+                focusType = focusType,
+                focusId = focusId,
+                onOpenRecord = onOpenRecord
+            )
+        }
+    }
+}
+
+internal const val MAP_VIEW_PLACES = "places"
+internal const val MAP_VIEW_COVERAGE = "coverage"
+
+/** The session's answer to "may this account open Coverage?". A refusal or no connection is "no". */
+private object CoverageEntitlement {
+    var answeredFor: WorkshopRepository? = null
+    var allowed: Boolean = false
+}
+
+@Composable
+private fun rememberCoverageAllowed(repository: WorkshopRepository): Boolean {
+    var allowed by remember(repository) {
+        mutableStateOf(CoverageEntitlement.answeredFor === repository && CoverageEntitlement.allowed)
+    }
+    LaunchedEffect(repository) {
+        if (CoverageEntitlement.answeredFor === repository) return@LaunchedEffect
+        val answer = runCatching { repository.entitlements().coverageMap }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(false)
+        CoverageEntitlement.answeredFor = repository
+        CoverageEntitlement.allowed = answer
+        allowed = answer
+    }
+    return allowed
+}
+
+/** Places | Coverage: the web's view switch, as a two-segment control with the same labels. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun MapViewSwitch(view: String, onChange: (String) -> Unit) {
+    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+        listOf(MAP_VIEW_PLACES to "Places", MAP_VIEW_COVERAGE to "Coverage").forEachIndexed { index, (value, label) ->
+            SegmentedButton(
+                selected = view == value,
+                onClick = { onChange(value) },
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
+                modifier = Modifier.heightIn(min = 48.dp).testTag("map-view-$value")
+            ) {
+                Text(label)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlacesMapSection(
+    repository: WorkshopRepository,
+    onError: (String) -> Unit,
+    focusType: String?,
+    focusId: String?,
+    onOpenRecord: ((recordType: String, recordId: String) -> Unit)?
 ) {
     val context = LocalContext.current
 
@@ -1073,9 +1163,10 @@ private fun stableHash(text: String): Int {
  * says, as text, with the same selection. The description names the list so a TalkBack user is told
  * where the real interface is rather than left with an unexplained image.
  *
- * NO MAP SDK, NO TILES, NO ZOOM AND NO PAN. The boundary is the shipped official depiction (see
- * [IndiaOutline.kt]); a tile source would draw its own line for Jammu & Kashmir, need a key and a
- * network, and this app is used in villages with no signal.
+ * NO MAP SDK AND NO TILES. The boundary is the shipped official depiction (see [IndiaOutline.kt]); a
+ * tile source would draw its own line for Jammu & Kashmir, need a key and a network, and this app is
+ * used in villages with no signal. Pinch, pan and double tap come from [mapZoomGestures]: the same
+ * picture under one transform, with pins kept at their on-screen size.
  *
  * THE THREE LINE WEIGHTS ARE A HIERARCHY, AND THEY ARE ALL NEUTRAL. Frontier heaviest, state medium,
  * district lightest — because at district detail this canvas carries over a thousand polylines and a
@@ -1140,7 +1231,11 @@ private fun IndiaMapCanvas(
         // Built once per BUCKET rather than per frame: a Path with ~12k points is expensive to build
         // and cheap for Skia to transform, so the geometry is baked at the bucket scale and the
         // residual is applied as a transform. See `outlineBucketScale`.
-        val bucketScale = remember(frame.contentWidth) { outlineBucketScale(frame.contentWidth) }
+        val zoom = rememberMapZoomState()
+        val reducedMotion = LocalAppPreferences.current.reducedMotion
+        val bucketScale by remember(frame.contentWidth) {
+            derivedStateOf { outlineBucketScale(frame.contentWidth * zoom.scale) }
+        }
         val outline = remember(geometry, bucketScale) {
             buildOutlinePath(geometry, bucketScale).apply {
                 // EvenOdd, because the geometry carries a hole. With the default winding rule the
@@ -1148,7 +1243,6 @@ private fun IndiaMapCanvas(
                 fillType = PathFillType.EvenOdd
             }
         }
-        val residual = frame.contentWidth / bucketScale
 
         // WHICH INTERIOR LAYERS THIS LEVEL EARNS. State borders from the state level down, because a
         // state-level pin is read inside a state; district borders only at district detail, where they
@@ -1171,6 +1265,7 @@ private fun IndiaMapCanvas(
         val slopPx = with(density) { PIN_TAP_SLOP.toPx() }
         val hairlinePx = with(density) { 1.dp.toPx() }
 
+        Box {
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1184,18 +1279,24 @@ private fun IndiaMapCanvas(
                         "from, with ${points.size} " + (if (points.size == 1) "point" else "points") +
                         ". All places are listed below."
                 }
-                .pointerInput(pins, slopPx) {
-                    detectTapGestures { tap ->
-                        // Nearest hit wins, and small pins are tested too — a 1-record dot beside a
-                        // 300-record disc must still be reachable.
-                        pins
-                            .filter { hypot(it.x - tap.x, it.y - tap.y) <= it.radius + slopPx }
-                            .minByOrNull { hypot(it.x - tap.x, it.y - tap.y) }
-                            ?.let { onSelect(it.point.key) }
-                    }
+                .testTag("places-map")
+                .mapZoomGestures(zoom, Size(frame.widthPx, frame.heightPx), reducedMotion) { tap ->
+                    // `tap` is already back in the resting frame. Nearest hit wins, and small pins are
+                    // tested too — a 1-record dot beside a 300-record disc must still be reachable. A
+                    // pin keeps its on-screen size, so its reach shrinks in frame units as the map zooms.
+                    pins
+                        .filter { hypot(it.x - tap.x, it.y - tap.y) * zoom.scale <= it.radius + slopPx }
+                        .minByOrNull { hypot(it.x - tap.x, it.y - tap.y) }
+                        ?.let { onSelect(it.point.key) }
                 }
         ) {
-            translate(left = frame.offsetX, top = frame.offsetY) {
+            val zoomScale = zoom.scale
+            val residual = frame.contentWidth * zoomScale / bucketScale
+            val screenPins = pins.map { it.through(zoom) }
+            translate(
+                left = zoom.offset.x + frame.offsetX * zoomScale,
+                top = zoom.offset.y + frame.offsetY * zoomScale
+            ) {
                 scale(scaleX = residual, scaleY = residual, pivot = Offset.Zero) {
                     drawPath(outline, color = land, style = Fill)
                     // The stroke width is divided back out of the residual scale so it stays a
@@ -1241,7 +1342,7 @@ private fun IndiaMapCanvas(
 
             // Uncertainty first, under everything: a halo is context for its pin, not a mark of its
             // own.
-            pins.filter { it.uncertainty > 3f }.forEach { pin ->
+            screenPins.filter { it.uncertainty > 3f }.forEach { pin ->
                 drawCircle(
                     color = haloFill,
                     radius = pin.uncertainty,
@@ -1259,7 +1360,7 @@ private fun IndiaMapCanvas(
             }
 
             // Leader lines tie a displaced pin back to where the place really is.
-            pins.filter { it.displaced }.forEach { pin ->
+            screenPins.filter { it.displaced }.forEach { pin ->
                 drawLine(
                     color = leader,
                     start = Offset(pin.anchorX, pin.anchorY),
@@ -1273,7 +1374,7 @@ private fun IndiaMapCanvas(
                 )
             }
 
-            pins.forEach { pin ->
+            screenPins.forEach { pin ->
                 drawPin(
                     pin = pin,
                     primary = primary,
@@ -1285,7 +1386,7 @@ private fun IndiaMapCanvas(
             }
 
             // The selected pin's number and name, over every mark. See [drawPinLabel].
-            pins.firstOrNull { it.point.key == selectedKey }?.let { pin ->
+            screenPins.firstOrNull { it.point.key == selectedKey }?.let { pin ->
                 val ordinal = points.indexOfFirst { it.key == pin.point.key } + 1
                 if (ordinal > 0) {
                     drawPinLabel(
@@ -1299,9 +1400,32 @@ private fun IndiaMapCanvas(
                 }
             }
 
-            drawScaleBar(frame = frame, measurer = measurer, density = density, ink = scaleInk)
+            drawScaleBar(frame = frame, measurer = measurer, density = density, ink = scaleInk, zoomScale = zoomScale)
+        }
+        MapZoomResetButton(zoom, Modifier.align(Alignment.TopEnd).padding(4.dp))
         }
     }
+}
+
+/**
+ * The pin as drawn under the zoom: its mark and its true point moved through the transform, its
+ * radius unchanged (a pin is a mark, not an area) and its uncertainty halo scaled (a halo IS an area).
+ */
+private fun PlacedPin.through(zoom: MapZoomState): PlacedPin {
+    if (!zoom.isZoomed && zoom.offset == Offset.Zero) return this
+    val at = zoom.toScreen(Offset(x, y))
+    val anchor = zoom.toScreen(Offset(anchorX, anchorY))
+    return PlacedPin(
+        point = point,
+        x = at.x,
+        y = at.y,
+        anchorX = anchor.x,
+        anchorY = anchor.y,
+        radius = radius,
+        displaced = displaced,
+        uncertainty = uncertainty * zoom.scale,
+        count = count
+    )
 }
 
 /**
@@ -1418,11 +1542,15 @@ private fun DrawScope.drawScaleBar(
     frame: MapFrame,
     measurer: TextMeasurer,
     density: Density,
-    ink: Color
+    ink: Color,
+    zoomScale: Float = 1f
 ) {
-    val kilometres = 500
-    val length = kilometres * frame.pxPerKilometre
-    if (length <= 0f || length > frame.contentWidth * 0.6f) return
+    // The longest round distance that still fits: 500 km at rest, shorter as the map zooms in.
+    val perKilometre = frame.pxPerKilometre * zoomScale
+    val kilometres = listOf(500, 200, 100, 50, 20, 10).firstOrNull { it * perKilometre <= frame.contentWidth * 0.6f }
+        ?: return
+    val length = kilometres * perKilometre
+    if (length <= 0f) return
 
     val hairline = with(density) { 1.dp.toPx() }
     val x = frame.offsetX + with(density) { 4.dp.toPx() }

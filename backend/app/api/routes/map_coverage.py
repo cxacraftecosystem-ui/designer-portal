@@ -72,6 +72,19 @@ def _filters(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from None
 
 
+#: What the choropleth colours by, by the name both portals use. ``records`` was this portal's name
+#: for ``all`` and is still accepted, so a saved link keeps working; the answer always says ``all``.
+COVERAGE_METRICS = ("workshops", "artisans", "all")
+COVERAGE_METRIC_ALIASES = {"records": "all"}
+
+
+def normalise_metric(value: str | None) -> str:
+    """The metric a request asked for, in the shared vocabulary. Anything unknown is ``workshops``."""
+    name = (value or "").strip().lower()
+    name = COVERAGE_METRIC_ALIASES.get(name, name)
+    return name if name in COVERAGE_METRICS else "workshops"
+
+
 @router.get("/coverage")
 async def map_coverage(
     current_user: Any = Depends(require_ministry_dashboard_reader),
@@ -81,11 +94,15 @@ async def map_coverage(
     fy: list[str] | None = Query(None),
     stateLgd: int | None = None,
     peer: str | None = None,
+    metric: str | None = None,
 ) -> dict[str, Any]:
     filters = _filters(level, craftCode, scheme, fy, stateLgd, peer)
-    return await coverage.coverage(
+    answer = await coverage.coverage(
         current_user, filters, settings=get_settings(), is_admin=can_map_places(current_user)
     )
+    if metric is not None and isinstance(answer.get("filters"), dict):
+        answer["filters"]["metric"] = normalise_metric(metric)
+    return answer
 
 
 @router.get("/coverage/units/{state_lgd}/{district_lgd}/records")
