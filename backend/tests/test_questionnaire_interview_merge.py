@@ -347,7 +347,7 @@ async def test_merge_moves_responses_and_media_then_removes_the_source(env):
     source_id, target_id = env["cleanSource"].id, env["cleanTarget"].id
     response = env["client"].post(
         f"/api/questionnaire/interviews/{source_id}/merge-into/{target_id}",
-        headers=_auth(env, "author"),
+        headers=_auth(env, "admin"),
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -418,7 +418,7 @@ async def test_conflicting_answers_are_refused_and_every_question_is_named(env):
     source_id, target_id = env["clashSource"].id, env["clashTarget"].id
     response = env["client"].post(
         f"/api/questionnaire/interviews/{source_id}/merge-into/{target_id}",
-        headers=_auth(env, "author"),
+        headers=_auth(env, "admin"),
     )
     assert response.status_code == 409, response.text
     detail = response.json()["detail"]
@@ -453,7 +453,7 @@ async def test_merge_across_two_workshops_is_refused(env):
     response = env["client"].post(
         f"/api/questionnaire/interviews/{env['scopeSource'].id}"
         f"/merge-into/{env['scopeTarget'].id}",
-        headers=_auth(env, "author"),
+        headers=_auth(env, "admin"),
     )
     assert response.status_code == 422, response.text
     detail = response.json()["detail"]
@@ -509,7 +509,7 @@ async def test_an_interview_cannot_be_merged_into_itself(env):
     response = env["client"].post(
         f"/api/questionnaire/interviews/{env['namedHolder'].id}"
         f"/merge-into/{env['namedHolder'].id}",
-        headers=_auth(env, "author"),
+        headers=_auth(env, "admin"),
     )
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == "merge_self"

@@ -269,7 +269,9 @@ def test_a_token_containing_the_word_admin_still_passes_no_admin_gate(tier: str)
     )
     assert deps.is_admin(user) is False, message
     assert deps.is_master_admin(user) is False, message
-    assert deps.can_create_design_workshops(user) is False, message
+    # The Ministry Admin STARTS a design workshop since 2026-10-20 (content admins add every record
+    # type), and that is `DESIGN_WORKSHOP_CREATOR_ROLES` naming it, not `is_admin` widening.
+    assert deps.can_create_design_workshops(user) is (tier == "MINISTRY_ADMIN"), message
     assert deps.can_export_design_workshop_data(user) is False, message
     assert deps.can_manage_designer_roster(user) is False, message
     assert deps.can_manage_access_roster(user) is False, message
@@ -333,7 +335,7 @@ def test_no_rank_buys_design_workshop_authority_because_every_one_of_those_gates
     user = _user(tier)
     assert deps.can_run_design_workshops(user) is True
     assert tier in deps.DESIGN_WORKSHOP_ROLES
-    assert tier not in deps.DESIGN_WORKSHOP_CREATOR_ROLES
+    assert (tier in deps.DESIGN_WORKSHOP_CREATOR_ROLES) is (tier == "MINISTRY_ADMIN")
     assert tier not in design_workshop_inspectors.INSPECTION_ROLES
     # The two tiers between them and a designer, so the assertions above cannot be read as a floor.
     for below in ("PROFESSOR", "INSPECTOR"):
@@ -441,22 +443,26 @@ def test_each_tier_mints_at_or_below_itself_and_is_refused_everything_above(tier
 
 
 @pytest.mark.parametrize("tier", DIRECTORATE)
-def test_deleting_a_record_and_acting_on_somebody_elses_stay_admin_or_owner(tier: str) -> None:
-    """The widening arrives through the REVIEW route and nowhere else.
+def test_deleting_a_record_and_acting_on_somebody_elses_stay_content_admin_or_owner(tier: str) -> None:
+    """Deleting is the content admins' (``deps.CONTENT_ADMIN_ROLES``, owner's ruling 2026-10-20).
 
-    ``assert_can_delete`` is ``is_admin``; ``assert_owner_or_admin`` is ``is_admin`` OR ownership.
-    Neither composes with rank, so no directorate tier reaches either on a record it does not own —
-    which is the line between "corrects the archive" and "removes things from it".
+    The MINISTRY_ADMIN is one, so it deletes and acts on any record. The two director tiers are not:
+    set membership, never rank, so neither reaches either gate on a record it does not own.
     """
     user = _user(tier)
     somebody_elses: Any = SimpleNamespace(createdById="u-researcher", id="r1")
+
+    if tier == "MINISTRY_ADMIN":
+        deps.assert_can_delete(user)
+        deps.assert_owner_or_admin(somebody_elses, user)
+        return
 
     with pytest.raises(HTTPException) as delete_refusal:
         deps.assert_can_delete(user)
     assert delete_refusal.value.status_code == 403
 
     with pytest.raises(HTTPException) as owner_refusal:
-        deps.assert_owner_or_admin(user, somebody_elses)
+        deps.assert_owner_or_admin(somebody_elses, user)
     assert owner_refusal.value.status_code == 403
 
 

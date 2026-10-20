@@ -88,6 +88,7 @@ import { namedDesignerTeam } from "@/lib/designWorkshops";
 import { CalendarField } from "@/components/ui/CalendarField";
 import {
   confirmSanctionImport,
+  deleteSanctionOrder,
   downloadSanctionProForma,
   formatLinkExpiry,
   formatSanctionAmount,
@@ -115,6 +116,8 @@ import { SanctionImportReview } from "./SanctionImportReview";
 import { UploadSanctionDialog } from "./UploadSanctionDialog";
 import { PlannedWorkshopPicker } from "./PlannedWorkshopPicker";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { useAdminView } from "@/components/AdminViewProvider";
+import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 
 const PAGE_SIZE = 25;
 
@@ -213,6 +216,23 @@ export default function SanctionOrdersPage() {
    * Update — this screen has never edited an order, and a view must not start to.
    */
   const [viewing, setViewing] = useState<SanctionOrder | null>(null);
+  // Deleting an order is a content admin's act, in admin view (owner's ruling, 2026-10-20).
+  const { adminMode } = useAdminView();
+  const confirm = useConfirm();
+
+  async function deleteOrder(order: SanctionOrder) {
+    setViewing(null);
+    const ok = await confirm(deleteConfirm(`Delete sanction order ${order.sanctionOrderNo}?`, undefined, "This cannot be undone."));
+    if (!ok) return;
+    setError(null);
+    try {
+      await deleteSanctionOrder(order.id);
+      void refresh();
+      void refreshAwaitingSanctionCount();
+    } catch (err) {
+      setError(problemOf(err, "Unable to delete the sanction order"));
+    }
+  }
   const [linkNotice, setLinkNotice] = useState<string | null>(null);
   /** Whether this deployment sends e-mail — the sign-in links and reminders go by e-mail when it does. */
   const [mailOn, setMailOn] = useState(false);
@@ -1064,6 +1084,7 @@ export default function SanctionOrdersPage() {
       <RecordDetailsDialog
         open={viewing !== null}
         onClose={() => setViewing(null)}
+        onDelete={viewing && adminMode ? () => void deleteOrder(viewing) : undefined}
         title={viewing ? `Sanction order ${viewing.sanctionOrderNo}` : "Sanction order"}
         details={
           viewing

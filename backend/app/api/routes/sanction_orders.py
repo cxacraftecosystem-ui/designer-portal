@@ -67,7 +67,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from fastapi.responses import Response
 
 from app.core.db import db
-from app.core.deps import get_current_user
+from app.core.deps import assert_can_delete, get_current_user
 from app.schemas.sanction_orders import (
     SanctionImportConfirm,
     SanctionOrderCreate,
@@ -239,6 +239,30 @@ async def update_sanction_order(
         include=SANCTION_INCLUDE,
     )
     return await sanction_orders.sanction_payload(updated)
+
+
+@router.delete("/{sanction_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sanction_order(
+    sanction_id: str,
+    officer: Any = Depends(require_sanction_recorder),
+) -> Response:
+    """Delete an order. Content admins only (``deps.CONTENT_ADMIN_ROLES``, 2026-10-20).
+
+    409 while the workshop it authorised is live: an order is the authority a workshop runs under,
+    so the workshop is deleted first and the order after it.
+    """
+    assert_can_delete(officer)
+    row = await _load(sanction_id)
+    linked = await db.designworkshop.count(where={"id": row.designWorkshopId, "deletedAt": None})
+    if linked:
+        noun = "workshop" if linked == 1 else "workshops"
+        pronoun = "it" if linked == 1 else "them"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Linked to {linked} {noun}. Unlink {pronoun} first.",
+        )
+    await db.sanctionorder.delete(where={"id": row.id})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{sanction_id}/credential-link")

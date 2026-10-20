@@ -54,6 +54,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -233,6 +234,17 @@ object FieldPermissions {
 
     /** `is_master_admin`. */
     fun isMasterAdmin(user: UserDto): Boolean = user.role == "MASTER_ADMIN"
+
+    /**
+     * `deps.CONTENT_ADMIN_ROLES` (owner's ruling, 2026-10-20): ADMIN, MASTER_ADMIN and MINISTRY_ADMIN
+     * add, edit and DELETE every record, media file and other managed content type. Every other role
+     * adds and edits and never deletes. SET MEMBERSHIP, never rank >= 50 — and not [isAdmin], which
+     * keeps its two members for accounts and governance. The web's `CONTENT_ADMIN_ROLES` and the
+     * documentation-portal's twin carry the same three; `test_role_ladder_parity.py` holds them.
+     */
+    val CONTENT_ADMIN_ROLES: Set<String> = setOf("MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
+
+    fun isContentAdmin(user: UserDto?): Boolean = user?.role?.let { it in CONTENT_ADMIN_ROLES } == true
 
     /**
      * `require_record_creator` — OPENING an artisan, product, process, tool or interview. Researcher
@@ -1044,8 +1056,8 @@ fun AppNavigationDrawerContent(
         if (isAdmin || FieldPermissions.isMasterAdmin(user)) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         }
-        // Offered to admins only — and it can merely hide admin chrome, never unlock it.
-        if (isAdmin) {
+        // Offered to the content admins only — and it can merely hide admin chrome, never unlock it.
+        if (FieldPermissions.isContentAdmin(user)) {
             // A real switch (owner's rule, 2026-10-17): its position and TalkBack's "On"/"Off" state
             // say which, so the label never carries an "ON"/"OFF" word. The web's island draws the
             // same `ToggleSwitch` labelled "Admin view".
@@ -1126,3 +1138,10 @@ private fun NavRow(
         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
     )
 }
+
+/**
+ * True only for a content admin ([FieldPermissions.isContentAdmin]) with admin view on — the handset's
+ * `adminMode`. Every remove/delete control reads it, so a role outside the set is never offered a
+ * delete the server refuses (owner's ruling, 2026-10-20).
+ */
+val LocalContentAdminChrome = staticCompositionLocalOf { false }

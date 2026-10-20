@@ -477,11 +477,9 @@ async def test_a_soft_deleted_workshop_is_gone_from_the_inspection_surface(world
 
 
 async def test_an_inspector_cannot_delete_the_workshop_they_inspect(world, client):
-    """``DELETE /{id}`` loads BEFORE it gates, so only a database can refuse it.
-
-    404 and not 403: the loader is what turns them away, and it turns them away by answering that
-    the workshop is not there. An inspector destroying the record they were asked to examine is the
-    single worst thing this scope could be made to authorise.
+    """``DELETE /{id}`` gates on the role first since 2026-10-20 (content admins only), so an
+    inspector is refused with a 403 that names no workshop. An inspector destroying the record they
+    were asked to examine is the single worst thing this scope could be made to authorise.
     """
     workshop_id = _make_workshop(world, "Ikat, undeletable by its inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
@@ -489,9 +487,9 @@ async def test_an_inspector_cannot_delete_the_workshop_they_inspect(world, clien
     response = client.delete(
         f"/api/design-workshops/{workshop_id}", headers=_headers(world, "inspector")
     )
-    assert response.status_code == 404, response.text
+    assert response.status_code == 403, response.text
 
-    # AND IT IS STILL THERE. A 404 that had actually deleted the row would pass the line above.
+    # AND IT IS STILL THERE. A refusal that had actually deleted the row would pass the line above.
     assert (
         client.get(
             f"/api/design-workshop-inspections/{workshop_id}", headers=_headers(world, "inspector")

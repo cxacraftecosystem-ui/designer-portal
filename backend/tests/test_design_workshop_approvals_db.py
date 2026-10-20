@@ -380,6 +380,13 @@ def test_an_approved_report_is_frozen_to_its_designers(world):
         f"/api/design-workshops/{wid}/stages/WORKSHOP_SETUP", json={"entries": []}, headers=_as(world, "designer")
     )
     assert save.status_code == 403
+    # Frozen to the content admins too (2026-10-20): they delete everything else, never this.
+    for slug in ("ministry2", "admin"):
+        renamed = client.patch(f"/api/design-workshops/{wid}", json={"title": "Renamed"}, headers=_as(world, slug))
+        assert renamed.status_code == 403, (slug, renamed.text)
+        assert "has been approved" in renamed.json()["detail"]
+        deleted = client.delete(f"/api/design-workshops/{wid}", headers=_as(world, slug))
+        assert deleted.status_code == 403, (slug, deleted.text)
 
 
 def test_a_legacy_submitted_report_has_nothing_to_withdraw(world):

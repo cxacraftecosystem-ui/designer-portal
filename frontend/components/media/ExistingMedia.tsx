@@ -23,6 +23,7 @@ import { formatDateTime } from "@/lib/format";
 import { downloadMediaUrl } from "@/lib/localMediaDownload";
 import type { MediaFile } from "@/lib/types";
 import { useConfirm } from "@/components/dialogs";
+import { useAdminView } from "@/components/AdminViewProvider";
 
 // Transcript statuses that mean a job is still running (shared vocabulary with the backend).
 const IN_FLIGHT_TRANSCRIPT = new Set(["QUEUED", "PROCESSING", "PENDING", "RUNNING"]);
@@ -117,6 +118,10 @@ export function ExistingMedia({
   readOnly?: boolean;
 }) {
   const [items, setItems] = useState<MediaFile[] | null>(null);
+  // Removing a file is a delete, and deletes are the content admins' alone, in admin view (owner's
+  // ruling, 2026-10-20). Everybody else attaches and edits; the ✕ is not drawn for them.
+  const { adminMode } = useAdminView();
+  const mayRemove = !readOnly && adminMode;
   /**
    * How many files the SERVER says are attached, which is not the same number as `items.length` and
    * was being printed as if it were. The panel asked for one page of 100 — the endpoint's maximum —
@@ -345,7 +350,7 @@ export function ExistingMedia({
             record carried more than one page, which is precisely when the sentence mattered. */}
         <p className="mt-1 text-sm text-ink-muted">
           {total} file{total === 1 ? "" : "s"} already attached. Audio transcripts appear once processing finishes.
-          {readOnly ? " Open a file to preview it, or download it." : " Use the ✕ on a file to remove it."}
+          {mayRemove ? " Use the ✕ on a file to remove it." : " Open a file to preview it, or download it."}
         </p>
         {hidden > 0 ? (
           <p className="mt-1 text-sm text-ink-muted">
@@ -460,7 +465,7 @@ export function ExistingMedia({
               <MediaPreviewTile
                 item={preview}
                 onOpen={() => setActive(preview)}
-                onRemove={readOnly || removingId === media.id ? undefined : () => removeMedia(media)}
+                onRemove={!mayRemove || removingId === media.id ? undefined : () => removeMedia(media)}
                 removeLabel="Remove"
                 removeHeld={writesHeld(hold)}
                 removeDescribedBy={typeof hold === "string" ? heldNoticeId : undefined}

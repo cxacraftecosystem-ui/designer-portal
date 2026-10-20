@@ -48,7 +48,7 @@ from prisma.errors import UniqueViolationError
 from app.services.standard_values import compose_phone, language_name
 from app.services.text_format import by_count, count_noun
 from app.core.db import db
-from app.core.deps import can_run_design_workshops, has_rank, is_admin
+from app.core.deps import can_run_design_workshops, has_rank, is_content_admin
 
 # THE PRE-SUBMISSION LOOP'S PURE HALF: the status graph, and the one function that builds the
 # header write which enters PRE_SUBMISSION. It is in `app/schemas` and not in `app/services`
@@ -357,7 +357,9 @@ async def load_workshop_or_404(
     record = await db.designworkshop.find_unique(where={"id": workshop_id})
     if record is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-    admin = is_admin(user)
+    # Content admins (``deps.CONTENT_ADMIN_ROLES``) reach every workshop without a viewer grant
+    # (owner's ruling, 2026-10-20); the post-holder and officer refusals below still bind them.
+    admin = is_content_admin(user)
     if (
         record.createdById != user.id
         and not admin

@@ -10,10 +10,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.db import db
-from app.core.deps import get_current_user, get_value, is_admin
+from app.core.deps import assert_can_delete, get_current_user, get_value, is_admin, is_content_admin
 from app.schemas.access import (
     TIERS,
     CommentIn,
+    CommentUpdate,
     DataAccessDecisionIn,
     DataAccessGrantIn,
     DataAccessRequestIn,
@@ -478,15 +479,31 @@ COMMENT_LABELS: dict[str, str] = {
 }
 
 
+@router.patch("/comments/{comment_id}")
+async def update_comment(
+    comment_id: str, payload: CommentUpdate, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """The author edits their own comment. Nobody else rewrites what somebody said."""
+    comment = await db.entrycomment.find_unique(where={"id": comment_id})
+    if comment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
+    if comment.authorId != get_value(current_user, "id"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="You can only edit your own comments"
+        )
+    updated = await db.entrycomment.update(
+        where={"id": comment_id}, data={"body": payload.body}, include={"author": True}
+    )
+    return public_encode(updated)
+
+
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_comment(comment_id: str, current_user: Any = Depends(get_current_user)) -> None:
+    """Content admins only (``deps.CONTENT_ADMIN_ROLES``, 2026-10-20). The author edits instead."""
+    assert_can_delete(current_user)
     comment = await db.entrycomment.find_unique(where={"id": comment_id})
     if comment is None:
         return
-    if comment.authorId != get_value(current_user, "id") and not is_admin(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="You can only delete your own comments"
-        )
     await db.entrycomment.delete(where={"id": comment_id})
 
 
@@ -510,7 +527,7 @@ async def list_revisions(
     append-only table is not a retraction.
     """
     owner_id = await _resolve_record_owner(recordType, recordId)
-    if not is_admin(current_user) and owner_id != get_value(current_user, "id"):
+    if not is_content_admin(current_user) and owner_id != get_value(current_user, "id"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the owner or an admin can view edit history",

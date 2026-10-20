@@ -66,7 +66,7 @@ from fastapi import (
 from fastapi.responses import Response
 
 from app.core.db import db
-from app.core.deps import get_current_user
+from app.core.deps import assert_can_delete, get_current_user
 from app.schemas.annual_plan import (
     AnnualPlanEntryUpdate,
     AnnualPlanPromoteRequest,
@@ -748,6 +748,23 @@ async def promote_annual_plan_entry(
         template_id=payload.templateId,
     )
     return {"entry": entry_payload(await _entry_or_404(entry_id)), "workshop": workshop_summary(record)}
+
+
+@router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_annual_plan_entry(
+    entry_id: str, current_user: Any = Depends(require_annual_plan_manager)
+) -> Response:
+    """Delete one plan row. Content admins only (``deps.CONTENT_ADMIN_ROLES``, 2026-10-20).
+
+    409 once promoted: the row is then the plan history of a live workshop. Withdrawing stays the
+    everyday way to take a row out of the standing plan.
+    """
+    assert_can_delete(current_user)
+    entry = await _entry_or_404(entry_id)
+    if entry.promotedAt is not None or entry.designWorkshopId:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Promoted to a workshop.")
+    await db.annualplanentry.delete(where={"id": entry.id})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{entry_id}/withdraw")

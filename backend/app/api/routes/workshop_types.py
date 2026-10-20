@@ -10,15 +10,15 @@ record they save.
 ── THE PERMISSION SPLIT, AND IT IS THE ONE `crafts.py` USES ───────────────────────────────────────
 
 READ is ``get_current_user``: every signed-in account needs this list, because every record form
-draws it. WRITE is ``require_admin`` — MASTER_ADMIN and ADMIN, the same helper and the same set as
-``/admin`` and every other admin-only surface — because this is a shared vocabulary and renaming a
+draws it. WRITE is ``require_content_admin`` — ``deps.CONTENT_ADMIN_ROLES``, the set that manages
+every content type since 2026-10-20 — because this is a shared vocabulary and renaming a
 type renames it under everybody. That asymmetry is not an oversight in either direction: a list
 nobody could read would be a dropdown with no members, and a list anybody could write would let a
 researcher rename the category another researcher's fieldwork is filed under.
 
 The gate is HERE, on the route, and not only on the admin screen. A designer who types
 ``/admin/workshop-types`` meets ``AppShell``'s lock panel; a designer who types
-``POST /api/workshop-types`` meets a 403 from ``require_admin``. The second one is the boundary; the
+``POST /api/workshop-types`` meets a 403 from ``require_content_admin``. The second one is the boundary; the
 first is a courtesy.
 
 ── WHY DELETING IS REFUSED RATHER THAN CASCADED, AND WHAT IS OFFERED INSTEAD ──────────────────────
@@ -62,7 +62,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from prisma.errors import UniqueViolationError
 
 from app.core.db import db
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user, require_content_admin
 from app.schemas.workshop_types import (
     WorkshopTypeOptionCreate,
     WorkshopTypeOptionReorder,
@@ -306,7 +306,7 @@ async def list_workshop_types(
 
     SIGNED-IN AND OTHERWISE UNGATED for the same reason ``/reference`` is: what a form may offer is
     not per-user and is not sensitive, and a list a researcher could not read is a dropdown with no
-    members. Writing is ``require_admin``; see the routes below.
+    members. Writing is ``require_content_admin``; see the routes below.
     """
     where = {} if includeInactive else {"isActive": True}
     rows = await db.workshoptypeoption.find_many(where=where, order=_ORDER)
@@ -315,7 +315,7 @@ async def list_workshop_types(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_workshop_type(
-    payload: WorkshopTypeOptionCreate, _: Any = Depends(require_admin)
+    payload: WorkshopTypeOptionCreate, _: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
     """Mint a type. The one request that decides a key.
 
@@ -340,7 +340,7 @@ async def create_workshop_type(
 
 @router.patch("/reorder")
 async def reorder_workshop_types(
-    payload: WorkshopTypeOptionReorder, _: Any = Depends(require_admin)
+    payload: WorkshopTypeOptionReorder, _: Any = Depends(require_content_admin)
 ) -> list[dict[str, Any]]:
     """Set the order of the list in ONE request.
 
@@ -385,7 +385,7 @@ async def reorder_workshop_types(
 
 @router.patch("/{type_id}")
 async def update_workshop_type(
-    type_id: str, payload: WorkshopTypeOptionUpdate, _: Any = Depends(require_admin)
+    type_id: str, payload: WorkshopTypeOptionUpdate, _: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
     """Correct a type: its label, its position, whether it is offered, where it routes.
 
@@ -411,7 +411,7 @@ async def update_workshop_type(
 
 
 @router.delete("/{type_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_workshop_type(type_id: str, _: Any = Depends(require_admin)) -> None:
+async def delete_workshop_type(type_id: str, _: Any = Depends(require_content_admin)) -> None:
     """Delete a type that nothing is filed under. Refuse, with a count, when something is.
 
     See this module's header for the argument. The short version: there is no foreign key onto this

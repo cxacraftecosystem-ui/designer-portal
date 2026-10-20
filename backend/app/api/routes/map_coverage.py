@@ -29,16 +29,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.routes.ministry_dashboard import require_ministry_dashboard_reader
 from app.core.config import get_settings
 from app.core.db import db
-from app.core.deps import get_current_user, role_value
+from app.core.deps import CONTENT_ADMIN_ROLES, get_current_user, role_value
 from app.services import coverage, lgd
 from app.services.access import record_revision
 
 router = APIRouter(prefix="/map", tags=["map"])
 
-#: The two posts that may map a place spelling to an LGD code.
-PLACE_MAPPING_ROLES = frozenset({"MASTER_ADMIN", "MINISTRY_ADMIN"})
+#: Who may map a place spelling to an LGD code: the content admins (``deps.CONTENT_ADMIN_ROLES``,
+#: 2026-10-20). ADMIN joined the master admin and the Ministry Admin that day.
+PLACE_MAPPING_ROLES = CONTENT_ADMIN_ROLES
 
-PLACE_MAPPING_REFUSAL = "Only the master admin or the Ministry Admin can map place names."
+PLACE_MAPPING_REFUSAL = "Only an admin can map place names."
 
 
 def can_map_places(user: Any) -> bool:

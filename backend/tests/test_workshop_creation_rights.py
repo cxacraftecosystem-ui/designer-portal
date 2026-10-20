@@ -72,9 +72,9 @@ REPO = Path(__file__).resolve().parents[2]
 #: ADMIN 50, MASTER_ADMIN 60}`` — "ministry and admin tiers", in the ladder's own words.
 WORKSHOP_CREATE_FLOOR = 48
 
-#: Who may open a DESIGN & prototype workshop. A SET and not a floor, and strictly narrower than the
-#: one above it: see this module's header for the two places that decision is argued.
-DESIGN_WORKSHOP_CREATORS = ("ADMIN", "MASTER_ADMIN")
+#: Who may open a DESIGN & prototype workshop. A SET and not a floor. Since 2026-10-20 it is the
+#: content admins (owner's ruling), the same three tiers as the floor above.
+DESIGN_WORKSHOP_CREATORS = ("MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
 
 #: A body that VALIDATES, which matters only for the roles that get through. A gate raises during
 #: dependency resolution, before the body is looked at, so a refused role needs nothing here — but an
@@ -313,28 +313,14 @@ def test_an_admin_opens_a_design_workshop(api, role: str):
     assert outcome.reached, outcome
 
 
-def test_a_ministry_admin_is_refused_the_design_workshop_door_and_that_is_the_decision(api):
-    """**THE ONE PLACE THE TWO TABLES DISAGREE. NOT A BUG. DO NOT "FIX" IT HERE.**
-
-    ``POST /workshops`` admits a MINISTRY_ADMIN and ``POST /design-workshops`` refuses one, and the
-    obvious tidy-up — adding MINISTRY_ADMIN to ``DESIGN_WORKSHOP_CREATOR_ROLES`` so the two agree —
-    has been considered and rejected twice in this tree:
-
-    * ``services/sanction_orders.can_record_sanction_orders``: "``DESIGN_WORKSHOP_CREATOR_ROLES`` is
-      ``{ADMIN, MASTER_ADMIN}`` and stays that way … widening it to the ministry tiers was considered
-      and rejected: it would hand three new tiers the untracked create."
-    * ``POST /annual-plan/{entry_id}/promote``: "a MINISTRY_ADMIN is not in
-      ``DESIGN_WORKSHOP_CREATOR_ROLES``, and widening that set to fit would hand every ministry admin
-      the ordinary create button as well. Two doors, two gates, one creation path."
-
-    A ministry admin DOES open design & prototype workshops — through that promote route, with a
-    published annual-plan row behind each one. What they do not get is the ad-hoc create with no
-    instrument behind it. ``tests/test_directorate_tiers.py`` pins the set itself; this asserts the
-    consequence at the door, so a reader who arrives from the ``Workshop`` table's rule and expects
-    symmetry finds the answer as a test rather than as a surprise.
+def test_a_ministry_admin_opens_a_design_workshop_since_the_content_admin_ruling(api):
+    """The two tables AGREE since 2026-10-20: ``POST /workshops`` and ``POST /design-workshops`` both
+    admit a MINISTRY_ADMIN, because the owner ruled that content admins (``deps.CONTENT_ADMIN_ROLES``)
+    add every record type. The promote route and the sanction register remain the tracked doors; the
+    two director tiers still have only those.
     """
     outcome = _create_a_design_workshop(api, "MINISTRY_ADMIN")
-    assert outcome.status_code == 403, outcome
+    assert outcome.reached, outcome
 
 
 # --------------------------------------------------------------------------------------

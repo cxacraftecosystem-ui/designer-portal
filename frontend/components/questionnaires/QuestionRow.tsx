@@ -38,6 +38,7 @@ export function QuestionRow({
   question,
   ordinal,
   mayEdit,
+  mayRemove = false,
   onChanged,
   onError
 }: {
@@ -45,6 +46,8 @@ export function QuestionRow({
   question: QFormQuestion;
   ordinal: number;
   mayEdit: boolean;
+  /** Delete or retire: content admins in admin view only (owner's ruling, 2026-10-20). */
+  mayRemove?: boolean;
   /** The whole form as the server returned it, plus the sentence to show when something non-obvious happened. */
   onChanged: (form: QForm, message?: string) => void;
   onError: (message: string) => void;
@@ -212,16 +215,18 @@ export function QuestionRow({
                 does to the URL. Offering "Delete" on a question the server will retire instead is
                 the single most misleading control this screen could carry.
               */}
-              <button type="button" data-danger className={rowAction("danger")} onClick={remove} disabled={busy}>
-                {question.hasAnswers ? (
-                  <>
-                    <Lock className="h-3 w-3" aria-hidden />
-                    Retire
-                  </>
-                ) : (
-                  "Delete"
-                )}
-              </button>
+              {mayRemove ? (
+                <button type="button" data-danger className={rowAction("danger")} onClick={remove} disabled={busy}>
+                  {question.hasAnswers ? (
+                    <>
+                      <Lock className="h-3 w-3" aria-hidden />
+                      Retire
+                    </>
+                  ) : (
+                    "Delete"
+                  )}
+                </button>
+              ) : null}
             </ActionGroup>
           ) : null}
         </div>

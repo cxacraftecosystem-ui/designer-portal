@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 
+import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { deleteConfirm, useConfirm } from "@/components/dialogs";
 import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
-import { isAdmin } from "@/lib/permissions";
+import { ActionGroup } from "@/components/ui/ActionGroup";
 import type { EntryComment, RecordRevision } from "@/lib/types";
 
 /**
@@ -23,7 +24,13 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
   const [busy, setBusy] = useState(false);
   /** Which comment is being withdrawn, so only its own control goes quiet. */
   const [removingId, setRemovingId] = useState<string | null>(null);
+  /** The comment being edited by its author, and the draft in the box. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
   const { user } = useAuth();
+  // Deleting is the content admins' alone, in admin view (owner's ruling, 2026-10-20).
+  const { adminMode } = useAdminView();
   const confirm = useConfirm();
 
   const load = useCallback(async () => {
@@ -69,9 +76,9 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
    * something that should not stand on a record other researchers read, had no way to remove it on
    * the web or on the handset: the comment was permanent.
    *
-   * WHO IS OFFERED IT MIRRORS THE HANDLER, read rather than assumed: it 403s unless the caller is
-   * the comment's AUTHOR or an admin. Offering the control more widely would put a button in front
-   * of people whose only possible outcome is a refusal.
+   * WHO IS OFFERED IT MIRRORS THE HANDLER, read rather than assumed: since 2026-10-20 it 403s unless
+   * the caller is a content admin (`isContentAdmin`), so it is drawn only in admin view (`adminMode`).
+   * The author edits instead — see `saveEdit`.
    *
    * Confirmed first, and in the danger tone, because there is no undo — the row is deleted outright
    * rather than tombstoned. A double press is harmless either way: the handler returns 204 in
@@ -100,6 +107,26 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
     }
   }
 
+  /** The author's edit — `PATCH /data-access/comments/{id}`, which 403s for anybody else. */
+  async function saveEdit(comment: EntryComment) {
+    const next = draft.trim();
+    if (!next || next === comment.body) {
+      setEditingId(null);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiFetch(`/data-access/comments/${comment.id}`, { method: "PATCH", body: JSON.stringify({ body: next }) });
+      setEditingId(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save comment");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="grid gap-4">
       {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
@@ -110,13 +137,45 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
           {comments.length === 0 ? <li className="text-sm text-ink-muted">No comments yet.</li> : null}
           {comments.map((c) => (
             <li key={c.id} className="rounded-md border border-line-200 bg-field-50 p-2 text-sm">
-              <div className="text-ink">{c.body}</div>
+              {editingId === c.id ? (
+                <div className="grid gap-2">
+                  <textarea
+                    className="field-input min-h-20"
+                    aria-label="Edit comment"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                  />
+                  <ActionGroup align="end">
+                    <button type="button" className="field-button-secondary" disabled={saving} onClick={() => setEditingId(null)}>
+                      Cancel
+                    </button>
+                    <button type="button" className="field-button" disabled={saving || !draft.trim()} onClick={() => saveEdit(c)}>
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                  </ActionGroup>
+                </div>
+              ) : (
+                <div className="text-ink">{c.body}</div>
+              )}
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
                 <span>
                   {c.author?.name ?? "Someone"} · {formatDateTime(c.createdAt)}
                 </span>
+                {user && c.authorId === user.id && editingId !== c.id ? (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-purple-700 underline underline-offset-2"
+                    onClick={() => {
+                      setEditingId(c.id);
+                      setDraft(c.body);
+                    }}
+                  >
+                    <Pencil className="h-3 w-3" aria-hidden />
+                    Edit
+                  </button>
+                ) : null}
                 {/* Only where the server would allow it — see `removeComment`. */}
-                {user && (c.authorId === user.id || isAdmin(user)) ? (
+                {user && adminMode ? (
                   <button
                     type="button"
                     className="inline-flex items-center gap-1 text-error-600 underline underline-offset-2 disabled:no-underline disabled:opacity-60"

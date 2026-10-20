@@ -213,6 +213,11 @@ export function withdrawAnnualPlanEntry(id: string) {
   return apiFetch<AnnualPlanEntry>(`/annual-plan/${id}/withdraw`, { method: "POST" });
 }
 
+/** Delete one plan row (content admins). 409 once promoted. */
+export function deleteAnnualPlanEntry(id: string) {
+  return apiFetch<void>(`/annual-plan/entries/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export function reinstateAnnualPlanEntry(id: string) {
   return apiFetch<AnnualPlanEntry>(`/annual-plan/${id}/reinstate`, { method: "POST" });
 }

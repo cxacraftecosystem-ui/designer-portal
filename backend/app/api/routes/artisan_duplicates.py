@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.config import get_settings
 from app.core.db import db
-from app.core.deps import get_value, require_admin, require_record_creator
+from app.core.deps import get_value, require_content_admin, require_record_creator
 from app.scale.rate_limit import _TokenBuckets
 from app.schemas.duplicates import DismissIn, DuplicateCheckIn, MergeIn, PairLinkIn
 from app.services import aadhaar_fingerprint, artisan_duplicates, artisan_merge
@@ -193,7 +193,7 @@ _ARTISAN_INCLUDE = {"include": {"craft": True, "location": True}}
 
 @router.get("")
 async def list_pairs(
-    _: Any = Depends(require_admin),
+    _: Any = Depends(require_content_admin),
     status_filter: str | None = Query("OPEN", alias="status"),
     kind: str | None = None,
     band: str | None = None,
@@ -293,7 +293,9 @@ async def _remote_view(pair: Any, user: Any) -> dict[str, Any]:
 
 
 @router.get("/{pair_id}")
-async def get_pair(pair_id: str, current_user: Any = Depends(require_admin)) -> dict[str, Any]:
+async def get_pair(
+    pair_id: str, current_user: Any = Depends(require_content_admin)
+) -> dict[str, Any]:
     pair = await artisan_merge.load_pair(pair_id)
     body = await artisan_merge.preview(pair)
     if body["kind"] == "CROSS_PORTAL":
@@ -305,7 +307,7 @@ async def get_pair(pair_id: str, current_user: Any = Depends(require_admin)) -> 
 
 @router.post("/{pair_id}/merge")
 async def merge_pair(
-    pair_id: str, payload: MergeIn, current_user: Any = Depends(require_admin)
+    pair_id: str, payload: MergeIn, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
     pair = await artisan_merge.load_pair(pair_id)
     result = await artisan_merge.merge(
@@ -345,19 +347,21 @@ async def _decide(pair_id: str, status_value: str, user: Any, note: str | None) 
 
 @router.post("/{pair_id}/dismiss")
 async def dismiss_pair(
-    pair_id: str, payload: DismissIn, current_user: Any = Depends(require_admin)
+    pair_id: str, payload: DismissIn, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
     return await _decide(pair_id, "NOT_DUPLICATE", current_user, payload.note)
 
 
 @router.post("/{pair_id}/reopen")
-async def reopen_pair(pair_id: str, current_user: Any = Depends(require_admin)) -> dict[str, Any]:
+async def reopen_pair(
+    pair_id: str, current_user: Any = Depends(require_content_admin)
+) -> dict[str, Any]:
     return await _decide(pair_id, "OPEN", current_user, None)
 
 
 @router.post("/{pair_id}/link")
 async def link_pair(
-    pair_id: str, payload: PairLinkIn, current_user: Any = Depends(require_admin)
+    pair_id: str, payload: PairLinkIn, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
     """Link a local artisan to the Field Repository record it matched. Never a merge."""
     from app.api.routes import cross_portal as cp
@@ -382,7 +386,7 @@ async def link_pair(
 
 @merges_router.get("")
 async def list_merges(
-    _: Any = Depends(require_admin),
+    _: Any = Depends(require_content_admin),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -415,6 +419,8 @@ async def list_merges(
 
 
 @merges_router.post("/{merge_id}/undo")
-async def undo_merge(merge_id: str, current_user: Any = Depends(require_admin)) -> dict[str, Any]:
+async def undo_merge(
+    merge_id: str, current_user: Any = Depends(require_content_admin)
+) -> dict[str, Any]:
     result = await artisan_merge.undo(merge_id, user=current_user, settings=get_settings())
     return public_encode(result)

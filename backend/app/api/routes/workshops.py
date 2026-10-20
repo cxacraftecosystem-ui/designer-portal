@@ -53,6 +53,7 @@ from app.core.deps import (
     get_value,
     has_rank,
     require_admin,
+    require_content_admin,
     require_workshop_manager,
 )
 from app.schemas.access import (
@@ -536,7 +537,7 @@ async def create_workshop(
 
 
 @router.get("/unmapped")
-async def unmapped_records(_: Any = Depends(require_admin)) -> dict[str, Any]:
+async def unmapped_records(_: Any = Depends(require_content_admin)) -> dict[str, Any]:
     """Which records carry no workshop at all, and which workshop each one's own evidence points at.
 
     A READ. Nothing is written, so this is safe to render, safe to re-render and safe to poll — it is
@@ -559,7 +560,9 @@ async def unmapped_records(_: Any = Depends(require_admin)) -> dict[str, Any]:
 
 
 @router.post("/unmapped/map")
-async def map_unmapped_records(current_user: Any = Depends(require_admin)) -> dict[str, Any]:
+async def map_unmapped_records(
+    current_user: Any = Depends(require_content_admin),
+) -> dict[str, Any]:
     """Stamp every unassigned record whose own evidence names exactly one workshop.
 
     Takes NO body. The plan is re-derived server-side rather than accepted from the caller: a
@@ -585,7 +588,7 @@ async def file_one_unmapped_record(
     bucket: str,
     record_id: str,
     workshopId: str = Body(..., embed=True),
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
     """File ONE record the ladder could not settle, under the workshop an admin names.
 
@@ -608,7 +611,7 @@ async def file_one_unmapped_record(
     two paths that close this one gap must not disagree about whether it appears in a record's
     history. ``update_many`` could not write one per row in any case.
 
-    ``require_admin``, exactly as the two routes above — a per-row account of records the caller may
+    ``require_content_admin``, exactly as the two routes above — a per-row account of records the caller may
     not own, and a write into them. AND THE CALLER IS BOUND (2026-10-09): the inspector or a director
     of a design workshop that claims the row is refused with the post named (403), as every other
     write to that workshop's records and files refuses them.
@@ -620,17 +623,17 @@ async def file_one_unmapped_record(
 async def discard_one_unmapped_record(
     bucket: str,
     record_id: str,
-    current_user: Any = Depends(require_admin),
+    current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
-    """Delete ONE unfiled record permanently. Admin and master admin only.
+    """Delete ONE unfiled record permanently. Content admins only (``deps.CONTENT_ADMIN_ROLES``).
 
     THE OTHER THING AN ADMIN LOOKING AT THIS LIST NEEDS. Some of what lands here should not exist —
     a test row, a duplicated sync, a file uploaded twice — and the reason it is on the report at all
     is that nothing in the repository claims it. ``discard_one_unmapped`` carries the argument for
     the delete being real rather than a flag.
 
-    THE SAME PREDICATE AS EVERY OTHER DELETE IN THIS API, not a looser one. ``require_admin`` here is
-    what ``deps.assert_can_delete`` enforces on ``DELETE /artisans/{id}``, ``/products/{id}``,
+    THE SAME PREDICATE AS EVERY OTHER DELETE IN THIS API, not a looser one. ``require_content_admin``
+    here is what ``deps.assert_can_delete`` enforces on ``DELETE /artisans/{id}``, ``/products/{id}``,
     ``/tools/{id}``, ``/processes/{id}``, ``/questionnaire/interviews/{id}`` and
     ``/media/{id}``'s admin branch — one rule, reached from the screen where the record is visible.
 

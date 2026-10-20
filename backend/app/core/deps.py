@@ -319,6 +319,28 @@ def is_master_admin(user: Any) -> bool:
     return role_value(user) == "MASTER_ADMIN"
 
 
+#: The CONTENT admins (owner's ruling, 2026-10-20): they add, edit and delete every record type, every
+#: media file and every other managed content type, wherever it is managed. Every other role adds and
+#: edits within its existing privileges and never deletes.
+#:
+#: A SET AND NOT A FLOOR, and deliberately NOT ``is_admin``. MINISTRY_ADMIN manages content; it does
+#: not manage accounts, rosters, settings or secrets, so ``is_admin`` keeps its two members and every
+#: account and governance rule keeps reading it. The documentation-portal spells this constant and
+#: :func:`is_content_admin` identically in ``app/core/roles.py``; ``frontend/lib/permissions.ts`` and
+#: the handset's ``FieldPermissions.isContentAdmin`` carry the same three members, and
+#: ``tests/test_role_ladder_parity.py`` holds them together.
+CONTENT_ADMIN_ROLES = frozenset({"ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN"})
+
+
+def is_content_admin(user: Any) -> bool:
+    """May this account delete records and media, and edit every record whoever made it?"""
+    return role_value(user) in CONTENT_ADMIN_ROLES
+
+
+#: The one refusal every delete gives a role outside :data:`CONTENT_ADMIN_ROLES`.
+CONTENT_DELETE_REFUSAL = "Only an admin can delete this."
+
+
 def is_break_glass_master(user: Any) -> bool:
     """Is this account the ONE identity the platform allow-list must never be able to bar?
 
@@ -473,7 +495,11 @@ def can_run_design_workshops(user: Any) -> bool:
 
 #: Who may bring a NEW design & prototype workshop into existence. A STRICT SUBSET of
 #: :data:`DESIGN_WORKSHOP_ROLES` — see :func:`can_create_design_workshops`.
-DESIGN_WORKSHOP_CREATOR_ROLES = frozenset({"ADMIN", "MASTER_ADMIN"})
+#:
+#: MINISTRY_ADMIN JOINED ON 2026-10-20 (owner's ruling: content admins add every record type), so the
+#: set is now :data:`CONTENT_ADMIN_ROLES`' three members, written out because the two decisions are
+#: different ones that happen to agree today.
+DESIGN_WORKSHOP_CREATOR_ROLES = frozenset({"ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN"})
 
 
 def can_create_design_workshops(user: Any) -> bool:
@@ -500,15 +526,14 @@ def can_create_design_workshops(user: Any) -> bool:
     permission change that quietly cost a designer their stage edits would be far worse than this
     rule is worth.
 
-    ``is_admin`` rather than a rank floor at ADMIN, so it reads as the same set the rest of this
-    module means by "an admin", and so a PROFESSOR — who is below admin and outside the designer
-    set entirely — is refused here for the same reason they are refused everywhere else in the
-    design-workshop surface.
+    SET MEMBERSHIP in :data:`DESIGN_WORKSHOP_CREATOR_ROLES` rather than a rank floor, so a
+    PROFESSOR — outside the designer set entirely — is refused here for the same reason they are
+    refused everywhere else in the design-workshop surface.
 
     ``frontend/lib/permissions.ts::canCreateDesignWorkshops`` and its
     ``DESIGN_WORKSHOP_CREATOR_ROLES`` carry the identical set and must keep carrying it.
     """
-    return is_admin(user)
+    return role_value(user) in DESIGN_WORKSHOP_CREATOR_ROLES
 
 
 #: The refusal a designer reads when they try to start a workshop, in ONE place because it is said
@@ -520,7 +545,8 @@ def can_create_design_workshops(user: Any) -> bool:
 #: with participants in front of them; "forbidden" tells them to stop working, and the truth is that
 #: everything they came to do still works as soon as an admin has opened the workshop.
 DESIGN_WORKSHOP_CREATE_REFUSAL = (
-    "Only admins and the master admin can start a new design & prototype workshop. Ask an admin to "
+    "Only admins, the master admin and the Ministry Admin can start a new design & prototype "
+    "workshop. Ask an admin to "
     "create it for your cluster and give you access — you can then fill in all 22 stages, add "
     "artisans, products and photographs, and generate the report exactly as before. Any workshop "
     "you already have access to is open to you now."
@@ -528,7 +554,7 @@ DESIGN_WORKSHOP_CREATE_REFUSAL = (
 
 
 def assert_can_create_design_workshops(user: Any) -> None:
-    """Refuse anyone but an admin or the master admin, naming what they can do instead.
+    """Refuse anyone outside :data:`DESIGN_WORKSHOP_CREATOR_ROLES`, naming what they can do instead.
 
     A function rather than only a ``Depends`` because the create route already takes
     ``current_user`` for other reasons and because putting the sentence in one place is the point —
@@ -1966,7 +1992,7 @@ def values_match(current_value: Any, next_value: Any) -> bool:
 def assert_can_contribute_fields(
     record: Any, user: Any, data: dict[str, Any], owner_field: str = "createdById"
 ) -> None:
-    if is_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
+    if is_content_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
         return
 
     # A populated field is locked to non-privileged editors whether they try to CHANGE it or CLEAR it.
@@ -2004,7 +2030,7 @@ def assert_can_contribute_fields(
 def assert_can_contribute_relation(
     record: Any, user: Any, populated: bool, field_name: str, owner_field: str = "createdById"
 ) -> None:
-    if is_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
+    if is_content_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
         return
     if populated:
         raise HTTPException(
@@ -2014,7 +2040,7 @@ def assert_can_contribute_relation(
 
 
 def assert_owner_or_admin(record: Any, user: Any, owner_field: str = "createdById") -> None:
-    if is_admin(user):
+    if is_content_admin(user):
         return
     if get_value(record, owner_field) != get_value(user, "id"):
         raise HTTPException(
@@ -2028,10 +2054,16 @@ def assert_admin_or_owner(record: Any, user: Any, owner_field: str = "createdByI
 
 
 def assert_can_delete(user: Any) -> None:
-    if not is_admin(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required to delete records"
-        )
+    """Every delete of a record, media file or other managed content: content admins only."""
+    if not is_content_admin(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CONTENT_DELETE_REFUSAL)
+
+
+async def require_content_admin(current_user: Any = Depends(get_current_user)) -> Any:
+    """``Depends`` form of the content-admin gate, for routes that manage content outright."""
+    if not is_content_admin(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user
 
 
 async def require_designer(current_user: Any = Depends(get_current_user)) -> Any:

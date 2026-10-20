@@ -76,7 +76,8 @@ because one of them is not a rank threshold:
   tagged ``linkedRecordType="designWorkshop"`` with THIS workshop's id is readable by a grantee —
   its bytes, its transcript, and since 2026-08-27 its ``url`` on ``GET /media`` too. The full
   statement of that half is ``docs/PERMISSIONS.md`` §4.4.1.
-* DELETING is ``assert_can_delete``; restoring is ``require_admin``; and LISTING THE DELETED ones is
+* DELETING is ``assert_can_delete``; restoring is ``require_content_admin`` (both the content
+  admins, ``deps.CONTENT_ADMIN_ROLES``, since 2026-10-20); and LISTING THE DELETED ones is
   the same admin test as the restore, stated inline in ``list_design_workshops`` because it gates two
   query parameters rather than a route. The three have to agree: a trash a designer could read would
   show them rows ``load_workshop_or_404`` then 404s, and a restore looser than the trash would let
@@ -143,8 +144,8 @@ from app.core.deps import (
     assert_can_delete,
     can_run_design_workshops,
     get_current_user,
-    is_admin,
-    require_admin,
+    is_content_admin,
+    require_content_admin,
 )
 # THE STATUS GRAPH AND THE ONE FUNCTION THAT ENTERS PRE_SUBMISSION. In `app/schemas` rather than
 # `app/services` because it touches no database — see that module's header — which is what lets the
@@ -1183,7 +1184,10 @@ async def decide_identity_photograph(
                 "changed. Reload the stage to see what is still attached."
             ),
         )
-    if not is_admin(current_user) and getattr(media, "uploadedById", None) != current_user.id:
+    if (
+        not is_content_admin(current_user)
+        and getattr(media, "uploadedById", None) != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -1814,8 +1818,8 @@ async def list_design_workshops(
     an admin could only restore a workshop whose id they already had written down. A safety net
     nobody can find is not a safety net, and the web's delete confirmation promises one.
 
-    ADMIN ONLY, AND THE SAME GATE AS THE RESTORE IT EXISTS TO FEED — ``is_admin``, refused with the
-    sentence ``require_admin`` uses. Anything looser would widen a read: a deleted workshop is
+    CONTENT ADMINS ONLY, AND THE SAME GATE AS THE RESTORE IT EXISTS TO FEED — ``is_content_admin``,
+    refused with the sentence ``require_admin`` uses. Anything looser would widen a read: a deleted workshop is
     invisible to its own creator today (``load_workshop_or_404`` answers 404 to a non-admin READING a
     deleted row, and 409 "Restore it before editing" to anyone at all who asked to EDIT one), so
     letting a designer list the trash would show them rows the single read then denies. The two
@@ -1826,7 +1830,7 @@ async def list_design_workshops(
     ``deletedOnly`` WINS OVER ``includeDeleted`` when both are sent — it is the narrower of the two
     and a caller that asked for both meant the specific one.
     """
-    if (includeDeleted or deletedOnly) and not is_admin(current_user):
+    if (includeDeleted or deletedOnly) and not is_content_admin(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     # THREE STATES, NOT A BOOLEAN. The default filters deleted rows out, `deletedOnly` filters
     # everything else out, and `includeDeleted` drops the key entirely so the two sets arrive
@@ -1888,7 +1892,7 @@ async def list_design_workshops(
     # `services/records.owned_or_granted_where`.
     if mineOnly:
         where["createdById"] = current_user.id
-    elif not is_admin(current_user):
+    elif not is_content_admin(current_user):
         where.setdefault("AND", []).append(visible_to_clause(current_user.id))
 
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
@@ -2709,8 +2713,9 @@ async def delete_design_workshop(
     fact that one row here represents weeks of fieldwork by someone who is no longer in the
     village, both point the same way.
     """
-    await load_workshop_or_404(workshop_id, current_user, for_edit=True)
+    # The role first: a refusal names no workshop, so asking it before the load discloses nothing.
     assert_can_delete(current_user)
+    await load_workshop_or_404(workshop_id, current_user, for_edit=True)
     await db.designworkshop.update(
         where={"id": workshop_id},
         data={"deletedAt": datetime.now(UTC), "deletedById": current_user.id},
@@ -2719,7 +2724,7 @@ async def delete_design_workshop(
 
 @router.post("/{workshop_id}/restore")
 async def restore_design_workshop(
-    workshop_id: str, _: Any = Depends(require_admin)
+    workshop_id: str, _: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
     """Undo a soft delete. Admin only — the point of the safety net is that it is not per-user.
 
@@ -2864,7 +2869,7 @@ async def workshop_provenance(
     was built for. Omitting it would make "the record is gone" look identical to "the field was
     never hydrated".
     """
-    if not is_admin(current_user):
+    if not is_content_admin(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(

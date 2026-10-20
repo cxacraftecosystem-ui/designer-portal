@@ -1262,7 +1262,7 @@ def test_the_unfiled_doors_ask_about_the_design_workshop_before_they_write():
         workshop_routes.discard_one_unmapped_record,
     ):
         source = inspect.getsource(handler)
-        assert "current_user: Any = Depends(require_admin)" in source, handler.__name__
+        assert "current_user: Any = Depends(require_content_admin)" in source, handler.__name__
         assert "user=current_user)" in source, f"{handler.__name__} drops the caller"
 
     filed = inspect.getsource(inference.file_one_unmapped)
@@ -1934,11 +1934,11 @@ def test_every_administrator_tier_serves_in_every_supervisory_post(world):
 
 @needs_db
 def test_every_administrator_tier_is_named_a_designer_and_then_writes(world):
-    """The MINISTRY_ADMIN is the one that proves something: the two platform tiers write every
-    workshop through the admin arm, and a ministry admin writes this one only through the row."""
+    """All three tiers are content admins since 2026-10-20 (owner's ruling), so each writes every
+    workshop through the admin arm with no viewer row — and naming them designers changes nothing."""
     workshop_id = _open(world, "Team of administrators")
     before = _write(world, workshop_id, "ministry")
-    assert before.status_code == 404, "a ministry admin wrote a workshop nobody had put them on"
+    assert before.status_code == 200, "a content admin is a privileged editor of every workshop"
 
     named = _designers(world, workshop_id, ["ministry", "admin", "master2"])
     assert named.status_code == 200, named.text
@@ -2103,6 +2103,26 @@ def test_a_post_holder_cannot_write_the_workshop_even_through_the_admin_route(wo
     assert _officers(world, workshop_id, ad=None).status_code == 200
     assert _write(world, workshop_id, "admin").status_code == 200
     assert _write(world, workshop_id, "master2").status_code == 200
+
+
+@needs_db
+def test_a_content_admin_holding_a_post_is_still_refused_the_workshop(world):
+    """2026-10-20: a Ministry Admin is a content admin and writes every workshop without a viewer
+    grant. The post-holder refusal is separation of duty, not a missing permission, so it still holds
+    for them, delete included; giving the post up gives the write back."""
+    workshop_id = _open(world, "Content admin serving")
+    assert _officers(world, workshop_id, ad="ministry").status_code == 200
+
+    stage = _write(world, workshop_id, "ministry")
+    assert stage.status_code == 403, stage.text
+    assert "You are this workshop's Assistant Director" in stage.json()["detail"]
+    delete = world["client"].delete(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "ministry")
+    )
+    assert delete.status_code == 403, delete.text
+
+    assert _officers(world, workshop_id, ad=None).status_code == 200
+    assert _write(world, workshop_id, "ministry").status_code == 200
 
 
 @needs_db

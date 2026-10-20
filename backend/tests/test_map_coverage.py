@@ -537,7 +537,9 @@ def doors():
             answers[f"unmatched-{actor}"] = call("GET", "/coverage/unmatched", actor)
         body = {"rawState": raw_state, "rawDistrict": "Somewhere", "stateLgd": RAJASTHAN, "districtLgd": BARMER}
         answers["alias-designer"] = call("POST", "/coverage/aliases", "designer", json=body)
-        answers["alias-admin"] = call("POST", "/coverage/aliases", "admin", json=body)
+        # An ADMIN maps places since 2026-10-20 (content admins); sent to the wrong state so the gate is
+        # proved passed (422 from validation) without writing the alias the rows below create.
+        answers["alias-admin"] = call("POST", "/coverage/aliases", "admin", json={**body, "stateLgd": GUJARAT})
         answers["alias-wrong-state"] = call("POST", "/coverage/aliases", "ma", json={**body, "stateLgd": GUJARAT})
         answers["alias-ok"] = call("POST", "/coverage/aliases", "ma", json=body)
         answers["alias-again"] = call("POST", "/coverage/aliases", "master", json=body)
@@ -583,14 +585,14 @@ def test_a_regional_director_sees_only_their_states(doors):
 
 
 @needs_db
-def test_only_the_master_admin_and_ministry_admin_map_places(doors):
+def test_only_the_content_admins_map_places(doors):
     answers = doors["answers"]
-    for actor in ("ma", "master"):
-        assert answers[f"unmatched-{actor}"].status_code == 200
-    for actor in ("rd", "ad", "designer", "admin"):
+    for actor in ("ma", "master", "admin"):
+        assert answers[f"unmatched-{actor}"].status_code == 200, actor
+    for actor in ("rd", "ad", "designer"):
         assert answers[f"unmatched-{actor}"].status_code == 403, actor
     assert answers["alias-designer"].status_code == 403
-    assert answers["alias-admin"].status_code == 403
+    assert answers["alias-admin"].status_code == 422
     assert answers["delete-designer"].status_code == 403
     raw = doors["raw_state"]
     before = answers["unmatched-ma"].json()["items"]

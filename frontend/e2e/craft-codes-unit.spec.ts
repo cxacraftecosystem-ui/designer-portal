@@ -26,9 +26,9 @@ test("the heading counts what is left", () => {
   expect(unmappedHeading(3)).toBe("3 crafts without a shared code");
 });
 
-test("the crafts page draws the panel for administrators in admin view only", () => {
+test("the crafts page draws the panel for content admins in admin view only", () => {
   const page = readFileSync(join(__dirname, "../app/(protected)/crafts/page.tsx"), "utf8");
-  expect(page).toContain("{isAdmin(user) && adminMode ? <UnmappedCraftsPanel /> : null}");
+  expect(page).toContain("{isContentAdmin(user) && adminMode ? <UnmappedCraftsPanel /> : null}");
   const panel = readFileSync(join(__dirname, "../components/crafts/UnmappedCraftsPanel.tsx"), "utf8");
   expect(panel).toContain('"/craft-codes/unmapped"');
   expect(panel).toContain("if (!items || items.length === 0) return null;");

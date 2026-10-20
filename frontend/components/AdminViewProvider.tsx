@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
-import { isAdmin, isMasterAdmin } from "@/lib/permissions";
+import { isAdmin, isContentAdmin, isMasterAdmin } from "@/lib/permissions";
 import type { User } from "@/lib/types";
 
 /**
@@ -21,6 +21,11 @@ type AdminViewValue = {
   adminView: boolean;
   /** Whether the user has any admin capability at all — the toggle is offered to these users only. */
   canAdmin: boolean;
+  /**
+   * The content admins (`isContentAdmin`: ADMIN, MASTER_ADMIN, MINISTRY_ADMIN) — whoever may turn
+   * admin view on. The island's admin control shows when this is true. Same value as `canAdmin`.
+   */
+  available: boolean;
   /**
    * False until the stored preference for THIS account has actually been read. `user` arrives from
    * an async /me call, so there is one commit where the account is known but its preference is not;
@@ -65,7 +70,9 @@ function writePreference(key: string, value: string | null) {
 
 export function AdminViewProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  const canAdmin = isAdmin(user);
+  // The content admins (owner's ruling, 2026-10-20): Ministry Admin gains admin view, and with it
+  // every Delete that reads `adminMode`. The default stays off for everyone but the master admin.
+  const canAdmin = isContentAdmin(user);
   // null = not yet read for this user; resolved in the effect below. Tagging it with the user id is
   // what stops one account's preference from being applied for a frame after a switch of accounts.
   const [resolved, setResolved] = useState<ResolvedView | null>(null);
@@ -105,6 +112,7 @@ export function AdminViewProvider({ children }: { children: React.ReactNode }) {
       adminView: view,
       adminMode: view,
       canAdmin,
+      available: canAdmin,
       adminViewResolved: settled !== null,
       setAdminView,
       toggleAdminView: () => setAdminView(!view)

@@ -31,6 +31,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ClipboardList, CopyPlus, Download, FileSpreadsheet, Lock, Plus, Share2, Upload } from "lucide-react";
 
+import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { HeldPostNotice, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
@@ -53,7 +54,8 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
 import { listDesignWorkshops, saveBlobToDisk, type DwSummary } from "@/lib/designWorkshops";
 import { formatDateTime } from "@/lib/format";
-import { canEditOwnOrAdmin, isAdmin } from "@/lib/permissions";
+import { apiFetch } from "@/lib/api";
+import { canEditOwnOrAdmin, isContentAdmin } from "@/lib/permissions";
 import { cachedQuestionnaireNotice, loadQuestionnaireWithCache } from "@/lib/questionnaireFormCache";
 import { Toggle } from "@/components/ui/Toggle";
 import {
@@ -99,6 +101,8 @@ export default function QuestionnaireDetailPage() {
   const { user, loading: authLoading } = useAuth();
   const confirm = useConfirm();
   const { toast } = useToast();
+  // Deleting the form or a sitting is a content admin's act, in admin view (2026-10-20).
+  const { adminMode } = useAdminView();
 
   const [form, setForm] = useState<QForm | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -283,6 +287,27 @@ export default function QuestionnaireDetailPage() {
   */
   const attachedHold = useHeldPostRefusal(form?.designWorkshopId ?? null);
   const mayEdit = owns && attachedHold === null;
+  const mayDelete = mayEdit && adminMode;
+
+  async function deleteForm() {
+    if (!form) return;
+    const ok = await confirm(
+      deleteConfirm(`Delete “${form.title}”?`, "Its sections, questions and every recorded answer go with it.", "This cannot be undone.")
+    );
+    if (!ok) return;
+    const done = await run(() => apiFetch(`/questionnaires/${id}`, { method: "DELETE" }), "Unable to delete this questionnaire");
+    if (done !== null) router.push("/questionnaires");
+  }
+
+  async function deleteEntry(entryId: string, label: string) {
+    const ok = await confirm(deleteConfirm(`Delete the answers from “${label}”?`, undefined, "This cannot be undone."));
+    if (!ok) return;
+    await run(async () => {
+      await apiFetch(`/questionnaires/${id}/entries/${entryId}`, { method: "DELETE" });
+      setForm((current) => (current ? { ...current, entries: current.entries.filter((entry) => entry.id !== entryId) } : current));
+      return true;
+    }, "Unable to delete those answers");
+  }
 
   async function run<T>(work: () => Promise<T>, failure: string): Promise<T | null> {
     setBusy(true);
@@ -559,6 +584,11 @@ export default function QuestionnaireDetailPage() {
             <Link className="field-button" href={`/questionnaires/${id}/answer`}>
               Record answers
             </Link>
+            {mayDelete ? (
+              <button type="button" data-danger className="field-danger" onClick={deleteForm} disabled={busy}>
+                Delete
+              </button>
+            ) : null}
           </>
         }
       />
@@ -799,7 +829,7 @@ export default function QuestionnaireDetailPage() {
               WITHDRAWING IS THE SAME AUTHORITY AS PUBLISHING, so one control does both. A designer
               must no more be able to take the standard form away from everybody than to give it.
             */}
-            {isAdmin(user) ? (
+            {isContentAdmin(user) ? (
               <button
                 type="button"
                 className="field-button-secondary"
@@ -974,6 +1004,7 @@ export default function QuestionnaireDetailPage() {
                     question={question}
                     ordinal={index + 1}
                     mayEdit={mayEdit}
+                    mayRemove={mayDelete}
                     onChanged={(next, message) => {
                       setForm(next);
                       if (message) setNotice(message);
@@ -1021,9 +1052,22 @@ export default function QuestionnaireDetailPage() {
                       {entry.source === "UPLOAD" ? " · from the uploaded spreadsheet" : ""}
                     </p>
                   </div>
-                  <Link className={rowAction("edit")} href={`/questionnaires/${id}/answer?entry=${entry.id}`}>
-                    Open
-                  </Link>
+                  <RowActions>
+                    <Link className={rowAction("edit")} href={`/questionnaires/${id}/answer?entry=${entry.id}`}>
+                      Open
+                    </Link>
+                    {mayDelete ? (
+                      <button
+                        type="button"
+                        data-danger
+                        className={rowAction("danger")}
+                        onClick={() => deleteEntry(entry.id, entry.respondentName || entry.title)}
+                        disabled={busy}
+                      >
+                        Delete
+                      </button>
+                    ) : null}
+                  </RowActions>
                 </li>
               );
             })}

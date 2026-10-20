@@ -9,7 +9,7 @@ from app.core.deps import (
     assert_can_delete,
     get_current_user,
     get_value,
-    is_admin,
+    is_content_admin,
     is_empty_value,
     may_edit_lower_ranked_record,
     require_record_creator,
@@ -1321,7 +1321,7 @@ async def _may_manage_tool_links(tool: Any, tool_id: str, current_user: Any) -> 
     everybody else — and it is asked BEFORE the grant lookup for that reason, which is the ordering
     ``guard_record_edit`` uses and the reason it gives.
     """
-    if is_admin(current_user) or getattr(tool, "createdById", None) == current_user.id:
+    if is_content_admin(current_user) or getattr(tool, "createdById", None) == current_user.id:
         return True
     owner_id = getattr(tool, "createdById", None)
     if not owner_id:

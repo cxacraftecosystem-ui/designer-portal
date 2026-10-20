@@ -1,4 +1,6 @@
-"""Authority over an assignment belongs to the admin who handed it out — on EVERY route, not one.
+"""Authority over an assignment belongs to the admin who handed it out — for EDITS. Since the owner's
+ruling of 2026-10-20 any content admin deletes any task or batch (``deps.CONTENT_ADMIN_ROLES``), so the
+delete half of the history below is superseded; section 1 asserts the new rule.
 
 ``DELETE /tasks/batch/{batch_id}`` has always enforced that: it refuses unless the caller is the
 master admin or created every row in the batch, and its docstring says why — "otherwise one admin
@@ -176,39 +178,26 @@ def _exists(world, task_id: str) -> bool:
 # --------------------------------------------------------------------------------------
 
 
-async def test_the_batch_route_refuses_another_admins_batch(world):
-    """The half that always worked, asserted so that the next two tests mean something."""
-    response = world["client"].delete(
-        f"/api/tasks/batch/{world['batchId']}", headers=_as(world, "stranger")
-    )
-    assert response.status_code == 403, response.text
-    assert "created this batch" in response.json()["detail"]
-
-
-async def test_the_same_rows_cannot_be_deleted_one_at_a_time(world):
-    """THE DEFECT IN ONE REQUEST. The batch was refused a line above; every member id is readable
-    from ``GET /tasks?view=all&batchId=…`` by the same admin, and each single delete used to answer
-    204. The batch rule was a ``for`` loop away from meaningless."""
-    listed = world["client"].get(
-        "/api/tasks", params={"view": "all", "batchId": world["batchId"]}, headers=_as(world, "stranger")
-    )
-    assert listed.status_code == 200, listed.text
-    member_ids = {item["id"] for item in listed.json()["items"]}
-    assert member_ids == set(world["batch"]), "the enumeration path this bypass needs still works"
-
+async def test_nobody_below_the_content_admins_deletes_a_task_or_a_batch(world):
+    """Deleting is the content admins' alone since the owner's ruling of 2026-10-20 — the assignee,
+    a researcher, is refused both routes and the rows stay."""
+    batch = world["client"].delete(f"/api/tasks/batch/{world['batchId']}", headers=_as(world, "worker"))
+    assert batch.status_code == 403, batch.text
+    single = world["client"].delete(f"/api/tasks/{world['solo']['stranger']}", headers=_as(world, "worker"))
+    assert single.status_code == 403, single.text
+    assert _exists(world, world["solo"]["stranger"])
     for task_id in world["batch"]:
-        response = world["client"].delete(f"/api/tasks/{task_id}", headers=_as(world, "stranger"))
-        assert response.status_code == 403, response.text
-        assert "created this task" in response.json()["detail"]
-        assert _exists(world, task_id), "the row must still be there, not merely reported as kept"
+        assert _exists(world, task_id)
 
 
-async def test_a_stranger_admin_cannot_delete_a_single_task(world):
+async def test_any_content_admin_withdraws_another_admins_task(world):
+    """THE RULE RELAXED ON PURPOSE (2026-10-20): any content admin deletes any task, whoever sent it;
+    the journal line names who did. Editing another admin's task is still refused (section 2)."""
     response = world["client"].delete(
         f"/api/tasks/{world['solo']['stranger']}", headers=_as(world, "stranger")
     )
-    assert response.status_code == 403, response.text
-    assert _exists(world, world["solo"]["stranger"])
+    assert response.status_code == 204, response.text
+    assert not _exists(world, world["solo"]["stranger"])
 
 
 # --------------------------------------------------------------------------------------

@@ -146,6 +146,7 @@ import { createWorkshopOrKeepItHere, startLocalDraftHere } from "@/lib/designWor
 import { AdoptLocalDraftDialog } from "@/components/designworkshop/AdoptLocalDraftDialog";
 import { WorkshopDesignerPicker } from "@/components/designworkshop/WorkshopDesignerPicker";
 import { DesignWorkshopViewersPanel } from "@/components/settings/DesignWorkshopViewersPanel";
+import { DeletedWorkshopsCard } from "@/components/admin/DeletedWorkshopsCard";
 import { isUnreachable } from "@/lib/offline";
 import { formatDate } from "@/lib/format";
 import {
@@ -153,7 +154,8 @@ import {
   canAccessRoute,
   canCreateDesignWorkshops,
   canRunDesignWorkshops,
-  isAdmin
+  isAdmin,
+  isContentAdmin
 } from "@/lib/permissions";
 import type { PageResult, Workshop } from "@/lib/types";
 import { listResource } from "@/lib/api";
@@ -302,7 +304,8 @@ function DesignWorkshopsPageBody() {
    * `ROUTE_GUARDS` refuses the whole path to anyone outside `canRunDesignWorkshops`.
    */
   const allowWork = canRunDesignWorkshops(user);
-  const allowDelete = isAdmin(user);
+  // The content admins (`isContentAdmin`, 2026-10-20) — the server's `assert_can_delete`.
+  const allowDelete = isContentAdmin(user);
   /**
    * The screens to name when THIS reader's empty list is a scope rather than an empty repository —
    * see {@link OVERSIGHT_DOORS}. Empty for everybody else, and both halves of that matter.
@@ -1949,6 +1952,14 @@ function DesignWorkshopsPageBody() {
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {/* Restore is every content admin's (2026-10-20). Admins have this card on /admin; a Ministry
+          Admin has no /admin, so theirs is here, in admin view. */}
+      {adminMode && !isAdmin(user) ? (
+        <div className="mb-5">
+          <DeletedWorkshopsCard />
+        </div>
       ) : null}
 
       {/* THREE COLUMNS SINCE THE TYPE FILTER LANDED. The search box keeps the flexible one; the two

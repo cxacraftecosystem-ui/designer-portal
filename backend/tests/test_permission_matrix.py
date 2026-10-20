@@ -962,3 +962,114 @@ def test_this_matrix_still_covers_every_tier_that_exists() -> None:
         "RECORD_CREATORS is no longer 'may open a record, may not edit the taxonomy' — a tier was "
         "added between Researcher and Professor, or one of those two floors moved"
     )
+
+
+# --- Content admins delete; every other role never does (owner's ruling, 2026-10-20) --------------
+#
+# ``deps.CONTENT_ADMIN_ROLES`` — ADMIN, MASTER_ADMIN, MINISTRY_ADMIN — add, edit and delete every
+# record, media file and other managed content type. Every other tier adds and edits within its
+# existing privileges and is refused every delete here with a 403 BEFORE the route reads a row.
+# A content admin reaches the handler (the tripwire), which is this harness's 2xx.
+
+CONTENT_ADMINS = ("MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
+NOT_CONTENT_ADMINS = tuple(role for role in ALL_ROLES if role not in CONTENT_ADMINS)
+
+#: Every content delete, and every act the ruling counts as one (a merge that removes its source,
+#: the design-workshop restore that undoes a soft delete).
+CONTENT_DELETES = [
+    ("DELETE", "/artisans/x1"),
+    ("DELETE", "/products/x1"),
+    ("DELETE", "/tools/x1"),
+    ("DELETE", "/processes/x1"),
+    ("DELETE", "/crafts/x1"),
+    ("DELETE", "/workshops/x1"),
+    ("DELETE", "/design-workshops/x1"),
+    ("POST", "/design-workshops/x1/restore"),
+    ("DELETE", "/media/x1"),
+    ("DELETE", "/data-access/comments/x1"),
+    ("DELETE", "/questionnaire/sections/x1"),
+    ("DELETE", "/questionnaire/questions/x1"),
+    ("DELETE", "/questionnaire/interviews/x1"),
+    ("POST", "/questionnaire/interviews/x1/merge-into/x2"),
+    ("DELETE", "/questionnaires/x1"),
+    ("DELETE", "/questionnaires/x1/entries/e1"),
+    ("DELETE", "/questionnaires/x1/questions/q1"),
+    ("DELETE", "/tasks/x1"),
+    ("DELETE", "/tasks/batch/b1"),
+    ("DELETE", "/workshop-types/x1"),
+    ("DELETE", "/workshops/unmapped/artisans/x1"),
+    ("DELETE", "/map/coverage/aliases/x1"),
+    ("DELETE", "/sanction-orders/x1"),
+    ("DELETE", "/annual-plan/entries/x1"),
+]
+
+
+def test_the_content_admin_set_is_the_three_admin_tiers() -> None:
+    assert frozenset({"ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN"}) == deps.CONTENT_ADMIN_ROLES
+    assert set(CONTENT_ADMINS) == set(deps.CONTENT_ADMIN_ROLES)
+    # ``is_admin`` is NOT widened: accounts, rosters and settings keep their two-member set.
+    assert not deps.is_admin(_user("MINISTRY_ADMIN"))
+    for role in ALL_ROLES:
+        assert deps.is_content_admin(_user(role)) is (role in CONTENT_ADMINS), role
+
+
+@pytest.mark.parametrize("role", NOT_CONTENT_ADMINS)
+@pytest.mark.parametrize("method,path", CONTENT_DELETES)
+def test_no_role_below_the_content_admins_deletes(api: _Api, method: str, path: str, role: str) -> None:
+    outcome = api.as_(_user(role)).call(method, path)
+
+    assert outcome.refused, outcome
+    assert api.tripwire.touched is False, "the delete was refused before reading a row"
+
+
+@pytest.mark.parametrize("role", CONTENT_ADMINS)
+@pytest.mark.parametrize("method,path", CONTENT_DELETES)
+def test_every_content_admin_deletes(api: _Api, method: str, path: str, role: str) -> None:
+    outcome = api.as_(_user(role)).call(method, path)
+
+    assert outcome.reached, outcome
+
+
+class _Comments:
+    """``db.entrycomment`` with one comment by ``u1``; the update is the handler doing its work."""
+
+    def __init__(self) -> None:
+        self.find_unique = _returning(SimpleNamespace(id="c1", authorId="u1"))
+
+    async def update(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise _DatabaseTouched("entrycomment.update")
+
+
+def test_the_author_edits_their_own_comment(api: _Api) -> None:
+    outcome = api.preload("entrycomment", _Comments()).as_(_user("RESEARCHER", "u1")).call(
+        "PATCH", "/data-access/comments/c1", {"body": "Corrected."}
+    )
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", ["RESEARCHER", "ADMIN", "MASTER_ADMIN"])
+def test_nobody_else_edits_a_comment(api: _Api, role: str) -> None:
+    outcome = api.preload("entrycomment", _Comments()).as_(_user(role, "u2")).call(
+        "PATCH", "/data-access/comments/c1", {"body": "Rewritten."}
+    )
+
+    assert outcome.refused, outcome
+
+
+def test_an_uploader_no_longer_deletes_their_own_media(api: _Api) -> None:
+    api.preload(
+        "mediafile", SimpleNamespace(find_unique=_returning(SimpleNamespace(id="m1", uploadedById="u1")))
+    )
+
+    outcome = api.as_(_user("RESEARCHER", "u1")).call("DELETE", "/media/m1")
+
+    assert outcome.refused, outcome
+
+
+def test_an_author_no_longer_deletes_their_own_comment(api: _Api) -> None:
+    outcome = api.preload("entrycomment", _Comments()).as_(_user("RESEARCHER", "u1")).call(
+        "DELETE", "/data-access/comments/c1"
+    )
+
+    assert outcome.refused, outcome
