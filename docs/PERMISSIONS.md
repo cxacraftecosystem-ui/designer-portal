@@ -786,7 +786,7 @@ neither, and are unchanged.
 | Media file (every type), transcripts, relink, transcribe-now, job retry | uploader and record editors; content admins on any media | content admins (uploaders no longer delete their own) |
 | Comments | the author (`PATCH /data-access/comments/{id}`) | content admins |
 | Questionnaire sections and questions | questionnaire managers, plus content admins | content admins |
-| Questionnaire forms, sittings, form questions | the owner, plus content admins on any form | content admins (`DELETE /questionnaires/{id}`, `DELETE /questionnaires/{id}/entries/{entry_id}`) |
+| Questionnaire forms, sittings, form questions | the owner, plus content admins on any form | content admins (`DELETE /questionnaires/{id}`, `DELETE /questionnaires/{id}/entries/{entry_id}`, both soft); restore: content admins (`POST .../restore`) |
 | Interview merge (source removed) | – | content admins |
 | Design workshop | create: `DESIGN_WORKSHOP_CREATOR_ROLES` = the three; edit: content admins without a viewer grant | content admins (soft); restore: content admins |
 | Workshop types, craft codes mapping, unmapped records, duplicates, completion override | content admins | content admins |

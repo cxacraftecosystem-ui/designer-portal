@@ -63,6 +63,19 @@ test("questionnaire deletes are content-admin only on both questionnaire screens
   expect(form).toContain("apiFetch(`/questionnaires/${id}/entries/${entryId}`, { method: \"DELETE\" })");
 });
 
+test("a deleted questionnaire or sitting is restored by a content admin, in admin view", () => {
+  const form = read("app/(protected)/questionnaires/[id]/page.tsx");
+  expect(form).toContain('"An admin can restore it."');
+  expect(form).not.toContain("This cannot be undone.");
+  expect(form).toContain("{mayDelete ? (\n        <DeletedSittings");
+  const list = read("app/(protected)/questionnaires/page.tsx");
+  expect(list).toContain("{adminMode ? <DeletedQuestionnairesCard");
+  const lib = read("lib/questionnaireForms.ts");
+  expect(lib).toContain('deletedOnly: params.deletedOnly ? "true" : undefined');
+  expect(lib).toContain("/restore`, { method: \"POST\" }");
+  expect(lib).toContain("/deleted-entries`");
+});
+
 test("a design workshop's Delete reaches the Ministry Admin", () => {
   const page = read("app/(protected)/design-workshops/page.tsx");
   expect(page).toContain("const allowDelete = isContentAdmin(user);");

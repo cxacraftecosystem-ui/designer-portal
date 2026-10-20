@@ -43,6 +43,7 @@ import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { PageHeader } from "@/components/PageHeader";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
+import { DeletedSittings } from "@/components/questionnaires/DeletedSittings";
 import { cappedListNotice, cutOf } from "@/components/data/cappedList";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
@@ -103,6 +104,8 @@ export default function QuestionnaireDetailPage() {
   const { toast } = useToast();
   // Deleting the form or a sitting is a content admin's act, in admin view (2026-10-20).
   const { adminMode } = useAdminView();
+  /** Bumped after a sitting is deleted, so the admin's "Deleted answers" list re-reads. */
+  const [deletedSittingsToken, setDeletedSittingsToken] = useState(0);
 
   const [form, setForm] = useState<QForm | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -292,7 +295,7 @@ export default function QuestionnaireDetailPage() {
   async function deleteForm() {
     if (!form) return;
     const ok = await confirm(
-      deleteConfirm(`Delete “${form.title}”?`, "Its sections, questions and every recorded answer go with it.", "This cannot be undone.")
+      deleteConfirm(`Delete “${form.title}”?`, "Its questions and answers are kept.", "An admin can restore it.")
     );
     if (!ok) return;
     const done = await run(() => apiFetch(`/questionnaires/${id}`, { method: "DELETE" }), "Unable to delete this questionnaire");
@@ -300,11 +303,12 @@ export default function QuestionnaireDetailPage() {
   }
 
   async function deleteEntry(entryId: string, label: string) {
-    const ok = await confirm(deleteConfirm(`Delete the answers from “${label}”?`, undefined, "This cannot be undone."));
+    const ok = await confirm(deleteConfirm(`Delete the answers from “${label}”?`, undefined, "An admin can restore them."));
     if (!ok) return;
     await run(async () => {
       await apiFetch(`/questionnaires/${id}/entries/${entryId}`, { method: "DELETE" });
       setForm((current) => (current ? { ...current, entries: current.entries.filter((entry) => entry.id !== entryId) } : current));
+      setDeletedSittingsToken((token) => token + 1);
       return true;
     }, "Unable to delete those answers");
   }
@@ -1074,6 +1078,11 @@ export default function QuestionnaireDetailPage() {
           </ul>
         )}
       </section>
+
+      {/* Restoring a sitting is a content admin's act, in admin view (2026-10-20). */}
+      {mayDelete ? (
+        <DeletedSittings questionnaireId={id} refreshToken={deletedSittingsToken} onRestored={() => void load()} />
+      ) : null}
 
       <ReuseDialog
         open={reuseOpen}

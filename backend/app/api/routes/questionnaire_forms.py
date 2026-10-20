@@ -40,7 +40,9 @@ is the cost the feature accepts on purpose.
 DELETING IS A CONTENT ADMIN'S ACT (owner's ruling, 2026-10-20). Everyone else retires a form with
 ``PATCH {isActive: false}``, which takes it out of every list and every dropdown while the answers
 stay; ``DELETE /questionnaires/{id}`` and ``DELETE /questionnaires/{id}/entries/{entry_id}`` are for
-``deps.CONTENT_ADMIN_ROLES`` alone. The one DELETE in this file removes a
+``deps.CONTENT_ADMIN_ROLES`` alone. Both are SOFT deletes (``deletedAt``): every read here filters
+them out, ``GET /questionnaires?deletedOnly=true`` and ``GET /questionnaires/{id}/deleted-entries``
+list them for a content admin, and ``POST .../restore`` puts one back whole. The one DELETE in this file removes a
 single QUESTION, and even that only really deletes when nobody has answered it — otherwise it
 retires. The database agrees with both: see the ``ON DELETE RESTRICT`` on
 ``QuestionnaireFormAnswer.questionId``.
@@ -68,6 +70,7 @@ from app.core.deps import (
     can_run_design_workshops,
     get_current_user,
     is_content_admin,
+    require_content_admin,
 )
 from app.schemas.questionnaire import (
     CustomAnswerBatch,
@@ -262,8 +265,22 @@ def _require_designer(user: Any) -> None:
 
 
 async def _require_questionnaire(questionnaire_id: str, user: Any) -> Any:
+    """The live questionnaire, or 404. A soft-deleted one is not found here by anybody; only the
+    restore route reads it, by its own lookup."""
     _require_designer(user)
-    return await require_record(db.questionnaire, questionnaire_id)
+    record = await require_record(db.questionnaire, questionnaire_id)
+    if record.deletedAt is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    return record
+
+
+async def _deleted_by_names(rows: list[Any]) -> dict[str, str]:
+    """``deletedById`` -> the account's name, for the trash listings. One read, however many rows."""
+    ids = sorted({row.deletedById for row in rows if getattr(row, "deletedById", None)})
+    if not ids:
+        return {}
+    users = await db.user.find_many(where={"id": {"in": ids}})
+    return {u.id: u.name for u in users if getattr(u, "name", None)}
 
 
 async def _works_on_this_questionnaires_workshop(record: Any, user: Any) -> bool:
@@ -779,6 +796,7 @@ async def list_questionnaires(
     designWorkshopId: str | None = None,
     activeOnly: bool = True,
     mineOnly: bool = False,
+    deletedOnly: bool = False,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Questionnaires this designer may use, newest first.
@@ -786,10 +804,16 @@ async def list_questionnaires(
     Scoped exactly as design workshops are: a non-admin sees their own, an explicit ``mineOnly``
     narrows an admin's view without changing anybody else's. ``designWorkshopId`` is what the
     workshop screen passes to show only the forms attached to it.
+
+    ``deletedOnly`` is THE TRASH, newest deletion first, for content admins alone and refused with
+    a 403 for anyone else, exactly as ``GET /design-workshops?deletedOnly=true`` is. It ignores
+    ``activeOnly``: a form retired before it was deleted is still one an admin may restore.
     """
     _require_designer(current_user)
-    where: dict[str, Any] = {}
-    if activeOnly:
+    if deletedOnly and not is_content_admin(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    where: dict[str, Any] = {"deletedAt": {"not": None} if deletedOnly else None}
+    if activeOnly and not deletedOnly:
         where["isActive"] = True
     if designWorkshopId:
         where["designWorkshopId"] = designWorkshopId
@@ -838,10 +862,15 @@ async def list_questionnaires(
             #
             # STILL TOTAL, so paging is still stable: ``with_id_tiebreak`` appends ``id`` to whatever
             # it is given, and a list is what it takes when the ordering has more than one clause.
-            order=with_id_tiebreak([{"isShared": "desc"}, {"createdAt": "desc"}]),
+            order=with_id_tiebreak(
+                [{"deletedAt": "desc"}]
+                if deletedOnly
+                else [{"isShared": "desc"}, {"createdAt": "desc"}]
+            ),
             include={"owner": True, "designWorkshop": True},
         ),
     )
+    deleters = await _deleted_by_names(rows) if deletedOnly else {}
     summaries = [
         {
             "id": row.id,
@@ -867,6 +896,9 @@ async def list_questionnaires(
             "sourceFilename": row.sourceFilename,
             "createdAt": row.createdAt,
             "updatedAt": row.updatedAt,
+            # Null on every live row; set only in the trash.
+            "deletedAt": row.deletedAt,
+            "deletedByName": deleters.get(row.deletedById or ""),
         }
         for row in rows
     ]
@@ -884,7 +916,7 @@ async def questionnaire_options(
     stops at page one is a designer who cannot find the questionnaire they uploaded this morning.
     """
     _require_designer(current_user)
-    where: dict[str, Any] = {"isActive": True}
+    where: dict[str, Any] = {"isActive": True, "deletedAt": None}
     if not is_content_admin(current_user):
         # OWN FORMS **OR THE PUBLISHED DEFAULT**, and this used to be `ownerId` alone.
         #
@@ -1657,10 +1689,11 @@ async def delete_entry(
     entry_id: str,
     current_user: Any = Depends(get_current_user),
 ) -> Response:
-    """Delete one sitting and its answers. Content admins only (``deps.CONTENT_ADMIN_ROLES``).
+    """Delete one sitting. Content admins only (``deps.CONTENT_ADMIN_ROLES``).
 
-    A hard delete: ``QuestionnaireFormEntry`` carries no ``deletedAt``, and its answers cascade.
-    Whoever holds a post on the form's workshop is refused, as on every other write here.
+    A SOFT delete (owner, 2026-10-20): ``deletedAt`` is set and the sitting and its answers stay,
+    so a content admin can put it back with ``POST .../entries/{entry_id}/restore``. Whoever holds a
+    post on the form's workshop is refused, as on every other write here.
     """
     assert_can_delete(current_user)
     record = await _require_questionnaire(questionnaire_id, current_user)
@@ -1668,8 +1701,63 @@ async def delete_entry(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=False
     )
     await _refuse_its_workshops_holder(record, current_user)
-    await db.questionnaireformentry.delete(where={"id": entry.id})
+    await db.questionnaireformentry.update(
+        where={"id": entry.id},
+        data={"deletedAt": datetime.now(UTC), "deletedById": current_user.id},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{questionnaire_id}/deleted-entries")
+async def list_deleted_entries(
+    questionnaire_id: str,
+    current_user: Any = Depends(require_content_admin),
+) -> list[dict[str, Any]]:
+    """The sittings deleted from one live questionnaire, newest deletion first. Content admins only."""
+    await _require_questionnaire(questionnaire_id, current_user)
+    rows = await db.questionnaireformentry.find_many(
+        where={"questionnaireId": questionnaire_id, "deletedAt": {"not": None}},
+        order=[{"deletedAt": "desc"}, {"id": "asc"}],
+        include={"createdBy": True},
+    )
+    deleters = await _deleted_by_names(rows)
+    return public_encode(
+        [
+            {
+                "id": row.id,
+                "title": row.title,
+                "respondentName": row.respondentName,
+                "source": row.source,
+                "createdAt": row.createdAt,
+                "createdByName": getattr(row.createdBy, "name", None),
+                "deletedAt": row.deletedAt,
+                "deletedByName": deleters.get(row.deletedById or ""),
+            }
+            for row in rows
+        ]
+    )
+
+
+@router.post("/{questionnaire_id}/entries/{entry_id}/restore")
+async def restore_entry(
+    questionnaire_id: str,
+    entry_id: str,
+    current_user: Any = Depends(require_content_admin),
+) -> dict[str, Any]:
+    """Undo a sitting's soft delete. Content admins only; idempotent on a live sitting.
+
+    The questionnaire must itself be live (a 404 otherwise: restore the form first), and whoever
+    holds a post on its workshop is refused, as on the delete.
+    """
+    record = await _require_questionnaire(questionnaire_id, current_user)
+    entry = await db.questionnaireformentry.find_unique(where={"id": entry_id})
+    if entry is None or entry.questionnaireId != questionnaire_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    await _refuse_its_workshops_holder(record, current_user)
+    restored = await db.questionnaireformentry.update(
+        where={"id": entry.id}, data={"deletedAt": None, "deletedById": None}
+    )
+    return public_encode({"id": restored.id, "title": restored.title, "deletedAt": None})
 
 
 @router.delete("/{questionnaire_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1677,24 +1765,40 @@ async def delete_questionnaire(
     questionnaire_id: str,
     current_user: Any = Depends(get_current_user),
 ) -> Response:
-    """Delete a questionnaire with its sections, questions, sittings and answers. Content admins only.
+    """Delete a questionnaire. Content admins only.
 
-    A hard delete in one transaction: ``Questionnaire`` carries no ``deletedAt``, and
-    ``QuestionnaireFormAnswer.questionId`` is ``onDelete: Restrict``, so the answers go first and the
-    cascade from the questionnaire takes the rest.
+    A SOFT delete (owner, 2026-10-20), as a design workshop's is: only ``deletedAt`` and
+    ``deletedById`` are written. Its sections, questions, sittings and answers stay exactly as they
+    were, every read here stops finding it, and ``POST /questionnaires/{id}/restore`` brings it back
+    whole. Nothing cascades either way.
     """
     assert_can_delete(current_user)
     record = await _require_questionnaire(questionnaire_id, current_user)
     await _refuse_its_workshops_holder(record, current_user)
-    async with db.tx() as tx:
-        await tx.questionnaireformanswer.delete_many(
-            where={"entry": {"is": {"questionnaireId": questionnaire_id}}}
-        )
-        await tx.questionnaireformanswer.delete_many(
-            where={"question": {"is": {"section": {"is": {"questionnaireId": questionnaire_id}}}}}
-        )
-        await tx.questionnaire.delete(where={"id": questionnaire_id})
+    await db.questionnaire.update(
+        where={"id": questionnaire_id},
+        data={"deletedAt": datetime.now(UTC), "deletedById": current_user.id},
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{questionnaire_id}/restore")
+async def restore_questionnaire(
+    questionnaire_id: str,
+    current_user: Any = Depends(require_content_admin),
+) -> dict[str, Any]:
+    """Undo a questionnaire's soft delete. Content admins only.
+
+    The pair is cleared together, as ``restore_design_workshop`` clears its own. Idempotent on a
+    live form, so a double-clicked Restore answers 200. Whoever holds a post on the form's workshop
+    is refused, as on the delete. Sittings deleted one by one stay deleted: each has its own restore.
+    """
+    record = await require_record(db.questionnaire, questionnaire_id)
+    await _refuse_its_workshops_holder(record, current_user)
+    restored = await db.questionnaire.update(
+        where={"id": questionnaire_id}, data={"deletedAt": None, "deletedById": None}
+    )
+    return public_encode({"id": restored.id, "title": restored.title, "deletedAt": None})
 
 
 async def _entry_in(
@@ -1719,6 +1823,8 @@ async def _entry_in(
     by a colleague on their instrument is still their fieldwork to correct.
     """
     entry = await require_record(db.questionnaireformentry, entry_id)
+    if entry.deletedAt is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     if entry.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     if rewriting and not _may_rewrite_entry(entry, questionnaire, user):

@@ -231,6 +231,22 @@ export type QFormSummary = {
   sourceFilename: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  /** Set only on a row of the trash (`deletedOnly`); null on every live row. */
+  deletedAt?: string | null;
+  /** Who deleted it, in the trash; null when the account is gone. */
+  deletedByName?: string | null;
+};
+
+/** A sitting in `GET /questionnaires/{id}/deleted-entries` — content admins only. */
+export type QFormDeletedEntry = {
+  id: string;
+  title: string;
+  respondentName: string | null;
+  source: string;
+  createdAt: string | null;
+  createdByName: string | null;
+  deletedAt: string;
+  deletedByName: string | null;
 };
 
 /** `GET /questionnaires/options` — id + label and nothing else, for a dropdown. */
@@ -524,6 +540,8 @@ export type QFormListParams = {
   activeOnly?: boolean;
   /** Narrows an ADMIN's view to their own. A non-admin is scoped to their own regardless, so this never widens anything. */
   mineOnly?: boolean;
+  /** The trash: soft-deleted questionnaires only, newest deletion first. Content admins only (403 otherwise). */
+  deletedOnly?: boolean;
 };
 
 export function listQuestionnaires(params: QFormListParams = {}) {
@@ -536,8 +554,27 @@ export function listQuestionnaires(params: QFormListParams = {}) {
       // `buildQuery` takes no booleans and drops "" exactly as it drops null, so both flags are
       // spelled out as literals and omitted entirely when they are at their server default.
       activeOnly: params.activeOnly === false ? "false" : undefined,
-      mineOnly: params.mineOnly ? "true" : undefined
+      mineOnly: params.mineOnly ? "true" : undefined,
+      deletedOnly: params.deletedOnly ? "true" : undefined
     })}`
+  );
+}
+
+/** Undo a questionnaire's soft delete. Content admins only. */
+export function restoreQuestionnaire(id: string) {
+  return apiFetch<{ id: string; title: string }>(`/questionnaires/${encodeURIComponent(id)}/restore`, { method: "POST" });
+}
+
+/** The sittings deleted from one questionnaire. Content admins only. */
+export function listDeletedEntries(id: string) {
+  return apiFetch<QFormDeletedEntry[]>(`/questionnaires/${encodeURIComponent(id)}/deleted-entries`);
+}
+
+/** Undo a sitting's soft delete. Content admins only. */
+export function restoreEntry(id: string, entryId: string) {
+  return apiFetch<{ id: string; title: string }>(
+    `/questionnaires/${encodeURIComponent(id)}/entries/${encodeURIComponent(entryId)}/restore`,
+    { method: "POST" }
   );
 }
 

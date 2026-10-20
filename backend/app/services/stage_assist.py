@@ -594,14 +594,19 @@ async def _sittings(workshop_id: str) -> list[dict[str, Any]]:
     from app.core.db import db
 
     forms = await db.questionnaire.find_many(
-        where={"designWorkshopId": workshop_id, "isActive": True, "kind": "MARKET_SURVEY"},
+        where={
+            "designWorkshopId": workshop_id,
+            "isActive": True,
+            "kind": "MARKET_SURVEY",
+            "deletedAt": None,
+        },
         order={"createdAt": "asc"},
     )
     if not forms:
         return []
     groups = await db.questionnaireformentry.group_by(
         by=["questionnaireId"],
-        where={"questionnaireId": {"in": [f.id for f in forms]}},
+        where={"questionnaireId": {"in": [f.id for f in forms]}, "deletedAt": None},
         count=True,
         max={"createdAt": True},
     )

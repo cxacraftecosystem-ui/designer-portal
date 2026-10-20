@@ -194,7 +194,7 @@ async def load_form(
     is a fact about the question and not about who is looking at it.
     """
     questionnaire = await db.questionnaire.find_unique(where={"id": questionnaire_id})
-    if questionnaire is None:
+    if questionnaire is None or questionnaire.deletedAt is not None:
         return None
 
     sections, entries = await gather_reads(
@@ -269,11 +269,13 @@ async def load_form(
     # Filtered here rather than in the query above, so ``answered_ids`` — and therefore every
     # question's ``hasAnswers`` — still sees the whole form. Narrowing the query would tell a
     # colleague they may reword a question that in fact already carries somebody else's answers.
-    visible_entries = (
-        entries
-        if only_entries_of is None
-        else [e for e in entries if e.createdById == only_entries_of]
-    )
+    # A soft-deleted sitting is narrowed out here for the same reason: its answers still pin their
+    # questions (``ON DELETE RESTRICT`` counts them, and a restore brings them back).
+    visible_entries = [
+        e
+        for e in entries
+        if e.deletedAt is None and (only_entries_of is None or e.createdById == only_entries_of)
+    ]
 
     return {
         "id": questionnaire.id,
@@ -360,7 +362,7 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
     report must re-establish the same thing rather than assume it.
     """
     questionnaires = await db.questionnaire.find_many(
-        where={"designWorkshopId": design_workshop_id, "isActive": True},
+        where={"designWorkshopId": design_workshop_id, "isActive": True, "deletedAt": None},
         order={"createdAt": "asc"},
     )
     if not questionnaires:
@@ -373,7 +375,7 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
             order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
         ),
         db.questionnaireformentry.find_many(
-            where={"questionnaireId": {"in": ids}},
+            where={"questionnaireId": {"in": ids}, "deletedAt": None},
             order={"createdAt": "asc"},
             include={"createdBy": True},
         ),
@@ -565,7 +567,7 @@ async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
     of this table has to make it too.
     """
     questionnaire = await db.questionnaire.find_unique(where={"id": questionnaire_id})
-    if questionnaire is None:
+    if questionnaire is None or questionnaire.deletedAt is not None:
         return None
 
     sections = await db.questionnaireformsection.find_many(

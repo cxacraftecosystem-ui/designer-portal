@@ -2899,6 +2899,8 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         order={"title": "asc"},
         search_fields=("title", "description", "sourceFilename"),
         viewer_where=visible_questionnaire_where,
+        # A soft-deleted form is never offered; one already chosen still resolves by id.
+        offered_where={"deletedAt": None},
         label=lambda r: str(r.title or ""),
         # THE SUBLABEL IS LIVE AND IS NEVER WRITTEN ONTO THE ENTRY, exactly as `_review_flag` is on
         # the models that have one. `kind` is what decides which stage of the report a sitting is

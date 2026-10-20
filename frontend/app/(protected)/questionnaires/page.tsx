@@ -37,7 +37,9 @@ import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
+import { useAdminView } from "@/components/AdminViewProvider";
 import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
+import { DeletedQuestionnairesCard } from "@/components/questionnaires/DeletedQuestionnairesCard";
 import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
@@ -86,6 +88,8 @@ const NO_WORKSHOP_ROWS: readonly DwSummary[] = [];
 export default function QuestionnairesPage() {
   const router = useRouter();
   const { toast } = useToast();
+  // The trash and its Restore are a content admin's, in admin view (2026-10-20).
+  const { adminMode } = useAdminView();
   const [data, setData] = useState<PageResult<QFormSummary> | null>(null);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
@@ -856,6 +860,8 @@ export default function QuestionnairesPage() {
         )}
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
+
+      {adminMode ? <DeletedQuestionnairesCard onRestored={() => void load()} /> : null}
 
       {/*
         `key` on the questionnaire id, so the dialog is a FRESH component per row rather than the
