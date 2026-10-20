@@ -120,6 +120,9 @@ for (const size of [
     });
 
     test("the header hides on the way down and returns on any move up", async ({ page }) => {
+      // Let the dashboard finish loading first: content arriving above the fold moves the page by
+      // scroll anchoring, which the header rightly reads as more scrolling.
+      await page.waitForLoadState("networkidle");
       await tallPage(page);
       const frame = page.locator(".app-search-header-frame");
       // Window scrolls, not wheels: a wheel lands on whatever is under the pointer, and a card list
