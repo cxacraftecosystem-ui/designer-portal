@@ -33,6 +33,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.designprototype.workshop.data.CrossPortalCardAnswer
 import com.designprototype.workshop.data.CrossPortalClient
 import com.designprototype.workshop.data.CrossPortalCopy
 import com.designprototype.workshop.data.CrossPortalFieldsDto
@@ -96,12 +97,18 @@ private fun Note(text: String?) {
     }
 }
 
-/** A new artisan: find by the numbers typed above, then fill the form in one press. */
+/**
+ * A new artisan: find by the numbers typed above, then fill the form in one press. Opened from a
+ * scanned Field Repository card ([cardInput]), it asks by the card instead (web `CrossPortalFind`).
+ */
 @Composable
 fun CrossPortalFindCard(
     aadhaar: String,
     pehchanNumber: String,
     filled: CrossPortalMatchDto?,
+    cardInput: String? = null,
+    /** Opens an artisan the card already names here. Null: the note says so without a button. */
+    onOpenArtisan: ((String) -> Unit)? = null,
     onFill: (CrossPortalMatchDto) -> Unit,
 ) {
     val (status, client) = rememberCrossPortal()
@@ -110,13 +117,14 @@ fun CrossPortalFindCard(
     var busy by remember { mutableStateOf(false) }
     var match by remember { mutableStateOf<CrossPortalMatchDto?>(null) }
     var note by remember { mutableStateOf<String?>(null) }
+    var existingId by remember { mutableStateOf<String?>(null) }
     if (!status.enabled) return
     if (filled != null) {
         Text(CrossPortalCopy.filled(CrossPortalPrefill.summary(filled)), style = MaterialTheme.typography.bodyMedium)
         return
     }
     CardFrame {
-        Text(CrossPortalCopy.HEADING, fontWeight = FontWeight.SemiBold)
+        Text(cardInput?.let(CrossPortalCopy::cardHeading) ?: CrossPortalCopy.HEADING, fontWeight = FontWeight.SemiBold)
         ConsentRow(consent, CrossPortalCopy.consent(status.sharedFields)) { consent = it }
         val found = match
         if (found != null) {
@@ -133,6 +141,27 @@ fun CrossPortalFindCard(
                     enabled = consent && !busy,
                     modifier = Modifier.heightIn(min = 48.dp),
                     onClick = {
+                        if (cardInput != null) {
+                            busy = true
+                            note = null
+                            existingId = null
+                            scope.launch {
+                                runCatching { client.lookupByCard(cardInput) }
+                                    .onSuccess { answer ->
+                                        when (answer) {
+                                            is CrossPortalCardAnswer.Match -> match = answer.match
+                                            is CrossPortalCardAnswer.Existing -> {
+                                                existingId = answer.artisanId
+                                                note = CrossPortalCopy.ALREADY_HERE
+                                            }
+                                            CrossPortalCardAnswer.NotFound -> note = CrossPortalCopy.NOT_FOUND
+                                        }
+                                    }
+                                    .onFailure { note = it.apiRefusal(CrossPortalCopy.UNREACHABLE).message }
+                                busy = false
+                            }
+                            return@OutlinedButton
+                        }
                         if (aadhaar.isBlank() && pehchanNumber.isBlank()) {
                             note = CrossPortalCopy.NEED_NUMBER
                             return@OutlinedButton
@@ -152,6 +181,14 @@ fun CrossPortalFindCard(
             }
         }
         Note(note)
+        val existing = existingId
+        if (existing != null && onOpenArtisan != null) {
+            ActionRow {
+                OutlinedButton(onClick = { onOpenArtisan(existing) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(CrossPortalCopy.OPEN_ARTISAN)
+                }
+            }
+        }
     }
 }
 

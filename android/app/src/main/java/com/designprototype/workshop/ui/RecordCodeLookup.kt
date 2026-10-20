@@ -1,58 +1,63 @@
 package com.designprototype.workshop.ui
 
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.QrCode2
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.ArtisanCardCode
 import com.designprototype.workshop.data.CARD_REPLACED
 import com.designprototype.workshop.data.CardResolution
 import com.designprototype.workshop.data.DwWorkshopCodeRef
 import com.designprototype.workshop.data.DwWorkshopRecordType
 import com.designprototype.workshop.data.DwWorkshopScan
+import com.designprototype.workshop.data.ScanAction
+import com.designprototype.workshop.data.ScanCardAnswer
+import com.designprototype.workshop.data.ScanCardKind
+import com.designprototype.workshop.data.ScanCodecs
+import com.designprototype.workshop.data.ScanCopy
+import com.designprototype.workshop.data.ScanDecoded
+import com.designprototype.workshop.data.ScanOutcome
+import com.designprototype.workshop.data.ScanOutcomeKind
+import com.designprototype.workshop.data.ScanPortal
+import com.designprototype.workshop.data.ScanRecordAnswer
+import com.designprototype.workshop.data.ScanServices
+import com.designprototype.workshop.data.ScanTarget
 import com.designprototype.workshop.data.WorkshopRepository
-import com.designprototype.workshop.data.designWorkshopJoinAskingMessage
-import com.designprototype.workshop.data.designWorkshopJoinCardRedeemingMessage
+import com.designprototype.workshop.data.dispatchScan
 import com.designprototype.workshop.data.readWorkshopScan
 import com.designprototype.workshop.data.unresolvedWorkshopCodeMessage
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 
 /**
  * Read a code back from anywhere in the app, for every record type it can carry, and open the record.
+ *
+ * ── IT NOW ANSWERS THROUGH THE TOP-BAR DISPATCHER (REQUIREMENTS_2026-10-20 §6) ───────────────
+ *
+ * [RecordCodeLookupPanel] draws [TopBarScanContent] over [designerScanServices], the same body the
+ * header's scan button opens, so the search screen, "Scan a code" and the header cannot answer one
+ * code two ways. What a code is and what it says is `data/ScanDispatch.kt`, shared with the Field
+ * Repository and the web. The paragraphs below describe the camera and the anti-enumeration rule,
+ * both of which still hold.
  *
  * ── WHY IT IS NOT ONLY ON THE WORKSHOP'S CARDS & TAGS SCREEN ─────────────────────────────────
  *
@@ -167,56 +172,9 @@ suspend fun lookUpRecordCode(repository: WorkshopRepository, ref: DwWorkshopCode
             "That's a prototype tag. Look it up from its workshop's Cards & tags."
         )
     }
+    if (ref.recordType == DwWorkshopRecordType.DESIGN_WORKSHOP) return RecordCodeOutcome.Join(ref.id)
     return try {
-        val hit = when (ref.recordType) {
-            DwWorkshopRecordType.ARTISAN -> repository.artisan(ref.id).let { RecordCodeHit(it.name, line(it.place)) }
-            DwWorkshopRecordType.CRAFT -> repository.craft(ref.id).let { RecordCodeHit(it.name, line(it.category, it.place)) }
-            DwWorkshopRecordType.WORKSHOP -> repository.workshop(ref.id).let { RecordCodeHit(it.title, line(it.place)) }
-            DwWorkshopRecordType.PRODUCT ->
-                repository.product(ref.id).let { RecordCodeHit(it.productName, line(it.craftName, it.artisanName, it.place)) }
-            DwWorkshopRecordType.PROCESS -> repository.process(ref.id).let { RecordCodeHit(it.name, line(it.notes)) }
-            DwWorkshopRecordType.TOOL ->
-                repository.tool(ref.id).let { RecordCodeHit(it.toolkitName, line(it.craftName, it.artisanName, it.place)) }
-            // The artisans a sitting covered are deliberately NOT named: the interview's own title and
-            // place are what confirm the right sitting was found, and a list of people is the sort of
-            // thing that ends up on a screen held up in the room those people are standing in.
-            DwWorkshopRecordType.QUESTIONNAIRE ->
-                repository.interview(ref.id).let { RecordCodeHit(it.title, line(it.place, it.language)) }
-            DwWorkshopRecordType.MEDIA ->
-                repository.mediaItem(ref.id).let {
-                    RecordCodeHit(it.caption?.trim()?.ifEmpty { null } ?: it.originalFilename, line(it.mediaType, it.mimeType))
-                }
-            // Answered above. Written out rather than left to an `else` so that adding a record type to
-            // the grammar fails this `when`'s exhaustiveness check instead of falling into a branch
-            // somebody else wrote.
-            DwWorkshopRecordType.PROTOTYPE -> return RecordCodeOutcome.Refused(unresolvedWorkshopCodeMessage(ref.recordType))
-
-            // AND THIS IS THAT EXHAUSTIVENESS CHECK DOING ITS JOB. `DESIGN_WORKSHOP` / `G` arrived in
-            // the grammar with the browser's workshop card, and the compiler stopped here rather than
-            // letting a `G` code fall into somebody else's branch.
-            //
-            // IT USED TO REFUSE, AND THE REFUSAL WAS THE FEATURE'S DEAD END. The clause that stood
-            // here read: "IT REFUSES INSTEAD OF RESOLVING, and that is a decision rather than a
-            // stub — `repository.designWorkshop(id)` would answer perfectly well and this panel would
-            // then show a title and an Open button, but Open reports through `onOpen(...)` into
-            // `MainActivity.searchRecordEntryMode`, whose `else` is `EntryMode.ARTISAN`", so a
-            // scanned workshop would have been opened AS AN ARTISAN one press later. That reasoning
-            // is still entirely correct — and it was an argument against OPENING the workshop, which
-            // was never what a person handed this card wants. They want to be ON it.
-            //
-            // SO IT ASKS. `POST /design-workshop-access/requests` has been shipped the whole time
-            // with no client on any surface; `ui/DwWorkshopJoin.kt` is now that client. Nothing here
-            // opens anything, so the `EntryMode.ARTISAN` trap is not merely avoided — it is not on
-            // this path at all.
-            //
-            // NO SENTENCE IS WRITTEN HERE. [RecordCodeOutcome.Join] carries an id and the caller
-            // performs the act, and the words a designer is left with are the SERVER'S, shown as
-            // given — see `dwJoinDesignWorkshop`. That is not a style choice: the route answers one
-            // sentence for all seven of its outcomes precisely so that nobody can read the existence
-            // of a workshop off the wording, and a client that improved the copy for one branch would
-            // undo it.
-            DwWorkshopRecordType.DESIGN_WORKSHOP -> return RecordCodeOutcome.Join(ref.id)
-        }
+        val hit = fetchRecordCodeHit(repository, ref)
         RecordCodeOutcome.Found(ref, hit)
     } catch (e: HttpException) {
         RecordCodeOutcome.Refused(unresolvedWorkshopCodeMessage(ref.recordType))
@@ -227,212 +185,179 @@ suspend fun lookUpRecordCode(repository: WorkshopRepository, ref: DwWorkshopCode
     }
 }
 
+
 /**
- * The typed-code route, and the one press that opens what it found.
+ * Fetch what a reference names, throwing on any failure so each caller decides what a failure means.
  *
- * IT REPORTS, THEN OFFERS TO OPEN. A lookup that jumped straight to a record would leave nothing on
- * screen to check, and the one failure this whole feature exists to remove is work attached to the
- * wrong record. Opening is a deliberate press on a real button, which is also what makes the result
- * reachable with a keyboard and readable by TalkBack after the announcement has gone.
+ * ONE `when` for every record type, shared by [lookUpRecordCode] and [designerScanServices]: a
+ * second copy is how one surface comes to describe a record differently from another. The artisans a
+ * sitting covered are deliberately NOT named for an interview: its title and place confirm the right
+ * sitting, and a list of people is what ends up on a screen held up in the room they are standing in.
+ */
+suspend fun fetchRecordCodeHit(repository: WorkshopRepository, ref: DwWorkshopCodeRef): RecordCodeHit =
+    when (ref.recordType) {
+        DwWorkshopRecordType.ARTISAN -> repository.artisan(ref.id).let { RecordCodeHit(it.name, line(it.place)) }
+        DwWorkshopRecordType.CRAFT -> repository.craft(ref.id).let { RecordCodeHit(it.name, line(it.category, it.place)) }
+        DwWorkshopRecordType.WORKSHOP -> repository.workshop(ref.id).let { RecordCodeHit(it.title, line(it.place)) }
+        DwWorkshopRecordType.PRODUCT ->
+            repository.product(ref.id).let { RecordCodeHit(it.productName, line(it.craftName, it.artisanName, it.place)) }
+        DwWorkshopRecordType.PROCESS -> repository.process(ref.id).let { RecordCodeHit(it.name, line(it.notes)) }
+        DwWorkshopRecordType.TOOL ->
+            repository.tool(ref.id).let { RecordCodeHit(it.toolkitName, line(it.craftName, it.artisanName, it.place)) }
+        DwWorkshopRecordType.QUESTIONNAIRE ->
+            repository.interview(ref.id).let { RecordCodeHit(it.title, line(it.place, it.language)) }
+        DwWorkshopRecordType.MEDIA ->
+            repository.mediaItem(ref.id).let {
+                RecordCodeHit(it.caption?.trim()?.ifEmpty { null } ?: it.originalFilename, line(it.mediaType, it.mimeType))
+            }
+        // The server answers 404 for a workshop this account is not on; the scanner then offers to ask.
+        DwWorkshopRecordType.DESIGN_WORKSHOP ->
+            repository.designWorkshop(ref.id).let {
+                RecordCodeHit(it.title.ifBlank { "Design workshop" }, line(it.craftName, it.district))
+            }
+        // A prototype lives in one workshop's draft; there is no endpoint to ask.
+        DwWorkshopRecordType.PROTOTYPE -> throw IllegalArgumentException("A prototype is looked up inside its workshop.")
+    }
+
+// ---------------------------------------------------------------------------------------------
+// The top-bar dispatcher's designer half (REQUIREMENTS_2026-10-20 §6)
+// ---------------------------------------------------------------------------------------------
+
+/** The DPW grammars, read by `readWorkshopScan` exactly as every other scanner here reads them. */
+object DesignerScanCodecs : ScanCodecs {
+    override fun decodeJoinCard(raw: String): ScanDecoded.JoinCard = when (val scan = readWorkshopScan(raw)) {
+        is DwWorkshopScan.JoinCard -> ScanDecoded.JoinCardOk(scan.card.workshopId, scan.card.code)
+        is DwWorkshopScan.Refused -> ScanDecoded.Refused(scan.message)
+        is DwWorkshopScan.RecordCode -> ScanDecoded.Refused(ScanCopy.UNKNOWN)
+    }
+
+    override fun decodeRecordCode(raw: String): ScanDecoded.RecordCode = when (val scan = readWorkshopScan(raw)) {
+        is DwWorkshopScan.RecordCode -> ScanDecoded.RecordCodeOk(scan.ref.recordType.wire, scan.ref.id, scan.code)
+        is DwWorkshopScan.Refused -> ScanDecoded.Refused(scan.message)
+        is DwWorkshopScan.JoinCard -> ScanDecoded.Refused(ScanCopy.UNKNOWN)
+    }
+}
+
+/** How an artisan card reads, by this app's [ArtisanCardCode]. */
+fun designerScanCardKind(raw: String): ScanCardKind = when {
+    ArtisanCardCode.parse(raw) is ArtisanCardCode.Result.Ok -> ScanCardKind.VALID
+    ArtisanCardCode.looksLikeCard(raw) -> ScanCardKind.MISTYPED
+    else -> ScanCardKind.NONE
+}
+
+/** The designer app's answers to the dispatcher: the cached register first, then the server. */
+fun designerScanServices(context: Context, repository: WorkshopRepository): ScanServices = object : ScanServices {
+    override val portal = ScanPortal.DESIGNER
+    override val codecs: ScanCodecs = DesignerScanCodecs
+
+    override fun cardKind(raw: String): ScanCardKind = designerScanCardKind(raw)
+
+    override suspend fun resolveCard(raw: String): ScanCardAnswer =
+        when (val answer = resolveScannedCard(context, repository, raw)) {
+            is CardResolution.Found -> ScanCardAnswer.Found(answer.artisanId, answer.name, answer.detail)
+            is CardResolution.Replaced ->
+                if (answer.artisanId.isBlank()) ScanCardAnswer.Refused(CARD_REPLACED) else ScanCardAnswer.Replaced(answer.artisanId)
+            CardResolution.Remote -> ScanCardAnswer.Peer
+            // A card this phone has not seen, with no signal: nothing to open until it resolves.
+            is CardResolution.Pending -> ScanCardAnswer.Offline
+            is CardResolution.Refused -> ScanCardAnswer.Refused(answer.message)
+        }
+
+    override suspend fun lookUpRecord(recordType: String, id: String): ScanRecordAnswer {
+        val type = DwWorkshopRecordType.ofWire(recordType) ?: return ScanRecordAnswer.Missing
+        if (type == DwWorkshopRecordType.PROTOTYPE) return ScanRecordAnswer.Missing
+        return try {
+            val hit = fetchRecordCodeHit(repository, DwWorkshopCodeRef(type, id))
+            ScanRecordAnswer.Found(hit.label, hit.detail)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: HttpException) {
+            // One answer for "no such record" and "not yours", as the API gives it.
+            ScanRecordAnswer.Missing
+        } catch (_: Exception) {
+            ScanRecordAnswer.Offline
+        }
+    }
+}
+
+/**
+ * Run the action the person pressed. Returns the next outcome to show, or null once it has handed
+ * [onTarget] a place to go. The join card and the ask are queued on the device when there is no
+ * signal (`DwJoinCard.kt`, `DwWorkshopJoin.kt`), and the server's own sentence is shown as given.
+ */
+suspend fun runDesignerScanAction(context: Context, action: ScanAction, onTarget: (ScanTarget) -> Unit): ScanOutcome? =
+    when (action) {
+        is ScanAction.Open -> {
+            onTarget(action.target)
+            null
+        }
+        is ScanAction.Add -> {
+            onTarget(action.target)
+            null
+        }
+        is ScanAction.Redeem -> when (val outcome = dwScanJoinCard(context, action.workshopId, action.code)) {
+            is DwJoinOutcome.Inducted -> ScanOutcome(
+                ScanOutcomeKind.OPEN,
+                if (outcome.fullMember) ScanCopy.JOINED else outcome.message,
+                if (outcome.fullMember) outcome.message else null,
+                ScanAction.Open(ScanCopy.OPEN_WORKSHOP, ScanTarget.DesignWorkshop(action.workshopId)),
+            )
+            is DwJoinOutcome.Queued -> ScanOutcome(ScanOutcomeKind.OFFLINE, outcome.message)
+            is DwJoinOutcome.Refused -> ScanOutcome(ScanOutcomeKind.REFUSED, outcome.message)
+            is DwJoinOutcome.Asked -> ScanOutcome(ScanOutcomeKind.JOIN_WORKSHOP, outcome.detail)
+        }
+        is ScanAction.RequestAccess -> when (val outcome = dwJoinDesignWorkshop(context, action.workshopId, action.scannedCode)) {
+            is DwJoinOutcome.Asked -> ScanOutcome(ScanOutcomeKind.JOIN_WORKSHOP, outcome.detail)
+            is DwJoinOutcome.Queued -> ScanOutcome(ScanOutcomeKind.JOIN_WORKSHOP, outcome.message)
+            is DwJoinOutcome.Refused -> ScanOutcome(ScanOutcomeKind.REFUSED, outcome.message)
+            is DwJoinOutcome.Inducted -> ScanOutcome(
+                ScanOutcomeKind.OPEN,
+                outcome.message,
+                action = ScanAction.Open(ScanCopy.OPEN_WORKSHOP, ScanTarget.DesignWorkshop(action.workshopId)),
+            )
+        }
+        // A Field Repository session; the dispatcher refuses it here before an action exists.
+        is ScanAction.JoinSession -> ScanOutcome(ScanOutcomeKind.REFUSED, ScanCopy.SESSION_ELSEWHERE)
+    }
+
+/** This app's camera and picture controls, in the slot [TopBarScanContent] leaves for them. */
+@Composable
+fun DesignerScanControls(enabled: Boolean, onText: (String) -> Unit, onRefusal: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        DwQrLiveScanControl(
+            enabled = enabled,
+            onText = onText,
+            onRefusal = onRefusal,
+            label = ScanCopy.USE_CAMERA,
+            pictureLabel = ScanCopy.CHOOSE_PHOTO,
+        )
+        DwQrScanControl(enabled = enabled, onText = onText, onRefusal = onRefusal, pictureLabel = ScanCopy.CHOOSE_PHOTO)
+    }
+}
+
+/**
+ * The search screen's and "Scan a code"'s panel: the top-bar scanner's own body, in a card.
  *
- * @param onOpen the record type's [DwWorkshopRecordType.wire] name and the record's id — the same
- *   singular vocabulary `SearchScreen` reports hits in, so the host routes both through one mapper.
+ * @param onOpen a record's wire type and id: the search screen's own arm (`openSearchRecord`).
+ * @param onTarget every other place a code can lead (the add-artisan form, the design workshops,
+ *   Questionnaires).
  */
 @Composable
 fun RecordCodeLookupPanel(
     repository: WorkshopRepository,
     onOpen: (recordType: String, recordId: String) -> Unit,
     modifier: Modifier = Modifier,
+    onTarget: ((ScanTarget) -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var typed by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var refusal by remember { mutableStateOf<String?>(null) }
-    var found by remember { mutableStateOf<RecordCodeOutcome.Found?>(null) }
-    /**
-     * The join path's own answer — rendered in the same panel and never mixed with [found].
-     *
-     * A THIRD SLOT AND NOT A REUSE OF [found], because a join has no record to open: [found] renders
-     * an "Open …" button, and offering one for a workshop nobody has been admitted to yet would be
-     * the same lie the old refusal was written to avoid. It is not [refusal] either — a queued or
-     * accepted ask is not a refusal, and rendering it in the amber box would tell a designer their
-     * card had failed when it had worked.
-     */
-    var joined by remember { mutableStateOf<String?>(null) }
-
-    /**
-     * Whether [joined] describes actual membership, which is the ONE thing that changes its colour.
-     *
-     * FALSE FOR EVERY ASK AND FOR A PROVISIONAL FOOTHOLD, and true only for the server's `FULL` and
-     * `ALREADY_A_MEMBER`. `design_workshop_grants` insists on this in terms: any UI over a provisional
-     * outcome "must keep the state visibly and persistently provisional … and must never dress it as
-     * membership", because somebody can work for days into a workspace that turns out to be nothing.
-     * Green is the strongest thing this panel can say, so it is spent only where it is literally true.
-     */
-    var inducted by remember { mutableStateOf(false) }
-
-    /**
-     * Ask to be put on the workshop a scanned card names.
-     *
-     * WRITTEN DOWN BEFORE THE NETWORK IS TOUCHED, inside `dwJoinDesignWorkshop`. The offline case is
-     * not an error path here: a card is handed over in a courtyard, and the scan plus the time it
-     * happened are kept on the device and sent when signal returns. See `ui/DwWorkshopJoin.kt`.
-     */
-    /**
-     * Redeem a JOIN CARD. **This is an induction, not an ask** — no administrator has to decide.
-     *
-     * THE OTHER HALF OF THE FEATURE, AND IT HAD NO CLIENT AT ALL. `POST
-     * /design-workshop-access/redemptions` shipped complete — single-use seats decided by a
-     * compare-and-swap, a 30-day offline sync grace, a provisional foothold for the late-comer — and
-     * nothing anywhere called it; a genuine `DPW2:J:…` card scanned here was answered "update the app
-     * to read it", against an app that did not exist. See `ui/DwJoinCard.kt`.
-     *
-     * WRITTEN DOWN BEFORE THE NETWORK IS TOUCHED, inside `dwScanJoinCard`, exactly as [join] is: a
-     * card handed over in a courtyard with no signal is queued with the time it happened and sent when
-     * signal returns, and the flush that does that is process-wide rather than tied to this screen.
-     */
-    fun redeemJoinCard(workshopId: String, canonicalCode: String) {
-        busy = true
-        refusal = null
-        found = null
-        inducted = false
-        joined = designWorkshopJoinCardRedeemingMessage()
-        scope.launch {
-            when (val outcome = dwScanJoinCard(context, workshopId, canonicalCode)) {
-                // THE SERVER'S SENTENCE, SHOWN AS GIVEN. Three of its answers are deliberately
-                // distinguishable and three are deliberately identical; rewriting either half here
-                // would undo a decision made on purpose. See `DwJoinCard.kt`.
-                is DwJoinOutcome.Inducted -> {
-                    joined = outcome.message
-                    inducted = outcome.fullMember
-                }
-                is DwJoinOutcome.Queued -> joined = outcome.message
-                is DwJoinOutcome.Refused -> {
-                    joined = null
-                    refusal = outcome.message
-                }
-                // UNREACHABLE ON THIS PATH — `dwScanJoinCard` never asks — and written out rather
-                // than left to an `else` so that a new arm on `DwJoinOutcome` fails the compiler here
-                // instead of falling into a branch somebody else wrote.
-                is DwJoinOutcome.Asked -> joined = outcome.detail
-            }
-            busy = false
+    val services = remember(repository) { designerScanServices(context, repository) }
+    val route: (ScanTarget) -> Unit = { target ->
+        when (target) {
+            is ScanTarget.Record -> onOpen(target.recordType, target.id)
+            is ScanTarget.DesignWorkshop -> onOpen("designWorkshop", target.id)
+            else -> onTarget?.invoke(target)
         }
     }
-
-    fun join(workshopId: String, canonicalCode: String) {
-        busy = true
-        refusal = null
-        found = null
-        inducted = false
-        joined = designWorkshopJoinAskingMessage()
-        scope.launch {
-            when (val outcome = dwJoinDesignWorkshop(context, workshopId, canonicalCode)) {
-                // THE SERVER'S SENTENCE, SHOWN AS GIVEN — see `DwWorkshopJoin.kt`'s rule 1.
-                is DwJoinOutcome.Asked -> joined = outcome.detail
-                is DwJoinOutcome.Queued -> joined = outcome.message
-                is DwJoinOutcome.Refused -> {
-                    joined = null
-                    refusal = outcome.message
-                }
-                // UNREACHABLE ON THIS PATH — the ASK route cannot admit anybody — and written out
-                // rather than left to an `else` so that the compiler, and not a reader, is what
-                // notices if the two paths are ever crossed.
-                is DwJoinOutcome.Inducted -> {
-                    joined = outcome.message
-                    inducted = outcome.fullMember
-                }
-            }
-            busy = false
-        }
-    }
-
-    /**
-     * Resolve whatever was read or typed — ONE route for both.
-     *
-     * A scanned payload goes through `readWorkshopScan` exactly as a typed one does. That is the
-     * whole reason this takes a string rather than the scanner calling its own resolver: a payment
-     * QR photographed by mistake must be refused by the same sentence a mistyped code is, and a
-     * second parser is how the two come to disagree about the same card.
-     */
-    fun lookUp(input: String) {
-        if (input.isBlank() || busy) return
-        busy = true
-        // Cleared BEFORE the request, not after it: the seconds a lookup takes are exactly when the
-        // previous code's Open button would otherwise still be sitting under this one's spinner, one
-        // press away from opening the wrong record. `joined` is cleared for the same reason and it is
-        // the more dangerous of the two: "an administrator can now see that you have asked to join"
-        // left standing under a second card would be a claim about the wrong workshop.
-        refusal = null
-        found = null
-        joined = null
-        scope.launch {
-            // AN ARTISAN QR CARD FIRST (`CXA1:` or a typed `D-XXXXX-XXXXX-XX`), then the DPW1 grammar
-            // below, so old printed DPW1:A cards keep opening. The card is matched against the
-            // register this phone cached before the server is asked.
-            if (ArtisanCardCode.looksLikeCard(input)) {
-                when (val answer = resolveScannedCard(context, repository, input)) {
-                    is CardResolution.Found -> found = RecordCodeOutcome.Found(
-                        DwWorkshopCodeRef(DwWorkshopRecordType.ARTISAN, answer.artisanId),
-                        RecordCodeHit(answer.name, answer.detail),
-                    )
-                    is CardResolution.Replaced ->
-                        if (answer.artisanId.isNotBlank()) {
-                            found = RecordCodeOutcome.Found(
-                                DwWorkshopCodeRef(DwWorkshopRecordType.ARTISAN, answer.artisanId),
-                                RecordCodeHit(CARD_REPLACED, null),
-                            )
-                        } else {
-                            refusal = CARD_REPLACED
-                        }
-                    is CardResolution.Pending -> refusal = "Offline. The card is valid; try again online."
-                    else -> refusal = cardResolutionMessage(answer)
-                }
-                busy = false
-                return@launch
-            }
-            // ONE FRONT DOOR FOR BOTH GRAMMARS. `readWorkshopScan` decides by the LETTER whether this
-            // is a code that names a record or a JOIN CARD, and a join card must not reach
-            // `decodeWorkshopCode`: that parser gates on `SUPPORTED_VERSIONS`, so a genuine v2 card
-            // used to be answered "update the app to read it" with no newer app in existence. See
-            // `DwWorkshopCodes.readWorkshopScan` and `DwJoinCard.kt`.
-            when (val scan = readWorkshopScan(input)) {
-                is DwWorkshopScan.Refused -> refusal = scan.message
-                is DwWorkshopScan.JoinCard -> {
-                    // THE CARD IS NOT PUT IN THE BOX, which is the opposite of what the record path
-                    // does one branch down and is deliberate: a join card's payload is a live
-                    // credential, and the box is a visible, screenshot-able, copyable field that also
-                    // survives the next recomposition. A record code is a locator and showing it back
-                    // is a kindness; showing this one back would be leaving a key on the table.
-                    typed = ""
-                    redeemJoinCard(scan.card.workshopId, scan.card.code)
-                    return@launch
-                }
-                is DwWorkshopScan.RecordCode -> when (val answer = lookUpRecordCode(repository, scan.ref)) {
-                    is RecordCodeOutcome.Found -> found = answer
-                    is RecordCodeOutcome.Refused -> refusal = answer.message
-                    // THE CANONICAL CODE AND NOT WHAT WAS TYPED. `decodeWorkshopCode` returns the
-                    // code re-spelled in its canonical form — upper case, no grouping spaces — and the
-                    // server decodes `scannedCode` with its own copy of this grammar. Sending "dpw1
-                    // g…" as a designer typed it would be refused by a 422 about the body for no
-                    // reason at all.
-                    is RecordCodeOutcome.Join -> {
-                        typed = scan.code
-                        // THE CANONICAL CODE IS PASSED, NOT READ BACK OUT OF `typed`. It is the same
-                        // string a line above, and it would still be a mistake to read it from state:
-                        // the box is also the designer's own field, and a value that travels to the
-                        // server through a text box somebody can be typing in is a value that can
-                        // change between the write and the read.
-                        join(answer.workshopId, scan.code)
-                        return@launch
-                    }
-                }
-            }
-            busy = false
-        }
-    }
-
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.field.surface50),
         border = BorderStroke(1.dp, MaterialTheme.field.hairline),
@@ -441,12 +366,7 @@ fun RecordCodeLookupPanel(
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(
-                    Icons.Filled.QrCode2,
-                    contentDescription = null,
-                    tint = MaterialTheme.field.muted,
-                    modifier = Modifier.size(16.dp),
-                )
+                Icon(Icons.Filled.QrCode2, contentDescription = null, tint = MaterialTheme.field.muted, modifier = Modifier.size(16.dp))
                 Text(
                     "Open a record from its code",
                     color = MaterialTheme.colorScheme.onSurface,
@@ -454,180 +374,12 @@ fun RecordCodeLookupPanel(
                     fontWeight = FontWeight.Medium,
                 )
             }
-            Text(
-                "The code under the QR on any card, tag or record. Contains no personal details.",
-                color = MaterialTheme.field.muted,
-                style = MaterialTheme.typography.bodySmall,
-                lineHeight = 16.sp,
+            TopBarScanContent(
+                dispatch = { raw -> dispatchScan(raw, services) },
+                onAction = { action -> runDesignerScanAction(context, action, route) },
+                onDone = {},
+                scanner = { enabled, onText, onRefusal -> DesignerScanControls(enabled, onText, onRefusal) },
             )
-            /*
-             * THE SCANNER ABOVE THE BOX, because it is the faster route when it applies and the box
-             * is what you fall back to. Both are always present; neither is hidden by the other.
-             *
-             * TWO CONTROLS AND NOT ONE, AND THAT IS A WAVE BOUNDARY RATHER THAN A DESIGN. The live
-             * scanner belongs INSIDE `DwQrScanControl` — one control, three surfaces, one refusal
-             * wording, which is that file's own stated rule — and that file is not this wave's to
-             * edit. Mounting it beside the existing control is the additive move: nothing about the
-             * photograph or the picked-picture routes changes, no refusal sentence is duplicated
-             * (`DwQrLiveScanControl` uses `DwCameraRefusal.kt`'s), and the next wave's change is one
-             * call and one deletion.
-             */
-            DwQrLiveScanControl(
-                enabled = !busy,
-                onText = { text ->
-                    typed = text
-                    refusal = null
-                    found = null
-                    joined = null
-                    lookUp(text)
-                },
-                onRefusal = { message ->
-                    found = null
-                    joined = null
-                    refusal = message
-                },
-            )
-            DwQrScanControl(
-                enabled = !busy,
-                onText = { text ->
-                    // The decoded payload is put IN THE BOX as well as resolved. A designer who
-                    // scanned the wrong card can see what was read and correct a character, rather
-                    // than being shown a refusal about a string the app never told them it had.
-                    typed = text
-                    refusal = null
-                    found = null
-                    joined = null
-                    lookUp(text)
-                },
-                onRefusal = { message ->
-                    found = null
-                    joined = null
-                    refusal = message
-                },
-            )
-            OutlinedTextField(
-                value = typed,
-                onValueChange = {
-                    typed = it
-                    refusal = null
-                    found = null
-                },
-                label = { Text("Record code") },
-                placeholder = { Text("DPW1 :T: …") },
-                singleLine = true,
-                enabled = !busy,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                leadingIcon = {
-                    Icon(Icons.Filled.Keyboard, contentDescription = null, modifier = Modifier.size(16.dp))
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { lookUp(typed) },
-                    enabled = typed.isNotBlank() && !busy,
-                    // The 48dp floor this app applies wherever a control was thought about — see
-                    // ISLAND_TOUCH_TARGET in ui/AppNavigation.kt.
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) {
-                    Text("Look up")
-                }
-                if (busy) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp))
-            }
-            Text(
-                "Spaces and capitals don't matter. The last four characters are a check.",
-                color = MaterialTheme.field.muted,
-                style = MaterialTheme.typography.bodySmall,
-                lineHeight = 16.sp,
-            )
-
-            /*
-             * THE JOIN ANSWER, in the neutral container and not the green one.
-             *
-             * NOT `successContainer`, deliberately. Green says "done", and nothing is done: an
-             * administrator has still to decide, and on the offline branch nothing has even been sent.
-             * The server's own sentence is conditional for exactly this reason — "IF that workshop
-             * exists and you are not already on it" — and painting a conditional green is how a
-             * designer comes to stop waiting for the thing they are waiting for.
-             */
-            joined?.let {
-                /*
-                 * GREEN FOR EXACTLY ONE OUTCOME, AND NEUTRAL FOR EVERY OTHER. `inducted` is true only
-                 * when the server said the person is on the workshop — see that state's own comment
-                 * for why a PROVISIONAL foothold must not borrow this colour. An ask is never green.
-                 */
-                Text(
-                    it,
-                    color = if (inducted) {
-                        MaterialTheme.field.onSuccessContainer
-                    } else {
-                        MaterialTheme.field.body
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    lineHeight = 17.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { liveRegion = LiveRegionMode.Polite }
-                        .background(
-                            if (inducted) {
-                                MaterialTheme.field.successContainer
-                            } else {
-                                MaterialTheme.field.surface200
-                            },
-                            RoundedCornerShape(8.dp),
-                        )
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                )
-            }
-
-            refusal?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.field.onWarningContainer,
-                    style = MaterialTheme.typography.bodySmall,
-                    lineHeight = 17.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // Polite rather than a snackbar. A snackbar goes away after a few seconds, and
-                        // both outcomes here are things the designer has to act on: open the record, or
-                        // go and read the card again.
-                        .semantics { liveRegion = LiveRegionMode.Polite }
-                        .background(MaterialTheme.field.warningContainer, RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                )
-            }
-
-            found?.let { answer ->
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { liveRegion = LiveRegionMode.Polite }
-                        .background(MaterialTheme.field.successContainer, RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        answer.ref.recordType.label,
-                        color = MaterialTheme.field.onSuccessContainer,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        answer.hit.label,
-                        color = MaterialTheme.field.onSuccessContainer,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    answer.hit.detail?.let {
-                        Text(it, color = MaterialTheme.field.onSuccessContainer, style = MaterialTheme.typography.bodySmall)
-                    }
-                    Button(
-                        onClick = { onOpen(answer.ref.recordType.wire, answer.ref.id) },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    ) {
-                        Text("Open ${answer.ref.recordType.label.lowercase()}")
-                    }
-                }
-            }
         }
     }
 }

@@ -361,8 +361,11 @@ test("the repository-wide panel on /search offers both ways in too, and decodes 
 
   // Decoded, parsed, and sent to the one screen that can answer it. Reaching this sentence at all
   // means every link from the PNG to the grammar worked.
-  await expect(page.getByTestId("workshop-code-outcome")).toContainText(/prototype tag/i, { timeout: 20_000 });
-  await expect(page.getByTestId("workshop-code-outcome")).toContainText(/open that workshop/i);
+  // The panel answers through the top-bar dispatcher (`lib/scanDispatch.ts`), which points a
+  // prototype tag at its workshop's Cards & tags.
+  const answer = page.locator('[data-scan-outcome="POINTER"]');
+  await expect(answer).toContainText(/prototype tag/i, { timeout: 20_000 });
+  await expect(answer).toContainText(/Cards & tags/i);
 });
 
 test("a QR that is not ours is refused as not ours, not as a damaged tag", async ({ page }) => {

@@ -125,4 +125,63 @@ class CrossPortalPrefillTest {
         assertTrue(!card.contains(".onFailure { note = CrossPortalCopy.UNREACHABLE }"))
         assertTrue(card.contains("onClick = { confirmUnlink = true }"))
     }
+
+    /** Answers `POST /artisan-cards/resolve` with [reply]; every other call is unused here. */
+    private class FakeCrossPortalApi(private val reply: ResolveCardDto) : CrossPortalApi {
+        var sent: ResolveCardRequest? = null
+        override suspend fun status() = CrossPortalStatusDto(enabled = true)
+        override suspend fun lookup(body: CrossPortalLookupRequest) = CrossPortalLookupDto()
+        override suspend fun link(id: String) = CrossPortalLinkDto()
+        override suspend fun createLink(id: String, body: CrossPortalLinkRequest) = CrossPortalLinkDto()
+        override suspend fun refresh(id: String) = CrossPortalRefreshDto()
+        override suspend fun unlink(id: String) = CrossPortalLinkDto()
+        override suspend fun resolveCard(body: ResolveCardRequest): ResolveCardDto {
+            sent = body
+            return reply
+        }
+    }
+
+    @Test
+    fun aScannedFieldRepositoryCardFillsTheFormFromItsMatch() {
+        val matchJson = answer.substringAfter("\"match\": ").substringBeforeLast("}")
+        val remote = json.decodeFromString(
+            ResolveCardDto.serializer(),
+            """{"status": "REMOTE", "issuer": "F", "needsConsent": false, "match": $matchJson}""",
+        )
+        val api = FakeCrossPortalApi(remote)
+        val found = kotlinx.coroutines.runBlocking { CrossPortalClient(api).lookupByCard(" F-ABCDE-FGHJK-MN ") }
+        assertTrue(found is CrossPortalCardAnswer.Match)
+        assertEquals("fr1", (found as CrossPortalCardAnswer.Match).match.remoteArtisanId)
+        assertEquals("Meena Devi", CrossPortalPrefill.from(found.match).name)
+        // Asked by the card, with the consent the designer ticked, exactly as the web's lookupByCard.
+        assertEquals(ResolveCardRequest("F-ABCDE-FGHJK-MN", source = "ANDROID", consent = true), api.sent)
+    }
+
+    @Test
+    fun aCardAlreadyHereOpensItAndAnUnknownOneSaysNotFound() {
+        val linked = FakeCrossPortalApi(ResolveCardDto(status = "FOUND", via = "LINK", artisan = CardArtisanDto("a1", "Meena Devi")))
+        assertEquals(CrossPortalCardAnswer.Existing("a1"), kotlinx.coroutines.runBlocking { CrossPortalClient(linked).lookupByCard("F-X") })
+        val replaced = FakeCrossPortalApi(ResolveCardDto(status = "REPLACED", artisanId = "a2"))
+        assertEquals(CrossPortalCardAnswer.Existing("a2"), kotlinx.coroutines.runBlocking { CrossPortalClient(replaced).lookupByCard("F-X") })
+        val consentless = FakeCrossPortalApi(ResolveCardDto(status = "REMOTE", issuer = "F", needsConsent = true))
+        assertEquals(CrossPortalCardAnswer.NotFound, kotlinx.coroutines.runBlocking { CrossPortalClient(consentless).lookupByCard("F-X") })
+    }
+
+    @Test
+    fun theScannerAddsFromThePeerCardIntoAPrefilledForm() {
+        val main = generateSequence(File("").absoluteFile) { it.parentFile }
+            .flatMap { sequenceOf(File(it, "src/main/java/com/designprototype/workshop/MainActivity.kt"), File(it, "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt")) }
+            .first { it.isFile }
+            .readText()
+        // The scanned card travels to the add-artisan form, never an empty one (REQUIREMENTS_2026-10-20 §6.1).
+        assertTrue(main.contains("screen = Screen.Create(EntryMode.ARTISAN, fromCard = target.card)"))
+        assertTrue(main.contains("fromCard = s.fromCard,"))
+        assertTrue(main.contains("cardInput = fromCard,"))
+        assertTrue(main.contains("createLink(artisanId, match.remoteArtisanId, fromCard)"))
+    }
+
+    @Test
+    fun theCardHeadingNamesTheCardByItsShortCode() {
+        assertEquals("Field Repository card SOMETHING", CrossPortalCopy.cardHeading(" something "))
+    }
 }
