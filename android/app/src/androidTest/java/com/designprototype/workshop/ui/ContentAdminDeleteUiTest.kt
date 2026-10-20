@@ -1,0 +1,81 @@
+package com.designprototype.workshop.ui
+
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.designprototype.workshop.data.EntryCommentDto
+import com.designprototype.workshop.data.UserDto
+import org.junit.Assert.assertEquals
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * A Ministry Admin sees Delete in admin chrome (REQUIREMENTS_2026-10-20 §5.4), drawn on a device.
+ *
+ * The comment row is the record screen's real delete control: its Remove is offered on
+ * [LocalContentAdminChrome], which `MainActivity` provides as [contentAdminChrome] — so a Ministry
+ * Admin with admin view on sees it, the same account with admin view off does not, and a designer
+ * never does. The author's Edit (the PATCH the web already had) is held here too.
+ */
+@RunWith(AndroidJUnit4::class)
+class ContentAdminDeleteUiTest {
+    @get:Rule
+    val compose = createComposeRule()
+
+    private fun user(id: String, role: String) = UserDto(id = id, email = "$id@example.org", name = id, role = role)
+
+    private val comment = EntryCommentDto(
+        id = "c1",
+        recordType = "artisan",
+        recordId = "a1",
+        authorId = "author",
+        body = "Loom count checked twice.",
+        createdAt = "2026-10-20T09:00:00Z"
+    )
+
+    private fun show(viewer: UserDto, adminView: Boolean, onEdit: () -> Unit = {}, onRemove: () -> Unit = {}) {
+        compose.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalContentAdminChrome provides contentAdminChrome(viewer, adminView)) {
+                    EntryCommentRow(comment = comment, viewerId = viewer.id, busy = false, onEdit = onEdit, onRemove = onRemove)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun aMinistryAdminInAdminViewSeesRemoveAndItFires() {
+        var removed = 0
+        show(user("ma", "MINISTRY_ADMIN"), adminView = true, onRemove = { removed++ })
+        compose.onNodeWithText("Remove").assertIsDisplayed().performClick()
+        assertEquals(1, removed)
+        // Not the author: no Edit.
+        compose.onNodeWithText("Edit").assertDoesNotExist()
+    }
+
+    @Test
+    fun aMinistryAdminWithAdminViewOffSeesNoRemove() {
+        show(user("ma", "MINISTRY_ADMIN"), adminView = false)
+        compose.onNodeWithText("Remove").assertDoesNotExist()
+    }
+
+    @Test
+    fun aDesignerNeverSeesRemove() {
+        show(user("d1", "DESIGNER"), adminView = true)
+        compose.onNodeWithText("Remove").assertDoesNotExist()
+    }
+
+    @Test
+    fun theAuthorSeesEditAndNotRemove() {
+        var edited = 0
+        show(user("author", "DESIGNER"), adminView = false, onEdit = { edited++ })
+        compose.onNodeWithText("Edit").assertIsDisplayed().performClick()
+        assertEquals(1, edited)
+        compose.onNodeWithText("Remove").assertDoesNotExist()
+    }
+}

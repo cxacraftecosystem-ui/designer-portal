@@ -119,6 +119,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
 import com.designprototype.workshop.ui.LocalContentAdminChrome
+import com.designprototype.workshop.ui.EntryCommentRow
+import com.designprototype.workshop.ui.contentAdminChrome
 import com.designprototype.workshop.ui.readAdminView
 import com.designprototype.workshop.ui.restoredAdminView
 import com.designprototype.workshop.ui.writeAdminView
@@ -3494,7 +3496,7 @@ private fun HomeScreen(
     // Deletes are the content admins' alone (FieldPermissions.isContentAdmin — ADMIN, MASTER_ADMIN,
     // MINISTRY_ADMIN; owner's ruling 2026-10-20), and only with admin view on, exactly as the web's
     // `adminMode`. Set membership, never rank.
-    val canDelete = FieldPermissions.isContentAdmin(user) && adminView
+    val canDelete = contentAdminChrome(user, adminView)
 
     // Unsaved-changes guard: a record form on screen registers its dirty-state + save action here, and
     // any attempt to leave (system Back / in-app back arrow) is intercepted to offer Save / Discard so
@@ -18523,13 +18525,11 @@ private fun RecordCollabSection(
     var revisions by remember(recordId) { mutableStateOf<List<RecordRevisionDto>?>(null) }
     var draft by remember(recordId) { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    // The signed-in account, read once: the delete affordance below is offered on the same
-    // author-or-admin test `data_access.delete_comment` enforces.
+    // The signed-in account, read once. `EntryCommentRow` offers Edit to the author and Remove to a
+    // content admin in admin view (2026-10-20) — the two rules `data_access` enforces.
     val me = remember { repository.cachedUser() }
-    // Deleting a comment is a content admin's act in admin view (2026-10-20); authors no longer delete.
-    val contentAdminChrome = LocalContentAdminChrome.current
-    fun canRemoveComment(@Suppress("UNUSED_PARAMETER") comment: EntryCommentDto): Boolean =
-        me != null && contentAdminChrome
+    var editingId by remember(recordId) { mutableStateOf<String?>(null) }
+    var editDraft by remember(recordId) { mutableStateOf("") }
 
     fun reload() {
         scope.launch {
@@ -18546,12 +18546,33 @@ private fun RecordCollabSection(
         Text("Comments", display = true, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
         if (comments.isEmpty()) Text("No comments yet.", color = Muted, style = MaterialTheme.typography.bodySmall)
         comments.forEach { c ->
-            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(1.dp), modifier = Modifier.weight(1f)) {
-                    Text(c.body, color = Body, style = MaterialTheme.typography.bodyMedium)
-                    Text("${c.author?.name ?: "Someone"} · ${c.createdAt.take(10)}", color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (editingId == c.id) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextInput("Edit comment", editDraft, minLines = 2) { editDraft = it }
+                    ActionRow {
+                        OutlinedButton(enabled = !busy, onClick = { editingId = null }) { Text("Cancel") }
+                        Button(
+                            enabled = !busy && editDraft.isNotBlank(),
+                            onClick = {
+                                val next = editDraft.trim()
+                                if (next == c.body) {
+                                    editingId = null
+                                    return@Button
+                                }
+                                scope.launch {
+                                    busy = true
+                                    runCatching { repository.updateEntryComment(c.id, next) }
+                                        .onSuccess { editingId = null; reload() }
+                                        .onFailure { onError(it.userMessage("Unable to save comment")) }
+                                    busy = false
+                                }
+                            }
+                        ) { Text(if (busy) "Saving…" else "Save") }
+                    }
                 }
-                /*
+                return@forEach
+            }
+            /*
                   WITHDRAWING ONE, WHICH THIS HANDSET COULD NOT DO WHILE IT COULD POST.
 
                   `DELETE /data-access/comments/{id}` has existed the whole time and the browser has
@@ -18564,22 +18585,22 @@ private fun RecordCollabSection(
                   AUTHOR or an admin and 403s everybody else. Showing the control to everyone would
                   buy most people a refusal for a thing they were invited to do; the server still
                   decides, exactly as it does on the web.
-                */
-                if (canRemoveComment(c)) {
-                    TextButton(
-                        enabled = !busy,
-                        onClick = {
-                            scope.launch {
-                                busy = true
-                                runCatching { repository.deleteEntryComment(c.id) }
-                                    .onSuccess { reload() }
-                                    .onFailure { onError(it.userMessage("Unable to remove the comment")) }
-                                busy = false
-                            }
-                        }
-                    ) { Text("Remove", style = MaterialTheme.typography.labelMedium) }
+            */
+            EntryCommentRow(
+                comment = c,
+                viewerId = me?.id,
+                busy = busy,
+                onEdit = { editingId = c.id; editDraft = c.body },
+                onRemove = {
+                    scope.launch {
+                        busy = true
+                        runCatching { repository.deleteEntryComment(c.id) }
+                            .onSuccess { reload() }
+                            .onFailure { onError(it.userMessage("Unable to remove the comment")) }
+                        busy = false
+                    }
                 }
-            }
+            )
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(modifier = Modifier.weight(1f)) { TextInput("Add a comment (needs comment access)", draft) { draft = it } }

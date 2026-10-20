@@ -1016,6 +1016,10 @@ interface WorkshopRepositoryApi {
     @DELETE("data-access/comments/{id}")
     suspend fun deleteEntryComment(@Path("id") id: String)
 
+    /** The author edits their own comment. 403 for anybody else, admins included — as on the web. */
+    @PATCH("data-access/comments/{id}")
+    suspend fun updateEntryComment(@Path("id") id: String, @Body body: EntryCommentUpdateBody): EntryCommentDto
+
     @GET("data-access/revisions")
     suspend fun recordRevisions(
         @Query("recordType") recordType: String,

@@ -993,6 +993,8 @@ CONTENT_DELETES = [
     ("POST", "/questionnaire/interviews/x1/merge-into/x2"),
     ("DELETE", "/questionnaires/x1"),
     ("DELETE", "/questionnaires/x1/entries/e1"),
+    ("POST", "/questionnaires/x1/restore"),
+    ("POST", "/questionnaires/x1/entries/e1/restore"),
     ("DELETE", "/questionnaires/x1/questions/q1"),
     ("DELETE", "/tasks/x1"),
     ("DELETE", "/tasks/batch/b1"),

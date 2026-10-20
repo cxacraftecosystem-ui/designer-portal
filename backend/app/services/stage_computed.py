@@ -241,12 +241,17 @@ async def market_survey_sittings(workshop_id: str) -> int:
     from app.core.db import db
 
     forms = await db.questionnaire.find_many(
-        where={"designWorkshopId": workshop_id, "isActive": True, "kind": "MARKET_SURVEY"}
+        where={
+            "designWorkshopId": workshop_id,
+            "isActive": True,
+            "kind": "MARKET_SURVEY",
+            "deletedAt": None,
+        }
     )
     if not forms:
         return 0
     return await db.questionnaireformentry.count(
-        where={"questionnaireId": {"in": [f.id for f in forms]}}
+        where={"questionnaireId": {"in": [f.id for f in forms]}, "deletedAt": None}
     )
 
 

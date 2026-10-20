@@ -2335,6 +2335,11 @@ model Questionnaire {
   version     Int     @default(1)
   /// The name of the .xlsx it was uploaded from, shown so a designer can tell two drafts apart.
   sourceFilename String?
+  /// SOFT DELETE (owner, 2026-10-20). `DELETE /questionnaires/{id}` sets the pair and a content
+  /// admin's `POST /questionnaires/{id}/restore` clears it, as `DesignWorkshop.deletedAt` does. Every
+  /// read filters `deletedAt: null`; nothing cascades, so a restored form comes back whole.
+  deletedAt   DateTime?
+  deletedById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -2349,6 +2354,8 @@ model Questionnaire {
   /// The shared-forms clause every designer's list now ORs in, and it is always paired with
   /// `isActive` — a retired instrument must not keep appearing in everybody's picker.
   @@index([isShared, isActive])
+  /// The admin's trash listing (`deletedOnly`).
+  @@index([deletedAt])
 }
 
 /// A section of a custom questionnaire. `code` is unique WITHIN its questionnaire and nowhere else —
@@ -2427,6 +2434,10 @@ model QuestionnaireFormEntry {
   source          String  @default("APP")
   notes           String?
   createdById     String
+  /// SOFT DELETE, as `Questionnaire.deletedAt`: the sitting and its answers stay, every read filters
+  /// `deletedAt: null`, and `POST /questionnaires/{id}/entries/{entryId}/restore` clears the pair.
+  deletedAt   DateTime?
+  deletedById String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
