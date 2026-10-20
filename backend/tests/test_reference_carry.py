@@ -5650,3 +5650,53 @@ def test_an_internal_mapping_reading_a_RETIRED_field_fails_validation():
 
     assert any("dimensionsNote" in p and "deprecated" in p for p in problems), problems
     assert validate_registry() == [], "the registry was restored and the guard did not follow"
+
+
+class _CraftListDb:
+    """Just enough of the client for :func:`dw.derive_stage_craft_names`: one read of the crafts."""
+
+    def __init__(self, crafts):
+        rows = {c.id: c for c in crafts}
+
+        class _Crafts:
+            async def find_many(self, where):
+                return [rows[i] for i in where["id"]["in"] if i in rows]
+
+        self.craft = _Crafts()
+
+
+def _setup_entry(sent, previous=None):
+    return dw.PendingEntry(
+        entity=_entity("workshopSetup"), data=dict(sent), previous=dict(previous or {}),
+        row_id=None, ordinal=0, client_key="k1",
+    )
+
+
+_LISTED = SimpleNamespace(id="crf_active", name="Sambalpuri Ikat", status="ACTIVE")
+_UNLISTED = SimpleNamespace(id="crf_legacy", name="Ikat (old spelling)", status="LEGACY")
+_FOLDED = SimpleNamespace(id="crf_merged", name="Bandha", status="MERGED")
+
+
+@pytest.mark.parametrize("craft", [_UNLISTED, _FOLDED, None], ids=["legacy", "merged", "unknown"])
+async def test_stage_one_refuses_a_craft_that_is_not_on_the_list(monkeypatch, craft):
+    """A ``craftRef`` posted directly is held to the header's rule: a NEW link must be ACTIVE.
+
+    The picker offers only ACTIVE crafts (``offered_where``), but nothing stopped a body naming a
+    LEGACY or MERGED craft, which stage 1 then promoted to ``DesignWorkshop.craftId``.
+    """
+    monkeypatch.setattr(dw, "db", _CraftListDb([c for c in (_UNLISTED, _FOLDED) if c]))
+    entry = _setup_entry({"craftRef": craft.id if craft else "crf_missing", "craftName": "typed"})
+    with pytest.raises(dw.HTTPException) as refused:
+        await dw.derive_stage_craft_names([entry])
+    assert refused.value.status_code == 422
+    assert refused.value.detail["code"] == "CRAFT_NOT_IN_LIST"
+
+
+async def test_stage_one_keeps_a_craft_it_already_links_whatever_its_status(monkeypatch):
+    """Re-saving stage 1 with the craft the row already holds is never refused, and its name follows."""
+    monkeypatch.setattr(dw, "db", _CraftListDb([_UNLISTED, _LISTED]))
+    kept = _setup_entry({"craftRef": "crf_legacy", "craftName": "x"}, previous={"craftRef": "crf_legacy"})
+    picked = _setup_entry({"craftRef": "crf_active", "craftName": "typed"}, previous={"craftRef": "crf_legacy"})
+    await dw.derive_stage_craft_names([kept, picked])
+    assert kept.data["craftName"] == "Ikat (old spelling)"
+    assert picked.data["craftName"] == "Sambalpuri Ikat"

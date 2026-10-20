@@ -58,6 +58,7 @@ from app.core.deps import can_run_design_workshops, has_rank, is_admin
 from app.schemas import design_workshop_approvals, design_workshop_review_loop
 from app.services import (
     aadhaar_fingerprint,
+    craft_master,
     custom_sections,
     design_workshop_data,
     design_workshop_posts,
@@ -3939,6 +3940,11 @@ async def derive_stage_craft_names(entries: list[PendingEntry]) -> None:
     ``craftRef`` names the craft; the box beside it is derived, on every save, so the cover page and
     the promoted ``craftName`` column can never disagree with the link. A save with no link keeps
     whatever name it carries (a workshop recorded before the list, waiting for its craft).
+
+    A link that CHANGES must name an ACTIVE craft (422 ``CRAFT_NOT_IN_LIST``), the rule the header's
+    ``craftId`` follows: the picker offers only ACTIVE crafts, but a body posted directly could name a
+    LEGACY or MERGED one, and it would be promoted to ``DesignWorkshop.craftId``. A save that sends
+    back the craft the row already links is never refused, whatever its status now.
     """
     linked = [e for e in entries if e.entity.key == "workshopSetup" and e.data.get("craftRef")]
     if not linked:
@@ -3946,7 +3952,12 @@ async def derive_stage_craft_names(entries: list[PendingEntry]) -> None:
     ids = sorted({str(e.data["craftRef"]) for e in linked})
     crafts = {c.id: c for c in await db.craft.find_many(where={"id": {"in": ids}})}
     for entry in linked:
-        craft = crafts.get(str(entry.data["craftRef"]))
+        craft_id = str(entry.data["craftRef"])
+        craft = crafts.get(craft_id)
+        if craft_id != str((entry.previous or {}).get("craftRef") or "") and (
+            craft is None or craft_master.status_of(craft) != craft_master.ACTIVE
+        ):
+            raise craft_master.craft_error("CRAFT_NOT_IN_LIST", 422)
         if craft is not None and (craft.name or "").strip():
             entry.data["craftName"] = craft.name
 
