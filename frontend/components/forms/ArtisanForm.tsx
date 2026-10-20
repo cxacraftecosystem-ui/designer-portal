@@ -7,8 +7,6 @@ import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
 import { statusLabel } from "@/components/StatusBadge";
-import { CappedListNotice } from "@/components/data/CappedListNotice";
-import { LIST_PAGE_CEILING, listCut, mergeById, type ListCut } from "@/components/data/cappedList";
 import { CarryForwardCards } from "@/components/CarryForwardCards";
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { AadhaarField, aadhaarValidationError, isMaskedIdentityNumber } from "@/components/forms/AadhaarField";
@@ -23,7 +21,7 @@ import { LocationFields, type LocationInitialValues } from "@/components/forms/L
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
 import { GENDER_OPTIONS } from "@/lib/standardValues";
-import { useRecordOffPage } from "@/components/forms/recordPickers";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
 import { UploadProgress } from "@/components/media/UploadProgress";
@@ -36,7 +34,8 @@ import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
-import { ApiError, apiFetch, listResource } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
+import { CRAFT_NOT_IN_LIST, useCraftCatalogue } from "@/lib/craftCatalogue";
 import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, type BatchProgress } from "@/lib/media";
@@ -53,7 +52,6 @@ import {
   type PossibleDuplicateHold
 } from "@/lib/duplicates";
 import { canManageCrafts, hasRank } from "@/lib/permissions";
-import { craftsEmptyLine, deviceLooksOffline, workshopListNotice } from "@/lib/workshopOptions";
 import {
   ARTISAN_FORM_CONTRACT,
   EXPERIENCE_MONTH_OPTIONS,
@@ -62,7 +60,7 @@ import {
   missingArtisanDatesSentence
 } from "@/lib/artisanFormContract";
 import { EMAIL_PATTERN, emailValidationError } from "@/lib/textFormats";
-import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, Craft, RecordStatus } from "@/lib/types";
+import type { AadhaarLookupResult, Artisan, ArtisanIdentityConflict, ArtisanIdentityMatch, RecordStatus } from "@/lib/types";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { ArtisanConsentToggle } from "@/components/forms/ArtisanConsentToggle";
@@ -195,7 +193,7 @@ function duplicateCheckRequest(form: FormData): DuplicateCheckRequest {
     district: textValue(form, "district"),
     village: textValue(form, "village"),
     craftId: textValue(form, "craftId"),
-    craftName: textValue(form, "craftId") ? null : textValue(form, "newCraftName"),
+    craftName: null,
     aadhaar: aadhaar && !isMaskedIdentityNumber(aadhaar) && !aadhaarValidationError(aadhaar) ? aadhaar : null,
     pehchanCardNumber: textValue(form, "pehchanCardNumber")
   };
@@ -422,7 +420,7 @@ function StatusField({
  * use `DictatedTextInput`, the multi-line non-narrative ones `DictatedTextArea`, and the narrative
  * ones `RichTextField` (whose editor carries the microphone at the caret).
  *
- * DICTATED: Name · Local name · Or new craft name · Place · Address · Notes.
+ * DICTATED: Name · Local name · Place · Address · Notes.
  *
  * NOT DICTATED, one line each, and each is a rule rather than a preference:
  *
@@ -519,12 +517,17 @@ export function ArtisanForm({
   const dobId = `${derivedFieldsId}-dob`;
   const craftStartId = `${derivedFieldsId}-craft-start`;
   const formRef = useRef<HTMLFormElement>(null);
-  const [crafts, setCrafts] = useState<Craft[]>([]);
+  // The craft list is the database's (`GET /crafts/catalogue`); the picker allows no free text.
+  const craftCatalogue = useCraftCatalogue();
   // Controlled so the carried craft can land in it after the list arrives; a defaultValue is fixed
-  // at first render and the crafts request has not answered by then.
+  // at first render and the catalogue has not answered by then.
   const [craftId, setCraftId] = useState(initial?.craftId ?? "");
   // "Can I see this craft?" and "is there any signal?" are different answers — see useCarryContext.
-  const [craftListState, setCraftListState] = useState<CarryScopeState>("pending");
+  const craftListState: CarryScopeState = craftCatalogue.catalogue
+    ? "loaded"
+    : craftCatalogue.loading
+      ? "pending"
+      : "unavailable";
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   // A meter pill on the artisan's page opens this form with `focus=<key>`; the form mounts with its record.
   useFocusField(true);
@@ -571,7 +574,6 @@ export function ArtisanForm({
    */
   const [name, setName] = useState(initial?.name ?? "");
   const [localName, setLocalName] = useState(initial?.localName ?? "");
-  const [newCraftName, setNewCraftName] = useState("");
   const [place, setPlace] = useState(initial?.place ?? "");
   /*
    * ── THE TWO DATES, IN REACT STATE RATHER THAN LEFT UNCONTROLLED ─────────────────────────────
@@ -734,56 +736,14 @@ export function ArtisanForm({
   const todayIso = new Date().toISOString().slice(0, 10);
 
   /**
-   * The craft dropdown, and what it is NOT showing — see `components/data/cappedList`.
-   *
-   * `pageSize` is clamped to 100 server-side and `/crafts` orders NAME ASCENDING (deliberately, see
-   * the ordering comment in `routes/crafts.py`), so this is the first hundred crafts of the alphabet
-   * out of 178 on this database (counted 2026-08-15) — not the newest hundred, which matters,
-   * because the cut is stable and always falls in the same place. A craft whose name sorts past it
-   * is unreachable in this REQUIRED picker, and the field beside it offers "Or new craft name",
-   * which is exactly the wrong thing to reach for: the researcher creates a second craft row for a
-   * craft the taxonomy already holds. Saying the list is cut is what stops that.
+   * The whole list is in the catalogue, so there is no cut to state. A LEGACY craft an old record
+   * still points at is not on it; its name is drawn from the record so the field is never blank.
    */
-  const [craftCut, setCraftCut] = useState<ListCut | null>(null);
-
-  useEffect(() => {
-    listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING })
-      .then((result) => {
-        setCrafts(result.items);
-        setCraftCut(listCut(result, "crafts"));
-        setCraftListState("loaded");
-      })
-      .catch(() => {
-        setCrafts([]);
-        setCraftListState("unavailable");
-      });
-  }, []);
-
-  /**
-   * THIS ARTISAN'S OWN CRAFT IS ALWAYS AN OPTION, wherever it sorts.
-   *
-   * Editing an artisan whose craft sits past the alphabetical cut drew a REQUIRED dropdown with
-   * nothing selected in it, beside a box inviting a new craft name — so the obvious repair for what
-   * looked like missing data was to type the craft in again and duplicate it. See `useRecordOffPage`.
-   */
-  const offPageCraft = useRecordOffPage<Craft>("/crafts", craftId, crafts);
-  const craftOptions = useMemo(() => (offPageCraft ? mergeById(crafts, [offPageCraft]) : crafts), [crafts, offPageCraft]);
-  /**
-   * WHY THE CRAFT PICKER IS EMPTY — "" while it is loading or has rows.
-   *
-   * A register that ANSWERED with no crafts is empty, and says what this role can do about it; only
-   * a read that failed says it could not load. Collapsing the two is the 0.0.19 smoke's "Couldn't
-   * load crafts" on a deployment that simply had none yet.
-   */
-  const craftNotice =
-    craftOptions.length > 0 || craftListState === "pending"
-      ? ""
-      : craftListState === "loaded"
-        ? craftsEmptyLine(canManageCrafts(user))
-        : workshopListNotice(
-            { kind: "failed" },
-            { table: "field", noun: "crafts", scoped: false, accessList: false, online: !deviceLooksOffline() }
-          );
+  const craftOptions = useMemo(() => craftCatalogue.catalogue?.crafts ?? [], [craftCatalogue.catalogue]);
+  const craftFallbackLabels = useMemo(
+    () => (initial?.craftId && initial.craft?.name ? { [initial.craftId]: initial.craft.name } : undefined),
+    [initial?.craftId, initial?.craft?.name]
+  );
 
   /**
    * The craft and the workshop carry into a new artisan; the ARTISAN in the bag never does.
@@ -933,7 +893,6 @@ export function ArtisanForm({
     // name, local name and place standing in the form that replaced it.
     setName(initial?.name ?? "");
     setLocalName(initial?.localName ?? "");
-    setNewCraftName("");
     setPlace(initial?.place ?? "");
     resetDirty();
     setFormKey((key) => key + 1);
@@ -1027,11 +986,10 @@ export function ArtisanForm({
       // in here by hand — `locationFromForm` reads them now, so the five other forms that share it
       // stopped throwing the two answers away. Also goes onto the media batch below: same place.
       const location = locationFromForm(form);
-      // Android parity: an artisan needs either an existing craft or a new craft name.
+      // A craft from the list, never typed (REQUIREMENTS_2026-10-20 §2.4).
       const craftId = textValue(form, "craftId");
-      const newCraftName = textValue(form, "newCraftName");
-      if (!craftId && !newCraftName) {
-        setError("Choose a craft or enter a new one.");
+      if (!craftId) {
+        setError(CRAFT_NOT_IN_LIST);
         setSaving(false);
         return;
       }
@@ -1114,7 +1072,6 @@ export function ArtisanForm({
         dos: requiredText(form, "dos"),
         donts: requiredText(form, "donts"),
         craftId,
-        craftName: craftId ? null : newCraftName,
         workshopId: workshop.workshopId || null,
         designWorkshopId: workshop.designWorkshopId || null,
         // Below professor no status control is rendered: create submits PENDING, edit resubmits the
@@ -1296,7 +1253,6 @@ export function ArtisanForm({
                 setCraftStartDate("");
                 setName("");
                 setLocalName("");
-                setNewCraftName("");
                 setPlace("");
               }}
             >
@@ -1440,7 +1396,7 @@ export function ArtisanForm({
             `<button>` and fires no native input event for the form's `onInput` to catch.
           */}
           <WorkshopPicker state={workshop} onDirty={markDirty} saving={saving} disabled={filing.recordHeld} />
-          {/* Name, new craft name and place are title-cased by the API on write, so the box says
+          {/* Name and place are title-cased by the API on write, so the box says
               what will actually be stored (Android parity — see components/forms/TitleCasedInput);
               `titleCased` mounts that exact component inside the dictated box rather than a copy of
               its hint. `markDirty` by hand because a dictated phrase is a React state write and
@@ -1467,47 +1423,23 @@ export function ArtisanForm({
               markDirty();
             }}
           />
-          <Field label="Craft" required fieldKey="craft">
-            {/* `searchable`: crafts are records and this list is capped (see the notice below it).
-                Nine crafts today is one either side of the option-count threshold, so without this
-                the same required field would have a filter box on one deployment and not on the
-                next — see `SearchableSelectProps.searchable` for the rule. */}
-            <Select
+          <FieldBlock label="Craft" required fieldKey="craft">
+            <CraftSelect
               name="craftId"
-              searchable
-              emptyLabel={craftNotice || undefined}
+              required
+              ariaLabel="Craft"
               value={craftId}
-              onChange={(event) => {
-                setCraftId(event.target.value);
+              fallbackLabels={craftFallbackLabels}
+              canAddCraft={canManageCrafts(user)}
+              onDirty={markDirty}
+              onChange={(nextId, craft) => {
+                setCraftId(nextId);
                 // An explicit pick replaces the remembered craft and retires the banner: from here
                 // on what is on screen is the researcher's own choice, not a suggestion.
-                const craft = craftOptions.find((candidate) => candidate.id === event.target.value);
                 if (craft) carry.remember({ craftId: craft.id, craftName: craft.name }, { explicit: true });
-                markDirty();
               }}
-            >
-              <option value="">Select existing craft</option>
-              {craftOptions.map((craft) => (
-                <option value={craft.id} key={craft.id}>
-                  {craft.name}
-                </option>
-              ))}
-            </Select>
-            <CappedListNotice cuts={[craftCut]} />
-            {craftNotice ? <p className="mt-1 text-xs leading-5 text-ink-500">{craftNotice}</p> : null}
-          </Field>
-          <DictatedTextInput
-            name="newCraftName"
-            label="Or new craft name"
-            titleCased
-            placeholder="Used when no existing craft is selected"
-            explainWhenUnavailable={false}
-            value={newCraftName}
-            onChange={(next) => {
-              setNewCraftName(next);
-              markDirty();
-            }}
-          />
+            />
+          </FieldBlock>
           <DictatedTextInput
             name="place"
             label="Place"

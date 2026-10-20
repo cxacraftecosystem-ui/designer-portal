@@ -1370,13 +1370,13 @@ test("the craft picker offers the crafts page in a new tab, and only to somebody
   const source = read(PICKER);
   const branch = source.slice(source.indexOf('{field.refModel === "Craft" && !disabled ? ('));
   const head = branch.slice(0, 2400);
-  expect(head).toContain('href="/crafts"');
+  expect(head).toContain("`/crafts?new=${encodeURIComponent(query.trim())}`");
   // A NEW TAB, which is the whole point of this lane rather than a stylistic choice: the stage stays
   // open behind it, exactly as the dialog keeps it open for the other four models.
   expect(head).toContain('target="_blank"');
   expect(head).toContain('rel="noopener"');
   expect(head).toContain("{CRAFT_REGISTER_LINK}");
-  expect(source).toContain('const CRAFT_REGISTER_LINK = "Edit crafts (new tab)";');
+  expect(source).toContain('const CRAFT_REGISTER_LINK = "Add it to the list (new tab)";');
 
   /*
    * AND THE RANK GATE, which is the half that was missing and which turned this control into a dead
@@ -1396,13 +1396,10 @@ test("the craft picker offers the crafts page in a new tab, and only to somebody
   expect(source).toContain('import { canManageCrafts } from "@/lib/permissions";');
   expect(source).toContain("const craftManager = canManageCrafts(user);");
 
-  // AND BELOW THAT RANK, A SENTENCE THAT IS BOTH TRUE AND ACTIONABLE — not an absence. The way
-  // forward for a craft that is not in the register is the typed `craftName` box, and `craftRef` is
-  // optional, so saying so keeps stage 1 unblocked instead of sending anybody looking for signal or
-  // for a page they cannot use.
+  // AND BELOW THAT RANK, A SENTENCE THAT IS BOTH TRUE AND ACTIONABLE — not an absence. The craft
+  // list is the database's (REQUIREMENTS_2026-10-20 §2.4); nothing is typed in its place.
   expect(head).toContain("{CRAFT_REGISTER_BLOCKED}");
-  expect(source).toContain("Adding a craft to the register needs craft-creation access");
-  expect(source).toContain("the craft's name in the Craft box above and the stage still saves");
+  expect(source).toContain('const CRAFT_REGISTER_BLOCKED = "Not on the list? Ask an admin to add it.";');
   // Android's picker offers NEITHER sentence today — its empty craft list is a claim about this
   // device's cache. When it gains its half it must carry these words, not a second phrasing.
   expect(source).toContain("DwReferenceSelectField");

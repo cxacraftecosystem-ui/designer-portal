@@ -82,6 +82,7 @@ import { DateRangePicker, fromIsoDate, toIsoDate } from "@/components/forms/Date
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
@@ -357,6 +358,13 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
   const [fieldProblem, setFieldProblem] = useState<Partial<Record<EditableKey, string>>>({});
   /** "You pressed Save and there was nothing to send" — see the submit handler. */
   const [nothingToSend, setNothingToSend] = useState(false);
+  /**
+   * The craft, picked from the list (REQUIREMENTS_2026-10-20 §2.4). `craftName` is its derived name,
+   * which is what the diff compares; the body carries the id beside it.
+   */
+  const initialCraftId = (initial as DwSummary & { craftId?: string | null }).craftId ?? "";
+  const [craftId, setCraftId] = useState(initialCraftId);
+  const [craftName, setCraftName] = useState(initial.craftName ?? "");
 
   const [templates, setTemplates] = useState<DwTemplate[]>([]);
   /**
@@ -788,7 +796,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
       // of these now, and the `box` helper below is what the other eight still read through.
       title: title.trim(),
       templateId: templateId.trim(),
-      craftName: box("craftName"),
+      craftName: craftName.trim(),
       clusterName: box("clusterName"),
       state: box("state"),
       district: box("district"),
@@ -878,7 +886,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
       request never mentions — which is exactly `exclude_unset`'s "absent" on the other end. `null`
       is a different instruction and is only ever produced from a box the user actually emptied.
     */
-    const body: DwUpdateBody = {};
+    const body: DwUpdateBody & { craftId?: string | null } = {};
     for (const key of changed) {
       switch (key) {
         case "title":
@@ -891,6 +899,7 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           break;
         case "craftName":
           body.craftName = onScreen.craftName || null;
+          body.craftId = craftId || null;
           break;
         case "clusterName":
           body.clusterName = onScreen.clusterName || null;
@@ -1182,14 +1191,27 @@ export function DesignWorkshopHeaderForm({ initial }: { initial: DwSummary }) {
           {/* The four promoted text columns. `maxLength` mirrors the server's bound on each so the
               box refuses the 161st character rather than the save refusing the request — but the
               refusal slot is wired anyway; see {@link WritableTextField}. */}
-          <WritableTextField
-            label="Craft"
-            name="craftName"
-            maxLength={160}
-            defaultValue={initial.craftName ?? ""}
-            error={fieldProblem.craftName}
-            errorId={`${baseId}-craftName-error`}
-          />
+          <FieldBlock label="Craft">
+            <CraftSelect
+              ariaLabel="Craft"
+              value={craftId}
+              // An older workshop may hold typed craft text with no link: show it until one is picked.
+              placeholder={initialCraftId ? undefined : initial.craftName || undefined}
+              fallbackLabels={initialCraftId && initial.craftName ? { [initialCraftId]: initial.craftName } : undefined}
+              disabled={saving}
+              describedBy={fieldProblem.craftName ? `${baseId}-craftName-error` : undefined}
+              onDirty={markDirty}
+              onChange={(nextId, craft) => {
+                setCraftId(nextId);
+                setCraftName(craft?.name ?? "");
+              }}
+            />
+            {fieldProblem.craftName ? (
+              <p id={`${baseId}-craftName-error`} role="alert" className="text-xs text-error-600">
+                {fieldProblem.craftName}
+              </p>
+            ) : null}
+          </FieldBlock>
           <WritableTextField
             label="Cluster"
             name="clusterName"

@@ -29,6 +29,7 @@ import { cappedListNotice, listCut, LIST_PAGE_CEILING, type ListCut } from "@/co
 import { OpenableCard } from "@/components/data/OpenableRow";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import {
   useWorkshopScope,
   WorkshopScopeSelect,
@@ -232,22 +233,11 @@ export default function SearchPage() {
    * would be a filter offering a subset of the repository while claiming to offer all of it. What is
    * cut is SAID under the controls, which is the only thing that makes the cap honest.
    */
-  const [crafts, setCrafts] = useState<Craft[]>([]);
   const [artisans, setArtisans] = useState<Artisan[]>([]);
-  const [cuts, setCuts] = useState<{ crafts: ListCut | null; artisans: ListCut | null }>({
-    crafts: null,
-    artisans: null
-  });
+  const [cuts, setCuts] = useState<{ artisans: ListCut | null }>({ artisans: null });
 
   useEffect(() => {
     let cancelled = false;
-    listResource<Craft>("/crafts", { pageSize: LIST_PAGE_CEILING })
-      .then((result) => {
-        if (cancelled) return;
-        setCrafts(result.items);
-        setCuts((previous) => ({ ...previous, crafts: listCut(result, "crafts") }));
-      })
-      .catch(() => undefined);
     listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING })
       .then((result) => {
         if (cancelled) return;
@@ -464,20 +454,14 @@ export default function SearchPage() {
                 Bamboo". An explicit `ariaLabel` would win and drop the value; a wrapping `<label>`
                 would slam the menu shut on the first pick. */}
             <div className="grid gap-3 sm:grid-cols-3">
-              {crafts.length ? (
-                <FieldBlock label="Craft">
-                  <Dropdown
-                    value={filters.craftId}
-                    onChange={(craftId) => changeFilters({ ...filters, craftId })}
-                    advanceOnSelect={false}
-                    searchable
-                    options={[
-                      { value: "", label: "Any craft" },
-                      ...crafts.map((craft) => ({ value: craft.id, label: craft.name }))
-                    ]}
-                  />
-                </FieldBlock>
-              ) : null}
+              <FieldBlock label="Craft">
+                <CraftSelect
+                  ariaLabel="Craft"
+                  placeholder="Any craft"
+                  value={filters.craftId}
+                  onChange={(craftId) => changeFilters({ ...filters, craftId })}
+                />
+              </FieldBlock>
               {artisans.length ? (
                 <FieldBlock label="Artisan">
                   <Dropdown
@@ -520,7 +504,7 @@ export default function SearchPage() {
             {/* One line per picker that is not offering everything it claims to filter by. Nothing
                 at all when both are whole — rule 10: a list that quietly stops is indistinguishable
                 from a place with no records. */}
-            {[cuts.crafts, cuts.artisans].map((cut, index) =>
+            {[cuts.artisans].map((cut, index) =>
               cut ? (
                 <p key={index} className="text-xs text-ink-500">
                   {cappedListNotice(cut)}

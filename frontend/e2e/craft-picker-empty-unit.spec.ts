@@ -36,13 +36,12 @@ test("the empty sentence is never the failure sentence", () => {
   expect(craftsEmptyLine(false)).not.toMatch(/load/i);
 });
 
-test("the artisan form says empty only for a read that answered, and failure only for one that failed", () => {
+test("the artisan form picks its craft from the catalogue, which says its own load state", () => {
+  // REQUIREMENTS_2026-10-20 §2.4: the craft list is the database's, and nothing is typed instead.
+  // `CraftSelect` draws "Loading crafts…", the offline first-run sentence, or the no-match line.
   const form = readFileSync(join(__dirname, "../components/forms/ArtisanForm.tsx"), "utf8").replace(/\r\n/g, "\n");
-  const notice = form.slice(form.indexOf("const craftNotice ="), form.indexOf("const craftNotice =") + 500);
-  expect(notice).toContain('craftListState === "loaded"');
-  expect(notice).toContain("craftsEmptyLine(canManageCrafts(user))");
-  expect(notice).toContain('{ kind: "failed" }');
-  // Drawn on the page, not only inside a panel a disabled control cannot open.
-  expect(form).toContain("emptyLabel={craftNotice || undefined}");
-  expect(form).toMatch(/\{craftNotice \? <p className="mt-1 text-xs leading-5 text-ink-500">\{craftNotice\}<\/p> : null\}/);
+  expect(form).toContain("<CraftSelect");
+  expect(form).not.toContain("newCraftName");
+  expect(form).not.toContain("Or new craft name");
+  expect(form).toContain("craftCatalogue.loading");
 });

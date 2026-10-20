@@ -74,6 +74,8 @@ import { CalendarRange, ExternalLink } from "lucide-react";
 import { listAssignableDesigners } from "@/app/(protected)/officers/oversight";
 import { WorkshopDesignerPicker } from "@/components/designworkshop/WorkshopDesignerPicker";
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
+import { CraftSelect } from "@/components/forms/CraftSelect";
+import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { describeApiDetail } from "@/lib/api";
 import { designerCreateFields, namedDesignerTeam } from "@/lib/designWorkshops";
 
@@ -102,6 +104,12 @@ export function PromoteDialog({
    */
   const [chosen, setChosen] = useState<string[]>([]);
   const [lead, setLead] = useState("");
+  /**
+   * The craft, when the plan's imported text did not resolve to one on the list
+   * (REQUIREMENTS_2026-10-20 §2.4). An entry the server already linked (`craftId`) needs no pick.
+   */
+  const [craftId, setCraftId] = useState("");
+  const linkedCraftId = entry?.craftId ?? null;
 
   /**
    * WHO THIS PROMOTION ACTUALLY NAMES — read through the function the SUBMIT reads, never off
@@ -129,6 +137,7 @@ export function PromoteDialog({
     setError(null);
     setChosen([]);
     setLead("");
+    setCraftId("");
   }
 
   async function submit() {
@@ -136,7 +145,10 @@ export function PromoteDialog({
     setBusy(true);
     setError(null);
     try {
-      const result = await promoteAnnualPlanEntry(entry.id, designerCreateFields({ chosen, lead }));
+      const result = await promoteAnnualPlanEntry(entry.id, {
+        ...designerCreateFields({ chosen, lead }),
+        craftId: linkedCraftId ? undefined : craftId || undefined
+      });
       reset();
       onPromoted(result);
     } catch (caught) {
@@ -231,6 +243,20 @@ export function PromoteDialog({
               </div>
             ) : null}
           </dl>
+
+          {linkedCraftId ? null : (
+            <div className="mt-4">
+              <FieldBlock label="Craft">
+                <CraftSelect
+                  ariaLabel="Craft"
+                  value={craftId}
+                  placeholder={entry.craftName ? `Pick the craft for “${entry.craftName}”` : undefined}
+                  disabled={busy}
+                  onChange={(id) => setCraftId(id)}
+                />
+              </FieldBlock>
+            </div>
+          )}
 
           <div className="mt-4">
             {/*

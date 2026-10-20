@@ -118,6 +118,8 @@ export type AnnualPlanEntry = {
   workshopKind: string | null;
   workshopKindLabel: string | null;
   craftName: string | null;
+  /** The master-list craft the plan's text resolved to; null when it did not (REQUIREMENTS_2026-10-20 §2.2). */
+  craftId?: string | null;
   clusterName: string | null;
   state: string | null;
   district: string | null;
@@ -222,13 +224,15 @@ export type PromoteResult = {
 
 export function promoteAnnualPlanEntry(
   id: string,
-  body: { designerUserId?: string | null; designerUserIds?: string[] }
+  body: { designerUserId?: string | null; designerUserIds?: string[]; craftId?: string }
 ) {
   return apiFetch<PromoteResult>(`/annual-plan/${id}/promote`, {
     method: "POST",
     body: JSON.stringify({
       designerUserId: body.designerUserId || null,
-      designerUserIds: body.designerUserIds ?? []
+      designerUserIds: body.designerUserIds ?? [],
+      // Only when the reader picked one: the plan's text did not resolve to a craft on the list.
+      ...(body.craftId ? { craftId: body.craftId } : {})
     })
   });
 }

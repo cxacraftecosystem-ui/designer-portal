@@ -148,10 +148,13 @@ test("both link pickers are multi-selects, in FieldBlock, and both are searchabl
     records, and `SEARCH_THRESHOLD` would give one deployment a filter box and another none for the
     same control. That is the standing rule in `SearchableSelectProps.searchable`.
   */
-  expect(CODE).toContain('<FieldBlock label="Linked crafts (fills craft name)">');
+  expect(CODE).toContain('<FieldBlock label="Linked crafts" required>');
   expect(CODE).toContain('<FieldBlock label="Linked artisans (fills artisan + place)" fieldKey="artisan">');
+  // The craft picker is the catalogue's `CraftSelect` (REQUIREMENTS_2026-10-20 §2.4), searchable by
+  // construction; the artisan picker is the one `MultiSelectDropdown` left.
+  expect(CODE).toMatch(/<CraftSelect\s+multiple/);
   const pickers = CODE.match(/<MultiSelectDropdown[\s\S]*?\/>/g) ?? [];
-  expect(pickers.length, "two link pickers, and only two").toBe(2);
+  expect(pickers.length, "one artisan picker, and only one").toBe(1);
   for (const picker of pickers) expect(picker, "a record-backed picker with no filter box").toContain("searchable");
   // The single-selects are gone: a `<Select name="craftId">` left behind would be a second control
   // writing the same link.

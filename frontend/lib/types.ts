@@ -239,6 +239,19 @@ export type Craft = {
   workshop?: Workshop | null;
   extraMetadata?: ExtraMetadata | null;
   createdAt?: string;
+  /** The master-list identity (REQUIREMENTS_2026-10-20 §2.2); equal in both portals. */
+  slug?: string | null;
+  subCategoryId?: string | null;
+  categoryId?: string | null;
+  sourceSerial?: number | null;
+  stateOfOrigin?: string[];
+  stateOfPractice?: string[];
+  giStatus?: "GI" | "NON_GI" | null;
+  isCatchAll?: boolean;
+  /** ACTIVE is on the list; LEGACY predates it and waits for review; MERGED folded into another. */
+  status?: "ACTIVE" | "LEGACY" | "MERGED";
+  mergedIntoId?: string | null;
+  craftCode?: string | null;
 };
 
 export type Artisan = {

@@ -149,7 +149,7 @@ contents by craft. Adding it once keeps spellings consistent across everyone's r
 Record the person: who they are, where they work, how to reach them, and what they have learnt.
 
 **What the screen asks for:** Type of workshop, Workshop, Name *(required)*, Local name,
-**Craft** *(required)*, Or new craft name, Place *(required)*, Gender, **Date of birth**
+**Craft** *(required)*, Place *(required)*, Gender, **Date of birth**
 *(required)*, **Craft start date** *(required)*, Experience (years), Experience (months), Phone,
 Email, Address, Notes, **Aadhaar number** *(required)*, **Artisan Pehchan Card available**,
 **Artisan Pehchan Card number** *(required if the card is available)*, **Do's** *(required)*,
@@ -197,7 +197,7 @@ own hard-won craft knowledge: the part of the archive that cannot be reconstruct
 Record one thing this artisan makes, with its measurements, economics and photographs.
 
 **What the screen asks for:** Type of workshop, Workshop, Product name *(required)*,
-Local name, Product type, Linked craft (fills craft name), Craft name *(required)*, Linked artisan
+Local name, Product type, Craft *(required)*, Linked artisan
 (fills artisan + place), Artisan name *(required)*, Place *(required)*, Time taken to complete, Size,
 Length (inches), Breadth (inches), Height (inches), Cost of making, Selling price, Market demand,
 Raw materials used, Main tools used, Function or use, Remarks, Status, Product media, Location (GPS
@@ -260,7 +260,7 @@ Record the toolkit the artisan uses: what it is made of, how big it is, who made
 to replace.
 
 **What the screen asks for:** Type of workshop, Workshop, Toolkit name *(required)*,
-Local name, English name, Linked crafts (fills craft name), Craft name *(required)*, Linked artisans
+Local name, English name, Linked crafts *(required)*, Linked artisans
 (fills artisan + place), Artisan name *(required)*, Place *(required)*, Process used in, Material,
 Years in use, Height (cm), Width (cm), Length (inches), Breadth (inches), Height (inches),
 Thickness, Weight, Radius, Maker, Tradition type, Replacement cost, Suggestions for improvement,

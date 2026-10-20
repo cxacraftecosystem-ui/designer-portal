@@ -294,7 +294,8 @@ test("the funnel keeps every list's total and renders the notice", () => {
   const source = read("components", "FunnelFilters.tsx");
 
   expect(source).toContain('listCut(workshopResult, "workshops")');
-  expect(source).toContain('listCut(craftResult, "crafts")');
+  // Crafts are the catalogue's whole list (REQUIREMENTS_2026-10-20 §2.4), so there is no craft cut.
+  expect(source).toContain("<CraftSelect");
   expect(source).toContain('listCut(result, "artisans")');
   expect(source, "a cut list must say so on screen").toContain("<CappedListNotice");
   // 196 workshops and 178 crafts on this database, so all three arms are live, not hypothetical.
@@ -502,12 +503,14 @@ test("every record picker in the web forms reports its cut", () => {
   // The finding named eleven call sites; these are the ones in components/forms. WorkshopSelect and
   // ArtisanForm also recover the record's own row by id, because a picker that cannot draw its own
   // current value invites the one action that really does change the record: picking something else.
-  for (const file of ["ProductForm.tsx", "ToolForm.tsx", "ProcessForm.tsx", "ArtisanForm.tsx", "ToolAssignmentSection.tsx", "WorkshopSelect.tsx"]) {
+  // ArtisanForm's only capped picker was its craft list, which is now the catalogue (no cut).
+  for (const file of ["ProductForm.tsx", "ToolForm.tsx", "ProcessForm.tsx", "ToolAssignmentSection.tsx", "WorkshopSelect.tsx"]) {
     const source = read("components", "forms", file);
     expect(source, `${file} draws a capped picker with no notice`).toContain("<CappedListNotice");
     expect(source, `${file} still asks for a bare literal page size`).not.toContain("pageSize: 100");
   }
-  for (const file of ["ArtisanForm.tsx", "WorkshopSelect.tsx", "ProcessForm.tsx"]) {
+  expect(read("components", "forms", "ArtisanForm.tsx")).toContain("<CraftSelect");
+  for (const file of ["WorkshopSelect.tsx", "ProcessForm.tsx"]) {
     expect(read("components", "forms", file), `${file} cannot draw its own current value`).toContain(
       "useRecordOffPage"
     );
@@ -531,41 +534,17 @@ test("every record picker in the web forms reports its cut", () => {
  * question per PICKER rather than per file, so the next form to grow a craft dropdown is caught.
  */
 test("the craft picker in every record form can draw its own current value", () => {
+  /*
+    THE CATALOGUE IS THE WHOLE LIST (REQUIREMENTS_2026-10-20 §2.4), so no live craft is ever off a
+    page. What can still be missing is a LEGACY craft an old record points at: it is not on the list,
+    so each form hands `CraftSelect` the record's own name for it (`fallbackLabels`) and the field is
+    never drawn blank over a link the record holds.
+  */
   for (const file of ["ArtisanForm.tsx", "ProductForm.tsx", "ToolForm.tsx"]) {
     const code = codeOf(read("components", "forms", file));
-    /*
-      ── `ToolForm` ASKS THE SAME QUESTION IN THE PLURAL SINCE 2026-09-15 ────────────────────────
-      Its craft picker is a multi-select, and each linked craft is past the 100-row cut or not
-      INDEPENDENTLY of the others: recovering only the first would leave a tool linked to three
-      crafts opening with one tick drawn and two missing. It is worse than the single-select defect
-      this test was written for, not better — a multi-select draws no placeholder for a row it does
-      not have, so the link is invisible rather than visibly "Unlinked". `useRecordsOffPage` is the
-      same rule in the plural and lives in the same file; it is emphatically not a variant, which is
-      how the singular came to be missing from two forms out of three.
-    */
-    const plural = file === "ToolForm.tsx";
-
-    // The by-id recovery itself, spelled the same way everywhere — reuse of ArtisanForm's hook.
-    expect(code, `${file}'s craft picker cannot draw a craft that is off page one`).toContain(
-      plural ? 'useRecordsOffPage<Craft>("/crafts", craftIds, crafts)' : 'useRecordOffPage<Craft>("/crafts", craftId, crafts)'
-    );
-    expect(code, `${file} fetches the off-page craft and then does not offer it`).toContain(
-      plural ? "mergeById(crafts, offPageCrafts)" : "mergeById(crafts, [offPageCraft])"
-    );
-
-    // And the dropdown is actually built from the merged list. Fetching the craft and then mapping
-    // the unmerged page would leave the screen exactly as wrong as before.
-    const select = plural
-      ? between(code, "<MultiSelectDropdown", "/>")
-      : between(code, 'name="craftId"', "</Select>");
-    expect(select, `${file}'s craft picker must map craftOptions`).toContain("craftOptions.map(");
-    expect(select, `${file}'s craft picker still maps the raw page`).not.toContain("crafts.map(");
-
-    // The carried craft is judged against the same merged list: "not on page one" is not "you can no
-    // longer reach it", and pruning on it drops a good link out of the carry bag.
-    expect(between(code, 'carryScope("craft"', ")"), `${file} prunes a carried craft off the raw page`).toContain(
-      "craftOptions"
-    );
+    expect(code, `${file} must pick its craft from the catalogue`).toContain("<CraftSelect");
+    expect(code, `${file} must name a craft that is not on the list`).toContain("fallbackLabels={craftFallbackLabels}");
+    expect(code, `${file} still reads the paged craft list`).not.toContain('listResource<Craft>("/crafts"');
   }
 });
 
@@ -628,10 +607,12 @@ test("the media upload form says how much of the record type its entry picker ho
   expect(source, "the ComboBox filters only what it was handed").toContain("<CappedListNotice");
   expect(source).toContain("const params = { pageSize: LIST_PAGE_CEILING };");
 
-  // All eight branches must carry the total, not just the one somebody happened to look at.
+  // Every paged branch must carry the total, not just the one somebody happened to look at. The
+  // craft branch reads the catalogue, the whole list, so it has no cut to state.
   const loader = between(source, "async function loadEntryOptions", "\n}\n");
   const counted = loader.match(/cut: listCut\(page, /g) ?? [];
-  expect(counted.length, "one branch per linkable record type").toBe(8);
+  expect(counted.length, "one branch per paged record type").toBe(7);
+  expect(loader).toContain("await loadCraftCatalogue()");
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
