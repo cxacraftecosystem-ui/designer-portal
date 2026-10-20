@@ -139,8 +139,15 @@ export function WorkshopCodeScanner({
   onJoined,
   resolveCard = resolveCardForScan,
   onCardResolved,
+  takeRaw,
   description
 }: {
+  /**
+   * Hand every decoded string, from every route, to the host instead of answering it here. The
+   * top-bar scanner (`components/scan/ScanSheet.tsx`) passes `lib/scanDispatch.ts` through this so
+   * the camera stays this one shared control while the answer is the dispatcher's.
+   */
+  takeRaw?: (raw: string) => Promise<void>;
   /** An artisan QR card (CXA1 or a typed short code). Defaults to `POST /artisan-cards/resolve`. */
   resolveCard?: (raw: string) => Promise<CardScanOutcome>;
   /** Fired with the artisan a card opened, so a picker can take it. */
@@ -278,6 +285,18 @@ export function WorkshopCodeScanner({
   /** One decoded string, from any route, taken as far as it can honestly go. */
   const handleRawValue = useCallback(
     async (raw: string) => {
+      if (takeRaw) {
+        // The box never keeps a join card's secret, whoever answers it.
+        if (looksLikeJoinCard(raw)) setTyped("");
+        setOutcome(null);
+        setBusy(true);
+        try {
+          await takeRaw(raw);
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
       // A JOIN CARD IS ANSWERED BY ITS OWN PARSER, BEFORE THE RECORD PARSER'S VERSION GATE — which
       // would otherwise tell somebody holding a genuine card to update an app that has no update.
       if (looksLikeJoinCard(raw)) {
@@ -308,7 +327,7 @@ export function WorkshopCodeScanner({
       }
       await handleReference(scan.ref);
     },
-    [handleReference, handleJoinCard, resolveCard, onCardResolved]
+    [handleReference, handleJoinCard, resolveCard, onCardResolved, takeRaw]
   );
 
   /**

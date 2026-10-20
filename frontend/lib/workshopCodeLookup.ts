@@ -253,6 +253,41 @@ export async function lookUpWorkshopCode(ref: WorkshopCodeRef): Promise<Workshop
   }
 }
 
+/**
+ * The same lookup as {@link lookUpWorkshopCode}, answering in three states rather than a sentence, for
+ * the top-bar scanner (`lib/scanDispatch.ts`), whose copy is shared with the Field Repository and
+ * Android. "missing" still covers "not yours": the API answers 404 for both and so does this.
+ */
+export async function findWorkshopCodeRecord(
+  ref: WorkshopCodeRef
+): Promise<{ status: "found"; hit: WorkshopCodeHit } | { status: "missing" } | { status: "offline" }> {
+  if (ref.recordType === "prototype") return { status: "missing" };
+  try {
+    return { status: "found", hit: await fetchHit(ref) };
+  } catch (error) {
+    if (isUnreachable(error)) return { status: "offline" };
+    if (error instanceof ApiError) return { status: "missing" };
+    throw error;
+  }
+}
+
+/**
+ * Ask to be let into a design workshop from its scanned `DPW1:G` code
+ * (`POST /design-workshop-access/requests`). The answer is the server's one sentence, shown as given:
+ * it is worded identically for every outcome so that it cannot say whether the workshop exists.
+ */
+export async function requestDesignWorkshopAccess(
+  workshopId: string,
+  scannedCode: string,
+  scannedAt: Date = new Date()
+): Promise<string> {
+  const answer = await apiFetch<{ received?: boolean; detail?: string }>("/design-workshop-access/requests", {
+    method: "POST",
+    body: JSON.stringify({ workshopId, scannedCode, scannedAt: scannedAt.toISOString() })
+  });
+  return answer?.detail?.trim() || "Asked. An administrator can now see your request.";
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Joining a design workshop by code
  * ──────────────────────────────────────────────────────────────────────────── */

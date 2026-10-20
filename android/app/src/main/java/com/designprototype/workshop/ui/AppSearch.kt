@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
@@ -39,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -268,14 +270,15 @@ fun AppSearchHeader(
     appName: String,
     logo: @Composable (Modifier) -> Unit,
     onOpenSearch: () -> Unit,
+    /**
+     * Open the top-bar scanner (`ui/TopBarScanSheet.kt`). Always drawn, as a 48dp button at the
+     * leading edge in the slot the lock-up's padding leaves there, for every signed-in user whether or
+     * not artisan cards are on (REQUIREMENTS_2026-10-20 §6.2).
+     */
+    onScan: () -> Unit,
     modifier: Modifier = Modifier,
     /** True while it floats over content mid-page, where a shadow separates it from the page. */
-    elevated: Boolean = false,
-    /**
-     * Scan an artisan QR card. Drawn as a 48dp QR button at the leading edge, in the slot the
-     * lock-up's padding already leaves there; null draws nothing (cards off, or no artisans here).
-     */
-    onScanCard: (() -> Unit)? = null
+    elevated: Boolean = false
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -313,10 +316,16 @@ fun AppSearchHeader(
             ) {
                 Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             }
-            if (onScanCard != null) {
-                ArtisanCardScanButton(onClick = onScanCard, modifier = Modifier.align(Alignment.CenterStart))
-            }
+            TopBarScanButton(onClick = onScan, modifier = Modifier.align(Alignment.CenterStart))
         }
+    }
+}
+
+/** The header's leading scan button. Its own target: a press never also opens search. */
+@Composable
+fun TopBarScanButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    IconButton(onClick = onClick, modifier = modifier.size(48.dp).testTag("top-bar-scan")) {
+        Icon(Icons.Filled.QrCodeScanner, contentDescription = "Scan a code", tint = MaterialTheme.colorScheme.primary)
     }
 }
 

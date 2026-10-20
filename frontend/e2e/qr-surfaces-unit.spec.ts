@@ -221,7 +221,10 @@ test("exactly one component turns a scanned or typed code into a record referenc
   //
   // Since the artisan QR card the one caller is `lib/scanInput.ts`, which tries a card first and a
   // DPW1 code second, and the shared control is the one caller of THAT.
-  expect(filesCalling("decodeWorkshopCode")).toEqual(["lib/scanInput.ts"]);
+  //
+  // `lib/scanCodecs.ts` is the top-bar dispatcher's codec (REQUIREMENTS_2026-10-20 §6). It calls the
+  // same function rather than parsing a code of its own, and is the only other caller allowed.
+  expect(filesCalling("decodeWorkshopCode").sort()).toEqual(["lib/scanCodecs.ts", "lib/scanInput.ts"]);
   expect(filesCalling("classifyScanInput")).toEqual([SHARED_CONTROL]);
   // The grammar itself declares it; it is not a caller, and this pins that distinction so the
   // assertion above cannot be satisfied by the function quietly moving.
@@ -289,18 +292,23 @@ test("every surface that reads a code mounts the shared control, and there are n
   //     parameter, so the scanned record is narrowed by the same scope and cascade the list is, and
   //     commits through the picker's own `choose`.
   //
-  // `RecordCodeScanPanel` is counted as a surface in its own right because it is what `/search`
-  // mounts; the page below is asserted to mount the panel, so the chain is complete.
+  // The top-bar scanner's panel (`components/scan/ScanSheet.tsx`, REQUIREMENTS_2026-10-20 §6) is
+  // counted in its own right: the header button, `/scan` and `/search` (through
+  // `RecordCodeScanPanel`) all mount it, and it answers through `lib/scanDispatch.ts`. The chain is
+  // asserted below so that it stays complete.
   const mounts = filesUsing(/<WorkshopCodeScanner\b/);
   expect(mounts.sort()).toEqual(
     [
       "app/(protected)/design-workshops/[id]/codes/page.tsx",
-      "components/RecordCodeScanPanel.tsx",
+      "components/scan/ScanSheet.tsx",
       "components/designworkshop/StageReferenceField.tsx"
     ].sort()
   );
 
   expect(sourceOf.get("app/(protected)/search/page.tsx")).toContain("<RecordCodeScanPanel");
+  expect(sourceOf.get("components/RecordCodeScanPanel.tsx")).toContain("<ScanPanel");
+  expect(sourceOf.get("app/(protected)/scan/page.tsx")).toContain("<ScanPanel");
+  expect(sourceOf.get("components/scan/TopBarScanButton.tsx")).toContain("<ScanSheet");
 
   // And nothing else builds a scanner of its own out of a camera preview. `getUserMedia` is used by
   // dictation too, which is why this looks for the pairing that makes something a code reader — a

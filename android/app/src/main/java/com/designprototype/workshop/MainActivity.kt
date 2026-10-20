@@ -479,6 +479,13 @@ import com.designprototype.workshop.ui.NO_FIELD_WORKSHOP
 import com.designprototype.workshop.ui.NO_DESIGN_WORKSHOP
 import com.designprototype.workshop.ui.workshopCapLine
 import com.designprototype.workshop.ui.RecordCodeLookupPanel
+import com.designprototype.workshop.ui.DesignerScanControls
+import com.designprototype.workshop.ui.TopBarScanSheet
+import com.designprototype.workshop.ui.designerScanServices
+import com.designprototype.workshop.ui.runDesignerScanAction
+import com.designprototype.workshop.data.ScanCopy
+import com.designprototype.workshop.data.ScanTarget
+import com.designprototype.workshop.data.dispatchScan
 import com.designprototype.workshop.ui.RecordCodeSection
 import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.OpenableCard
@@ -3382,12 +3389,10 @@ private fun HomeScreen(
     val reducedMotion = preferences.reducedMotion
     // The search panel the page header opens. See AppSearch.kt.
     var searchOpen by remember { mutableStateOf(false) }
-    // The artisan QR card scanner the header's QR button opens (ui/ArtisanCardScanSheet.kt). The
-    // button is drawn only while the server says cards are on (remembered for offline launches).
-    var cardScanOpen by remember { mutableStateOf(false) }
-    var artisanCardsOn by remember { mutableStateOf(false) }
-    val cardStatusContext = LocalContext.current
-    LaunchedEffect(Unit) { artisanCardsOn = repository.artisanCardsEnabled(cardStatusContext) }
+    // The top-bar scanner the header's leading button opens (ui/TopBarScanSheet.kt), for every
+    // signed-in user whether or not artisan cards are on (REQUIREMENTS_2026-10-20 §6.2).
+    var scanOpen by remember { mutableStateOf(false) }
+    val scanContext = LocalContext.current
     // Written as a string (success); errors go through showError. See ui/AppMessage.kt.
     val messageState = remember { AppMessageState() }
     var message by messageState
@@ -3687,6 +3692,23 @@ private fun HomeScreen(
     // used to be in this list; they are rank-only now, so their columns cannot change the answer.
     val dashboardModes = remember(user.role, user.canManageQuestionnaire) {
         EntryMode.entries.filter { it != EntryMode.USERS || user.canManageUsers() }
+    }
+
+    /**
+     * Where a scanned code's Open or Add leads (`data/ScanDispatch.kt`). A record goes through the
+     * search screen's own arm, [openSearchRecord]; the rest are this app's screens for the same places.
+     */
+    val openScanTarget: (ScanTarget) -> Unit = { target ->
+        when (target) {
+            is ScanTarget.Record -> openSearchRecord(target.recordType, target.id)
+            is ScanTarget.DesignWorkshop -> openSearchRecord(SearchRecordTypes.DESIGN_WORKSHOP, target.id)
+            ScanTarget.DesignWorkshops -> screen = Screen.DesignWorkshops()
+            ScanTarget.Questionnaires -> screen = Screen.Questionnaires
+            is ScanTarget.AddFromPeer ->
+                if (canCreate(EntryMode.ARTISAN)) screen = Screen.Create(EntryMode.ARTISAN) else showMessage(ScanCopy.NOT_FOUND)
+            // A Field Repository session; the dispatcher refuses it here before a target exists.
+            is ScanTarget.Session -> showMessage(ScanCopy.SESSION_ELSEWHERE)
+        }
     }
 
     /**
@@ -5234,7 +5256,8 @@ private fun HomeScreen(
                     // mount's own header above requires the two to be "character for character"; a
                     // shared value is the only spelling of that requirement a maintainer cannot
                     // accidentally break. See [openSearchRecord].
-                    onOpen = openSearchRecord
+                    onOpen = openSearchRecord,
+                    onTarget = openScanTarget
                 )
                 /*
                  * SAID HERE BECAUSE A DESIGNER WHO ARRIVES AT A DESTINATION NAMED "Scan a code" AND
@@ -5366,22 +5389,22 @@ private fun HomeScreen(
                         appName = APP_SEARCH_NAME,
                         logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 10.dp) },
                         onOpenSearch = { searchOpen = true },
-                        elevated = elevated,
-                        onScanCard = if (artisanCardsOn) ({ cardScanOpen = true }) else null
+                        onScan = { scanOpen = true },
+                        elevated = elevated
                     )
                 }
-                if (cardScanOpen) {
-                    ArtisanCardScanSheet(
-                        repository = repository,
-                        onDismiss = { cardScanOpen = false },
-                        onResolved = { artisanId, _ ->
-                            cardScanOpen = false
-                            openSearchRecord(SearchRecordTypes.ARTISAN, artisanId)
+                if (scanOpen) {
+                    val scanServices = remember(repository) { designerScanServices(scanContext, repository) }
+                    TopBarScanSheet(
+                        dispatch = { raw -> dispatchScan(raw, scanServices) },
+                        onAction = { action ->
+                            runDesignerScanAction(scanContext, action) { target ->
+                                scanOpen = false
+                                openScanTarget(target)
+                            }
                         },
-                        onOpenReplaced = { artisanId ->
-                            cardScanOpen = false
-                            openSearchRecord(SearchRecordTypes.ARTISAN, artisanId)
-                        }
+                        onDismiss = { scanOpen = false },
+                        scanner = { enabled, onText, onRefusal -> DesignerScanControls(enabled, onText, onRefusal) }
                     )
                 }
                 // Over the page, under nothing: the page keeps its scroll and any half-filled form.
