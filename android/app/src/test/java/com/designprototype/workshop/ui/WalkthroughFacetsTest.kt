@@ -237,6 +237,39 @@ class WalkthroughFacetsTest {
             assertTrue("“${end.id}” lost its words in the cutter", facets.summary.isNotBlank())
         }
     }
+
+    @Test
+    fun `a step's own why and cautions win over the body's seams`() {
+        // [walkthroughFacets] is shared with the Field Repository, whose steps carry `why` and
+        // `watch` as fields of their own. The same function must prefer them here too.
+        val facets = walkthroughFacets(
+            WalkStep(
+                id = "probe",
+                title = "Probe · Test",
+                body = "Record the thing you came for, in the order it happens. Watch out: a body caution.",
+                why = "The dataset needs it.",
+                watch = listOf("First caution.", "  ", "Second caution."),
+            )
+        )
+        assertEquals("Record the thing you came for, in the order it happens.", facets.summary)
+        assertEquals("The dataset needs it.", facets.detail)
+        assertEquals(listOf("First caution.", "Second caution."), facets.watch)
+    }
+
+    @Test
+    fun `blank why and watch fields fall back to the body's seams`() {
+        val facets = walkthroughFacets(
+            WalkStep(
+                id = "probe",
+                title = "Probe · Test",
+                body = "Record the thing you came for, in the order it happens. The dataset needs it. Watch out: a body caution.",
+                why = "  ",
+                watch = listOf(" "),
+            )
+        )
+        assertEquals("The dataset needs it.", facets.detail)
+        assertEquals(listOf("a body caution."), facets.watch)
+    }
 }
 
 /** The caution bullets a step's card would draw. Named so the assertions above read as English. */

@@ -94,7 +94,7 @@ import com.designprototype.workshop.data.UserDto
 /**
  * One step of the walkthrough.
  *
- * Five fields, and every one of them is load-bearing — see each property for what breaks without it.
+ * Seven fields, and every one of them is load-bearing — see each property for what breaks without it.
  */
 internal data class WalkStep(
     /**
@@ -181,6 +181,17 @@ internal data class WalkStep(
      * half-filled form and must still be asked about.
      */
     val destination: NavDestination? = null,
+    /**
+     * "Why this step exists", as a field of its own. Where it is blank, [walkthroughFacets] takes the
+     * reason from [body] instead, after its first sentence; a step with neither draws no heading.
+     */
+    val why: String = "",
+    /**
+     * "Watch out for": the cautions, one bullet each, in the order a reader meets them. Where it is
+     * empty, [walkthroughFacets] takes the caution from [body] instead, after the words "Watch out";
+     * a step with neither draws no heading.
+     */
+    val watch: List<String> = emptyList(),
 )
 
 /**
