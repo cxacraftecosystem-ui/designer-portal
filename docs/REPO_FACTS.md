@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**500 operations** in the working tree — 238 GET, 173 POST, 37 DELETE,
+**501 operations** in the working tree — 239 GET, 173 POST, 37 DELETE,
 27 PATCH, 25 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -50,10 +50,10 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `auth.py` | 10 |
 | `designers.py` | 10 |
 | `tasks.py` | 10 |
+| `crafts.py` | 9 |
 | `feedback.py` | 9 |
 | `ministry_dashboard.py` | 9 |
 | `ministry_exports.py` | 9 |
-| `crafts.py` | 8 |
 | `tools.py` | 8 |
 | `artisan_duplicates.py` | 7 |
 | `craft_categories.py` | 7 |
@@ -144,7 +144,7 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 336 | 6194 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Backend unit (`backend/tests/`) | 336 | 6195 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 280 | 3206 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 316 | 3811 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 9 | 25 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
@@ -172,7 +172,7 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 327 | 198,687 | 327 | 198,687 |
+| `backend/app` | 327 | 198,720 | 327 | 198,720 |
 | `frontend/app` | 123 | 61,050 | 123 | 61,050 |
 | `frontend/components` | 387 | 145,757 | 387 | 145,757 |
 | `frontend/lib` | 187 | 82,587 | 187 | 82,587 |
