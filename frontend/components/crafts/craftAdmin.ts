@@ -109,3 +109,20 @@ export function swapSortOrder<T extends { id: string; sortOrder: number }>(
     { id: items[other].id, sortOrder: items[index].sortOrder }
   ];
 }
+
+/**
+ * How many records name each ACTIVE craft — the `/crafts` table's Records column, for every reader.
+ * `GET /crafts` adds `referenceCount` to every row of a list page; 500 a page (its ceiling) reads the
+ * whole master list in one or two requests.
+ */
+export async function loadCraftReferenceCounts(): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (let page = 1; page <= 20; page += 1) {
+    const answer = await apiFetch<{ items: Array<{ id: string; referenceCount?: number | null }>; total: number }>(
+      `/crafts?pageSize=500&page=${page}`
+    );
+    for (const row of answer.items) counts.set(row.id, row.referenceCount ?? 0);
+    if (answer.items.length < 500 || counts.size >= answer.total) break;
+  }
+  return counts;
+}

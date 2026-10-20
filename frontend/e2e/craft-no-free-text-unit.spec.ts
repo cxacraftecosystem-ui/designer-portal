@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { expect, test } from "@playwright/test";
@@ -23,9 +24,11 @@ function files(dir: string): string[] {
   return out;
 }
 
-test("no form has a free-text craft input", () => {
+test("no screen has a free-text craft input", () => {
+  // Every form and page, not only `components/forms`: the officers' "Start a design workshop" form
+  // lives under `app/` and once still typed its craft.
   const offenders: string[] = [];
-  for (const file of files("components/forms")) {
+  for (const file of [...files("components"), ...files("app")]) {
     const source = read(file);
     if (/name=["']craftName["']/.test(source) || /name=["']newCraftName["']/.test(source)) {
       offenders.push(relative(ROOT, join(ROOT, file)));
@@ -46,7 +49,9 @@ test("every craft picker is CraftSelect", () => {
     "app/(protected)/workshops/page.tsx",
     "components/designworkshop/DesignWorkshopHeaderForm.tsx",
     "app/(protected)/design-workshops/page.tsx",
-    "app/(protected)/annual-plan/PromoteDialog.tsx"
+    "app/(protected)/annual-plan/PromoteDialog.tsx",
+    "app/(protected)/officers/page.tsx",
+    "app/(protected)/media/page.tsx"
   ];
   for (const file of pickers) expect(read(file), file).toContain("<CraftSelect");
   // The craft form's category is Category → Sub-category, never typed.
@@ -85,16 +90,40 @@ test("the two shared craft files carry no portal-specific import", () => {
   }
 });
 
-test("the two shared craft files are byte-identical to the documentation portal's, when it is checked out", () => {
-  // CI checks out one repository, so an absent sibling passes; side by side they must not differ.
-  const sibling = join(ROOT, "..", "..", "..", "documentation-portal", "frontend");
-  for (const file of ["components/forms/CraftSelect.tsx", "lib/craftCatalogue.ts"]) {
-    let theirs: string;
-    try {
-      theirs = readFileSync(join(sibling, file), "utf8");
-    } catch {
-      continue;
-    }
-    expect(theirs.replace(/\r\n/g, "\n"), file).toBe(read(file).replace(/\r\n/g, "\n"));
+/*
+  PARITY WITH THE DOCUMENTATION PORTAL (§2.8), held two ways.
+
+  1. A pinned SHA-256 of each shared file (line endings folded). CI checks out one repository, so
+     this is the half that always runs: the documentation portal's test pins the same digests, and
+     changing a shared file means changing both copies and both pins in one go.
+  2. A straight comparison with the sibling checkout when it is present: $SIBLING_REPO, then
+     `documentation-portal` beside this repository, then C:/dev/IIT/documentation-portal.
+*/
+const SHARED_DIGESTS: Record<string, string> = {
+  "components/forms/CraftSelect.tsx": "b8c23a80b88c1bdbb33c56a35ef6acd17431ac7bffee38deeaebcb086d04e3f0",
+  "lib/craftCatalogue.ts": "39b7dd6c7214dd6c3d1208a0262c16ebb2a9f06b93b8a87706064038a9812555",
+  "e2e/fixtures/craft-catalogue.json": "33ee1b2655d0fa558f9d8c3a147cc056c434d4d867a81c966a99406be824c572"
+};
+const lf = (text: string) => text.replace(/\r\n/g, "\n");
+
+test("the shared craft files match the pinned digests both portals carry", () => {
+  for (const [file, digest] of Object.entries(SHARED_DIGESTS)) {
+    expect(createHash("sha256").update(lf(read(file)), "utf8").digest("hex"), file).toBe(digest);
+  }
+});
+
+const SIBLING_FRONTEND = [
+  process.env.SIBLING_REPO,
+  join(ROOT, "..", "..", "documentation-portal"),
+  "C:/dev/IIT/documentation-portal"
+]
+  .filter((dir): dir is string => Boolean(dir))
+  .map((dir) => join(dir, "frontend"))
+  .find((dir) => Object.keys(SHARED_DIGESTS).every((file) => existsSync(join(dir, file))));
+
+test("the shared craft files are byte-identical to the documentation portal's checkout", () => {
+  test.skip(!SIBLING_FRONTEND, "no documentation-portal checkout carrying the craft files (CI has one repository)");
+  for (const file of Object.keys(SHARED_DIGESTS)) {
+    expect(lf(readFileSync(join(SIBLING_FRONTEND as string, file), "utf8")), file).toBe(lf(read(file)));
   }
 });

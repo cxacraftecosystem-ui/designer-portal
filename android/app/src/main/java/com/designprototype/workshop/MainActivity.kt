@@ -17251,6 +17251,11 @@ private data class ReviewField(
      * either client.
      */
     val vocabulary: String? = null,
+    /**
+     * Shown, never edited or sent: the web's `readOnly`. A product's or tool's craft name is derived
+     * from the craft picked from the list (REQUIREMENTS_2026-10-20 §2.4).
+     */
+    val readOnly: Boolean = false,
 )
 
 /** The one vocabulary [ReviewField.vocabulary] recognises today. Spelled as the web spells it. */
@@ -17284,7 +17289,7 @@ private fun reviewEditableFields(recordType: String): List<ReviewField> = when (
     "product" -> listOf(
         ReviewField("productName", "Product name"),
         ReviewField("localName", "Local name"),
-        ReviewField("craftName", "Craft name"),
+        ReviewField("craftName", "Craft", readOnly = true),
         ReviewField("artisanName", "Artisan name"),
         ReviewField("place", "Place"),
         ReviewField("rawMaterialsUsed", "Raw materials used", multiline = true),
@@ -17296,7 +17301,7 @@ private fun reviewEditableFields(recordType: String): List<ReviewField> = when (
         ReviewField("toolkitName", "Toolkit name"),
         ReviewField("localName", "Local name"),
         ReviewField("englishName", "English name"),
-        ReviewField("craftName", "Craft name"),
+        ReviewField("craftName", "Craft", readOnly = true),
         ReviewField("artisanName", "Artisan name"),
         ReviewField("place", "Place"),
         ReviewField("processUsedIn", "Process used in", multiline = true),
@@ -17674,7 +17679,17 @@ private fun PendingReviewRow(
                              * screen. `field.multiline` is the same flag the web's registry uses, so
                              * the two platforms light up the same boxes.
                              */
-                            if (field.vocabulary == REVIEW_VOCABULARY_INTERVIEW_LANGUAGE) {
+                            if (field.readOnly) {
+                                // Derived from the craft picked on the record's own form; never typed here.
+                                OutlinedTextField(
+                                    value = value.ifBlank { "—" },
+                                    onValueChange = {},
+                                    label = { Text(field.label) },
+                                    readOnly = true,
+                                    enabled = false,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            } else if (field.vocabulary == REVIEW_VOCABULARY_INTERVIEW_LANGUAGE) {
                                 /*
                                   A CLOSED VOCABULARY IS A DROPDOWN, AND IT CARRIES NO MICROPHONE.
                                   A recogniser cannot produce a value a closed list will accept, so a
@@ -17715,6 +17730,7 @@ private fun PendingReviewRow(
                         // Only the keys that actually moved travel — the API logs the diff, and sending
                         // an unchanged value would put a no-op line in the record's edit history.
                         val changed = fields
+                            .filterNot { it.readOnly }
                             .map { it.key }
                             .filter { key -> edited[key].orEmpty() != baseline[key].orEmpty() }
                             .associateWith { key -> edited[key].orEmpty() }

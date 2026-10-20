@@ -666,6 +666,19 @@ function effectiveMaxItems(field: DwField): number {
   return declaredMaxItems(field) ?? DW_DEFAULT_MAX_ITEMS;
 }
 
+/** The line under stage 1's craft name — Android's `DW_CRAFT_NAME_FROM_LIST`, word for word. */
+export const DW_CRAFT_NAME_FROM_LIST = "From the craft picked from the list.";
+
+/**
+ * Stage 1's `craftName` is the derived, read-only copy of `craftRef` (REQUIREMENTS_2026-10-20 §2.4),
+ * and `craftRef` is required: the box is read-only wherever its entity carries a craft link to the
+ * list, linked or not yet. The picker is the only way to set it; the server rewrites the name from
+ * the link on every save. Android's `dwCraftNameLocked` is the same rule.
+ */
+export function stageCraftNameLocked(entity: Pick<DwEntity, "fields">, field: Pick<DwField, "key">): boolean {
+  return field.key === "craftName" && entity.fields.some((sibling) => sibling.key === "craftRef" && sibling.refModel === "Craft");
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * The component
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -1212,6 +1225,7 @@ export function FieldInput({
        * really did attach, and it is the only one of the two that can offer a real delete.
        */
       const identityTarget = field.type === "TEXT" ? identityNumberField(entity) : null;
+      const craftLocked = field.type === "TEXT" && stageCraftNameLocked(entity, field);
       const textBox = (
         <input
           id={controlId}
@@ -1244,9 +1258,20 @@ export function FieldInput({
           aria-invalid={invalid}
           value={inputValue(value)}
           disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
+          readOnly={craftLocked}
+          onChange={(event) => {
+            if (!craftLocked) onChange(event.target.value);
+          }}
         />
       );
+      if (craftLocked) {
+        return labelled(
+          <>
+            {textBox}
+            <p className="text-xs leading-5 text-ink-500">{DW_CRAFT_NAME_FROM_LIST}</p>
+          </>
+        );
+      }
       return labelled(
         <>
           {/* Prose only. A speech recogniser hands back words, so dictating into a URL, an email

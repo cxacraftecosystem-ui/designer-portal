@@ -20,6 +20,7 @@ import {
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { seedHasArtisan, type InlineHostSeed, type InlineRecordSurfaceProps } from "@/components/forms/inlineRecordHost";
 import { craftChangeClearsArtisan, useCraftAndArtisanOptions } from "@/components/forms/recordPickers";
+import { CraftAddDraftBoundary } from "@/components/forms/CraftAddDraftBoundary";
 import { CraftSelect } from "@/components/forms/CraftSelect";
 import { CRAFT_NOT_IN_LIST } from "@/lib/craftCatalogue";
 import { canManageCrafts } from "@/lib/permissions";
@@ -920,24 +921,34 @@ export function ProductForm({
           </Field>
           {/* The craft is picked from the list; its name is derived from the pick, server-side too. */}
           <FieldBlock label="Craft" required fieldKey="craft">
-            <CraftSelect
-              name="craftId"
-              required
-              ariaLabel="Craft"
-              value={craftId}
-              fallbackLabels={craftFallbackLabels}
-              canAddCraft={canManageCrafts(user)}
-              onDirty={markDirty}
-              onChange={(next, craft) => {
-                setCraftId(next);
+            <CraftAddDraftBoundary
+              formRef={formRef}
+              onLeave={resetDirty}
+              onCraftAdded={(addedId, craft) => {
+                setCraftId(addedId);
                 setCraftName(craft?.name ?? "");
-                // Drop the artisan ONLY when this form actually knows they practise a different
-                // craft — never merely because it cannot see them. See `forms/recordPickers`.
-                if (craftChangeClearsArtisan({ nextCraftId: next, artisanId, artisans })) {
-                  setArtisanId("");
-                }
+                markDirty();
               }}
-            />
+            >
+              <CraftSelect
+                name="craftId"
+                required
+                ariaLabel="Craft"
+                value={craftId}
+                fallbackLabels={craftFallbackLabels}
+                canAddCraft={canManageCrafts(user)}
+                onDirty={markDirty}
+                onChange={(next, craft) => {
+                  setCraftId(next);
+                  setCraftName(craft?.name ?? "");
+                  // Drop the artisan ONLY when this form actually knows they practise a different
+                  // craft — never merely because it cannot see them. See `forms/recordPickers`.
+                  if (craftChangeClearsArtisan({ nextCraftId: next, artisanId, artisans })) {
+                    setArtisanId("");
+                  }
+                }}
+              />
+            </CraftAddDraftBoundary>
           </FieldBlock>
           <Field label="Linked artisan (fills artisan + place)" fieldKey="artisan">
             <Select

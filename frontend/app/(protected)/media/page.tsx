@@ -46,7 +46,7 @@ import { apiFetch, listResource } from "@/lib/api";
 import { bytes, countNoun, formatDateTime } from "@/lib/format";
 import { locationFromForm, textValue } from "@/lib/forms";
 import { inferMediaType, transcribeMediaNow, uploadMediaBatch, type BatchProgress } from "@/lib/media";
-import { craftIndex, craftPath, craftStatesLine, loadCraftCatalogue } from "@/lib/craftCatalogue";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import { isAdmin } from "@/lib/permissions";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
@@ -187,18 +187,8 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "craft": {
-      // The craft list is the catalogue (REQUIREMENTS_2026-10-20 §2.4): every craft, grouped.
-      const catalogue = await loadCraftCatalogue();
-      const index = craftIndex(catalogue);
-      return {
-        options: catalogue.crafts.map((craft) => ({
-          value: craft.id,
-          label: craft.name,
-          hint: craftStatesLine(craft) || undefined,
-          group: craftPath(index, craft)
-        })),
-        cut: null
-      };
+      // A craft is picked through `CraftSelect`, which reads the whole catalogue itself (§2.4).
+      return { options: [], cut: null };
     }
     case "tool": {
       const page = await listResource<ToolDocumentation>("/tools", params);
@@ -815,7 +805,11 @@ function MediaPageBody() {
             />
           </FieldBlock>
         </div>
-        {linkedType ? (
+        {linkedType === "craft" ? (
+          <FieldBlock label="Linked entry (optional)">
+            <CraftSelect name="linkedRecordId" ariaLabel="Linked craft" value={linkedEntryId} onChange={(id) => setLinkedEntryId(id)} />
+          </FieldBlock>
+        ) : linkedType ? (
           <Field label="Linked entry (optional)">
             <ComboBox
               options={entryOptions}

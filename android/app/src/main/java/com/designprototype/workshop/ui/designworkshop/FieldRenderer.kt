@@ -817,6 +817,8 @@ fun FieldRenderer(
                     field, value, onChange, enabled, error, resetKey = resetKey,
                     keyboard = if (dwNumericTextField(field)) KeyboardType.Number else KeyboardType.Text,
                     services = services,
+                    rowValues = rowValues,
+                    siblings = siblings,
                 )
             }
         }
@@ -1627,16 +1629,17 @@ private fun DwWorkshopNameField(
  * when the store moved to something the box does not already represent — which is what happens when
  * the caller switches to another collection row through the same composable.
  */
-/** The line under stage 1's craft name while it is the linked craft's. */
-internal const val DW_CRAFT_NAME_FROM_LIST = "From the linked craft. Change the craft to change it."
+/** The line under stage 1's craft name: it is the picked craft's, never typed. */
+internal const val DW_CRAFT_NAME_FROM_LIST = "From the craft picked from the list."
 
 /**
- * Stage 1's `craftName` is the derived, read-only copy of `craftRef` (REQUIREMENTS_2026-10-20 §2.4):
- * once a craft is linked, its name is the list's and is never typed. With no link yet the box keeps
- * whatever an older workshop holds, and the craft picker beside it is the way forward.
+ * Stage 1's `craftName` is the derived, read-only copy of `craftRef` (REQUIREMENTS_2026-10-20 §2.4),
+ * and `craftRef` is required. So the box is read-only whenever its entity carries a craft link to the
+ * list — linked or not yet linked: the craft picker beside it is the only way to set it, and the
+ * server rewrites the name from the link on every save.
  */
-internal fun dwCraftNameLocked(field: FieldDto, rowValues: Map<String, JsonElement>): Boolean =
-    field.key == "craftName" && rowValues.containsKey("craftRef") && DwValues.text(rowValues["craftRef"]).isNotBlank()
+internal fun dwCraftNameLocked(field: FieldDto, siblings: Map<String, FieldDto>): Boolean =
+    field.key == "craftName" && siblings["craftRef"]?.refModel == "Craft"
 
 @Composable
 private fun ScalarInput(
@@ -1653,6 +1656,8 @@ private fun ScalarInput(
     services: DwFieldServices? = null,
     /** The whole record this field sits in — what a DERIVED field is computed from. */
     rowValues: Map<String, JsonElement> = emptyMap(),
+    /** The entity's other fields: stage 1's craft name is locked by the craft link beside it. */
+    siblings: Map<String, FieldDto> = emptyMap(),
 ) {
     var buffer by remember(field.key, resetKey) { mutableStateOf(DwValues.text(value)) }
     var localError by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
@@ -1771,7 +1776,7 @@ private fun ScalarInput(
             onValueChange = { raw -> if (spoken.isBlank()) commit(raw) },
             label = { Text(requiredMarked(fieldLabel(field))) },
             // Stage 1's craft name is the linked craft's (REQUIREMENTS_2026-10-20 §2.4): read-only.
-            enabled = enabled && !dwCraftNameLocked(field, rowValues),
+            enabled = enabled && !dwCraftNameLocked(field, siblings),
             // Read-only for the seconds the recogniser is running. A keystroke landing in the middle
             // of a stream would be overwritten by the next partial, so the alternative is a box that
             // silently discards typing — which reads as a broken keyboard.
@@ -1785,7 +1790,7 @@ private fun ScalarInput(
             //
             // Only while the box is EMPTY: once they have typed their own figure the derivation is
             // overridden, and a line underneath still quoting a different number reads as an error.
-            supportingText = (if (dwCraftNameLocked(field, rowValues)) DW_CRAFT_NAME_FROM_LIST else derivedHint?.takeIf { buffer.isBlank() })
+            supportingText = (if (dwCraftNameLocked(field, siblings)) DW_CRAFT_NAME_FROM_LIST else derivedHint?.takeIf { buffer.isBlank() })
                 ?.let { hint -> { Text(hint) } },
             minLines = minLines,
             singleLine = minLines == 1 && spoken.isBlank(),

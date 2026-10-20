@@ -607,12 +607,12 @@ test("the media upload form says how much of the record type its entry picker ho
   expect(source, "the ComboBox filters only what it was handed").toContain("<CappedListNotice");
   expect(source).toContain("const params = { pageSize: LIST_PAGE_CEILING };");
 
-  // Every paged branch must carry the total, not just the one somebody happened to look at. The
-  // craft branch reads the catalogue, the whole list, so it has no cut to state.
+  // Every paged branch must carry the total, not just the one somebody happened to look at. A craft
+  // is picked through `CraftSelect` over the whole catalogue, so it has no cut to state.
   const loader = between(source, "async function loadEntryOptions", "\n}\n");
   const counted = loader.match(/cut: listCut\(page, /g) ?? [];
   expect(counted.length, "one branch per paged record type").toBe(7);
-  expect(loader).toContain("await loadCraftCatalogue()");
+  expect(source).toContain('<CraftSelect name="linkedRecordId"');
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

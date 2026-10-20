@@ -32,7 +32,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { CraftCategoriesTab } from "@/components/crafts/CraftCategoriesTab";
 import { CraftReviewQueue } from "@/components/crafts/CraftReviewQueue";
 import { CraftSubCategorySelect } from "@/components/crafts/CraftTaxonomyFields";
-import { CRAFT_STATE_OPTIONS, GI_LABEL, canAdministerCraftList, deleteCraft } from "@/components/crafts/craftAdmin";
+import { CRAFT_STATE_OPTIONS, GI_LABEL, canAdministerCraftList, deleteCraft, loadCraftReferenceCounts } from "@/components/crafts/craftAdmin";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown, MultiSelectDropdown } from "@/components/ui/Dropdown";
 import { apiFetch } from "@/lib/api";
@@ -42,13 +42,13 @@ import {
   craftSubCategoryName,
   foldCraftText,
   invalidateCraftCatalogue,
-  loadFullCraftCatalogue,
   searchCraftCatalogue,
   useCraftCatalogue,
   type CatalogueCraft,
   type CraftCatalogue,
   type GiStatus
 } from "@/lib/craftCatalogue";
+import { markCraftAdded, safeReturnPath } from "@/lib/craftAddDraft";
 import { countNoun } from "@/lib/format";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { requiredText, textValue } from "@/lib/forms";
@@ -142,20 +142,19 @@ function CraftsPageBody() {
     resetKey: editing?.id ?? null
   });
 
-  // Content admins see how many records use each craft — the number that decides merge or delete.
+  // How many records use each craft: a standard column (§2.6), and the number behind merge or delete.
   useEffect(() => {
-    if (!contentAdmin || !catalogue) return;
+    if (!catalogue) return;
     let cancelled = false;
-    loadFullCraftCatalogue()
-      .then((full) => {
-        if (cancelled) return;
-        setReferenceCounts(new Map(full.crafts.map((craft) => [craft.id, craft.referenceCount ?? 0])));
+    loadCraftReferenceCounts()
+      .then((counts) => {
+        if (!cancelled) setReferenceCounts(counts);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [contentAdmin, catalogue]);
+  }, [catalogue]);
 
   /** Search, filters and page, so Back from a craft's read-only page lands on the same rows. */
   const memory = useListMemory(
@@ -231,9 +230,12 @@ function CraftsPageBody() {
   // `/crafts?new=<name>`: "Add it to the list" from a craft picker, with the name already typed.
   const typedNew = searchParams.get("new");
   const typedNewHandled = useRef(false);
+  /** The form the picker was on: saving the craft goes back there (lib/craftAddDraft). */
+  const returnToRef = useRef<string | null>(null);
   useEffect(() => {
     if (typedNewHandled.current || !typedNew || typedNew === "1" || !allowManage) return;
     typedNewHandled.current = true;
+    returnToRef.current = safeReturnPath(searchParams.get("return"));
     setTab("crafts");
     resetForm(null, typedNew);
     router.replace("/crafts");
@@ -337,6 +339,13 @@ function CraftsPageBody() {
       resetForm(null);
       setConfirmAction(null);
       formElement.reset();
+      const backTo = !editing && returnToRef.current ? markCraftAdded(saved.id) ?? returnToRef.current : null;
+      returnToRef.current = null;
+      if (backTo) {
+        afterSaveRef.current = null;
+        router.push(backTo);
+        return;
+      }
       const after = afterSaveRef.current;
       afterSaveRef.current = null;
       after?.();
@@ -667,7 +676,7 @@ function CraftsPageBody() {
                       <ResizableTh>GI</ResizableTh>
                       <ResizableTh>State of origin</ResizableTh>
                       <ResizableTh>State of practice</ResizableTh>
-                      {referenceCounts ? <ResizableTh>Records</ResizableTh> : null}
+                      <ResizableTh>Records</ResizableTh>
                       <ResizableTh className="text-right">Actions</ResizableTh>
                     </tr>
                   </thead>
@@ -684,9 +693,7 @@ function CraftsPageBody() {
                         <td className="px-4 py-3 text-ink-700">{craft.giStatus ? GI_LABEL[craft.giStatus] : "—"}</td>
                         <td className="max-w-xs px-4 py-3 text-ink-700">{craft.stateOfOrigin.join(", ") || "—"}</td>
                         <td className="max-w-xs px-4 py-3 text-ink-700">{craft.stateOfPractice.join(", ") || "—"}</td>
-                        {referenceCounts ? (
-                          <td className="px-4 py-3 tabular-nums text-ink-700">{referenceCounts.get(craft.id) ?? 0}</td>
-                        ) : null}
+                        <td className="px-4 py-3 tabular-nums text-ink-700">{referenceCounts ? (referenceCounts.get(craft.id) ?? 0) : "—"}</td>
                         <td className="px-4 py-3 text-right">
                           <RowActions>
                             {allowManage ? (

@@ -21,6 +21,7 @@ import { LocationFields, type LocationInitialValues } from "@/components/forms/L
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { PhoneField } from "@/components/forms/PhoneField";
 import { GENDER_OPTIONS } from "@/lib/standardValues";
+import { CraftAddDraftBoundary } from "@/components/forms/CraftAddDraftBoundary";
 import { CraftSelect } from "@/components/forms/CraftSelect";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
@@ -1424,21 +1425,31 @@ export function ArtisanForm({
             }}
           />
           <FieldBlock label="Craft" required fieldKey="craft">
-            <CraftSelect
-              name="craftId"
-              required
-              ariaLabel="Craft"
-              value={craftId}
-              fallbackLabels={craftFallbackLabels}
-              canAddCraft={canManageCrafts(user)}
-              onDirty={markDirty}
-              onChange={(nextId, craft) => {
-                setCraftId(nextId);
-                // An explicit pick replaces the remembered craft and retires the banner: from here
-                // on what is on screen is the researcher's own choice, not a suggestion.
+            <CraftAddDraftBoundary
+              formRef={formRef}
+              onLeave={resetDirty}
+              onCraftAdded={(addedId, craft) => {
+                setCraftId(addedId);
+                markDirty();
                 if (craft) carry.remember({ craftId: craft.id, craftName: craft.name }, { explicit: true });
               }}
-            />
+            >
+              <CraftSelect
+                name="craftId"
+                required
+                ariaLabel="Craft"
+                value={craftId}
+                fallbackLabels={craftFallbackLabels}
+                canAddCraft={canManageCrafts(user)}
+                onDirty={markDirty}
+                onChange={(nextId, craft) => {
+                  setCraftId(nextId);
+                  // An explicit pick replaces the remembered craft and retires the banner: from here
+                  // on what is on screen is the researcher's own choice, not a suggestion.
+                  if (craft) carry.remember({ craftId: craft.id, craftName: craft.name }, { explicit: true });
+                }}
+              />
+            </CraftAddDraftBoundary>
           </FieldBlock>
           <DictatedTextInput
             name="place"

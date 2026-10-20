@@ -48,6 +48,11 @@ export type ReviewField = {
    * record still took free text and bypassed the vocabulary entirely.
    */
   vocabulary?: "interviewLanguage";
+  /**
+   * Shown, never edited or sent. A product's or tool's craft name is derived from the craft picked
+   * from the list (REQUIREMENTS_2026-10-20 §2.4); the craft itself changes on the record's own form.
+   */
+  readOnly?: boolean;
 };
 
 const FIELDS: Record<string, ReviewField[]> = {
@@ -69,7 +74,7 @@ const FIELDS: Record<string, ReviewField[]> = {
   product: [
     { key: "productName", label: "Product name", required: true },
     { key: "localName", label: "Local name" },
-    { key: "craftName", label: "Craft name", required: true },
+    { key: "craftName", label: "Craft", readOnly: true },
     { key: "artisanName", label: "Artisan name", required: true },
     { key: "place", label: "Place", required: true },
     { key: "rawMaterialsUsed", label: "Raw materials used", multiline: true },
@@ -81,7 +86,7 @@ const FIELDS: Record<string, ReviewField[]> = {
     { key: "toolkitName", label: "Toolkit name", required: true },
     { key: "localName", label: "Local name" },
     { key: "englishName", label: "English name" },
-    { key: "craftName", label: "Craft name", required: true },
+    { key: "craftName", label: "Craft", readOnly: true },
     { key: "artisanName", label: "Artisan name", required: true },
     { key: "place", label: "Place", required: true },
     { key: "processUsedIn", label: "Process used in", multiline: true },

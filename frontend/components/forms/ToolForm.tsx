@@ -52,6 +52,7 @@ import { recordingFilename, splitExtension } from "@/lib/naming";
 import { saveOrQueue } from "@/lib/offline";
 import { canManageCrafts, hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
+import { CraftAddDraftBoundary } from "@/components/forms/CraftAddDraftBoundary";
 import { CraftSelect } from "@/components/forms/CraftSelect";
 import { MATERIAL_FAMILY_OPTIONS, TRADITION_OPTIONS, traditionChoice } from "@/lib/standardValues";
 import { makerOptions } from "@/lib/types";
@@ -1704,16 +1705,26 @@ export function ToolForm({
                 same form stay plain — they are fixed vocabularies of four to seven, where a filter
                 box costs a tab stop and saves nothing. */}
             {/* Crafts come only from the list; the tool's craft name is derived from the picks. */}
-            <CraftSelect
-              multiple
-              required
-              ariaLabel="Linked crafts"
-              value={craftIds}
-              onChange={(ids) => onCraftsChanged(ids)}
-              describedBy={craftLimitNotice ? craftLimitId : undefined}
-              fallbackLabels={craftFallbackLabels}
-              canAddCraft={canManageCrafts(user)}
-            />
+            <CraftAddDraftBoundary
+              formRef={formRef}
+              onLeave={resetDirty}
+              onCraftAdded={(addedId) => {
+                if (craftIds.includes(addedId)) return;
+                onCraftsChanged([...craftIds, addedId]);
+                markDirty();
+              }}
+            >
+              <CraftSelect
+                multiple
+                required
+                ariaLabel="Linked crafts"
+                value={craftIds}
+                onChange={(ids) => onCraftsChanged(ids)}
+                describedBy={craftLimitNotice ? craftLimitId : undefined}
+                fallbackLabels={craftFallbackLabels}
+                canAddCraft={canManageCrafts(user)}
+              />
+            </CraftAddDraftBoundary>
             {/* THE TICK THAT WAS REFUSED, AND IT IS THE ONLY SENTENCE ON THIS FIELD IN `error-600`.
                 Nothing was lost — the selection is exactly what it was — but something the designer
                 asked for did not happen, and the one failure a picker must never have is the silent

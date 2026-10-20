@@ -42,9 +42,24 @@ class CraftPickerSourceTest {
     }
 
     @Test
-    fun `stage one's craft name is read-only once a craft is linked`() {
+    fun `stage one's craft name is always read-only beside its craft link`() {
         val renderer = read("ui/designworkshop/FieldRenderer.kt")
-        assertTrue(renderer.contains("enabled = enabled && !dwCraftNameLocked(field, rowValues)"))
+        assertTrue(renderer.contains("enabled = enabled && !dwCraftNameLocked(field, siblings)"))
+        // The TEXT branch hands the entity's fields down, or the lock never sees the link.
+        assertTrue(renderer.contains("rowValues = rowValues,\n                    siblings = siblings,"))
+        val craftRef = com.designprototype.workshop.data.FieldDto(key = "craftRef", type = "REF", refModel = "Craft")
+        val craftName = com.designprototype.workshop.data.FieldDto(key = "craftName")
+        assertTrue(com.designprototype.workshop.ui.designworkshop.dwCraftNameLocked(craftName, mapOf("craftRef" to craftRef)))
+        // A craft name copied from a tool or product record has no craft link beside it.
+        assertFalse(com.designprototype.workshop.ui.designworkshop.dwCraftNameLocked(craftName, emptyMap()))
+    }
+
+    @Test
+    fun `review edit shows a product's or tool's craft read-only`() {
+        val activity = read("MainActivity.kt")
+        assertFalse(activity.contains("ReviewField(\"craftName\", \"Craft name\")"))
+        assertEquals(2, Regex("ReviewField\\(\"craftName\", \"Craft\", readOnly = true\\)").findAll(activity).count())
+        assertTrue(activity.contains(".filterNot { it.readOnly }"))
     }
 
     /**
