@@ -402,6 +402,8 @@ fun AadhaarVerifyCard(
                     enabled = !busy,
                     onText = { text -> sendQr(text) },
                     onRefusal = { message -> error = message },
+                    pictureLabel = "Read it from a picture",
+                    captureLabel = null,
                 )
                 OutlinedButton(
                     onClick = { pickPicture.launch("image/*") },

@@ -659,16 +659,19 @@ private fun DwDictationConsentRow(
         )
         // WHAT IS ON RECORD AND WHAT IT MEANS FOR THE MICROPHONE, in one sentence, because "not
         // recorded" on its own tells a designer nothing about why dictation behaved differently on the
-        // stage they have just come from.
-        Text(
-            dwConsentStateSentence(state, consent),
-            color = if (state != DwTier3Consent.REFUSED) {
-                MaterialTheme.field.body
-            } else {
-                MaterialTheme.field.warning
-            },
-            style = MaterialTheme.typography.bodySmall,
-        )
+        // stage they have just come from. Not said for "no answer yet" above the switch, whose own
+        // description already opens "On by default" — one sentence, not the same one twice.
+        if (state != DwTier3Consent.NOT_RECORDED || !mayRecord) {
+            Text(
+                dwConsentStateSentence(state, consent),
+                color = if (state != DwTier3Consent.REFUSED) {
+                    MaterialTheme.field.body
+                } else {
+                    MaterialTheme.field.warning
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         if (mayRecord) {
             AppToggle(
                 label = DW_CONSENT_SWITCH_LABEL,

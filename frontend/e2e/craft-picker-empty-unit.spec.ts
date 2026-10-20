@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { craftsEmptyLine, workshopListNotice } from "@/lib/workshopOptions";
+import { workshopListNotice } from "@/lib/workshopOptions";
 
 /**
  * AN EMPTY CRAFT REGISTER READS AS EMPTY; ONLY A FAILED READ SAYS IT COULD NOT LOAD.
@@ -13,27 +13,22 @@ import { craftsEmptyLine, workshopListNotice } from "@/lib/workshopOptions";
  * form, whose craft picker said nothing at all in either state.
  */
 
-test("the empty sentence names the next move the role allows, and matches the handset", () => {
-  expect(craftsEmptyLine(true)).toBe("No crafts yet. Type a new craft name below.");
-  expect(craftsEmptyLine(false)).toBe("No crafts yet. Ask a professor or admin to add one.");
-
+test("no client tells anybody to type a craft name (REQUIREMENTS_2026-10-20 §2.4)", () => {
   const kotlin = readFileSync(
     join(__dirname, "../../android/app/src/main/java/com/designprototype/workshop/ui/WorkshopOptions.kt"),
     "utf8"
   );
-  expect(kotlin).toContain(`"${craftsEmptyLine(true)}"`);
-  expect(kotlin).toContain(`"${craftsEmptyLine(false)}"`);
+  expect(kotlin).not.toContain("Type a new craft name");
+  const web = readFileSync(join(__dirname, "../lib/workshopOptions.ts"), "utf8");
+  expect(web).not.toContain("Type a new craft name");
 });
 
-test("the empty sentence is never the failure sentence", () => {
+test("a failed craft read says it could not load", () => {
   const failed = workshopListNotice(
     { kind: "failed" },
     { table: "field", noun: "crafts", scoped: false, accessList: false, online: true }
   );
   expect(failed).toContain("could not be loaded");
-  expect(failed).not.toBe(craftsEmptyLine(true));
-  expect(craftsEmptyLine(true)).not.toMatch(/load/i);
-  expect(craftsEmptyLine(false)).not.toMatch(/load/i);
 });
 
 test("the artisan form picks its craft from the catalogue, which says its own load state", () => {

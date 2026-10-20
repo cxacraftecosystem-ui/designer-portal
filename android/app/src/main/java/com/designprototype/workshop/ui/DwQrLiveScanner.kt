@@ -220,9 +220,18 @@ const val DW_QR_LIVE_FRONT_LENS =
  */
 val DW_QR_LIVE_STILL_TRYING = dwQrLiveStillTrying("Use a picture")
 
-/** [DW_QR_LIVE_STILL_TRYING] naming the picture button by the label its host gave it. */
-fun dwQrLiveStillTrying(pictureLabel: String): String =
-    "Not reading? Close and tap “Scan a code” — a photo is read at full resolution — or “$pictureLabel”."
+/**
+ * [DW_QR_LIVE_STILL_TRYING] naming the buttons its host actually shows: [captureLabel] is the
+ * system-camera photograph ("Scan a code"), [pictureLabel] the picked picture. A host without one
+ * passes null, so the sentence never sends anybody to a button that is not there.
+ */
+fun dwQrLiveStillTrying(pictureLabel: String?, captureLabel: String? = "Scan a code"): String = when {
+    captureLabel != null && pictureLabel != null ->
+        "Not reading? Close and tap “$captureLabel” — a photo is read at full resolution — or “$pictureLabel”."
+    captureLabel != null -> "Not reading? Close and tap “$captureLabel” — a photo is read at full resolution."
+    pictureLabel != null -> "Not reading? Close and tap “$pictureLabel” — a picture is read at full resolution."
+    else -> "Not reading? Move closer, hold the phone steady and add light."
+}
 
 /** Said when frames have stopped arriving, so a stalled pipeline does not read as a bad card. */
 const val DW_QR_LIVE_STALLED =
@@ -330,8 +339,14 @@ fun DwQrLiveScanControl(
     modifier: Modifier = Modifier,
     /** The button's words. The top-bar scanner passes `ScanCopy.USE_CAMERA`. */
     label: String = "Scan with the camera",
-    /** What the picture button beside this one is called, for the "not reading?" hint. */
-    pictureLabel: String = "Use a picture",
+    /** What the picture button beside this one is called, for the "not reading?" hint; null for none. */
+    pictureLabel: String? = "Use a picture",
+    /** What the system-camera photograph button is called on this host; null when it has none. */
+    captureLabel: String? = "Scan a code",
+    /** The line under the button; null leaves it to the host. */
+    hint: String? = "Line the code up in the box; it reads automatically. Works offline.",
+    /** A button that shares this one's line (the top-bar scanner's "Choose a photo"). */
+    alongside: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var scanning by remember { mutableStateOf(false) }
@@ -380,6 +395,7 @@ fun DwQrLiveScanControl(
                 Spacer(Modifier.width(6.dp))
                 Text(label, style = MaterialTheme.typography.labelLarge)
             }
+            alongside?.invoke()
             /*
              * Offered when and only when Android has stopped asking, on `DwQrScanControl`'s own
              * reasoning: before that the button beside it IS the way forward, and a settings button
@@ -398,12 +414,14 @@ fun DwQrLiveScanControl(
                 }
             }
         }
-        Text(
-            "Line the code up in the box; it reads automatically. Works offline.",
-            color = MaterialTheme.field.muted,
-            style = MaterialTheme.typography.bodySmall,
-            lineHeight = 16.sp,
-        )
+        if (hint != null) {
+            Text(
+                hint,
+                color = MaterialTheme.field.muted,
+                style = MaterialTheme.typography.bodySmall,
+                lineHeight = 16.sp,
+            )
+        }
     }
 
     if (scanning) {
@@ -417,7 +435,7 @@ fun DwQrLiveScanControl(
                 onRefusal(message)
             },
             onDismiss = { scanning = false },
-            stillTrying = dwQrLiveStillTrying(pictureLabel),
+            stillTrying = dwQrLiveStillTrying(pictureLabel, captureLabel),
         )
     }
 }

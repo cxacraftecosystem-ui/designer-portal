@@ -644,6 +644,8 @@ private fun ReceivedQuestionnaireRow(
             enabled = !busy,
             onText = onCheck,
             onRefusal = onScanRefused,
+            pictureLabel = null,
+            captureLabel = null,
         )
         verdict?.let {
             Text(

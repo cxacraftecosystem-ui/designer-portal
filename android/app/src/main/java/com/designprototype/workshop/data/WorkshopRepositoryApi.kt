@@ -363,6 +363,14 @@ interface WorkshopRepositoryApi {
     @GET("artisans/{id}")
     suspend fun artisan(@Path("id") id: String): ArtisanDetailDto
 
+    /** The artisan's answer in the one consent store both portals share (`ArtisanConsent.kt`). */
+    @GET("artisans/{id}/consent")
+    suspend fun artisanConsent(@Path("id") id: String): ArtisanConsentDto
+
+    /** Append GRANTED or REFUSED; needs the standing to edit the artisan. */
+    @POST("artisans/{id}/consent")
+    suspend fun recordArtisanConsent(@Path("id") id: String, @Body body: ArtisanConsentRequest): ArtisanConsentDto
+
     /** The artisan's QR card, issued on first read (`routes/artisan_cards.py`). 404 while cards are off. */
     @GET("artisans/{id}/card")
     suspend fun artisanCard(@Path("id") id: String, @Query("source") source: String = "ANDROID"): ArtisanCardDto
