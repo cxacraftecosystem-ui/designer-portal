@@ -67,16 +67,18 @@ export function CoverageView() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const [peerAvailable, setPeerAvailable] = useState(false);
+  /** null until `peerCoverageEnabled` answers. */
+  const [peerAnswer, setPeerAnswer] = useState<boolean | null>(null);
+  const peerAvailable = peerAnswer === true;
   const urlQuery = useMemo(
     () => coverageQueryFromParams(new URLSearchParams(searchParams.toString())),
     [searchParams]
   );
   // The Field Repository is asked only when cross-portal coverage is switched on.
-  const query = useMemo(
-    () => ({ ...urlQuery, peer: Boolean(urlQuery.peer) && peerAvailable }),
-    [urlQuery, peerAvailable]
-  );
+  const peerRequested = Boolean(urlQuery.peer) && peerAvailable;
+  const query = useMemo(() => ({ ...urlQuery, peer: peerRequested }), [urlQuery, peerRequested]);
+  // A link asking for peer coverage waits for that answer, so the view is fetched once, not twice.
+  const queryReady = !urlQuery.peer || peerAnswer !== null;
   const metric = metricFromParams(new URLSearchParams(searchParams.toString()));
 
   const [data, setData] = useState<CoverageResponse | null>(null);
@@ -105,15 +107,20 @@ export function CoverageView() {
       .catch(() => {
         if (live) setShapesError(true);
       });
-    peerCoverageEnabled().then((on) => {
-      if (live) setPeerAvailable(on);
-    });
+    peerCoverageEnabled()
+      .then((on) => {
+        if (live) setPeerAnswer(on);
+      })
+      .catch(() => {
+        if (live) setPeerAnswer(false);
+      });
     return () => {
       live = false;
     };
   }, []);
 
   useEffect(() => {
+    if (!queryReady) return;
     const controller = new AbortController();
     setLoading(true);
     setError(null);
@@ -129,7 +136,7 @@ export function CoverageView() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [query, reload]);
+  }, [query, reload, queryReady]);
 
   // The state picker needs the whole register; a narrowed first view asks once.
   useEffect(() => {

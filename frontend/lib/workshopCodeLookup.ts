@@ -248,7 +248,10 @@ export async function lookUpWorkshopCode(ref: WorkshopCodeRef): Promise<Workshop
     }
     // ONE sentence for "no such record" and "not yours". See the file header: the API answers 404 for
     // both on purpose, and branching on the status here would hand back the fact it withholds.
-    if (error instanceof ApiError) return { ok: false, message: unresolvedWorkshopCodeMessage(ref.recordType) };
+    // Only that answer (404, or 403) is about the code; a 5xx or anything else is about the server,
+    // and reporting it as "no record" would invite a join request for a workshop already open to them.
+    if (isAnswerAboutTheCode(error)) return { ok: false, message: unresolvedWorkshopCodeMessage(ref.recordType) };
+    if (error instanceof ApiError) return { ok: false, message: "Couldn't look that up. Try again." };
     throw error;
   }
 }
@@ -266,9 +269,16 @@ export async function findWorkshopCodeRecord(
     return { status: "found", hit: await fetchHit(ref) };
   } catch (error) {
     if (isUnreachable(error)) return { status: "offline" };
-    if (error instanceof ApiError) return { status: "missing" };
+    if (isAnswerAboutTheCode(error)) return { status: "missing" };
+    // A server failure is not a fact about the code. Thrown, so dispatchScan gives its retryable
+    // sentence instead of "No record matches" or an "Ask to join" for a workshop they may be on.
     throw error;
   }
+}
+
+/** 404 (and 403) are the API's answer about the record itself; every other status is not. */
+function isAnswerAboutTheCode(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 403);
 }
 
 /**

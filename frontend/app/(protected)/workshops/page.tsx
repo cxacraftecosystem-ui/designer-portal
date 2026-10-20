@@ -477,9 +477,18 @@ function WorkshopsPageBody() {
         ]
       });
       if (outcome.queued) {
-        // OutboxBanner at the top of the page names the entry and says where it lives.
+        // OutboxBanner at the top of the page names the entry and says where it lives. Clear the form
+        // as a saved one is cleared: left filled with Save live, a second press queued a second copy
+        // and both synced as duplicate workshops. A save from the unsaved-changes dialog then runs
+        // the navigation it was asked for.
+        resetForm(null);
+        setConfirmAction(null);
+        formElement.reset();
         setSaving(false);
-        if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+        const after = afterSaveRef.current;
+        afterSaveRef.current = null;
+        if (after) after();
+        else if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
       const saved = outcome.saved;

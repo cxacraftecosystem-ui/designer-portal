@@ -1121,7 +1121,9 @@ function DesignWorkshopsPageBody() {
         // restore it" was true of the API and unreachable in the product — nothing listed deleted
         // workshops, so the only admin who could act on this sentence was one who had written the id
         // down first. A promise a reader cannot follow is worse than no promise.
-        "An admin can restore it from Settings → Deleted workshops."
+        // The card is on /admin (and on this list in a Ministry Admin's admin view), never /settings,
+        // so it is named by its own heading, as DesignWorkshopHeaderForm names it.
+        "An admin can restore it from Deleted workshops."
       )
     );
     if (!ok) return;

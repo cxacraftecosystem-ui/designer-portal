@@ -194,6 +194,8 @@ export function WorkshopCodeScanner({
   const labels: ScannerLabels = { ...DEFAULT_SCANNER_LABELS, ...labelOverrides };
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** True while the browser is still answering getUserMedia; holds the camera button so a second press cannot open a second stream. */
+  const [starting, setStarting] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{
     tone: "found" | "refused";
@@ -216,6 +218,14 @@ export function WorkshopCodeScanner({
   const handlingRef = useRef(false);
   /** Consecutive frames that located a symbol and could not read it. See {@link NEAR_MISSES_BEFORE_ADVICE}. */
   const nearMissRef = useRef(0);
+  /**
+   * Bumped by every stopCamera. A start remembers the value it began with and, if it changed while
+   * getUserMedia was pending (Stop, the page hidden, a picture read, unmount), closes the stream it
+   * was handed instead of attaching it. Otherwise that track stays open with nothing pointing at it,
+   * the camera light stays on, and the next open fails with "in use".
+   */
+  const cameraGenerationRef = useRef(0);
+  const startingRef = useRef(false);
 
   /**
    * Release the camera. Safe to call from anywhere, any number of times — which is what lets the
@@ -223,6 +233,7 @@ export function WorkshopCodeScanner({
    * rather than four almost-identical ones that drift apart.
    */
   const stopCamera = useCallback(() => {
+    cameraGenerationRef.current += 1;
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
@@ -424,6 +435,7 @@ export function WorkshopCodeScanner({
    * means the page is not on a secure origin and no amount of pressing will help.
    */
   async function startCamera() {
+    if (startingRef.current) return;
     setProblem(null);
     setOutcome(null);
     handlingRef.current = false;
@@ -437,6 +449,11 @@ export function WorkshopCodeScanner({
     }
 
     let stream: MediaStream;
+    // Release anything still held before asking for a new stream; this also bumps the generation.
+    stopCamera();
+    const generation = cameraGenerationRef.current;
+    startingRef.current = true;
+    setStarting(true);
     try {
       // `environment` is a REQUEST, not a guarantee — a laptop has only a front camera and will hand
       // one over anyway, which is correct: a designer holding a card up to a laptop lid is a real way
@@ -451,6 +468,15 @@ export function WorkshopCodeScanner({
             ? `No camera found. ${capitalise(labels.photoPhrase)} or type the code.`
             : `Couldn't open the camera. Close other apps using it, or ${labels.photoPhrase} or type the code.`
       );
+      return;
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
+    }
+
+    if (generation !== cameraGenerationRef.current || document.visibilityState === "hidden") {
+      // Stopped, hidden or unmounted while the prompt was open: close the new stream, attach nothing.
+      stream.getTracks().forEach((track) => track.stop());
       return;
     }
 
@@ -574,7 +600,7 @@ export function WorkshopCodeScanner({
           type="button"
           className="field-button"
           onClick={() => (scanning ? stopCamera() : void startCamera())}
-          disabled={busy}
+          disabled={busy || starting}
           data-testid="workshop-code-scan"
         >
           {scanning ? <Square className="h-4 w-4" aria-hidden /> : <Camera className="h-4 w-4" aria-hidden />}

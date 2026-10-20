@@ -302,8 +302,18 @@ function CraftsPageBody() {
       });
       if (outcome.queued) {
         resetForm(null);
+        setConfirmAction(null);
+        formElement.reset();
         setSaving(false);
-        if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+        // As the success path: back to the form that asked for this craft, or the navigation the
+        // unsaved-changes dialog's Save was for. A queued craft has no id yet, so nothing is marked added.
+        const queuedBackTo = !editing ? returnToRef.current : null;
+        returnToRef.current = null;
+        const after = afterSaveRef.current;
+        afterSaveRef.current = null;
+        if (queuedBackTo) router.push(queuedBackTo);
+        else if (after) after();
+        else if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
       const saved = outcome.saved;
