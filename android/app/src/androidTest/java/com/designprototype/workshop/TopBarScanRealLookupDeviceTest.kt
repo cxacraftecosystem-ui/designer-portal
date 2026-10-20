@@ -21,7 +21,10 @@ import com.designprototype.workshop.data.DwReferenceList
 import com.designprototype.workshop.data.DwReferenceStore
 import com.designprototype.workshop.data.OfflineOutbox
 import com.designprototype.workshop.data.PendingEntry
+import com.designprototype.workshop.data.StageDraft
 import com.designprototype.workshop.data.TokenStore
+import com.designprototype.workshop.data.WorkshopDraft
+import com.designprototype.workshop.data.WorkshopDraftStore
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.WorkshopRepositoryApi
 import com.designprototype.workshop.data.dispatchScan
@@ -30,6 +33,9 @@ import com.designprototype.workshop.ui.DesignWorkshopTheme
 import com.designprototype.workshop.ui.TopBarScanSheet
 import com.designprototype.workshop.ui.designerScanServices
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import org.junit.Rule
 import org.junit.Test
@@ -42,7 +48,7 @@ import java.util.UUID
 /**
  * The top-bar scanner on a device with the REAL header, the REAL designer services and the REAL
  * offline lookups (REQUIREMENTS_2026-10-20 §6.1): the artisan register this phone cached, and the
- * cards already queued in its outbox. The API is pointed at a closed loopback port, so every network
+ * cards already held in its outbox or in a design-workshop draft's stage. The API is pointed at a closed loopback port, so every network
  * call fails as "no signal" and nothing is signed in or sent.
  */
 @RunWith(AndroidJUnit4::class)
@@ -124,6 +130,26 @@ class TopBarScanRealLookupDeviceTest {
             rule.waitUntil(10_000) { rule.onAllNodes(hasText(said)).fetchSemanticsNodes().isNotEmpty() }
         } finally {
             runBlocking { OfflineOutbox.discard(context, entry.id) }
+        }
+    }
+
+    @Test
+    fun aCardScannedIntoAWorkshopStageOfflineIsNamedAsWaitingToSync() {
+        cacheRegister(ArtisanDto(id = "cmartisandevice03", name = "Lali Bai", place = "Kaladera", status = "APPROVED"))
+        val workshopId = "device-test-${UUID.randomUUID()}"
+        val participants = JsonArray(listOf(JsonObject(mapOf("artisanRef" to JsonPrimitive(ArtisanCardCode.pendingValue(card))))))
+        val draft = WorkshopDraft(
+            workshopId = workshopId,
+            title = "Device test workshop",
+            stages = mapOf("participants" to StageDraft(stageId = "participants", values = mapOf("participants" to participants))),
+        )
+        runBlocking { WorkshopDraftStore.save(context, draft) }
+        try {
+            scanTyped(CARD)
+            val said = ArtisanCardCode.pendingLabel(ArtisanCardCode.pendingValue(card))
+            rule.waitUntil(10_000) { rule.onAllNodes(hasText(said)).fetchSemanticsNodes().isNotEmpty() }
+        } finally {
+            runBlocking { WorkshopDraftStore.delete(context, workshopId) }?.deleteRecursively()
         }
     }
 

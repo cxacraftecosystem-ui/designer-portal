@@ -42,6 +42,8 @@ import com.designprototype.workshop.data.ScanPortal
 import com.designprototype.workshop.data.ScanRecordAnswer
 import com.designprototype.workshop.data.ScanServices
 import com.designprototype.workshop.data.ScanTarget
+import com.designprototype.workshop.data.WorkshopDraft
+import com.designprototype.workshop.data.WorkshopDraftStore
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.cardWaitingToSync
 import com.designprototype.workshop.data.dispatchScan
@@ -257,6 +259,16 @@ private suspend fun queuedPayloads(context: Context): List<String> =
         emptyList()
     }
 
+/** Every design-workshop draft on this phone, where a stage keeps a card scanned offline; empty when none can be read. */
+private suspend fun localDrafts(context: Context): List<WorkshopDraft> =
+    try {
+        WorkshopDraftStore.list(context).mapNotNull { WorkshopDraftStore.load(context, it.workshopId) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        emptyList()
+    }
+
 /** The designer app's answers to the dispatcher: the cached register first, then the server. */
 fun designerScanServices(context: Context, repository: WorkshopRepository): ScanServices = object : ScanServices {
     override val portal = ScanPortal.DESIGNER
@@ -270,10 +282,11 @@ fun designerScanServices(context: Context, repository: WorkshopRepository): Scan
             is CardResolution.Replaced ->
                 if (answer.artisanId.isBlank()) ScanCardAnswer.Refused(CARD_REPLACED) else ScanCardAnswer.Replaced(answer.artisanId)
             CardResolution.Remote -> ScanCardAnswer.Peer
-            // No signal and no row in the cached register. A card already queued on this phone
-            // (`card:<shortCode>` in an outbox entry) is named as waiting to sync; any other is offline.
+            // No signal and no row in the cached register. A card already held on this phone
+            // (`card:<shortCode>` in an outbox entry or a design-workshop stage) is named as waiting
+            // to sync; any other is offline.
             is CardResolution.Pending ->
-                if (cardWaitingToSync(answer.card, queuedPayloads(context))) {
+                if (cardWaitingToSync(answer.card, queuedPayloads(context), localDrafts(context))) {
                     ScanCardAnswer.Refused(ArtisanCardCode.pendingLabel(ArtisanCardCode.pendingValue(answer.card)))
                 } else {
                     ScanCardAnswer.Offline

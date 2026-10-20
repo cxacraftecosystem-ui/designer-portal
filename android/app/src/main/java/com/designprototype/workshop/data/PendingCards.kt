@@ -40,14 +40,25 @@ fun pendingCardsInPayload(payloadJson: String): Set<String> =
 fun substitutePendingCardsInPayload(payloadJson: String, ids: Map<String, String>): String =
     substitutePendingCards(Json.parseToJsonElement(payloadJson), ids).toString()
 
+/** Every pending card value in a design-workshop draft's stages, core and custom answers alike. */
+fun pendingCardsInDraft(draft: WorkshopDraft): Set<String> =
+    draft.stages.values.flatMapTo(LinkedHashSet()) { stage ->
+        pendingCardsIn(JsonObject(stage.values)) + pendingCardsIn(JsonObject(stage.custom))
+    }
+
 /**
- * Whether [card] is already held, waiting to sync, in one of [payloads] (queued entry bodies). The
- * top-bar scanner says so offline instead of a bare "You're offline": the card is known on this
- * phone and links on the next sync.
+ * Whether [card] is already held, waiting to sync, on this phone: in one of [payloads] (queued
+ * outbox bodies) or in a stage of one of [drafts] (design-workshop drafts, where the stage's
+ * artisan box keeps it). The top-bar scanner says so offline instead of a bare "You're offline":
+ * the card is known on this phone and links on the next sync.
  */
-fun cardWaitingToSync(card: ArtisanCardCode.Parsed, payloads: List<String>): Boolean {
+fun cardWaitingToSync(
+    card: ArtisanCardCode.Parsed,
+    payloads: List<String>,
+    drafts: List<WorkshopDraft> = emptyList(),
+): Boolean {
     val value = ArtisanCardCode.pendingValue(card)
-    return payloads.any { value in pendingCardsInPayload(it) }
+    return payloads.any { value in pendingCardsInPayload(it) } || drafts.any { value in pendingCardsInDraft(it) }
 }
 
 sealed interface PendingCardOutcome {
