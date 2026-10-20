@@ -89,10 +89,10 @@ WHAT THIS MODULE MUST NEVER DO
 * **Echo a full Aadhaar.** Into a problem, into the ledger, into a log line, or into stage data.
   ``participant.aadhaarNumber`` declares ``store_masked``, so going through ``save_stage`` is what
   masks it; writing the raw number into stage data by hand would bypass that.
-* **Create a craft.** ``resolve_craft_id`` is called with ``allow_create=False``. Its create arm is
-  gated on ``can_manage_crafts`` — PROFESSOR and above — and every officer tier clears that floor,
-  so a typo'd craft name in one cell would otherwise MINT a row in the controlled vocabulary and
-  report it as a success.
+* **Create a craft.** ``resolve_craft_id`` is called with ``strict=True``, so a typo'd craft name
+  in one cell refuses that row with the spelling it looked for. Since the master craft list
+  (2026-10-20) no path creates a craft from a typed name; on a form the text would be kept for the
+  admin review queue, which is no use to somebody fixing a spreadsheet.
 
 =======================================================================================
 THE REVIEW STATUS, MEASURED RATHER THAN ASSUMED — AND THE ASSUMPTION WAS WRONG
@@ -583,9 +583,9 @@ async def _create_one(
         refuse(artisan.row, f"{artisan.name} could not be recorded: {exc.message}")
         return ImportOutcome.REFUSED, None
     try:
-        # ``allow_create=False`` — see this module's header. A typo'd craft name is a refused ROW,
+        # ``strict=True`` — see this module's header. A typo'd craft name is a refused ROW,
         # never a new entry in the controlled vocabulary.
-        data = await records.resolve_craft_id(data, actor, allow_create=False)
+        data = await records.resolve_craft_id(data, actor, strict=True)
     except HTTPException as exc:
         refuse(artisan.row, f"{artisan.name}: {exc.detail}")
         return ImportOutcome.REFUSED, None

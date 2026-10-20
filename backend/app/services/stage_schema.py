@@ -985,6 +985,9 @@ PROMOTED_COLUMNS: dict[str, str] = {
     "workshopSetup.workshopKind": "workshopKind",
     "workshopSetup.schemeName": "scheme",
     "workshopSetup.craftName": "craftName",
+    # ADDED 2026-10-20 WITH MIGRATION `20261104090000_craft_master_list`: the master-list craft the
+    # workshop is about, so the list, the coverage map and search can follow the link, not the text.
+    "workshopSetup.craftRef": "craftId",
     "workshopSetup.clusterName": "clusterName",
     "workshopSetup.state": "state",
     "workshopSetup.district": "district",

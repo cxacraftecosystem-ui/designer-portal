@@ -44,10 +44,15 @@ pytestmark = [
 
 PASSWORD = "craft-rename-test-password"
 
-# The detail string is asserted verbatim rather than imported, and it is asserted to be the SAME
-# string on both routes. That equality is the actual fix: a client (and the professor reading it)
-# must not have to learn two different sentences for one collision on one index.
-CONFLICT_DETAIL = "Craft name already exists"
+# The detail is asserted verbatim rather than imported, and it is asserted to be the SAME on both
+# routes. That equality is the actual fix: a client (and the professor reading it) must not have to
+# learn two different answers for one collision on one index. Since the master craft list
+# (2026-10-20) the index is (sub-category, name) and the answer is the ``{code, message}`` shape.
+CONFLICT_DETAIL = {"code": "CRAFT_EXISTS", "message": "That craft is already in this sub-category."}
+
+# Every craft joins a sub-category now. This one is seeded by the master-list migration, with an id
+# derived from its slug (``craft_master.master_id``), so it is the same on every database.
+SUB_CATEGORY_ID = "cms" + __import__("hashlib").md5(b"s:Embroidery").hexdigest()[:22]
 
 
 @pytest.fixture(scope="module")
@@ -102,7 +107,11 @@ def _headers(world: dict[str, Any]) -> dict[str, str]:
 
 
 def _create(client: Any, world: dict[str, Any], name: str) -> Any:
-    return client.post("/api/crafts", json={"name": name}, headers=_headers(world))
+    return client.post(
+        "/api/crafts",
+        json={"name": name, "subCategoryId": SUB_CATEGORY_ID, "giStatus": "NON_GI"},
+        headers=_headers(world),
+    )
 
 
 async def test_renaming_a_craft_onto_an_existing_name_is_the_same_409_as_creating_one(world, client):

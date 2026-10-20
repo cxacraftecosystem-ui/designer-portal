@@ -76,6 +76,11 @@ _CENSUS_TABLES: tuple[tuple[str, str], ...] = (
     ("workshops", "workshop"),
 )
 
+#: THE ONE FILTER A HELD COUNT CARRIES (the master craft list, 2026-10-20). A craft is not a record
+#: somebody documented: it is a row of the list, and a LEGACY or MERGED row is one waiting for an
+#: admin or folded into another. "Crafts" on the public ledger is the list as it stands.
+_HELD_WHERE: dict[str, dict] = {"craft": {"where": {"status": "ACTIVE"}}}
+
 # How long a counted census stays authoritative in this process. Five minutes against a corpus that
 # gains a handful of records on a fieldwork day means the published figure is never meaningfully
 # behind, while the database sees at most eight counts every five minutes NO MATTER how hard this
@@ -198,9 +203,15 @@ async def _count_everything() -> dict[str, int]:
     """
     delegates = [getattr(db, attribute) for _, attribute in _CENSUS_TABLES]
     async with asyncio.timeout(_COUNT_TIMEOUT_SECONDS):
-        # No `where`. The absence of a filter here is what makes `recordsHeld` an honest name; adding
-        # a status filter without renaming the field is the exact drift this route is built against.
-        totals = await gather_reads(*(delegate.count() for delegate in delegates))
+        # No REVIEW `where`. The absence of a status filter here is what makes `recordsHeld` an honest
+        # name; adding one without renaming the field is the exact drift this route is built against.
+        # The craft row's ACTIVE filter is a different thing: see `_HELD_WHERE`.
+        totals = await gather_reads(
+            *(
+                delegate.count(**_HELD_WHERE.get(attribute, {}))
+                for delegate, (_, attribute) in zip(delegates, _CENSUS_TABLES, strict=True)
+            )
+        )
     return {name: int(total) for (name, _), total in zip(_CENSUS_TABLES, totals, strict=True)}
 
 

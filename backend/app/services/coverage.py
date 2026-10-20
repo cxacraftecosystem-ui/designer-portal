@@ -262,6 +262,12 @@ class Fold:
     peer_as_of: str | None = None
     peer_unknown_units: int = 0
     peer_list_version: int | None = None
+    #: THE MASTER CRAFT LIST (2026-10-20). A craft on the list is keyed by its slug; ``key_aliases``
+    #: maps that slug to the shared code (C26) it also answers to, so a filter or a peer naming the
+    #: code still finds it. ``active_crafts`` is the list the catalogue and the gap list read.
+    key_aliases: dict[str, set[str]] = field(default_factory=dict)
+    active_crafts: list[dict[str, Any]] = field(default_factory=list)
+    craft_keys_by_id: dict[str, str | None] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ helpers
 
@@ -283,8 +289,21 @@ class Fold:
             self.years.add(fy)
         return not self.filters.fys or fy in self.filters.fys
 
+    def keys_of(self, code: str | None) -> set[str]:
+        """A craft key and every key it answers to (its shared code, for a craft on the master list)."""
+        if not code:
+            return set()
+        return {code} | self.key_aliases.get(code, set())
+
     def wants_craft(self, code: str | None) -> bool:
-        return not self.filters.craft_codes or code in self.filters.craft_codes
+        return not self.filters.craft_codes or bool(self.keys_of(code) & set(self.filters.craft_codes))
+
+    def wants_any_craft(self, codes: set[str]) -> bool:
+        return not self.filters.craft_codes or any(self.wants_craft(code) for code in codes)
+
+    def document(self, codes: set[str]) -> None:
+        for code in codes:
+            self.documented.update(self.keys_of(code))
 
     def wants_scheme(self, scheme: str | None) -> bool:
         return not self.filters.schemes or (scheme or "").upper() in self.filters.schemes
@@ -405,7 +424,7 @@ def fold_field_rows(
             continue
         if is_workshop:
             codes = set((workshop_codes or {}).get(_get(row, "id"), set()))
-            if fold.filters.craft_codes and not codes & set(fold.filters.craft_codes):
+            if not fold.wants_any_craft(codes):
                 continue
             craft_ids: set[str] = set()
         else:
@@ -430,7 +449,7 @@ def fold_field_rows(
         unit = fold.unit(key)
         unit.counts[bucket] += 1
         unit.craft_codes.update(codes)
-        fold.documented.update(codes)
+        fold.document(codes)
         unit.crafts.update(codes or {f"id:{cid}" for cid in craft_ids})
         row_id = str(_get(row, "id"))
         title = field_title(bucket, row)
@@ -476,7 +495,7 @@ def fold_design_workshops(
             continue
         if not fold.wants_scheme(getattr(row, "workshopKind", None)):
             continue
-        code = craft_code(getattr(row, "craftName", None))
+        code = _row_craft_key(fold, row, craft_code)
         if not fold.wants_craft(code):
             continue
         resolution = fold.place("DesignWorkshop", row.state, row.district, 1)
@@ -488,7 +507,7 @@ def fold_design_workshops(
         if code:
             unit.craft_codes.add(code)
             unit.crafts.add(code)
-            fold.documented.add(code)
+            fold.document({code})
         _cluster(fold, unit, getattr(row, "clusterName", None))
         title = getattr(row, "title", None) or "Untitled workshop"
         fold.add_stub(
@@ -515,6 +534,14 @@ def fold_design_workshops(
             )
 
 
+def _row_craft_key(fold: Fold, row: Any, craft_code: Callable[[str | None], str | None]) -> str | None:
+    """A workshop or plan row's craft: its master-list link first, else its typed name's shared code."""
+    craft_id = getattr(row, "craftId", None)
+    if craft_id and fold.craft_keys_by_id.get(craft_id):
+        return fold.craft_keys_by_id[craft_id]
+    return craft_code(getattr(row, "craftName", None))
+
+
 def fold_plans(fold: Fold, rows: list[Any], craft_code: Callable[[str | None], str | None]) -> None:
     """``AnnualPlanEntry`` rows that are not withdrawn. ``planYear`` IS the financial year."""
     for row in rows:
@@ -523,7 +550,7 @@ def fold_plans(fold: Fold, rows: list[Any], craft_code: Callable[[str | None], s
             continue
         if not fold.wants_scheme(getattr(row, "workshopKind", None)):
             continue
-        code = craft_code(getattr(row, "craftName", None))
+        code = _row_craft_key(fold, row, craft_code)
         if not fold.wants_craft(code):
             continue
         resolution = fold.place("AnnualPlanEntry", row.state, row.district, 1)
@@ -721,10 +748,7 @@ def build_gaps(fold: Fold) -> dict[str, Any]:
             if row:
                 held_districts.add((row[1], row[2]))
 
-    catalogue = cross_portal_codes.catalogue()
-    if fold.filters.craft_codes:
-        catalogue = [c for c in catalogue if c["code"] in fold.filters.craft_codes]
-    never = [c for c in catalogue if c["code"] not in fold.documented]
+    never = crafts_never_documented(fold)
 
     from app.services.address import DISTRICTS_BY_STATE
 
@@ -753,6 +777,29 @@ def build_gaps(fold: Fold) -> dict[str, Any]:
         "districtsWithoutWorkshop": {"count": total_without, "byState": by_state},
         "statesWithoutWorkshop": states_without,
     }
+
+
+def crafts_never_documented(fold: Fold) -> list[dict[str, str]]:
+    """The crafts of the list (narrowed by the craft filter) that no record in scope documents.
+
+    Against the ACTIVE master list (2026-10-20), keyed by slug; a craft also counts as documented
+    when its shared code is (a record, or the peer, that names only the code). Without the list,
+    a corpus read before it existed, the shared code catalogue as before.
+    """
+    wanted = set(fold.filters.craft_codes)
+    if fold.active_crafts:
+        out = []
+        for craft in fold.active_crafts:
+            keys = {craft["code"]} | ({craft["craftCode"]} if craft.get("craftCode") else set())
+            if wanted and not keys & wanted:
+                continue
+            if not keys & fold.documented:
+                out.append({"code": craft["code"], "name": craft["name"]})
+        return out
+    catalogue = cross_portal_codes.catalogue()
+    if wanted:
+        catalogue = [c for c in catalogue if c["code"] in wanted]
+    return [c for c in catalogue if c["code"] not in fold.documented]
 
 
 def build_markers(fold: Fold) -> tuple[list[dict[str, Any]], bool]:
@@ -924,8 +971,13 @@ def scheme_catalogue() -> list[dict[str, str]]:
     return [{"value": value, "label": label} for value, label in ENUMS["WORKSHOP_KIND"].items()]
 
 
-def catalogue_payload() -> dict[str, Any]:
-    return {"crafts": cross_portal_codes.catalogue(), "schemes": scheme_catalogue()}
+def catalogue_payload(fold: Fold | None = None) -> dict[str, Any]:
+    """The filter lists. Crafts are the ACTIVE master list as ``{code: slug, name}`` (2026-10-20)."""
+    if fold is not None and fold.active_crafts:
+        crafts = [{"code": c["code"], "name": c["name"]} for c in fold.active_crafts]
+    else:
+        crafts = cross_portal_codes.catalogue()
+    return {"crafts": crafts, "schemes": scheme_catalogue()}
 
 
 @dataclass
@@ -934,8 +986,11 @@ class Corpus:
 
     field_rows: dict[str, list[Any]] = field(default_factory=dict)
     locations: dict[str, Any] = field(default_factory=dict)
+    #: craft id -> its coverage key: the slug of a craft on the master list, else its shared code.
     craft_codes_by_id: dict[str, str | None] = field(default_factory=dict)
     workshop_codes: dict[str, set[str]] = field(default_factory=dict)
+    key_aliases: dict[str, set[str]] = field(default_factory=dict)
+    active_crafts: list[dict[str, Any]] = field(default_factory=list)
     admin_spellings: dict[str, str] = field(default_factory=dict)
     aliases: dict[tuple[str, str], tuple[int, int | None]] = field(default_factory=dict)
     design_workshops: list[Any] = field(default_factory=list)
@@ -1048,10 +1103,11 @@ async def read_corpus(client: Any, user: Any) -> Corpus:
     corpus.plans, cut_plans = _capped(plans)
     corpus.truncated |= cut_dw or cut_plans
     corpus.aliases = aliases
-    corpus.craft_codes_by_id = {c.id: getattr(c, "craftCode", None) for c in crafts or []}
+    craft_keys(corpus, crafts or [])
     for craft in crafts or []:
-        if getattr(craft, "workshopId", None) and getattr(craft, "craftCode", None):
-            corpus.workshop_codes.setdefault(craft.workshopId, set()).add(craft.craftCode)
+        key = corpus.craft_codes_by_id.get(craft.id)
+        if getattr(craft, "workshopId", None) and key:
+            corpus.workshop_codes.setdefault(craft.workshopId, set()).add(key)
     for row in corpus.field_rows.get("artisans", []):
         craft_id, workshop_id = _get(row, "craftId"), _get(row, "workshopId")
         code = corpus.craft_codes_by_id.get(craft_id) if craft_id else None
@@ -1065,6 +1121,22 @@ async def read_corpus(client: Any, user: Any) -> Corpus:
     return corpus
 
 
+def craft_keys(corpus: Corpus, crafts: list[Any]) -> None:
+    """Fill the corpus's craft keys and the ACTIVE master list from the ``Craft`` rows."""
+    active: list[dict[str, Any]] = []
+    for craft in crafts:
+        code = getattr(craft, "craftCode", None)
+        status = str(getattr(getattr(craft, "status", None), "value", getattr(craft, "status", None)) or "")
+        listed = status == "ACTIVE" and getattr(craft, "subCategoryId", None) and getattr(craft, "slug", None)
+        key = craft.slug if listed else code
+        corpus.craft_codes_by_id[craft.id] = key
+        if listed:
+            active.append({"code": craft.slug, "name": craft.name, "craftCode": code})
+            if code:
+                corpus.key_aliases.setdefault(craft.slug, set()).add(code)
+    corpus.active_crafts = sorted(active, key=lambda c: (c["name"].lower(), c["code"]))
+
+
 def fold_corpus(corpus: Corpus, filters: Filters) -> Fold:
     """Every bucket folded under ``filters``. Pure over the corpus, so cheap to repeat per filter."""
     fold = Fold(
@@ -1074,6 +1146,9 @@ def fold_corpus(corpus: Corpus, filters: Filters) -> Fold:
         centroids=centroids(),
     )
     fold.truncated = corpus.truncated
+    fold.key_aliases = corpus.key_aliases
+    fold.active_crafts = corpus.active_crafts
+    fold.craft_keys_by_id = corpus.craft_codes_by_id
     craft_code = craft_code_lookup(corpus.admin_spellings)
     fold_design_workshops(fold, corpus.design_workshops, craft_code)
     fold_plans(fold, corpus.plans, craft_code)
@@ -1163,7 +1238,7 @@ async def coverage(user: Any, filters: Filters, *, settings: Any, is_admin: bool
         if answer is not None:
             fold_peer(fold, answer)
     payload = build_payload(
-        fold, is_admin=is_admin, boundaries=boundaries_info(), catalogue=catalogue_payload()
+        fold, is_admin=is_admin, boundaries=boundaries_info(), catalogue=catalogue_payload(fold)
     )
     FOLD_CACHE.put(cache_key, payload)
     return payload

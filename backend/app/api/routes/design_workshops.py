@@ -134,6 +134,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import model_validator
 
+from app.services import craft_master
 from app.services.text_format import by_count, count_noun
 from app.core.config import get_settings
 from app.core.db import db
@@ -1791,6 +1792,8 @@ async def list_design_workshops(
     # ``workshopType="DESIGN_PROTOTYPE"`` literal on two request builders against the OTHER table.
     workshopKind: str | None = None,
     craftName: str | None = None,
+    # The master-list craft (2026-10-20): every workshop linked to it.
+    craftId: str | None = None,
     state: str | None = None,
     mineOnly: bool = False,
     includeDeleted: bool = False,
@@ -1850,6 +1853,8 @@ async def list_design_workshops(
         where["workshopKind"] = enum_filter_or_422(workshopKind, WORKSHOP_KINDS)
     if craftName:
         where["craftName"] = contains(craftName)
+    if craftId:
+        where["craftId"] = craftId
     if state:
         # `plain`, not the raw value: a NUL byte cannot live in a Postgres text column, so
         # ?state=%00 raised a DataError inside the driver and surfaced as a 500 — a logged server
@@ -2142,6 +2147,12 @@ async def create_design_workshop(
         parsed = _parse_date(getattr(payload, key))
         if parsed:
             data[key] = parsed
+    # THE MASTER CRAFT LIST (2026-10-20): the craft is a ``craftId`` from the list and the name is
+    # its copy; an old client's typed name is matched onto the list.
+    data.update(
+        await craft_master.craft_columns(db, payload.model_dump(include={"craftId", "craftName"}, exclude_none=True))
+    )
+    data = {key: value for key, value in data.items() if value is not None}
 
     record = await db.designworkshop.create(data=data)
     # NAMING A DESIGNER PUTS THEM ON THE WORKSHOP, AND THAT IS ONE ACT RATHER THAN TWO. Without it
@@ -2201,7 +2212,8 @@ async def create_design_workshop(
             # column says one kind and whose stage-1 dropdown is blank — and stage 1 is the writer,
             # so the next save of that stage would null the column back out.
             ("workshopKind", payload.workshopKind),
-            ("craftName", payload.craftName),
+            ("craftRef", data.get("craftId")),
+            ("craftName", data.get("craftName")),
             ("clusterName", payload.clusterName),
             ("state", payload.state),
             ("district", payload.district),
@@ -2587,6 +2599,11 @@ async def update_design_workshop(
     _require_designer(current_user)
     record = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
     data = _header_patch_data(payload.model_dump(exclude_unset=True))
+    data.update(
+        await craft_master.craft_columns(
+            db, payload.model_dump(exclude_unset=True, include={"craftId", "craftName"}), stored=record
+        )
+    )
     if not data:
         return workshop_summary(record)
     # ── THE FIRST TRANSITION CHECK THIS ROUTE HAS EVER CARRIED (2026-09-13) ───────────────────────

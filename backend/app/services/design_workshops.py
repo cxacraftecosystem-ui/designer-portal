@@ -1859,6 +1859,9 @@ class ReferenceModel:
     # `reference_options` REFUSES a viewer-scoped model when it was handed no viewer at all, rather
     # than serving the table unnarrowed. See the guard there.
     viewer_where: Callable[[Any], dict[str, Any]] | None = None
+    #: A clause every OFFERED option must meet, whoever asks (the craft picker offers only the crafts
+    #: on the master list). Not applied to a re-read by id, so a value already stored still resolves.
+    offered_where: dict[str, Any] | None = None
     # The column that narrows this model to one artisan, for the cascading pickers.
     #
     # THE VALUE ARRIVING IN `filterBy` MAY NOT BE AN ARTISAN ID AT ALL — at stage 13 the maker is
@@ -2612,6 +2615,9 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
             "OR": [{"workshopId": wid}, {"workshops": {"some": {"workshopId": wid}}}]
         },
         media_field="craftId",
+        # THE MASTER CRAFT LIST (2026-10-20): only a craft on the list is offered. A LEGACY or MERGED
+        # craft a stored entry already names still resolves, because a re-read by id adds no clause.
+        offered_where={"status": "ACTIVE"},
         label=lambda r: str(r.name or ""),
         sublabel=lambda r: _joined(r.category, r.place),
         # ── THE CRAFT RECORD, IN FULL — AND THE ARGUMENT THIS REPLACES WAS THE LAST 1:1 GAP ─────
@@ -3126,6 +3132,8 @@ async def reference_options(
         )
 
     clauses: list[dict[str, Any]] = []
+    if spec.offered_where:
+        clauses.append(dict(spec.offered_where))
     # THE READ PREDICATE, AND-COMPOSED THE WAY EVERY LIST ROUTE COMPOSES IT.
     #
     # `viewable_where` is empty today — every signed-in account may read every row, which is the
@@ -3923,6 +3931,24 @@ def _has_value(value: Any) -> bool:
     if isinstance(value, (list, tuple, dict)):
         return bool(value)
     return True
+
+
+async def derive_stage_craft_names(entries: list[PendingEntry]) -> None:
+    """Stage 1's ``craftName`` is a copy of the linked craft's name (the master craft list, 2026-10-20).
+
+    ``craftRef`` names the craft; the box beside it is derived, on every save, so the cover page and
+    the promoted ``craftName`` column can never disagree with the link. A save with no link keeps
+    whatever name it carries (a workshop recorded before the list, waiting for its craft).
+    """
+    linked = [e for e in entries if e.entity.key == "workshopSetup" and e.data.get("craftRef")]
+    if not linked:
+        return
+    ids = sorted({str(e.data["craftRef"]) for e in linked})
+    crafts = {c.id: c for c in await db.craft.find_many(where={"id": {"in": ids}})}
+    for entry in linked:
+        craft = crafts.get(str(entry.data["craftRef"]))
+        if craft is not None and (craft.name or "").strip():
+            entry.data["craftName"] = craft.name
 
 
 async def hydrate_entries(entries: list[PendingEntry], *, workshop_id: str = "") -> None:
@@ -5609,6 +5635,7 @@ async def save_stage(
     # internal resolver issues its own scoped read. Passing the id here rather than putting it on
     # every `PendingEntry` keeps the dataclass about one entry.
     await hydrate_entries(pending, workshop_id=workshop_id)
+    await derive_stage_craft_names(pending)
 
     # COUNTS THAT REPLACE TYPED BOXES (owner, C7/C8): totals, days attended, completions and
     # survey responses are worked out from the rows this save leaves behind and stored over

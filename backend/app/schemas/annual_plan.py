@@ -56,6 +56,9 @@ class AnnualPlanPromoteRequest(APIModel):
         default_factory=list, max_length=MAX_DESIGN_WORKSHOP_VIEWERS
     )
     templateId: str = Field(default="DCH_STANDARD", max_length=48)
+    # THE MASTER CRAFT LIST (2026-10-20): the craft, picked when the sheet's craft text matched
+    # nothing on the list. Optional: a row already linked keeps its craft.
+    craftId: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def _known_template(self) -> AnnualPlanPromoteRequest:

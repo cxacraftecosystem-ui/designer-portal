@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, status
 from app.core.db import db
 from app.core.deps import assert_can_delete, get_current_user, require_record_creator
 from app.schemas.records import ProductCreate, ProductUpdate
+from app.services import craft_master
 from app.services.access import guard_record_edit
 from app.services.artisan_merge import redirect_payload
 from app.services.completeness import (
@@ -13,6 +14,7 @@ from app.services.completeness import (
     filter_or_422 as completeness_filter,
 )
 from app.services.concurrency import gather_reads
+from app.services.linked_names import fill_craft_name
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (
     assert_may_write_a_record_filed_under,
@@ -371,6 +373,10 @@ async def create_product(
     # A queued or stale write that still names a merged artisan lands on the survivor
     # (services/artisan_merge.redirect_payload) instead of a dangling-reference 422.
     await redirect_payload(data)
+    # THE MASTER CRAFT LIST (2026-10-20): the craft is a ``craftId`` from the list, and ``craftName``
+    # is its copy. An old client's typed name is matched onto the list or kept for review.
+    data = await craft_master.resolve_record_craft(db, data, keep_name=True)
+    data = await fill_craft_name(data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
@@ -447,6 +453,8 @@ async def update_product(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
     await redirect_payload(data)
+    data = await craft_master.resolve_record_craft(db, data, stored=product, keep_name=True)
+    data = await fill_craft_name(data, stored=product)
     # THE PRECONDITION IS A QUESTION, NOT A COLUMN — taken out of the body here, asked inside the
     # transaction below. ``take_expected_updated_at`` says why it has to leave ``data`` this early:
     # everything between this line and the write reads the dict, and a stray key would become an

@@ -20,6 +20,7 @@ from app.schemas.records import (
     ToolCreate,
     ToolUpdate,
 )
+from app.services import craft_master
 from app.services.access import effective_tier_for_record, guard_record_edit, record_revision
 from app.services.artisan_merge import redirect_ids, redirect_payload
 from app.services.completeness import (
@@ -895,6 +896,7 @@ async def create_tool(
     # payload, so the provenance stamp attributes the craft the caller will actually be stored with.
     # See the banner above ``_pop_link_ids`` for the absent / ``[]`` / ``null`` contract.
     craft_ids = _pop_link_ids(data, "craftIds")
+    craft_ids = await craft_master.resolve_tool_crafts(db, data, craft_ids)
     artisan_ids = _pop_link_ids(data, "artisanIds")
     await _resolve_craft_links(data, craft_ids)
     # ``tool=None``: on a create the caller IS the owner, so the assign-any gate is open. Both
@@ -997,6 +999,7 @@ async def update_tool(
     # "mentioned no links" it leaves the backfilled ``ToolCraft`` row naming the craft the designer
     # removed, and the next save from either new client silently re-links it. See the function.
     craft_ids = _craft_ids_from_a_legacy_body(data, craft_ids, tool)
+    craft_ids = await craft_master.resolve_tool_crafts(db, data, craft_ids, tool=tool)
     # WHAT THE SERVER WROTE INTO ``data`` RATHER THAN THE CALLER — ``craftName``, and only when
     # crafts are linked. It is carried to ``guard_record_edit`` as ``derived=`` and is withheld there
     # from ``assert_can_contribute_fields`` and from nothing else, because refusing a contributor
