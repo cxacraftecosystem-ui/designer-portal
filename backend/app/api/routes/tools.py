@@ -896,7 +896,6 @@ async def create_tool(
     # payload, so the provenance stamp attributes the craft the caller will actually be stored with.
     # See the banner above ``_pop_link_ids`` for the absent / ``[]`` / ``null`` contract.
     craft_ids = _pop_link_ids(data, "craftIds")
-    craft_ids = await craft_master.resolve_tool_crafts(db, data, craft_ids)
     artisan_ids = _pop_link_ids(data, "artisanIds")
     await _resolve_craft_links(data, craft_ids)
     # ``tool=None``: on a create the caller IS the owner, so the assign-any gate is open. Both
@@ -916,6 +915,12 @@ async def create_tool(
     # ``attach_location``, the first line here that WRITES, so a refused create leaves no
     # ``Location`` behind (2026-10-09) — the replay's reason, at the gates.
     await assert_payload_workshop(data, current_user, filed_under=None)
+    # THE MASTER CRAFT LIST (2026-10-20), below the workshop gates so a refused create reads nothing:
+    # every linked craft must be on the list, and an old client's typed name is matched onto it.
+    matched = await craft_master.resolve_tool_crafts(db, data, craft_ids)
+    if matched != craft_ids:
+        craft_ids = matched
+        await _resolve_craft_links(data, craft_ids)
     data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id

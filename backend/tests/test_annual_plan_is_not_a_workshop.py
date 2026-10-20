@@ -154,6 +154,11 @@ ALLOWED_MENTION_MODULES = ALLOWED_CLIENT_MODULES | {
     "services/search_index.py",
     "services/search_indexer.py",
     "services/coverage.py",
+    # Added 2026-10-20 with the craft master list. A plan row's craft is a link to the list now
+    # (`AnnualPlanEntry.craftId`), so merging two crafts re-points it and the mapping script matches
+    # its craft text. Both touch only that one column; neither reads a plan row as a workshop.
+    "services/craft_master.py",
+    "scripts/map_crafts.py",
 }
 
 

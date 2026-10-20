@@ -382,6 +382,9 @@ _HEADER_TEXT_COLUMNS: tuple[str, ...] = (
     # this column has a create-form history exactly as craft, cluster, state, district and the two
     # dates do. ``scheme`` has none.
     "workshopKind",
+    # ``craftId`` (the master craft list, 2026-10-20) travels with ``craftName``: the create form and
+    # the details form pick the craft from the list, and ``craft_master.craft_columns`` writes both.
+    "craftId",
     "craftName",
     "clusterName",
     "state",

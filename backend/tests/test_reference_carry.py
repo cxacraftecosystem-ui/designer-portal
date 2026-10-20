@@ -608,6 +608,19 @@ CRAFT_NOT_CARRIED = {
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping",
+    # THE MASTER CRAFT LIST (2026-10-20, docs/CRAFTS.md). The list's own facts about the craft.
+    # None of them is a stage box today: the cover page names the craft, and its category already
+    # crosses as `craftCategory` through the compatibility column `category`.
+    "slug": "cross-portal identity of a master-list craft — a matching key, nothing a stage prints",
+    "subCategoryId": "taxonomy link — the category name crosses as `category`",
+    "sourceSerial": "the PDF's row number — provenance of the list, not of the workshop",
+    "stateOfOrigin": "a fact of the list; the workshop's own state is stage 1's",
+    "stateOfPractice": "a fact of the list; the workshop's own state is stage 1's",
+    "giStatus": "a fact of the list, not a stage box",
+    "isCatchAll": "list bookkeeping — marks an 'Others' row",
+    "sourceNotes": "list bookkeeping — the extraction's notes on the PDF row",
+    "status": "list bookkeeping — the picker offers ACTIVE crafts only (offered_where)",
+    "mergedIntoId": "list bookkeeping — where a MERGED craft went",
 }
 
 # ── THE SIXTH MODEL, AND THE FIRST WHOSE LOADED ROWS ARE CONFIDENTIAL ──────────────────
@@ -952,6 +965,12 @@ RELATION_LEDGER = {
         ),
         "workshops": "join key — the WorkshopCraft reading of workshop scope",
         "code": "NOT INCLUDED — the shared code row (C26); see craftCode",
+        # The master craft list (2026-10-20). Nothing includes these; a stage reads the craft itself.
+        "subCategory": "NOT INCLUDED — the taxonomy row; the category name crosses as `category`",
+        "mergedInto": "NOT INCLUDED — list bookkeeping; a MERGED craft is never offered",
+        "mergedFrom": "NOT INCLUDED — list bookkeeping",
+        "designWorkshops": "the back-reference of DesignWorkshop.craftId (promoted from craftRef)",
+        "annualPlanEntries": "the back-reference of AnnualPlanEntry.craftId; never read as a workshop",
     },
     "QuestionnaireInterview": {
         "createdBy": "bookkeeping — who SAVED the record, which is not a claim about who sat in",

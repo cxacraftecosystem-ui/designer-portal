@@ -340,7 +340,7 @@ STAGE_1 = StageSpec(
                 ),
                 f(
                     "craftRef",
-                    "Craft",
+                    "Craft from the list",
                     REF,
                     B,
                     required=True,

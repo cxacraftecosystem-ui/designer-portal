@@ -373,10 +373,6 @@ async def create_product(
     # A queued or stale write that still names a merged artisan lands on the survivor
     # (services/artisan_merge.redirect_payload) instead of a dangling-reference 422.
     await redirect_payload(data)
-    # THE MASTER CRAFT LIST (2026-10-20): the craft is a ``craftId`` from the list, and ``craftName``
-    # is its copy. An old client's typed name is matched onto the list or kept for review.
-    data = await craft_master.resolve_record_craft(db, data, keep_name=True)
-    data = await fill_craft_name(data)
     # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
@@ -393,6 +389,11 @@ async def create_product(
     # so a create refused after it left a ``Location`` row behind that nothing references, on every
     # refused save (2026-10-09).
     await assert_payload_workshop(data, current_user, filed_under=None)
+    # THE MASTER CRAFT LIST (2026-10-20): the craft is a ``craftId`` from the list, and ``craftName``
+    # is its copy. An old client's typed name is matched onto the list or kept for review. Below the
+    # workshop gates, so a refused create reads nothing.
+    data = await craft_master.resolve_record_craft(db, data, keep_name=True)
+    data = await fill_craft_name(data)
     data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
@@ -453,8 +454,6 @@ async def update_product(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
     await redirect_payload(data)
-    data = await craft_master.resolve_record_craft(db, data, stored=product, keep_name=True)
-    data = await fill_craft_name(data, stored=product)
     # THE PRECONDITION IS A QUESTION, NOT A COLUMN — taken out of the body here, asked inside the
     # transaction below. ``take_expected_updated_at`` says why it has to leave ``data`` this early:
     # everything between this line and the write reads the dict, and a stray key would become an
@@ -472,6 +471,8 @@ async def update_product(
     # inspector and two directors may not change this record at all, an unfile and a move out
     # included (2026-10-09). Above ``attach_location``, which writes, for the create route's reason.
     await assert_payload_workshop(data, current_user, filed_under=product.designWorkshopId)
+    data = await craft_master.resolve_record_craft(db, data, stored=product, keep_name=True)
+    data = await fill_craft_name(data, stored=product)
     data = await attach_location(data)
     # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
     # ends in ``record_revision``, which used to COMMIT on its own a handful of statements before the
