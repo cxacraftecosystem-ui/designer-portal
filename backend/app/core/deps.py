@@ -2061,7 +2061,8 @@ def assert_can_delete(user: Any) -> None:
 
 async def require_content_admin(current_user: Any = Depends(get_current_user)) -> Any:
     """``Depends`` form of the content-admin gate, for routes that manage content outright."""
-    assert_can_delete(current_user)
+    if not is_content_admin(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
 
 
