@@ -19,7 +19,8 @@ const PASSWORD = process.env.E2E_PASSWORD ?? "";
 
 test.skip(!EMAIL || !PASSWORD, "Set E2E_EMAIL and E2E_PASSWORD to run the signed-in specs.");
 
-const hamburger = (page: Page) => page.getByRole("button", { name: "Toggle navigation menu" });
+// The island's menu button from `lg` up; the bottom island's below it (only one is ever drawn).
+const hamburger = (page: Page) => page.getByRole("button", { name: /^(Toggle navigation menu|Open menu)$/ });
 const sheet = (page: Page) => page.getByRole("dialog", { name: "Navigation" });
 
 /**

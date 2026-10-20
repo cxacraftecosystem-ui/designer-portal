@@ -33,6 +33,8 @@ export const CREDENTIALS_MISSING = !EMAIL || !PASSWORD
  */
 const SESSION_COOKIE = "__Host-session";
 const SESSION_MARKER_COOKIE = "__Host-session-marker";
+const INSECURE_SESSION_COOKIE = "session";
+const INSECURE_SESSION_MARKER_COOKIE = "session-marker";
 
 /**
  * A bearer token, straight from the API.
@@ -79,17 +81,28 @@ export function bearer(token: string): Record<string, string> {
  * is where a test of the form belongs.
  */
 export async function signInWithToken(page: Page, token: string) {
-  const url = new URL(process.env.E2E_BASE_URL ?? "http://localhost:3000").origin;
-  const common = { url, secure: true, sameSite: "Lax" as const };
+  const base = new URL(process.env.E2E_BASE_URL ?? "http://localhost:3000");
+  const local = base.hostname === "localhost" || base.hostname === "127.0.0.1";
+  // A `Secure` cookie must be planted from an https URL — Chromium refuses it from http ("Invalid
+  // cookie fields"), even for localhost, which it then sends it to over plain http. A plain-http host
+  // that is not localhost holds the unprefixed, non-`Secure` pair, as `lib/sessionCookie.ts` does.
+  const secure = base.protocol === "https:" || local;
+  const url = secure ? `https://${base.host}` : base.origin;
+  const common = { url, secure, sameSite: "Lax" as const };
   await page.context().addCookies([
-    { name: SESSION_COOKIE, value: token, httpOnly: true, ...common },
-    { name: SESSION_MARKER_COOKIE, value: `e2e-${Date.now().toString(36)}`, httpOnly: false, ...common }
+    { name: secure ? SESSION_COOKIE : INSECURE_SESSION_COOKIE, value: token, httpOnly: true, ...common },
+    {
+      name: secure ? SESSION_MARKER_COOKIE : INSECURE_SESSION_MARKER_COOKIE,
+      value: `e2e-${Date.now().toString(36)}`,
+      httpOnly: false,
+      ...common
+    }
   ]);
 }
 
 /** The session token the browser holds (from the HttpOnly cookie, which only the test can read). */
 export async function sessionTokenOf(page: Page): Promise<string> {
-  const cookie = (await page.context().cookies()).find((entry) => entry.name === SESSION_COOKIE);
+  const cookie = (await page.context().cookies()).find((entry) => entry.name === SESSION_COOKIE || entry.name === INSECURE_SESSION_COOKIE);
   return cookie ? decodeURIComponent(cookie.value) : "";
 }
 

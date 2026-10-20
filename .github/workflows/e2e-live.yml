@@ -74,6 +74,14 @@ on:
   # Manual only. The `schedule:` that stood here until 2026-09-21 is gone and the header says why;
   # putting a cron back is a decision, not a tidy-up, and the header lists what to fix first.
   workflow_dispatch:
+    inputs:
+      specs:
+        # Empty runs the whole suite. Otherwise spec files or name filters, space-separated, as
+        # `playwright test` takes them (e.g. `e2e/nav-responsive.spec.ts`), so one live spec can be
+        # run without waiting on all of them.
+        description: "Specs to run (empty: the whole suite)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -294,7 +302,11 @@ jobs:
         #
         # Retries stay at the config's zero. A retry turns a real intermittent defect into a green
         # run, and a suite that runs once a week is exactly the one that must be believed.
-        run: npm run test:e2e -- --reporter=list,html
+        # The selection arrives through the environment, never interpolated into the script.
+        env:
+          SPECS: ${{ inputs.specs }}
+        # Unquoted on purpose: a space-separated list is several arguments.
+        run: npm run test:e2e -- $SPECS --reporter=list,html
 
       - name: Upload the Playwright report and traces
         # `failure()`, not `always()`: on a green run these artifacts are tens of megabytes nobody
