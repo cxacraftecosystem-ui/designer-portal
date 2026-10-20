@@ -90,6 +90,7 @@ import com.designprototype.workshop.data.MlKitQrFrameReader
 import com.designprototype.workshop.data.ReferenceQrFrameReader
 import com.designprototype.workshop.data.dwQrReticleFraction
 import com.designprototype.workshop.ui.designworkshop.hasPermission
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -162,6 +163,21 @@ import java.util.concurrent.atomic.AtomicReference
  * That file is not this wave's to edit; the mount is a single call and is deliberately left as the
  * next wave's one-line change rather than forked here.
  */
+
+/**
+ * One camera call, where any failure is "no camera" EXCEPT a cancellation, which is rethrown.
+ *
+ * `runCatching` around a suspend call swallows `CancellationException`, so a scanner whose effect
+ * was merely restarted, or dismissed, reported the camera as held by another app. That is the first-
+ * open "camera in use" bug; see the provider effect in [DwQrLiveScannerDialog].
+ */
+suspend fun <T> dwCameraStep(block: suspend () -> T): T? = try {
+    block()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (_: Throwable) {
+    null
+}
 
 /**
  * WHAT TO SAY WHEN THE LENS ITSELF IS UNAVAILABLE — a refusal with no precedent in this app.
@@ -556,6 +572,32 @@ fun DwQrLiveScannerDialog(
     // on every frame of the sweep animation and this value changes only when the box is re-measured.
     LaunchedEffect(reticle) { reticleSink.set(reticle) }
 
+    /*
+     * THE PROVIDER IS FETCHED ONCE, IN ITS OWN EFFECT, AND NEVER INSIDE THE BIND.
+     *
+     * This is the 2026-10-20 fix for "the camera is in use by something else" on the first one or
+     * two opens. The bind below is keyed on the box, and a dialog window with
+     * `decorFitsSystemWindows = false` can measure more than once on its first open (inset, then
+     * edge to edge, a difference far larger than [DW_QR_REBIND_SLOP_PX]). The provider used to be awaited
+     * inside the bind, so that second measurement cancelled the first bind while a cold CameraX was
+     * still initialising — and `runCatching` caught the CancellationException, read it as "no
+     * camera" and closed the scanner with the in-use sentence. Once the provider was cached the
+     * await no longer suspended, which is why the third try always worked.
+     *
+     * Here the await is never relaunched by a resize, and [dwCameraStep] lets a cancellation be a
+     * cancellation rather than a refusal.
+     */
+    var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    LaunchedEffect(Unit) {
+        val awaited = dwCameraStep { ProcessCameraProvider.awaitInstance(context) }
+        if (awaited == null) {
+            onRefusal(dwQrCameraUnavailable(rearLensMissing = false))
+            return@LaunchedEffect
+        }
+        providerSink.set(awaited)
+        cameraProvider = awaited
+    }
+
     /**
      * The camera, bound once the box has been measured.
      *
@@ -565,14 +607,11 @@ fun DwQrLiveScannerDialog(
      * this whole section is written against. `boxSize` is quantised by [DW_QR_REBIND_SLOP_PX] so an
      * inset settling by a pixel does not tear the session down.
      */
-    LaunchedEffect(boxSize, configuration.orientation) {
+    LaunchedEffect(cameraProvider, boxSize, configuration.orientation) {
+        val provider = cameraProvider ?: return@LaunchedEffect
         if (boxSize.width <= 0 || boxSize.height <= 0) return@LaunchedEffect
-        val provider = runCatching { ProcessCameraProvider.awaitInstance(context) }.getOrNull()
-        if (provider == null) {
-            onRefusal(dwQrCameraUnavailable(rearLensMissing = false))
-            return@LaunchedEffect
-        }
-        providerSink.set(provider)
+        // A code already read has unbound the camera on purpose; a late resize must not reopen it.
+        if (hitSink.get() != null) return@LaunchedEffect
 
         val hasBack = runCatching { provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) }.getOrDefault(false)
         val hasFront = runCatching { provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) }.getOrDefault(false)
