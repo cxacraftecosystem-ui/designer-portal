@@ -508,7 +508,7 @@
    */
   @media (width < 64rem) {
     html.has-bottom-nav {
-      --bottom-nav-h: calc(60px + 0.75rem + env(safe-area-inset-bottom, 0px));
+      --bottom-nav-h: calc(62px + 0.75rem + env(safe-area-inset-bottom, 0px));
     }
   }
 
