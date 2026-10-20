@@ -184,13 +184,16 @@ test.describe("at 390×844, the upload tray", () => {
       .first()
       .click();
     await page.getByRole("option", { name: "Artisan" }).click();
-    // The form's required location: a state, its district and the device's coordinates.
-    await page.getByRole("button", { name: /^State/ }).click();
-    await page.getByRole("option", { name: "Rajasthan" }).click();
-    await page.getByRole("button", { name: /^District/ }).click();
-    await page.getByRole("option").first().click();
+    // The form's required location: the device's coordinates, a state and its district.
     await page.getByRole("spinbutton", { name: /^Latitude/ }).fill("26.82");
     await page.getByRole("spinbutton", { name: /^Longitude/ }).fill("75.54");
+    await page.getByRole("button", { name: /^State/ }).click();
+    await page.getByRole("option", { name: "Rajasthan" }).click();
+    const district = page.getByRole("button", { name: /^District/ });
+    await expect(district).toBeEnabled();
+    await district.click();
+    await page.getByRole("option", { name: "Jaipur", exact: true }).click();
+    await expect(district).toContainText("Jaipur");
     await page.locator("form button.field-button").filter({ hasText: /Upload/ }).click();
     const tray = page.locator('[role="status"]').filter({
       has: page.getByRole("button", { name: /upload details|Dismiss the upload summary/ })
