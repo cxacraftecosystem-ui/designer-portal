@@ -143,10 +143,10 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 332 | 6164 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 280 | 3206 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 316 | 3811 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
-| Android instrumented (`android/app/src/androidTest/`) | 9 | 25 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
+| Backend unit (`backend/tests/`) | 334 | 6172 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 282 | 3219 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 319 | 3825 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Android instrumented (`android/app/src/androidTest/`) | 10 | 29 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
 parametrised cases expand.
@@ -171,11 +171,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 321 | 196,669 | 321 | 196,669 |
-| `frontend/app` | 123 | 61,050 | 123 | 61,050 |
-| `frontend/components` | 387 | 145,757 | 387 | 145,757 |
+| `backend/app` | 321 | 196,686 | 321 | 196,686 |
+| `frontend/app` | 123 | 61,052 | 123 | 61,052 |
+| `frontend/components` | 385 | 145,821 | 386 | 146,047 |
 | `frontend/lib` | 187 | 82,587 | 187 | 82,587 |
-| `android/app/src/main/java` | 355 | 254,530 | 355 | 254,530 |
+| `android/app/src/main/java` | 359 | 255,820 | 360 | 256,486 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
