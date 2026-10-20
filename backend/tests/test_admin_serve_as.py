@@ -2106,6 +2106,26 @@ def test_a_post_holder_cannot_write_the_workshop_even_through_the_admin_route(wo
 
 
 @needs_db
+def test_a_content_admin_holding_a_post_is_still_refused_the_workshop(world):
+    """2026-10-20: a Ministry Admin is a content admin and writes every workshop without a viewer
+    grant. The post-holder refusal is separation of duty, not a missing permission, so it still holds
+    for them, delete included; giving the post up gives the write back."""
+    workshop_id = _open(world, "Content admin serving")
+    assert _officers(world, workshop_id, ad="ministry").status_code == 200
+
+    stage = _write(world, workshop_id, "ministry")
+    assert stage.status_code == 403, stage.text
+    assert "You are this workshop's Assistant Director" in stage.json()["detail"]
+    delete = world["client"].delete(
+        f"/api/design-workshops/{workshop_id}", headers=_headers(world, "ministry")
+    )
+    assert delete.status_code == 403, delete.text
+
+    assert _officers(world, workshop_id, ad=None).status_code == 200
+    assert _write(world, workshop_id, "ministry").status_code == 200
+
+
+@needs_db
 def test_a_post_holder_cannot_import_an_artisan_list_into_the_workshop(world):
     """The oversight screen's artisan-list import files stage-3 participant rows through its own
     loader, so it asks the same write gate itself — before the workbook is read. An assigner who

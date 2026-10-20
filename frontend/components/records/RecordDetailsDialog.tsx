@@ -25,6 +25,7 @@ export function RecordDetailsDialog({
   description,
   details,
   onUpdate,
+  onDelete,
   children
 }: {
   open: boolean;
@@ -33,6 +34,8 @@ export function RecordDetailsDialog({
   description?: string;
   details: RecordDetail[];
   onUpdate?: () => void;
+  /** Drawn only where the page offers the delete (content admins in admin view). */
+  onDelete?: () => void;
   children?: ReactNode;
 }) {
   return (
@@ -49,6 +52,11 @@ export function RecordDetailsDialog({
           {onUpdate ? (
             <button type="button" className="field-button" onClick={onUpdate}>
               Update
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button type="button" data-danger className="field-danger" onClick={onDelete}>
+              Delete
             </button>
           ) : null}
         </ActionGroup>

@@ -46,7 +46,7 @@ import { apiFetch, listResource } from "@/lib/api";
 import { bytes, countNoun, formatDateTime } from "@/lib/format";
 import { locationFromForm, textValue } from "@/lib/forms";
 import { inferMediaType, transcribeMediaNow, uploadMediaBatch, type BatchProgress } from "@/lib/media";
-import { isAdmin } from "@/lib/permissions";
+import { isContentAdmin } from "@/lib/permissions";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
 import { WORKSHOP_OPTION_PAGE_SIZE, fieldWorkshopOptions } from "@/lib/workshopOptions";
@@ -482,7 +482,7 @@ function MediaPageBody() {
     };
   }, [linkedType]);
 
-  const canTranscribe = isAdmin(user);
+  const canTranscribe = isContentAdmin(user);
 
   /*
     A FILE OF A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM (2026-10-09). The
@@ -638,7 +638,7 @@ function MediaPageBody() {
    * and the off-peak window. The row is patched from the response so the Transcript column updates
    * without a reload.
    *
-   * `POST /media/{id}/transcribe-now` is `require_admin` and refuses anything whose `mediaType` is
+   * `POST /media/{id}/transcribe-now` is content admins' (`require_content_admin`) and refuses anything whose `mediaType` is
    * not AUDIO, so the control below is offered on exactly that pair and nothing else.
    */
   async function transcribeNow(item: MediaFile) {

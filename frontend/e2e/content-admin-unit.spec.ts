@@ -68,3 +68,21 @@ test("a design workshop's Delete reaches the Ministry Admin", () => {
   expect(page).toContain("const allowDelete = isContentAdmin(user);");
   expect(page).toContain("{allowDelete && adminMode ? (");
 });
+
+test("the new delete routes have controls, in admin view", () => {
+  const sanction = read("app/(protected)/sanction-orders/page.tsx");
+  expect(sanction).toContain("onDelete={viewing && adminMode ? () => void deleteOrder(viewing) : undefined}");
+  expect(read("lib/sanctionOrders.ts")).toContain("`/sanction-orders/${encodeURIComponent(id)}`, { method: \"DELETE\" }");
+  const plan = read("app/(protected)/annual-plan/page.tsx");
+  expect(plan).toContain('manager && adminMode && entry.standing !== "PROMOTED"');
+  expect(read("app/(protected)/annual-plan/annualPlan.ts")).toContain("`/annual-plan/entries/${encodeURIComponent(id)}`, { method: \"DELETE\" }");
+});
+
+test("a Ministry Admin restores, maps and transcribes where the server now lets them", () => {
+  const workshops = read("app/(protected)/design-workshops/page.tsx");
+  expect(workshops).toContain("{adminMode && !isAdmin(user) ? (");
+  expect(workshops).toContain("<DeletedWorkshopsCard />");
+  expect(read("app/(protected)/crafts/page.tsx")).toContain("{isContentAdmin(user) && adminMode ? <UnmappedCraftsPanel /> : null}");
+  expect(read("app/(protected)/media/page.tsx")).toContain("const canTranscribe = isContentAdmin(user);");
+  expect(read("app/(protected)/workshops/page.tsx")).toContain("{isContentAdmin(user) ? (\n        <div className=\"mb-5\">\n          <WorkshopMappingPanel />");
+});

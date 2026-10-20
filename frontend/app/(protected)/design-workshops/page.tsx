@@ -145,6 +145,7 @@ import { createWorkshopOrKeepItHere, startLocalDraftHere } from "@/lib/designWor
 import { AdoptLocalDraftDialog } from "@/components/designworkshop/AdoptLocalDraftDialog";
 import { WorkshopDesignerPicker } from "@/components/designworkshop/WorkshopDesignerPicker";
 import { DesignWorkshopViewersPanel } from "@/components/settings/DesignWorkshopViewersPanel";
+import { DeletedWorkshopsCard } from "@/components/admin/DeletedWorkshopsCard";
 import { isUnreachable } from "@/lib/offline";
 import { formatDate } from "@/lib/format";
 import {
@@ -1942,6 +1943,14 @@ function DesignWorkshopsPageBody() {
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {/* Restore is every content admin's (2026-10-20). Admins have this card on /admin; a Ministry
+          Admin has no /admin, so theirs is here, in admin view. */}
+      {adminMode && !isAdmin(user) ? (
+        <div className="mb-5">
+          <DeletedWorkshopsCard />
+        </div>
       ) : null}
 
       {/* THREE COLUMNS SINCE THE TYPE FILTER LANDED. The search box keeps the flexible one; the two

@@ -441,6 +441,11 @@ export async function fetchAwaitingSanctionCount() {
   return apiFetch<{ awaiting: number }>("/sanction-orders/awaiting-count");
 }
 
+/** Delete an order (content admins). 409 while its workshop is live. */
+export async function deleteSanctionOrder(id: string) {
+  await apiFetch<void>(`/sanction-orders/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function getSanctionOrder(id: string) {
   return apiFetch<SanctionOrder>(`/sanction-orders/${encodeURIComponent(id)}`);
 }

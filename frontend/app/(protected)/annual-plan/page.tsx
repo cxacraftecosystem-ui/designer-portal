@@ -57,6 +57,7 @@ import { canManageAnnualPlan } from "@/lib/permissions";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 
 import {
+  deleteAnnualPlanEntry,
   downloadPlanExport,
   downloadPlanProForma,
   listAnnualPlan,
@@ -85,6 +86,8 @@ import { PromoteDialog } from "./PromoteDialog";
 import { RegionalStatesPanel } from "./RegionalStatesPanel";
 import { UploadPlanDialog } from "./UploadPlanDialog";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { useAdminView } from "@/components/AdminViewProvider";
+import { deleteConfirm, useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { formatSanctionAmount } from "@/lib/sanctionOrders";
 
 /**
@@ -119,6 +122,9 @@ export default function AnnualPlanPage() {
   const { user } = useAuth();
   /** The whole national instrument, or a Regional Director's own states' rows (see the header). */
   const manager = canManageAnnualPlan(user);
+  // Deleting a row is a content admin's act, in admin view (owner's ruling, 2026-10-20).
+  const { adminMode } = useAdminView();
+  const confirm = useConfirm();
   /** The row whose remarks are being corrected, and the draft. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -226,6 +232,26 @@ export default function AnnualPlanPage() {
       // A REFUSAL AN ADMINISTRATOR MUST ACT ON IS NOT A TOAST — `aria-live="polite"` never
       // interrupts. Withdrawing a row that is already a workshop is refused with a sentence naming
       // what to do instead, and that belongs where they are looking.
+      setError(
+        describeApiDetail(
+          (caught as { payload?: { detail?: unknown } })?.payload?.detail,
+          caught instanceof Error ? caught.message : "That could not be done."
+        )
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function remove(entry: AnnualPlanEntry) {
+    const ok = await confirm(deleteConfirm(`Delete ${entry.workshopNo} from the plan?`, undefined, "This cannot be undone."));
+    if (!ok) return;
+    setBusyId(entry.id);
+    try {
+      await deleteAnnualPlanEntry(entry.id);
+      await Promise.all([refreshRows(), refreshYears()]);
+      toast({ title: `${entry.workshopNo} was deleted`, tone: "success" });
+    } catch (caught) {
       setError(
         describeApiDetail(
           (caught as { payload?: { detail?: unknown } })?.payload?.detail,
@@ -627,6 +653,17 @@ export default function AnnualPlanPage() {
                           >
                             <RotateCcw className="h-3.5 w-3.5" aria-hidden />
                             Reinstate
+                          </button>
+                        ) : null}
+                        {manager && adminMode && entry.standing !== "PROMOTED" ? (
+                          <button
+                            type="button"
+                            data-danger
+                            className="field-danger min-h-8! rounded-md px-2.5! py-1! text-xs"
+                            onClick={() => void remove(entry)}
+                            disabled={busyId === entry.id}
+                          >
+                            Delete
                           </button>
                         ) : null}
                       </ActionGroup>

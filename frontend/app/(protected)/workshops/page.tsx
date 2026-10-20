@@ -53,7 +53,7 @@ import {
   type WorkshopListState,
   type WorkshopListVoice
 } from "@/lib/workshopOptions";
-import { canCreateWorkshops, canManageWorkshops, hasRank, isAdmin } from "@/lib/permissions";
+import { canCreateWorkshops, canManageWorkshops, hasRank, isAdmin, isContentAdmin } from "@/lib/permissions";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
 import { WORKSHOP_TYPE_LABELS } from "@/lib/types";
 import type {
@@ -624,8 +624,9 @@ function WorkshopsPageBody() {
       {/* WHY THIS SITS ON THE WORKSHOPS PAGE and not in Settings. What it fixes is a workshop's own
           contents — "this workshop looks empty" — so the person who notices the symptom is already here,
           looking at the workshop. Admin-only because it writes to hundreds of rows at once; the endpoints
-          are gated the same way, so the card is not the security boundary. */}
-      {allowAssign ? (
+          are gated the same way, so the card is not the security boundary. Unmapped records are content
+          admins' (2026-10-20); assignments stay with admins. */}
+      {isContentAdmin(user) ? (
         <div className="mb-5">
           <WorkshopMappingPanel />
         </div>
