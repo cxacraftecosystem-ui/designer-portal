@@ -399,24 +399,36 @@ fun MapScreen(
 internal const val MAP_VIEW_PLACES = "places"
 internal const val MAP_VIEW_COVERAGE = "coverage"
 
-/** The session's answer to "may this account open Coverage?". A refusal or no connection is "no". */
-private object CoverageEntitlement {
-    var answeredFor: WorkshopRepository? = null
-    var allowed: Boolean = false
+/**
+ * The sign-in session's answer to "may this account open Coverage?", keyed on [WorkshopRepository.sessionKey]
+ * so it ends with the session: another account on the same phone asks again. Only an ANSWER is kept; a
+ * failed ask (no connection) shows Places for now and is asked again next time the map opens.
+ */
+internal object CoverageEntitlement {
+    private var answeredFor: String? = null
+    private var allowed: Boolean = false
+
+    @Synchronized
+    fun cached(session: String?): Boolean? = if (session != null && session == answeredFor) allowed else null
+
+    @Synchronized
+    fun remember(session: String?, answer: Boolean) {
+        if (session == null) return
+        answeredFor = session
+        allowed = answer
+    }
 }
 
 @Composable
 private fun rememberCoverageAllowed(repository: WorkshopRepository): Boolean {
-    var allowed by remember(repository) {
-        mutableStateOf(CoverageEntitlement.answeredFor === repository && CoverageEntitlement.allowed)
-    }
-    LaunchedEffect(repository) {
-        if (CoverageEntitlement.answeredFor === repository) return@LaunchedEffect
+    val session = repository.sessionKey()
+    var allowed by remember(repository, session) { mutableStateOf(CoverageEntitlement.cached(session) ?: false) }
+    LaunchedEffect(repository, session) {
+        if (session == null || CoverageEntitlement.cached(session) != null) return@LaunchedEffect
         val answer = runCatching { repository.entitlements().coverageMap }
             .onFailure { if (it is CancellationException) throw it }
-            .getOrDefault(false)
-        CoverageEntitlement.answeredFor = repository
-        CoverageEntitlement.allowed = answer
+            .getOrNull() ?: return@LaunchedEffect
+        CoverageEntitlement.remember(session, answer)
         allowed = answer
     }
     return allowed
@@ -1233,6 +1245,8 @@ private fun IndiaMapCanvas(
         // and cheap for Skia to transform, so the geometry is baked at the bucket scale and the
         // residual is applied as a transform. See `outlineBucketScale`.
         val zoom = rememberMapZoomState()
+        // New places (a reload, another level or scope) start from the whole map, as the coverage map does.
+        LaunchedEffect(points) { zoom.reset() }
         val reducedMotion = LocalAppPreferences.current.reducedMotion
         val bucketScale by remember(frame.contentWidth) {
             derivedStateOf { outlineBucketScale(frame.contentWidth * zoom.scale) }

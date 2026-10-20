@@ -9566,6 +9566,18 @@ class WorkshopRepository(
 
     /** The ministry entitlements; a refusal (403) or no connection reads as none. */
     suspend fun entitlements(): MinistryEntitlementsDto = api.entitlements()
+
+    /**
+     * A fingerprint of the current sign-in, or null when signed out: a SHA-256 of the session token,
+     * so a cache keyed on it ends with the session (sign-out, another account, a new sign-in) and never
+     * holds the token itself.
+     */
+    fun sessionKey(): String? {
+        val token = tokenStore.getToken()?.takeIf { it.isNotBlank() } ?: return null
+        return java.security.MessageDigest.getInstance("SHA-256")
+            .digest(token.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
 }
 
 private fun String?.blankToNull(): String? = this?.trim()?.takeIf { it.isNotEmpty() }

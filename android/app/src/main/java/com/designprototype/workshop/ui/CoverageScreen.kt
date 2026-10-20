@@ -330,21 +330,6 @@ private fun CoverageFilterSheet(
             bulk = false,
             onSelectedChange = { onQuery(query.copy(craftCode = it.toList())) }
         )
-        if (!catalogue?.schemes.isNullOrEmpty()) {
-            Text("Workshop type", style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                catalogue!!.schemes.forEach { scheme ->
-                    val on = scheme.value in query.scheme
-                    FilterChip(
-                        selected = on,
-                        onClick = {
-                            onQuery(query.copy(scheme = if (on) query.scheme - scheme.value else query.scheme + scheme.value))
-                        },
-                        label = { Text(scheme.label) }
-                    )
-                }
-            }
-        }
         SearchableSelectField(
             label = "Financial year",
             options = catalogue?.years.orEmpty().map { SelectOption(it.fy.toString(), "FY ${it.label}") },
@@ -360,16 +345,31 @@ private fun CoverageFilterSheet(
             searchable = true,
             onSelect = { value -> onQuery(query.copy(stateLgd = value.toIntOrNull())) }
         )
-        Text("Detail", style = MaterialTheme.typography.labelLarge)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(CoverageLevel.DISTRICT to "District", CoverageLevel.STATE to "State").forEach { (value, label) ->
-                FilterChip(selected = query.level == value, onClick = { onQuery(query.copy(level = value)) }, label = { Text(label) })
+        if (!catalogue?.schemes.isNullOrEmpty()) {
+            Text("Workshop type", style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                catalogue!!.schemes.forEach { scheme ->
+                    val on = scheme.value in query.scheme
+                    FilterChip(
+                        selected = on,
+                        onClick = {
+                            onQuery(query.copy(scheme = if (on) query.scheme - scheme.value else query.scheme + scheme.value))
+                        },
+                        label = { Text(scheme.label) }
+                    )
+                }
             }
         }
         Text("Colour by", style = MaterialTheme.typography.labelLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CoverageMetric.OPTIONS.forEach { (value, label) ->
                 FilterChip(selected = metric == value, onClick = { onMetric(value) }, label = { Text(label) })
+            }
+        }
+        Text("Detail", style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(CoverageLevel.DISTRICT to "District", CoverageLevel.STATE to "State").forEach { (value, label) ->
+                FilterChip(selected = query.level == value, onClick = { onQuery(query.copy(level = value)) }, label = { Text(label) })
             }
         }
         ActionRow {
