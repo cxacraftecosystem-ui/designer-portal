@@ -3939,7 +3939,8 @@ class WorkshopRepository(
         // AND NOTHING JUMPS THE QUEUE: if earlier steps for this questionnaire are still waiting,
         // this one waits behind them, or a rename could land before the add it renames.
         val behindOthers = pendingQuestionnaireOps(context, setOf(op.questionnaireId)).isNotEmpty()
-        if (!waitsForParent && !behindOthers && isOnline(context)) {
+        val online = isOnline(context)
+        if (!waitsForParent && !behindOthers && online) {
             try {
                 return applyQuestionnaireOp(context, op, key) ?: "Saved."
             } catch (e: CancellationException) {
@@ -3960,7 +3961,15 @@ class WorkshopRepository(
                 idempotencyKey = key,
             )
         )
-        return "Saved on this phone; added when online."
+        // L11 (21 Oct 2026): said for what is actually holding it. "Added when online" over a phone
+        // that IS online, behind an earlier step the server refused, sent the designer to wait for a
+        // signal they already had.
+        val earlierRefused = behindOthers && OfflineOutbox.all(context).any { entry ->
+            entry.type == OFFLINE_QFORM_OP && entry.createdId == null && entry.failure != null &&
+                runCatching { offlineJson.decodeFromString(QFormOp.serializer(), entry.payloadJson) }.getOrNull()
+                    ?.let { it.questionnaireId == op.questionnaireId || resolveTempId(it.questionnaireId, map) == resolveTempId(op.questionnaireId, map) } == true
+        }
+        return queuedAuthoringMessage(online = online, waitsForParent = waitsForParent, earlierRefused = earlierRefused)
     }
 
     suspend fun createCustomQuestionnaire(

@@ -135,6 +135,17 @@ fun adoptionIdempotencyKey(rowId: String, vararg step: String): String {
     return clean.padEnd(8, '0').take(128)
 }
 
+/**
+ * What a designer is told when an authoring step is kept on the phone (L11, 21 Oct 2026), named for
+ * what is actually holding it. Pure, pinned by a JVM test.
+ */
+fun queuedAuthoringMessage(online: Boolean, waitsForParent: Boolean, earlierRefused: Boolean): String = when {
+    !online -> "Saved on this phone; added when online."
+    earlierRefused -> "Saved on this phone. An earlier change was not accepted; open Saved on this phone to fix it."
+    waitsForParent -> "Saved on this phone; added once the questionnaire has uploaded."
+    else -> "Saved on this phone; added after the changes queued before it."
+}
+
 /** [id] with a temporary id swapped for its server id where one is known. */
 fun resolveTempId(id: String?, map: Map<String, String>): String? = if (isTempId(id)) map[id] ?: id else id
 

@@ -154,12 +154,11 @@ fun QuestionnaireDetailScreen(
     /**
      * Set when the questionnaire on screen came off this device's disk.
      *
-     * Every write on this screen goes through `mutate`, which will fail with a network error while
-     * this is set — and that is left as it is deliberately. This screen's writes are edits to the
-     * INSTRUMENT (rename a section, retire a question), and those genuinely cannot be composed
-     * offline: `guard_question_edit` decides between "updated" and "superseded" from whether the
-     * question already has answers, which is a fact this copy cannot know. Saying so up front is
-     * this notice's job; refusing per-button would be four more places to keep the same sentence.
+     * Edits to the INSTRUMENT made while this is set (add, rename, edit, retire) are QUEUED on the
+     * phone since 2026-10-16 (`authorQuestionnaireOrQueue`) and replayed in order; the server still
+     * decides between "updated" and "superseded" when each one lands, because only it knows whether
+     * the question has answers by then. Actions that name the questionnaire itself on the server
+     * (attach, kind, deactivate, a sitting, the spreadsheet) still need a connection and say so.
      */
     var cachedNotice by remember(questionnaireId) { mutableStateOf<String?>(null) }
 
