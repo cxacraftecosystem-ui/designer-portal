@@ -23,11 +23,19 @@ export function restoredQuestionnaireNotice(title: string): string {
  * THE QUESTIONNAIRE TRASH — soft-deleted forms and the one control that brings one back.
  *
  * `DELETE /questionnaires/{id}` only sets `deletedAt` (owner, 2026-10-20), so a deleted form keeps
- * every section, sitting and answer. The caller mounts this in admin view; the server's 403 on
- * `deletedOnly` and on the restore is the gate that matters. Same shape as `DeletedWorkshopsCard`:
- * server-paged, rows kept on a failed refresh, and a pager on `total` rather than on the rows shown.
+ * every section, sitting and answer. A content admin's list is every deleted form; anyone else's is
+ * the forms they authored (`ownOnly`), which the server scopes and lets them restore (owner,
+ * 22 Oct 2026). `ownOnly` draws nothing until there is something to restore, so an author with an
+ * empty trash sees no card. Same shape as `DeletedWorkshopsCard`: server-paged, rows kept on a
+ * failed refresh, and a pager on `total` rather than on the rows shown.
  */
-export function DeletedQuestionnairesCard({ onRestored }: { onRestored?: () => void }) {
+export function DeletedQuestionnairesCard({
+  onRestored,
+  ownOnly = false
+}: {
+  onRestored?: () => void;
+  ownOnly?: boolean;
+}) {
   const [result, setResult] = useState<PageResult<QFormSummary> | null>(null);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
@@ -69,10 +77,12 @@ export function DeletedQuestionnairesCard({ onRestored }: { onRestored?: () => v
     }
   }
 
+  if (ownOnly && !notice && !error && (!result || result.total === 0)) return null;
+
   return (
     <section id="deleted-questionnaires" className="panel mt-6 overflow-hidden">
       <div className="border-b border-line-200 px-4 py-3">
-        <h2 className="font-display font-bold text-ink-900">Deleted questionnaires</h2>
+        <h2 className="font-display font-bold text-ink-900">{ownOnly ? "Your deleted questionnaires" : "Deleted questionnaires"}</h2>
         <p className="text-sm text-ink-500">Restoring one brings back its questions and answers.</p>
         <div aria-live="polite">
           {notice ? (

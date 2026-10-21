@@ -1596,9 +1596,16 @@ async def dictate_for_workshop(
     request: Request,
     file: UploadFile = File(...),
     languageHint: str | None = Form(default=None),
+    interviewId: str | None = Form(default=None),
+    artisanIds: str | None = Form(default=None),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """The same dictation, for a named workshop — and the only route where consent can be enforced.
+
+    **WHO THE CLIP IS ABOUT (H3, 21 Oct 2026).** ``interviewId`` (a saved interview) and
+    ``artisanIds`` (comma-separated: the artisans picked on a form not yet saved) are optional parts.
+    Their artisans join the workshop's linked ones under the same rule, so an interviewed artisan who
+    refused is never sent to the provider merely because they are not linked to this workshop.
 
     **WHAT THE CLIENTS SEND, AND THE ONLY ROUTE THAT TRANSCRIBES ANYTHING.** ``file``, and
     ``languageHint`` when it is known — the same two parts the retired ``POST /design-workshops/dictate``
@@ -1636,9 +1643,17 @@ async def dictate_for_workshop(
     _require_designer(current_user)
     record = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
     # THE ONE CONSENT STORE (19 Oct 2026): the workshop's answer AND the answers of the artisans
-    # linked to it (``dictation_consent.workshop_verdict``), so one artisan's refusal stops it too.
+    # linked to it, plus the interview's participants and the artisans picked on the form
+    # (``dictation_consent.dictation_verdict``), so one artisan's refusal stops it too.
     # A workshop refusal reads exactly as it always has; an unreadable store is a 503, not a 500.
-    await require_send(dictation_consent.workshop_verdict(workshop_id, record=record))
+    await require_send(
+        dictation_consent.dictation_verdict(
+            workshop_id,
+            interview_id=interviewId,
+            artisan_ids=dictation_consent.split_ids(artisanIds),
+            record=record,
+        )
+    )
     # The Request is handed down so the size cap can be answered off the declared `Content-Length`
     # before the body is read. Nothing else in this handler needs it.
     return await _transcribe_one_dictation(file, languageHint, current_user, request)

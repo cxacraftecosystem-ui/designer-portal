@@ -1686,7 +1686,10 @@ class WorkshopRepository(
         workshopId: String,
         clip: File,
         languageTag: String,
+        interviewId: String? = null,
+        artisanIds: Collection<String> = emptyList(),
     ): DwDictateDto {
+        val subjects = dictationSubjects(interviewId, artisanIds)
         val part = okhttp3.MultipartBody.Part.createFormData(
             "file",
             // The name and type the server reads its decoder from. `dictation.m4a` + `audio/mp4`
@@ -1701,6 +1704,8 @@ class WorkshopRepository(
                 workshopId,
                 part,
                 languageTag.toRequestBody("text/plain".toMediaType()),
+                subjects.interviewId?.toRequestBody("text/plain".toMediaType()),
+                subjects.artisanIds?.toRequestBody("text/plain".toMediaType()),
             )
         } catch (e: HttpException) {
             /*
@@ -3256,6 +3261,26 @@ class WorkshopRepository(
         mineOnly = mineOnly,
     )
 
+    // ── L9 (21 Oct 2026): soft delete and restore, content admins only ───────────────────────────
+
+    suspend fun deleteCustomQuestionnaire(id: String) = api.deleteCustomQuestionnaire(id)
+
+    suspend fun restoreCustomQuestionnaire(id: String) {
+        api.restoreCustomQuestionnaire(id)
+    }
+
+    /** The trash, newest deletion first. One page of a hundred: a trash is reviewed, not browsed. */
+    suspend fun deletedCustomQuestionnaires(): List<CustomQuestionnaireSummaryDto> =
+        api.customQuestionnaires(page = 1, pageSize = 100, activeOnly = false, deletedOnly = true).items
+
+    suspend fun deleteCustomEntry(id: String, entryId: String) = api.deleteCustomEntry(id, entryId)
+
+    suspend fun deletedCustomEntries(id: String): List<DeletedCustomEntryDto> = api.deletedCustomEntries(id)
+
+    suspend fun restoreCustomEntry(id: String, entryId: String) {
+        api.restoreCustomEntry(id, entryId)
+    }
+
     suspend fun customQuestionnaireOptions(
         designWorkshopId: String? = null
     ): List<CustomQuestionnaireOptionDto> =
@@ -3583,6 +3608,9 @@ class WorkshopRepository(
                     // one is a decision the designer makes afterwards on the questionnaire's own
                     // screen, where the dropdown lists workshops they actually work on.
                     designWorkshopId = null,
+                    // M13 (21 Oct 2026): one key per received file, so a retried adoption whose first
+                    // answer was lost is answered with the questionnaire it already made.
+                    idempotencyKey = adoptionIdempotencyKey(row.id, "q"),
                 )
                 persist(state.copy(remoteId = created.id))
             }
@@ -3616,6 +3644,7 @@ class WorkshopRepository(
                         // happened. Same discipline as `PendingEntry.createdId`.
                         persist(state.copy(sectionCreateStarted = true))
                         val afterSection = addCustomSection(
+                            idempotencyKey = adoptionIdempotencyKey(row.id, "s$sectionIndex"),
                             id = remoteId,
                             title = section.title.ifBlank { section.code.ifBlank { "Section" } },
                             // The bundle's own code, never a derived one: the code is what the report
@@ -3648,6 +3677,9 @@ class WorkshopRepository(
                         prompt = question.prompt,
                         helpText = question.helpText,
                         isRequired = question.isRequired,
+                        // M13: a question whose answer was lost before `questionsDone` moved is
+                        // answered from the first create on the retry, not made twice.
+                        idempotencyKey = adoptionIdempotencyKey(row.id, "s$sectionIndex", "q$questionIndex"),
                     )
                     questionIndex++
                     // AFTER EACH ONE. A pass that dies at question two hundred must resume at two
@@ -3920,7 +3952,8 @@ class WorkshopRepository(
         // AND NOTHING JUMPS THE QUEUE: if earlier steps for this questionnaire are still waiting,
         // this one waits behind them, or a rename could land before the add it renames.
         val behindOthers = pendingQuestionnaireOps(context, setOf(op.questionnaireId)).isNotEmpty()
-        if (!waitsForParent && !behindOthers && isOnline(context)) {
+        val online = isOnline(context)
+        if (!waitsForParent && !behindOthers && online) {
             try {
                 return applyQuestionnaireOp(context, op, key) ?: "Saved."
             } catch (e: CancellationException) {
@@ -3941,7 +3974,15 @@ class WorkshopRepository(
                 idempotencyKey = key,
             )
         )
-        return "Saved on this phone; added when online."
+        // L11 (21 Oct 2026): said for what is actually holding it. "Added when online" over a phone
+        // that IS online, behind an earlier step the server refused, sent the designer to wait for a
+        // signal they already had.
+        val earlierRefused = behindOthers && OfflineOutbox.all(context).any { entry ->
+            entry.type == OFFLINE_QFORM_OP && entry.createdId == null && entry.failure != null &&
+                runCatching { offlineJson.decodeFromString(QFormOp.serializer(), entry.payloadJson) }.getOrNull()
+                    ?.let { it.questionnaireId == op.questionnaireId || resolveTempId(it.questionnaireId, map) == resolveTempId(op.questionnaireId, map) } == true
+        }
+        return queuedAuthoringMessage(online = online, waitsForParent = waitsForParent, earlierRefused = earlierRefused)
     }
 
     suspend fun createCustomQuestionnaire(
@@ -3949,13 +3990,15 @@ class WorkshopRepository(
         description: String? = null,
         designWorkshopId: String? = null,
         kind: String? = null,
+        idempotencyKey: String? = null,
     ): CustomQuestionnaireDto = api.createCustomQuestionnaire(
         CustomQuestionnaireCreateBody(
             title = title.trim(),
             description = description?.trim()?.ifBlank { null },
             designWorkshopId = designWorkshopId?.takeIf { it.isNotBlank() },
             kind = kind?.takeIf { it.isNotBlank() },
-        )
+        ),
+        idempotencyKey,
     )
 
     /**
@@ -3997,12 +4040,14 @@ class WorkshopRepository(
         id: String,
         title: String,
         code: String? = null,
+        idempotencyKey: String? = null,
     ): CustomQuestionnaireDto = api.createCustomSection(
         id,
         CustomSectionCreateBody(
             title = title.trim(),
             code = code?.trim()?.ifBlank { null },
-        )
+        ),
+        idempotencyKey,
     )
 
     /**
@@ -4031,6 +4076,7 @@ class WorkshopRepository(
         prompt: String,
         helpText: String? = null,
         isRequired: Boolean = false,
+        idempotencyKey: String? = null,
     ): CustomQuestionnaireDto = api.createCustomQuestion(
         id,
         sectionId,
@@ -4038,7 +4084,8 @@ class WorkshopRepository(
             prompt = prompt.trim(),
             helpText = helpText?.trim()?.ifBlank { null },
             isRequired = isRequired,
-        )
+        ),
+        idempotencyKey,
     )
 
     /**
@@ -4082,13 +4129,17 @@ class WorkshopRepository(
         title: String? = null,
         respondentName: String? = null,
         notes: String? = null,
+        // M13 (21 Oct 2026): one key per "Start" press, reused by any retry of that press, so a
+        // sitting whose answer was lost is not started twice.
+        idempotencyKey: String = java.util.UUID.randomUUID().toString(),
     ): CustomEntryDto = api.createCustomEntry(
         id,
         CustomEntryCreateBody(
             title = title?.trim()?.ifBlank { null },
             respondentName = respondentName?.trim()?.ifBlank { null },
             notes = notes?.trim()?.ifBlank { null },
-        )
+        ),
+        idempotencyKey,
     )
 
     suspend fun updateCustomEntry(
@@ -4480,10 +4531,11 @@ class WorkshopRepository(
      *
      * THE TOKEN GOES FIRST and the deletion is best-effort, because those two are not equally
      * important: a designer handing the phone over must end up signed out even if a file will not
-     * delete. `DwQuestionnaireStore` is deliberately NOT cleared here — it holds the report annexure's
-     * evidence, it is unscoped by existing design, and emptying it on sign-out would silently destroy
-     * a courtyard export somebody is relying on. That one is a decision for its owner, stated in
-     * `DwQuestionnaireFormCache`'s header, not a side effect of this change.
+     * delete. `DwQuestionnaireStore` and `DwTranscriptStore` are deliberately NOT cleared here — they
+     * hold the report annexure's evidence, and emptying them on sign-out would silently destroy a
+     * courtyard export somebody is relying on. Since 21 Oct 2026 (audit M15) each copy carries the
+     * account that read it and is refused to every other account, so keeping them hands nothing to
+     * the next person who signs in.
      */
     suspend fun logout(context: Context) {
         val signedOut = tokenStore.getUser()?.id
@@ -7779,6 +7831,23 @@ class WorkshopRepository(
      *   is recorded as one ([UNFILED_BY_CHOICE]) so the replay sends the explicit null the server
      *   needs rather than an omitted key it would read as "leave it alone".
      */
+    /** H4: send a queued interview without the answers another researcher owns. */
+    suspend fun sendWithoutConflictingAnswers(context: Context, entryId: String): OutboxRetryResult {
+        val online = isOnline(context)
+        if (!OfflineOutbox.dropConflictingAnswers(context, entryId)) {
+            return OutboxRetryResult(false, 0, 1, 0, attempted = false)
+        }
+        val moved = syncOutbox(context)
+        val stillQueued = OfflineOutbox.all(context).any { it.id == entryId }
+        return OutboxRetryResult(
+            requestedSent = !stillQueued,
+            refusedSent = if (stillQueued) 0 else 1,
+            refusedTried = 1,
+            othersSent = (moved - if (stillQueued) 0 else 1).coerceAtLeast(0),
+            attempted = online,
+        )
+    }
+
     suspend fun repickOutboxEntry(
         context: Context,
         entryId: String,
@@ -8388,6 +8457,7 @@ class WorkshopRepository(
                             stale = outcome.stale,
                             currentUpdatedAt = outcome.currentUpdatedAt,
                             duplicateCandidates = outcome.duplicateCandidates,
+                            conflictingAnswerIds = outcome.conflictingAnswerIds,
                         )
                         // SAID WHEN IT CHANGES, NOT ON EVERY PASS THAT REACHES IT. Until a schema
                         // refusal could be re-attempted, an entry was refused exactly once and this
@@ -8491,6 +8561,8 @@ class WorkshopRepository(
              * Not a [conflict]: see [PendingEntry.duplicateCandidates].
              */
             val duplicateCandidates: List<OutboxDuplicateCandidate> = emptyList(),
+            /** H4: answers another researcher owns (403 `ANSWER_OWNED_BY_OTHER`). */
+            val conflictingAnswerIds: List<String> = emptyList(),
         ) : ReplayOutcome
     }
 
@@ -8566,6 +8638,17 @@ class WorkshopRepository(
                         conflict = false,
                         stale = true,
                         currentUpdatedAt = staleAt.ifBlank { null },
+                    )
+                }
+                // ANSWERS ANOTHER RESEARCHER OWNS (403 `ANSWER_OWNED_BY_OTHER`, H4 21 Oct 2026). Not a
+                // dead end: the tray offers "Send without them", which drops only those answers.
+                val owned = if (e is HttpException) ownedAnswersRefusal(e.code(), peekErrorBody(e)) else null
+                if (owned != null) {
+                    return ReplayOutcome.Rejected(
+                        owned.message,
+                        schemaSkew = false,
+                        conflict = false,
+                        conflictingAnswerIds = owned.questionIds,
                     )
                 }
                 // A LIKELY DUPLICATE IS ITS OWN ARM, NOT A CLASH (409 `artisan_possible_duplicate`):

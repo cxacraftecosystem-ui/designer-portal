@@ -449,6 +449,7 @@ async def _count_records(
             where["workshopId"] = workshop_id
         if in_artisans:
             where["artisans"] = {"some": {"artisanId": in_artisans}}
+        where["deletedAt"] = None
         return await db.questionnaireinterview.count(where=where)
 
     return 0
@@ -471,8 +472,9 @@ async def _count_sections(
         "answeredById": assignee_id,
         "question": {"is": {"sectionId": {"in": section_ids}}},
     }
+    where["interview"] = {"is": {"deletedAt": None}}
     if workshop_id:
-        where["interview"] = {"is": {"workshopId": workshop_id}}
+        where["interview"] = {"is": {"workshopId": workshop_id, "deletedAt": None}}
     responses = await db.questionnaireresponse.find_many(
         where=where,
         include={"question": True, "interview": {"include": {"artisans": True}}},

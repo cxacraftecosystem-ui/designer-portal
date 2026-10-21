@@ -1378,6 +1378,51 @@ async def interview_verdict(interview: Any, *, send: Send = DRAFTING) -> SendVer
     )
 
 
+async def dictation_verdict(
+    workshop_id: str,
+    *,
+    interview_id: str | None = None,
+    artisan_ids: list[str] | None = None,
+    record: Any = None,
+) -> SendVerdict:
+    """May a dictation for this workshop be sent, given WHO IT IS ABOUT (H3, 21 Oct 2026)?
+
+    :func:`workshop_verdict` covers only the artisans whose ``Artisan.designWorkshopId`` is this
+    workshop. An instant transcript recorded in an interview is the voice of THAT INTERVIEW'S
+    artisans, who need not be linked to the workshop at all — so one of them who refused was still
+    sent to the provider. This adds the interview's participants and any artisans the client names
+    (the ones picked on a form not yet saved) to the same rule: one refusal refuses.
+    """
+    workshop_id = str(workshop_id or "").strip()
+    ids: set[str] = {str(a).strip() for a in (artisan_ids or []) if str(a or "").strip()}
+    # A str or nothing: a route called directly (as the unit tests do) hands over FastAPI's
+    # ``Form(default=None)`` marker rather than None.
+    interview_id = interview_id.strip() if isinstance(interview_id, str) else ""
+    if interview_id:
+        rows = await db.query_raw(
+            'SELECT "artisanId" FROM "QuestionnaireInterviewArtisan" WHERE "interviewId" = $1',
+            interview_id,
+        )
+        ids.update(str(row["artisanId"]) for row in rows if row.get("artisanId"))
+    ids.update(await workshop_artisan_ids([workshop_id]))
+    artisans = await artisan_rows(sorted(ids))
+    return await _subjects_verdict(
+        None, [workshop_id] if workshop_id else [], artisans, send=DICTATION,
+        about=interview_id or workshop_id,
+        records={workshop_id: record} if record is not None and workshop_id else None,
+    )
+
+
+def split_ids(raw: str | None) -> list[str]:
+    """A comma-separated id list from a multipart form field, blanks dropped, order kept."""
+    seen: dict[str, None] = {}
+    for part in (raw if isinstance(raw, str) else "").split(","):
+        cleaned = part.strip()
+        if cleaned:
+            seen.setdefault(cleaned, None)
+    return list(seen)
+
+
 async def record_artisan_consent(
     artisan_id: str,
     *,

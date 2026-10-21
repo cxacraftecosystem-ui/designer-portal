@@ -302,7 +302,10 @@ async def consolidate_for_artisan(
     # derivation in full, and what to change on the day it stops holding.
     media_owners = await media_url_owners(current_user)
 
-    interview_where: dict[str, Any] = {"artisans": {"some": {"artisanId": artisan_id}}}
+    interview_where: dict[str, Any] = {
+        "artisans": {"some": {"artisanId": artisan_id}},
+        "deletedAt": None,
+    }
     and_clauses: list[dict[str, Any]] = []
     if vis:
         and_clauses.append(vis)

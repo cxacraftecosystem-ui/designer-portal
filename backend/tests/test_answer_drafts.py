@@ -192,7 +192,7 @@ def world(monkeypatch):
         return {}
 
     monkeypatch.setattr(routes, "viewable_where", read_all)
-    monkeypatch.setattr(routes, "require_record", required)
+    monkeypatch.setattr(routes, "require_live_record", required)
 
     async def not_a_post_holder(*_a, **_k):
         return None

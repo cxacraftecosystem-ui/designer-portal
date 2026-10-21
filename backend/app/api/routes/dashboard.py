@@ -145,7 +145,7 @@ async def dashboard_stats(current_user: Any = Depends(get_current_user)) -> dict
     ) = await gather_reads(
         *(delegate.group_by(by=["status"], count=True, where=view_where) for delegate in grouped),
         db.mediafile.count(where=media_view_where),
-        db.questionnaireinterview.count(where=pending(view_where)),
+        db.questionnaireinterview.count(where={"AND": [pending(view_where), {"deletedAt": None}]}),
         *(
             delegate.find_many(
                 where=view_where,
@@ -157,7 +157,7 @@ async def dashboard_stats(current_user: Any = Depends(get_current_user)) -> dict
         ),
         *(delegate.group_by(by=["status"], count=True, where=own_where) for delegate in grouped),
         db.mediafile.count(where=own_media_where),
-        db.questionnaireinterview.count(where=pending(own_where)),
+        db.questionnaireinterview.count(where={"AND": [pending(own_where), {"deletedAt": None}]}),
     )
 
     artisans, pending_artisans = _totals_by_status(artisan_groups)

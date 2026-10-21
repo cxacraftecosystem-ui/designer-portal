@@ -3169,7 +3169,12 @@ export function dictateAudio(
    * would silently send an artisan's voice to a third-party provider without the gate. Making it
    * required moves that from a runtime possibility to a compile error.
    */
-  workshopId: string
+  workshopId: string,
+  /**
+   * Extra consent subjects (H3, 21 Oct 2026): the interview a clip belongs to and the artisans it is
+   * about, so one interviewed artisan's refusal stops the send even when they are not on the workshop.
+   */
+  extraFields: Record<string, string> = {}
 ): Promise<DwDictationResult> {
   const form = new FormData();
   // The extension is carried in the part name because the server picks its decoder from the MIME
@@ -3190,6 +3195,7 @@ export function dictateAudio(
   //
   // Found from the Android side, where the same part had to be named for the first time.
   form.append("languageHint", language);
+  for (const [key, value] of Object.entries(extraFields)) form.append(key, value);
   // THE PER-WORKSHOP URL, because it is the only one that can enforce the artisan's consent. See
   // `dwDictatePathFor`. This used to post to `DW_DICTATE_PATH`, which takes no workshop id and so
   // consults no consent column — the gate was built, the columns were written, and the clip went to

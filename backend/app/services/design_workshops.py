@@ -2735,6 +2735,8 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
     # workflow. This model touches none of it.
     "QuestionnaireInterview": ReferenceModel(
         delegate="questionnaireinterview",
+        # A soft-deleted interview (audit H5) is not offered; one already cited still resolves by id.
+        offered_where={"deletedAt": None},
         # `title` ASCENDING, AND `interviewDate` DESCENDING IS A TRAP RATHER THAN A PREFERENCE.
         # `interviewDate` is NULLABLE and Postgres sorts NULLs FIRST under DESC, so ordering by
         # recency floats every undated interview to the top of the picker — the rows carrying the

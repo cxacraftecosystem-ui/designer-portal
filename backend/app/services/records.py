@@ -1651,6 +1651,14 @@ async def require_record(delegate: Any, record_id: str) -> Any:
     return record
 
 
+async def require_live_record(delegate: Any, record_id: str) -> Any:
+    """:func:`require_record` for a soft-deleted model: a row with ``deletedAt`` set is not found."""
+    record = await require_record(delegate, record_id)
+    if getattr(record, "deletedAt", None) is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    return record
+
+
 # --- The create-idempotency key, and the replay it makes indistinguishable from a first landing ---
 #
 # WHAT THIS IS FOR, IN ONE PARAGRAPH. A queued create is POSTed, the row is written, and the answer

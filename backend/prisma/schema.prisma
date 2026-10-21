@@ -2125,6 +2125,13 @@ model QuestionnaireInterview {
   /// interviews it reads. Anything that narrows the consolidated view by design workshop narrows it
   /// through here.
   designWorkshopId String?
+  /// SOFT DELETE (audit H5, 21 Oct 2026), as `Questionnaire.deletedAt`. `DELETE
+  /// /questionnaire/interviews/{id}` sets the pair and NULLS `artisanSetKey`, so the set is free for a
+  /// new interview; a content admin's `POST .../restore` clears the pair and recomputes the key from
+  /// the links (a 409 when a live interview took the set meanwhile). Answers, participants, AI drafts
+  /// and recordings all stay linked. Every read filters `deletedAt: null`.
+  deletedAt     DateTime?
+  deletedById   String?
 
   createdBy User                             @relation("QuestionnaireCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   location  Location?                        @relation(fields: [locationId], references: [id], onDelete: SetNull)
@@ -2141,6 +2148,8 @@ model QuestionnaireInterview {
   @@index([workshopId, createdAt])
   @@index([designWorkshopId, createdAt])
   @@index([createdAt])
+  /// The admin's trash listing (`deletedOnly`).
+  @@index([deletedAt])
 }
 
 model QuestionnaireInterviewArtisan {

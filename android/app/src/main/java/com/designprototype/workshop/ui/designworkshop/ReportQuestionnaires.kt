@@ -16,6 +16,9 @@ import com.designprototype.workshop.report.TableBlock
 import com.designprototype.workshop.report.TableColumn
 import com.designprototype.workshop.report.TemplateSection
 import com.designprototype.workshop.report.runsOf
+import com.designprototype.workshop.data.StageDto
+import com.designprototype.workshop.ui.questionnaires.QUESTIONNAIRE_KIND_STAGE_KEYS
+import com.designprototype.workshop.ui.questionnaires.labelForQuestionnaireKind
 import java.util.Locale
 
 /**
@@ -97,6 +100,8 @@ internal fun renderQuestionnaireAnnexure(
     section: TemplateSection,
     plan: ReportPlan,
     cache: DwQuestionnaireCache?,
+    /** The registry's stages, for the group headings (M16). Empty prints the groups by kind alone. */
+    stages: List<StageDto> = emptyList(),
 ): Int {
     if (cache == null) return 0
     val printed = cache.printedItems
@@ -127,14 +132,20 @@ internal fun renderQuestionnaireAnnexure(
     // reader can find. `builder.para` drops a blank, so the common case adds nothing.
     deviceNotes(cache).forEach { builder.para(it, style = ParaStyle.NOTE) }
 
-    printed.forEach { item ->
-        builder.heading(item.title.ifBlank { "Untitled questionnaire" }, level = 2, numbered = numbered)
-        builder.para(questionnaireProvenance(item), style = ParaStyle.NOTE)
+    // GROUPED BY THE STAGE EACH KIND BELONGS TO (M16), as `append_questionnaire_annexure`: a group
+    // with no heading (no kind stated) prints at level 2 exactly as before; a stated group takes
+    // level 2 for the stage and pushes its questionnaires to 3 and their sittings to 4.
+    questionnairesByStage(printed, stages).forEach { (stageHeading, group) ->
+      if (stageHeading.isNotEmpty()) builder.heading(stageHeading, level = 2, numbered = numbered)
+      val depth = if (stageHeading.isNotEmpty()) 3 else 2
+      group.forEach { item ->
+        builder.heading(item.title.ifBlank { "Untitled questionnaire" }, level = depth, numbered = numbered)
+        builder.para(questionnaireProvenance(item, stages), style = ParaStyle.NOTE)
         builder.para(item.description)
         val sittings = item.printedSittings
         val dropped = sittings.size - MAX_SITTINGS_PER_QUESTIONNAIRE
         sittings.take(MAX_SITTINGS_PER_QUESTIONNAIRE).forEach { sitting ->
-            builder.heading(sitting.label, level = 3, numbered = numbered)
+            builder.heading(sitting.label, level = depth + 1, numbered = numbered)
             builder.para(sittingProvenance(sitting), style = ParaStyle.NOTE)
             builder.para(sitting.notes)
             sittingBlocks(sitting).forEach(builder::add)
@@ -146,8 +157,43 @@ internal fun renderQuestionnaireAnnexure(
                 style = ParaStyle.NOTE,
             )
         }
+      }
     }
     return printed.size
+}
+
+/**
+ * `(sort key, group heading, provenance clause)` for one questionnaire — `_stage_group`.
+ *
+ * A known kind on a known stage sorts by the stage number; a kind this build does not know sorts
+ * after every stage, labelled with its own token; no kind sorts last with no heading.
+ */
+internal fun questionnaireStageGroup(item: DwQuestionnaireItem, stages: List<StageDto>): Triple<Int, String, String> {
+    if (item.kind.isBlank()) return Triple(10_000, "", "")
+    val label = labelForQuestionnaireKind(item.kind)
+    val stageKey = QUESTIONNAIRE_KIND_STAGE_KEYS[item.kind] ?: return Triple(9_000, label, "filed as $label")
+    val stage = stages.firstOrNull { it.key == stageKey }
+    val number = stage?.number ?: 8_000
+    val title = stage?.title ?: stageKey
+    return Triple(
+        number,
+        "$label \u2014 stage $number, $title",
+        "filed as $label, under stage $number ($title)",
+    )
+}
+
+/** The questionnaires as `[(group heading, items)]`, in stage order — `grouped_by_stage`. Stable. */
+internal fun questionnairesByStage(
+    items: List<DwQuestionnaireItem>,
+    stages: List<StageDto>,
+): List<Pair<String, List<DwQuestionnaireItem>>> {
+    val groups = ArrayList<Pair<String, MutableList<DwQuestionnaireItem>>>()
+    items.sortedBy { questionnaireStageGroup(it, stages).first }.forEach { item ->
+        val heading = questionnaireStageGroup(item, stages).second
+        if (groups.isNotEmpty() && groups.last().first == heading) groups.last().second += item
+        else groups += heading to mutableListOf(item)
+    }
+    return groups
 }
 
 /**
@@ -184,15 +230,18 @@ private fun deviceNotes(cache: DwQuestionnaireCache): List<String> {
 
 /** The contents table at the head of the annexure — `questionnaire_index_block`. */
 internal fun questionnaireIndexBlock(items: List<DwQuestionnaireItem>): TableBlock = TableBlock(
+    // THE KIND IS A COLUMN (M16), with the server's widths, which still total 100.
     columns = listOf(
-        TableColumn("Questionnaire", 46.0f),
-        TableColumn("Questions", 16.0f, numeric = true),
-        TableColumn("Sittings", 16.0f, numeric = true),
-        TableColumn("Answers recorded", 22.0f, numeric = true),
+        TableColumn("Questionnaire", 36.0f),
+        TableColumn("Kind", 18.0f),
+        TableColumn("Questions", 14.0f, numeric = true),
+        TableColumn("Sittings", 14.0f, numeric = true),
+        TableColumn("Answers recorded", 18.0f, numeric = true),
     ),
     rows = items.map { item ->
         listOf(
             runsOf(item.title.ifBlank { "Untitled questionnaire" }),
+            runsOf(labelForQuestionnaireKind(item.kind)),
             runsOf(if (item.questionCount > 0) grouped(item.questionCount) else "—"),
             runsOf(grouped(item.printedSittings.size)),
             runsOf(grouped(item.answeredTotal)),
@@ -267,8 +316,10 @@ internal fun sittingProvenance(sitting: DwQuestionnaireSitting): String {
  * destructive-ish edits applied after the first answer existed — a supersede or a retire — so two
  * reports of the same workshop that disagree can be told apart by it without opening the database.
  */
-internal fun questionnaireProvenance(item: DwQuestionnaireItem): String {
+internal fun questionnaireProvenance(item: DwQuestionnaireItem, stages: List<StageDto> = emptyList()): String {
     val parts = listOf(
+        // The kind and its stage first; empty when not stated, so that line is unchanged (M16).
+        questionnaireStageGroup(item, stages).third,
         "${item.printedSittings.size} ${if (item.printedSittings.size == 1) "sitting" else "sittings"}",
         if (item.questionCount > 0) "${item.questionCount} ${if (item.questionCount == 1) "question" else "questions"}" else "",
         "version ${item.version}",

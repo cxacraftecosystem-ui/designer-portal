@@ -87,6 +87,8 @@ data class DwTranscriptCache(
     /** Every AUDIO id the server's stages referenced at [fetchedAt] — see the file header. */
     val referencedIds: List<String> = emptyList(),
     val fetchedAt: String = "",
+    /** M15 (21 Oct 2026): the account this copy was read for; see [DwQuestionnaireCache.ownerUserId]. */
+    val ownerUserId: String = "",
 )
 
 /** `workshop_transcripts._media_ids_in`: one id, or a list of them. */
@@ -246,7 +248,10 @@ object DwTranscriptStore {
     private fun fileFor(context: Context, workshopId: String): File =
         File(rootDir(context), "${safeName(workshopId)}.json")
 
-    suspend fun load(context: Context, workshopId: String): DwTranscriptCache? {
+    suspend fun load(context: Context, workshopId: String, viewerId: String?): DwTranscriptCache? =
+        loadAny(context, workshopId)?.takeIf { dwCacheReadableBy(it.ownerUserId, viewerId) }
+
+    private suspend fun loadAny(context: Context, workshopId: String): DwTranscriptCache? {
         if (workshopId.isBlank()) return null
         memory[workshopId]?.let { return it }
         return withContext(Dispatchers.IO) {
@@ -264,22 +269,24 @@ object DwTranscriptStore {
     }
 
     /** Replace what this device holds. Only a successful server read reaches here. */
-    suspend fun store(context: Context, cache: DwTranscriptCache): DwTranscriptCache {
-        val workshopId = cache.workshopId
-        if (workshopId.isBlank()) return cache
+    suspend fun store(context: Context, cache: DwTranscriptCache, ownerUserId: String?): DwTranscriptCache {
+        // M15: stamped with its owner; a copy nobody owns is never written.
+        if (cache.workshopId.isBlank() || ownerUserId.isNullOrBlank()) return cache
+        val owned = cache.copy(ownerUserId = ownerUserId)
+        val workshopId = owned.workshopId
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val file = fileFor(context, workshopId)
                 val temp = File(file.parentFile, "${file.name}.tmp")
                 runCatching {
-                    temp.writeText(json.encodeToString(DwTranscriptCache.serializer(), cache))
+                    temp.writeText(json.encodeToString(DwTranscriptCache.serializer(), owned))
                     if (file.exists()) file.delete()
                     temp.renameTo(file)
                 }.onFailure { runCatching { temp.delete() } }
             }
         }
-        memory[workshopId] = cache
-        return cache
+        memory[workshopId] = owned
+        return owned
     }
 
     /**
@@ -295,8 +302,9 @@ object DwTranscriptStore {
         schema: SchemaResponse,
         stages: Map<String, StageBucketDto>,
         transcripts: Map<String, DwTranscriptItem>?,
+        ownerUserId: String?,
     ): DwTranscriptCache? {
         val cache = dwTranscriptCacheOf(workshopId, schema, stages, transcripts) ?: return null
-        return runCatching { store(context, cache) }.getOrNull()
+        return runCatching { store(context, cache, ownerUserId) }.getOrNull()
     }
 }

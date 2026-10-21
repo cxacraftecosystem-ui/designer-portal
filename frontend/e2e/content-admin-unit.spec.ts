@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { CONTENT_ADMIN_ROLES, ROLE_RANK, isAdmin, isContentAdmin } from "@/lib/permissions";
+import { CONTENT_ADMIN_ROLES, ROLE_RANK, isAdmin, isContentAdmin, mayDeleteQuestionnaire } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
 /**
@@ -31,6 +31,23 @@ test("the content admins are exactly the three admin tiers, and isAdmin is not w
   }
   expect(isContentAdmin(null)).toBe(false);
   expect(isAdmin(user("MINISTRY_ADMIN"))).toBe(false);
+});
+
+test("a questionnaire form is deleted by its author or a content admin, and nobody else (22 Oct 2026)", () => {
+  // The author: a designer deleting the form they made.
+  expect(mayDeleteQuestionnaire({ ...user("DESIGNER"), id: "author" }, "author")).toBe(true);
+  // Every content admin, on somebody else's form.
+  for (const role of CONTENT_ADMINS) expect(mayDeleteQuestionnaire(user(role), "author"), role).toBe(true);
+  // Every other role, a designer and a researcher included, on somebody else's form.
+  for (const role of Object.keys(ROLE_RANK) as UserRole[]) {
+    if (CONTENT_ADMINS.includes(role)) continue;
+    expect(mayDeleteQuestionnaire(user(role), "author"), role).toBe(false);
+  }
+  expect(mayDeleteQuestionnaire(null, "author")).toBe(false);
+  expect(mayDeleteQuestionnaire(user("DESIGNER"), null)).toBe(false);
+  // Sittings stay a content admin's: their Delete reads canDeleteRecords, not the author rule.
+  const form = read("app/(protected)/questionnaires/[id]/page.tsx");
+  expect(form).toContain("{mayDeleteSittings ? (\n                      <button");
 });
 
 test("admin view, and with it every Delete, is offered to the content admins", () => {
@@ -72,24 +89,25 @@ test("an attached file's remove control is drawn for content admins, admin view 
   expect(media).toContain("onRemove={!mayRemove || removingId === media.id ? undefined");
 });
 
-test("questionnaire deletes are content-admin only on both questionnaire screens", () => {
+test("the global form's deletes are content-admin only; a form's are its author's or an admin's", () => {
   const instrument = read("app/(protected)/questionnaire/page.tsx");
   expect(instrument).toContain("onRemove={canDeleteRecords ? () => removeQuestion(question) : undefined}");
   expect(instrument).toContain("{canDeleteRecords ? (\n                    <button type=\"button\" className=\"text-sm font-semibold text-red-700 dark:text-red-400\" onClick={() => removeSection(section)}>");
   const form = read("app/(protected)/questionnaires/[id]/page.tsx");
-  expect(form).toContain("const mayDelete = mayEdit && canDeleteRecords;");
+  expect(form).toContain("const mayDelete = mayEdit && mayDeleteQuestionnaire(user, form?.ownerId);");
+  expect(form).toContain("const mayDeleteSittings = mayEdit && canDeleteRecords;");
   expect(form).toContain("mayRemove={mayDelete}");
   expect(form).toContain("apiFetch(`/questionnaires/${id}`, { method: \"DELETE\" })");
   expect(form).toContain("apiFetch(`/questionnaires/${id}/entries/${entryId}`, { method: \"DELETE\" })");
 });
 
-test("a deleted questionnaire or sitting is restored by a content admin, in admin view", () => {
+test("a deleted sitting is restored by a content admin in admin view; a form by its author too", () => {
   const form = read("app/(protected)/questionnaires/[id]/page.tsx");
-  expect(form).toContain('"An admin can restore it."');
+  expect(form).toContain('"Its author or an admin can restore it."');
   expect(form).not.toContain("This cannot be undone.");
-  expect(form).toContain("{mayDelete && adminMode ? (\n        <DeletedSittings");
+  expect(form).toContain("{mayDeleteSittings && adminMode ? (\n        <DeletedSittings");
   const list = read("app/(protected)/questionnaires/page.tsx");
-  expect(list).toContain("{adminMode ? <DeletedQuestionnairesCard");
+  expect(list).toContain("{adminMode || !canDeleteRecords ? (\n        <DeletedQuestionnairesCard ownOnly={!canDeleteRecords}");
   const lib = read("lib/questionnaireForms.ts");
   expect(lib).toContain('deletedOnly: params.deletedOnly ? "true" : undefined');
   expect(lib).toContain("/restore`, { method: \"POST\" }");

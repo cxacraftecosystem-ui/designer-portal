@@ -591,6 +591,11 @@ def _taxonomies_for(scope: Scope) -> list[dict[str, Any]]:
     return [taxonomy for taxonomy in TAXONOMIES if taxonomy["id"] != "by-design-workshop"]
 
 
+def _live(where: dict[str, Any]) -> dict[str, Any]:
+    """``where`` for interviews that are not soft-deleted (audit H5, 21 Oct 2026)."""
+    return _and(where, {"deletedAt": None})
+
+
 def _and(where: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     """``where`` AND ``extra`` — returning ``where`` untouched when there is nothing to add, which
     is what keeps every query identical for an unrestricted caller."""
@@ -1437,7 +1442,7 @@ async def _list_artisan_level(segs: list[str], parent: str, scope: Scope) -> Lev
     if sub == "questionnaire":
         if len(segs) == 5:
             interviews = await db.questionnaireinterview.find_many(
-                where=_and({"artisans": {"some": {"artisanId": aid}}}, scope.records),
+                where=_and({"artisans": {"some": {"artisanId": aid}}}, _live(scope.records)),
                 take=TAKE,
                 order={"createdAt": "asc"},
                 include={"artisans": {"include": {"artisan": True}}},
@@ -1460,7 +1465,7 @@ async def _list_artisan_level(segs: list[str], parent: str, scope: Scope) -> Lev
                     "responses": {"include": {"question": True}},
                     "artisans": {"include": {"artisan": True}},
                 },
-                scope_where=scope.records,
+                scope_where=_live(scope.records),
             )
             info = _interview_info(interview)
             entries = []
@@ -2080,7 +2085,7 @@ async def _uploader_records(branch: str, wid: str, uid: str, scope: Scope) -> tu
                         },
                     ]
                 },
-                scope.records,
+                _live(scope.records),
             ),
             take=TAKE,
             order={"createdAt": "asc"},
@@ -2952,7 +2957,7 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
                 include=_TOOL_INCLUDE,
             ),
             db.questionnaireinterview.find_many(
-                where=scope.records,
+                where=_live(scope.records),
                 take=REPORT_TAKE,
                 order={"createdAt": "desc"},
                 include=_INTERVIEW_INCLUDE,
@@ -3153,11 +3158,11 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
                     rid,
                     "Interview",
                     include=_INTERVIEW_INCLUDE,
-                    scope_where=scope.records,
+                    scope_where=_live(scope.records),
                 )
             ]
         return await db.questionnaireinterview.find_many(
-            where=_and({"artisans": {"some": {"artisanId": {"in": aids}}}}, scope.records),
+            where=_and({"artisans": {"some": {"artisanId": {"in": aids}}}}, _live(scope.records)),
             take=REPORT_TAKE,
             order={"createdAt": "desc"},
             include=_INTERVIEW_INCLUDE,

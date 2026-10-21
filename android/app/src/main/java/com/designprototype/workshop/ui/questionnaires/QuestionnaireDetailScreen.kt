@@ -58,6 +58,10 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.RecordProseField
 import kotlinx.coroutines.CancellationException
+import com.designprototype.workshop.data.TempIdMap
+import com.designprototype.workshop.data.isTempId
+import com.designprototype.workshop.data.resolveTempId
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -91,6 +95,14 @@ fun QuestionnaireDetailScreen(
     onOpenEntry: (entryId: String) -> Unit,
     onMessage: (String) -> Unit,
     onError: (String) -> Unit,
+    /**
+     * M12 (21 Oct 2026): a questionnaire created offline is opened under its temporary id. Once its
+     * queued create lands, the router reopens it under the server's id so every server call on this
+     * screen names a real questionnaire.
+     */
+    onResolvedId: (serverId: String) -> Unit = {},
+    /** L9: called after a content admin deletes this questionnaire. */
+    onDeleted: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     // The application context, so the cache write below cannot outlive an Activity it holds.
@@ -109,7 +121,15 @@ fun QuestionnaireDetailScreen(
     var addingQuestionTo by remember { mutableStateOf<CustomSectionDto?>(null) }
     var editingQuestion by remember { mutableStateOf<CustomQuestionDto?>(null) }
     var removingQuestion by remember { mutableStateOf<CustomQuestionDto?>(null) }
+    /** L9: the sitting a content admin asked to delete, awaiting the confirmation. */
+    var deletingEntry by remember { mutableStateOf<CustomEntryDto?>(null) }
     var startingSitting by remember { mutableStateOf(false) }
+    /**
+     * M13 (21 Oct 2026): the last sitting start that did not come back, as (what was sent, its key).
+     * Pressing Start again with the same details reuses the key, so a start whose answer was lost
+     * is answered with that sitting rather than making a second one.
+     */
+    var unansweredStart by remember(questionnaireId) { mutableStateOf<Pair<String, String>?>(null) }
 
     // ── The .xlsx interchange ────────────────────────────────────────────────────────────────────
     // Absent by decision until 2026-08-16; the reversal and its reasoning are in
@@ -134,12 +154,11 @@ fun QuestionnaireDetailScreen(
     /**
      * Set when the questionnaire on screen came off this device's disk.
      *
-     * Every write on this screen goes through `mutate`, which will fail with a network error while
-     * this is set — and that is left as it is deliberately. This screen's writes are edits to the
-     * INSTRUMENT (rename a section, retire a question), and those genuinely cannot be composed
-     * offline: `guard_question_edit` decides between "updated" and "superseded" from whether the
-     * question already has answers, which is a fact this copy cannot know. Saying so up front is
-     * this notice's job; refusing per-button would be four more places to keep the same sentence.
+     * Edits to the INSTRUMENT made while this is set (add, rename, edit, retire) are QUEUED on the
+     * phone since 2026-10-16 (`authorQuestionnaireOrQueue`) and replayed in order; the server still
+     * decides between "updated" and "superseded" when each one lands, because only it knows whether
+     * the question has answers by then. Actions that name the questionnaire itself on the server
+     * (attach, kind, deactivate, a sitting, the spreadsheet) still need a connection and say so.
      */
     var cachedNotice by remember(questionnaireId) { mutableStateOf<String?>(null) }
 
@@ -254,7 +273,7 @@ fun QuestionnaireDetailScreen(
                 //
                 // Best-effort and silent: a full disk must not turn reading a questionnaire into an
                 // error message about a cache the designer never asked for.
-                runCatching { DwQuestionnaireStore.mergeQuestionnaire(appContext, it) }
+                runCatching { DwQuestionnaireStore.mergeQuestionnaire(appContext, it, repository.cachedUser()?.id) }
             }
             .onFailure { error ->
                 if (error !is CancellationException) {
@@ -265,6 +284,30 @@ fun QuestionnaireDetailScreen(
     }
 
     LaunchedEffect(questionnaireId) { workshops = attachableDesignWorkshops(repository) }
+
+    // M12: watch for the queued create to land, then hand the server id to the router.
+    LaunchedEffect(questionnaireId) {
+        if (!isTempId(questionnaireId)) return@LaunchedEffect
+        while (true) {
+            val real = runCatching { TempIdMap.all(appContext) }.getOrNull()?.let { resolveTempId(questionnaireId, it) }
+            if (real != null && !isTempId(real)) {
+                onResolvedId(real)
+                break
+            }
+            delay(TEMP_ID_POLL_MS)
+        }
+    }
+
+    /**
+     * M12: the server calls that name the questionnaire itself (attach, kind, deactivate, a new
+     * sitting, the spreadsheet and the handoff) wait until it has uploaded. Authoring steps do not:
+     * they are queued under the temporary id and replayed in order.
+     */
+    fun uploadedOrSay(): Boolean {
+        if (!isTempId(questionnaireId)) return true
+        onError(QUESTIONNAIRE_STILL_UPLOADING)
+        return false
+    }
 
     /** Run a write, then re-read the form. Every mutation on this screen goes through here. */
     fun mutate(failure: String, block: suspend () -> String?) {
@@ -282,6 +325,10 @@ fun QuestionnaireDetailScreen(
 
     val loaded = form
     val mayEdit = remember(loaded?.ownerId) { mayEditQuestionnaire(repository, loaded?.ownerId) }
+    // Removing a question and deleting the form are the author's or a content admin's (owner,
+    // 22 Oct 2026); deleting or restoring a sitting stays a content admin's alone.
+    val mayDelete = remember(loaded?.ownerId) { mayDeleteQuestionnaire(repository.cachedUser(), loaded?.ownerId) }
+    val mayDeleteSittings = remember { mayDeleteQuestionnaireItems(repository.cachedUser()) }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -312,6 +359,7 @@ fun QuestionnaireDetailScreen(
                     workshops = workshops,
                     onRename = { renaming = true },
                     onAttach = { workshopId ->
+                        if (!uploadedOrSay()) return@HeaderCard
                         mutate("The questionnaire could not be attached.") {
                             repository.updateCustomQuestionnaire(
                                 id = questionnaireId,
@@ -328,6 +376,7 @@ fun QuestionnaireDetailScreen(
                         }
                     },
                     onSetKind = { kind ->
+                        if (!uploadedOrSay()) return@HeaderCard
                         mutate("The kind could not be changed.") {
                             repository.updateCustomQuestionnaire(
                                 id = questionnaireId,
@@ -345,6 +394,7 @@ fun QuestionnaireDetailScreen(
                         }
                     },
                     onSetActive = { active ->
+                        if (!uploadedOrSay()) return@HeaderCard
                         mutate("The questionnaire could not be updated.") {
                             repository.updateCustomQuestionnaire(id = questionnaireId, isActive = active)
                             if (active) {
@@ -363,9 +413,10 @@ fun QuestionnaireDetailScreen(
                     reuploading = reuploading,
                     savedQuestionSetTo = savedQuestionSetTo,
                     savedWorkbookTo = savedWorkbookTo,
-                    onDownload = ::download,
+                    onDownload = { if (uploadedOrSay()) download(it) },
                     // Asked at the tap, before the file picker opens: see QuestionnaireOfflineCopy.kt.
                     onPickWorkbook = {
+                        if (!uploadedOrSay()) return@InterchangeCard
                         if (repository.isOnline(appContext)) pickWorkbook() else onError(WORKBOOK_UPLOAD_OFFLINE)
                     },
                 )
@@ -394,7 +445,7 @@ fun QuestionnaireDetailScreen(
                  * this API's stand-in for a delete and a retired instrument is exactly the thing a
                  * designer lifts for a new round.
                  */
-                ReuseCard(busy = reuseBusy, onOpen = { reusing = true })
+                ReuseCard(busy = reuseBusy, onOpen = { if (uploadedOrSay()) reusing = true })
 
                 uploadReport?.let { report ->
                     UploadReportPanel(report = report, onDismiss = { uploadReport = null })
@@ -417,7 +468,9 @@ fun QuestionnaireDetailScreen(
                 SittingsCard(
                     form = loaded,
                     busy = busy,
+                    onDeleteEntry = if (mayDeleteSittings && !isTempId(questionnaireId)) ({ deletingEntry = it }) else null,
                     onStart = {
+                        if (!uploadedOrSay()) return@SittingsCard
                         if (repository.isOnline(appContext)) startingSitting = true else onError(SITTING_START_OFFLINE)
                     },
                     onOpenEntry = onOpenEntry,
@@ -426,6 +479,7 @@ fun QuestionnaireDetailScreen(
                 FormCard(
                     form = loaded,
                     mayEdit = mayEdit,
+                    mayDelete = mayDelete,
                     busy = busy,
                     onAddSection = { addingSection = true },
                     onRenameSection = { renamingSection = it },
@@ -433,6 +487,32 @@ fun QuestionnaireDetailScreen(
                     onEditQuestion = { editingQuestion = it },
                     onRemoveQuestion = { removingQuestion = it },
                 )
+
+                // L9 (21 Oct 2026): a sitting's trash, content admins only.
+                if (mayDeleteSittings && !isTempId(questionnaireId)) {
+                    DeletedSittingsCard(
+                        repository = repository,
+                        questionnaireId = questionnaireId,
+                        reloadKey = reload,
+                        onRestored = { reload++ },
+                        onMessage = onMessage,
+                        onError = onError,
+                    )
+                }
+                // The form's own soft delete: its author or a content admin (owner, 22 Oct 2026).
+                if (mayDelete && !isTempId(questionnaireId)) {
+                    com.designprototype.workshop.ui.RecordDangerZoneCard(
+                        noun = "questionnaire",
+                        delete = { repository.deleteCustomQuestionnaire(questionnaireId) },
+                        onDeleted = {
+                            onMessage("Questionnaire deleted. Its author or an admin can restore it.")
+                            onDeleted()
+                        },
+                        onError = { onError(it.apiErrorMessage("The questionnaire could not be deleted.")) },
+                        body = QuestionnaireTrashCopy.QUESTIONNAIRE_BODY,
+                        confirmBody = QuestionnaireTrashCopy.QUESTIONNAIRE_CONFIRM,
+                    )
+                }
             }
         }
         Spacer(Modifier.padding(bottom = 8.dp))
@@ -636,24 +716,9 @@ fun QuestionnaireDetailScreen(
     }
 
     removingQuestion?.let { question ->
-        val retires = question.hasAnswers
-        /*
-         * A sitting holds an answer ROW for this question whose text is blank.
-         *
-         * VERIFIED AGAINST THE RUNNING API, and it is the one case where the two halves of the rule
-         * disagree. `guard_question_edit` counts only answers with text, so a blank row leaves
-         * `hasAnswers` false and the server takes the real-delete path — while the database's
-         * ON DELETE RESTRICT counts the ROW, and refuses. The DELETE comes back 500
-         * (ForeignKeyViolationError), which reaches the designer as "something went wrong on the
-         * server" about a question they can see perfectly well.
-         *
-         * Blank rows are ordinary: clearing an answer that was recorded earlier leaves one. So the
-         * warning states the fact this client can actually see — a sitting points at this question —
-         * rather than promising an outcome. Nothing here works around it; the fix belongs on the
-         * server, which owns both halves of the rule.
-         */
-        val blankAnswerRow = !retires && loaded != null &&
-            loaded.entries.any { entry -> entry.answers.any { it.questionId == question.id } }
+        // M17 (21 Oct 2026): an answer with notes but no text still counts, as on the server, so
+        // its question is retired and the notes kept. Blank rows are cleared by the server first.
+        val retires = questionRemovalRetires(question, loaded?.entries.orEmpty())
         AlertDialog(
             onDismissRequest = { if (!busy) removingQuestion = null },
             title = { Text(if (retires) "Retire this question?" else "Remove this question?") },
@@ -669,13 +734,6 @@ fun QuestionnaireDetailScreen(
                         color = MaterialTheme.field.muted,
                         style = MaterialTheme.typography.bodySmall
                     )
-                    if (blankAnswerRow) {
-                        Text(
-                            "A sitting holds a blank answer here, so it can't be deleted. Remove that blank first.",
-                            color = MaterialTheme.field.warning,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
                 }
             },
             confirmButton = {
@@ -699,6 +757,36 @@ fun QuestionnaireDetailScreen(
         )
     }
 
+    deletingEntry?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { if (!busy) deletingEntry = null },
+            title = { Text(QuestionnaireTrashCopy.SITTING_CONFIRM_TITLE) },
+            text = {
+                Text(
+                    (entry.respondentName?.takeIf { it.isNotBlank() } ?: entry.title.ifBlank { "This sitting" }) +
+                        ". " + QuestionnaireTrashCopy.SITTING_CONFIRM,
+                    color = MaterialTheme.field.body,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        deletingEntry = null
+                        mutate("The sitting could not be deleted.") {
+                            repository.deleteCustomEntry(questionnaireId, entry.id)
+                            "Sitting deleted. An admin can restore it."
+                        }
+                    }
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = { deletingEntry = null }) { Text("Cancel") }
+            }
+        )
+    }
+
     if (startingSitting && loaded != null) {
         StartSittingDialog(
             busy = busy,
@@ -707,14 +795,19 @@ fun QuestionnaireDetailScreen(
                 startingSitting = false
                 if (busy) return@StartSittingDialog
                 busy = true
+                val sent = "$respondent|$notes"
+                val key = unansweredStart?.takeIf { it.first == sent }?.second ?: java.util.UUID.randomUUID().toString()
+                unansweredStart = sent to key
                 scope.launch {
                     runCatching {
                         repository.startCustomEntry(
                             id = questionnaireId,
                             respondentName = respondent,
                             notes = notes,
+                            idempotencyKey = key,
                         )
                     }.onSuccess { entry ->
+                        unansweredStart = null
                         // Straight into the answer sheet. A designer who has just named the person in
                         // front of them wants the first question, not a list with one more row on it.
                         onOpenEntry(entry.id)
@@ -1006,6 +1099,8 @@ private fun SittingsCard(
     busy: Boolean,
     onStart: () -> Unit,
     onOpenEntry: (String) -> Unit,
+    /** L9: null unless this account may delete sittings (content admins). */
+    onDeleteEntry: ((CustomEntryDto) -> Unit)? = null,
 ) {
     val total = activeQuestionCount(form)
     ElevatedCard(
@@ -1036,6 +1131,7 @@ private fun SittingsCard(
                     total = total,
                     form = form,
                     onOpen = { onOpenEntry(entry.id) },
+                    onDelete = onDeleteEntry?.let { delete -> { delete(entry) } },
                 )
             }
 
@@ -1069,6 +1165,7 @@ private fun SittingRow(
     total: Int,
     form: CustomQuestionnaireDto,
     onOpen: () -> Unit,
+    onDelete: (() -> Unit)? = null,
 ) {
     var expanded by remember(entry.id) { mutableStateOf(false) }
     val promptById = remember(form) {
@@ -1099,6 +1196,12 @@ private fun SittingRow(
                 Text(entrySubtitle(entry, total), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             OutlinedButton(onClick = onOpen) { Text("Answer") }
+        }
+        if (onDelete != null) {
+            // L9: content admins only; the sitting and its answers are kept and can be restored.
+            TextButton(onClick = onDelete, modifier = Modifier.align(Alignment.End)) {
+                Text("Delete sitting", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+            }
         }
         if (expanded) {
             val recorded = entry.answers.filter { !it.answerText.isNullOrBlank() || !it.notes.isNullOrBlank() }
@@ -1146,6 +1249,7 @@ private fun SittingRow(
 private fun FormCard(
     form: CustomQuestionnaireDto,
     mayEdit: Boolean,
+    mayDelete: Boolean,
     busy: Boolean,
     onAddSection: () -> Unit,
     onRenameSection: (CustomSectionDto) -> Unit,
@@ -1207,6 +1311,7 @@ private fun FormCard(
                         QuestionRow(
                             question = question,
                             mayEdit = mayEdit,
+                            mayDelete = mayDelete,
                             busy = busy,
                             onEdit = { onEditQuestion(question) },
                             onRemove = { onRemoveQuestion(question) },
@@ -1236,6 +1341,7 @@ private fun FormCard(
 private fun QuestionRow(
     question: CustomQuestionDto,
     mayEdit: Boolean,
+    mayDelete: Boolean,
     busy: Boolean,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
@@ -1283,11 +1389,16 @@ private fun QuestionRow(
         // A retired question is offered NO controls at all. Editing one is refused by the server (and
         // the re-upload path says so in as many words), and "deleting" something already gone would
         // only be a way to hit the ON DELETE RESTRICT on its answers.
-        if (mayEdit && question.isActive) {
+        if ((mayEdit || mayDelete) && question.isActive) {
             ActionRow {
-                TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, style = MaterialTheme.typography.labelMedium) }
-                TextButton(onClick = onRemove, enabled = !busy) {
-                    Text(if (question.hasAnswers) "Retire" else "Delete", style = MaterialTheme.typography.labelMedium)
+                if (mayEdit) {
+                    TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, style = MaterialTheme.typography.labelMedium) }
+                }
+                // M2: the form's author or a content admin, the server's rule on every path.
+                if (mayDelete) {
+                    TextButton(onClick = onRemove, enabled = !busy) {
+                        Text(if (question.hasAnswers) "Retire" else "Delete", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }

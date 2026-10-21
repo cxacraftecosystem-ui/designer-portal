@@ -18,7 +18,7 @@ API lags the tree by however many commits have not been deployed; see
 |---|---|
 | Prisma models | **111** |
 | Prisma enums | **42** |
-| `@@index` declarations | 302 |
+| `@@index` declarations | 303 |
 | `@@unique` declarations | 43 |
 
 Models: `User`, `AssignedTask`, `Feedback`, `FeedbackReport`, `UserPreference`, `AppRelease`, `CraftCategory`, `CraftSubCategory`, `Craft`, `CraftCode`, `CraftSpelling`, `CrossPortalArtisanLink`, `ArtisanCard`, `ArtisanCardEvent`, `CrossPortalAccessLog`, `Location`, `Artisan`, `Workshop`, `WorkshopArtisan`, `WorkshopCraft`, `ProductDocumentation`, `ToolDocumentation`, `ToolArtisan`, `ToolCraft`, `MediaFile`, `TranscriptInsight`, `MediaProcessingJob`, `QuestionnaireSection`, `QuestionnaireSectionStatus`, `QuestionnaireQuestion`, `QuestionnaireInterview`, `QuestionnaireInterviewArtisan`, `QuestionnaireResponse`, `QuestionnaireAnswerDraft`, `Questionnaire`, `QuestionnaireFormSection`, `QuestionnaireFormQuestion`, `QuestionnaireFormEntry`, `QuestionnaireFormAnswer`, `Process`, `ProcessStep`, `ReviewLog`, `AppSetting`, `WorkshopAssignment`, `ManagedSecret`, `UserAiCredential`, `SecretTestResult`, `DataAccessGrant`, `DataAccessScopeItem`, `EntryComment`, `RecordRevision`, `DesignWorkshop`, `DesignWorkshopViewer`, `DesignWorkshopInspector`, `DesignWorkshopOversight`, `DwArtisanImport`, `DesignWorkshopAccessRequest`, `RecordAccessToken`, `RecordAccessTokenRedemption`, `DesignWorkshopProvisionalMember`, `DwStageEntry`, `DwCustomSection`, `DwCustomField`, `DwReportExport`, `DwAiLayer`, `DwAiLayerDecision`, `Consent`, `DwWorkshopConsentDecision`, `DwInspectionFeedback`, `DwDictationDailyUsage`, `DwAiVerbDailyUsage`, `DwReviewRating`, `DesignerRoster`, `DesignerProfile`, `SanctionOrder`, `PasswordResetToken`, `PasswordResetRequest`, `TwoFactorChallenge`, `AccessRoster`, `UsageEvent`, `UsageConsentDecision`, `AnnualPlanEntry`, `SanctionOrderDesigner`, `SanctionOrderImport`, `WorkshopTypeOption`, `RegionalDirectorState`, `EmailMessage`, `DwReportDelivery`, `IdempotencyKey`, `AadhaarOtpThrottle`, `DwInspectionClearance`, `DwRoundSnapshot`, `Notification`, `MinistryDataExport`, `AadhaarLogArchive`, `AadhaarLegalHold`, `WeeklyDigest`, `SearchDocument`, `SearchIndexQueue`, `ArtisanDuplicateCandidate`, `ArtisanPeerScan`, `ArtisanMerge`, `GeoAlias`, `MinistryExportRecipient`, `MinistryExportPack`, `MinistryExportDownload`, `SttProviderState`, `SttUsage`, `SttBudget`, `TranscriptionChunk`, `TranscriptCache`.
@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**512 operations** in the working tree — 243 GET, 175 POST, 41 DELETE,
+**513 operations** in the working tree — 243 GET, 176 POST, 41 DELETE,
 28 PATCH, 25 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -35,8 +35,8 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 |---|---|
 | `design_workshops.py` | 50 |
 | `questionnaire_forms.py` | 24 |
+| `questionnaire.py` | 22 |
 | `media.py` | 21 |
-| `questionnaire.py` | 21 |
 | `workshops.py` | 21 |
 | `design_workshop_oversight.py` | 20 |
 | `aadhaar.py` | 14 |
@@ -144,9 +144,9 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 346 | 6278 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 296 | 3354 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 332 | 3927 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Backend unit (`backend/tests/`) | 350 | 6317 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 297 | 3384 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 342 | 3958 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 13 | 40 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
@@ -172,11 +172,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 327 | 199,768 | 327 | 199,768 |
-| `frontend/app` | 123 | 61,367 | 123 | 61,367 |
-| `frontend/components` | 402 | 149,255 | 402 | 149,255 |
-| `frontend/lib` | 196 | 84,170 | 196 | 84,170 |
-| `android/app/src/main/java` | 372 | 259,897 | 372 | 259,897 |
+| `backend/app` | 327 | 200,162 | 327 | 200,162 |
+| `frontend/app` | 123 | 61,609 | 123 | 61,609 |
+| `frontend/components` | 403 | 149,437 | 403 | 149,437 |
+| `frontend/lib` | 199 | 84,589 | 199 | 84,589 |
+| `android/app/src/main/java` | 376 | 260,768 | 376 | 260,768 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is

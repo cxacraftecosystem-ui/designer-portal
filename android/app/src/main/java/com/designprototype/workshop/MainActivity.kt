@@ -2,6 +2,7 @@ package com.designprototype.workshop
 
 import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.plural
+import com.designprototype.workshop.data.interviewAnswersToSend
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.ui.destructiveAction
 import android.Manifest
@@ -5407,7 +5408,11 @@ private fun HomeScreen(
                     screen = Screen.QuestionnaireAnswers(s.questionnaireId, entryId)
                 },
                 onMessage = { showMessage(it) },
-                onError = { showError(it) }
+                onError = { showError(it) },
+                // M12: once a questionnaire created offline has uploaded, reopen it by its real id.
+                onResolvedId = { real -> screen = Screen.QuestionnaireDetail(real) },
+                // L9: a deleted questionnaire is no longer there to look at.
+                onDeleted = { message = null; screen = Screen.Questionnaires },
             )
 
             is Screen.QuestionnaireAnswers -> QuestionnaireAnswerScreen(
@@ -10785,6 +10790,9 @@ private fun DeleteRecordSection(
         delete = { deleteByMode(repository, mode, recordId) },
         onDeleted = onDeleted,
         onError = { onError(it.userMessage(RecordDangerZone.FAILED)) },
+        // H5: an interview's delete is soft, and says so.
+        body = if (mode == EntryMode.QUESTIONNAIRE) RecordDangerZone.INTERVIEW_BODY else null,
+        confirmBody = if (mode == EntryMode.QUESTIONNAIRE) RecordDangerZone.INTERVIEW_CONFIRM_BODY else null,
     )
 }
 
@@ -20134,7 +20142,14 @@ private fun QuestionnaireForm(
         }
         transcribing = transcribing + key
         scope.launch {
-            runCatching { repository.designWorkshopDictate(workshopId, clip, language) }
+            runCatching {
+                // H3: the interview's own artisans gate the send too, not only the workshop's.
+                repository.designWorkshopDictate(
+                    workshopId, clip, language,
+                    interviewId = editing?.id,
+                    artisanIds = selectedArtisans,
+                )
+            }
                 .onSuccess { answer ->
                     val text = answer.text.trim()
                     if (text.isEmpty()) {
@@ -21209,13 +21224,12 @@ private fun QuestionnaireForm(
                     val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
                     // Only send answers this interviewer actually added or changed; untouched answers
                     // (including those entered by other interviewers) are left exactly as they were.
-                    val responsesToSend = questions.mapNotNull { question ->
-                        val current = answers[question.id]?.value?.trim().orEmpty()
-                        val initial = editing?.responses?.firstOrNull { it.questionId == question.id }?.answerText?.trim().orEmpty()
-                        if (current.isNotBlank() && current != initial) {
-                            QuestionnaireResponseRequest(questionId = question.id, answerText = current)
-                        } else null
-                    }
+                    // H4 (21 Oct 2026): the rule is `interviewAnswersToSend`'s, pinned by a JVM test.
+                    val responsesToSend = interviewAnswersToSend(
+                        questionIds = questions.map { it.id },
+                        current = { id -> answers[id]?.value },
+                        initial = editing?.responses.orEmpty().associate { it.questionId to it.answerText },
+                    ).map { (id, text) -> QuestionnaireResponseRequest(questionId = id, answerText = text) }
                     // Offline: queue the interview + every recorded clip (with its section/question
                     // nomenclature) and attachments, to upload on reconnect.
                     //

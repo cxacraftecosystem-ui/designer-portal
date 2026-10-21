@@ -37,12 +37,14 @@ SITTING has no workshop and ``report_items`` selects on ``designWorkshopId`` alo
 is in ``reuse_questionnaire``. The cost of the copy is divergence between the two instruments, and it
 is the cost the feature accepts on purpose.
 
-DELETING IS A CONTENT ADMIN'S ACT (owner's ruling, 2026-10-20). Everyone else retires a form with
-``PATCH {isActive: false}``, which takes it out of every list and every dropdown while the answers
-stay; ``DELETE /questionnaires/{id}`` and ``DELETE /questionnaires/{id}/entries/{entry_id}`` are for
-``deps.CONTENT_ADMIN_ROLES`` alone. Both are SOFT deletes (``deletedAt``): every read here filters
-them out, ``GET /questionnaires?deletedOnly=true`` and ``GET /questionnaires/{id}/deleted-entries``
-list them for a content admin, and ``POST .../restore`` puts one back whole. The one DELETE in this file removes a
+WHO DELETES WHAT (owner, 2026-10-20, amended 2026-10-22). A FORM and everything inside it (its
+sections, its questions, a re-upload that drops questions) is edited and deleted by its AUTHOR
+(``ownerId``) or a content admin (``deps.CONTENT_ADMIN_ROLES``); everyone else gets 403
+(``_require_owner``). A SITTING (``DELETE /questionnaires/{id}/entries/{entry_id}``) stays a content
+admin's alone. Both are SOFT deletes (``deletedAt``): every read here filters them out,
+``GET /questionnaires?deletedOnly=true`` lists deleted forms (a content admin sees every one, an author
+their own), ``GET /questionnaires/{id}/deleted-entries`` lists deleted sittings for a content admin,
+and ``POST .../restore`` puts one back whole (a form: its author or a content admin). The one DELETE in this file removes a
 single QUESTION, and even that only really deletes when nobody has answered it — otherwise it
 retires. The database agrees with both: see the ``ON DELETE RESTRICT`` on
 ``QuestionnaireFormAnswer.questionId``.
@@ -766,7 +768,15 @@ async def reupload_questionnaire(
         )
     try:
         report = await apply_parsed_edit(
-            questionnaire_id, parsed, user_id=current_user.id, title=title
+            questionnaire_id,
+            parsed,
+            user_id=current_user.id,
+            title=title,
+            # ONE REMOVAL RULE ON EVERY PATH (owner, 21 Oct 2026, amended 22 Oct; audit M2): a
+            # question left out of the file is retired or deleted for whoever may remove one on
+            # DELETE .../questions — the form's author or a content admin, which `_require_owner`
+            # above has already established for this caller.
+            may_remove=True,
         )
     except QuestionnaireEditError as exc:
         raise HTTPException(
@@ -805,14 +815,15 @@ async def list_questionnaires(
     narrows an admin's view without changing anybody else's. ``designWorkshopId`` is what the
     workshop screen passes to show only the forms attached to it.
 
-    ``deletedOnly`` is THE TRASH, newest deletion first, for content admins alone and refused with
-    a 403 for anyone else, exactly as ``GET /design-workshops?deletedOnly=true`` is. It ignores
-    ``activeOnly``: a form retired before it was deleted is still one an admin may restore.
+    ``deletedOnly`` is THE TRASH, newest deletion first. A content admin sees every deleted form;
+    anyone else sees only the forms they authored, because those are the ones they may restore
+    (owner, 22 Oct 2026). It ignores ``activeOnly``: a form retired before it was deleted is still
+    one its author or an admin may restore.
     """
     _require_designer(current_user)
-    if deletedOnly and not is_content_admin(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     where: dict[str, Any] = {"deletedAt": {"not": None} if deletedOnly else None}
+    if deletedOnly and not is_content_admin(current_user):
+        where["ownerId"] = current_user.id
     if activeOnly and not deletedOnly:
         where["isActive"] = True
     if designWorkshopId:
@@ -825,7 +836,7 @@ async def list_questionnaires(
             {"title": contains(search)},
             {"description": contains(search)},
         ]
-    if mineOnly:
+    if mineOnly or (deletedOnly and not is_content_admin(current_user)):
         # An explicit "mine" means MINE — the ones this designer uploaded — and must not quietly
         # include a colleague's form that happens to hang off a shared workshop.
         where["ownerId"] = current_user.id
@@ -988,13 +999,7 @@ async def read_questionnaire(
     not exist and the API handed it over.
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
-    entitled = (
-        record.ownerId == current_user.id
-        or is_content_admin(current_user)
-        # A co-designer on the workshop this form belongs to. See the helper for why the sittings
-        # come with it rather than being withheld.
-        or await _works_on_this_questionnaires_workshop(record, current_user)
-    )
+    entitled = await _sees_every_sitting(record, current_user)
     mine_only = None if entitled else current_user.id
     form = await load_form(
         questionnaire_id, include_retired=includeRetired, only_entries_of=mine_only
@@ -1312,24 +1317,32 @@ async def create_section(
     code = (payload.code or "").strip()
     if not code or code.lower() in codes:
         code = derive_section_code(payload.title, codes)
-    made = await db.questionnaireformsection.create(
-        data={
-            "questionnaireId": questionnaire_id,
-            "code": code,
-            "title": payload.title.strip(),
-            "sortOrder": payload.sortOrder or (max((s.sortOrder for s in existing), default=0) + 1),
-        }
-    )
-    for position, question in enumerate(payload.questions, start=1):
-        await db.questionnaireformquestion.create(
+    # ONE TRANSACTION, TWO STATEMENTS (audit M4, 21 Oct 2026): the section and every question in it
+    # land together or not at all, as ``POST /questionnaires`` has since D2. A failure part way used
+    # to leave a section holding the first few of its questions.
+    async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
+        made = await tx.questionnaireformsection.create(
             data={
-                "sectionId": made.id,
-                "prompt": question.prompt.strip(),
-                "helpText": question.helpText,
-                "isRequired": question.isRequired,
-                "sortOrder": question.sortOrder or position,
+                "questionnaireId": questionnaire_id,
+                "code": code,
+                "title": payload.title.strip(),
+                "sortOrder": payload.sortOrder
+                or (max((s.sortOrder for s in existing), default=0) + 1),
             }
         )
+        if payload.questions:
+            await tx.questionnaireformquestion.create_many(
+                data=[
+                    {
+                        "sectionId": made.id,
+                        "prompt": question.prompt.strip(),
+                        "helpText": question.helpText,
+                        "isRequired": question.isRequired,
+                        "sortOrder": question.sortOrder or position,
+                    }
+                    for position, question in enumerate(payload.questions, start=1)
+                ]
+            )
     await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     return public_encode(await load_form(questionnaire_id))
 
@@ -1368,6 +1381,8 @@ async def update_section(
     )
     if "title" in data:
         data["title"] = data["title"].strip()
+    # TAKING A SECTION OUT IS A REMOVAL, and removals belong to whoever may edit the form: its author
+    # or a content admin (owner, 22 Oct 2026), which `_require_owner` above already checked.
     if data:
         await db.questionnaireformsection.update(where={"id": section_id}, data=data)
     await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
@@ -1494,9 +1509,8 @@ async def remove_question(
     asked and keeps its answers; a client that assumed 204-means-gone would show a question the
     designer just deleted still sitting in the list, with no explanation.
 
-    Content admins only since 2026-10-20 (``deps.CONTENT_ADMIN_ROLES``).
+    The form's author or a content admin (owner, 22 Oct 2026), as for every edit of the form.
     """
-    assert_can_delete(current_user)
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
@@ -1536,8 +1550,10 @@ async def remove_question(
     # Deleting the blank rows loses no fieldwork: they assert nothing, which is the same reason the
     # guard does not count them. Anything with text took the retire branch above and never reaches
     # here, so this cannot remove a recorded answer.
-    await db.questionnaireformanswer.delete_many(where={"questionId": question_id})
-    await db.questionnaireformquestion.delete(where={"id": question_id})
+    # Together or not at all: the blank rows and the question are one removal.
+    async with db.tx() as tx:
+        await tx.questionnaireformanswer.delete_many(where={"questionId": question_id})
+        await tx.questionnaireformquestion.delete(where={"id": question_id})
     return public_encode(
         {
             "action": "deleted",
@@ -1645,6 +1661,18 @@ async def update_entry(
     return public_encode(entry)
 
 
+async def _sees_every_sitting(record: Any, user: Any) -> bool:
+    """May this account read every sitting of this form, or only its own? One answer for the read
+    and for the answers PUT, so the second cannot hand back what the first withholds (audit M6)."""
+    return (
+        record.ownerId == user.id
+        or is_content_admin(user)
+        # A co-designer on the workshop this form belongs to. See the helper for why the sittings
+        # come with it rather than being withheld.
+        or await _works_on_this_questionnaires_workshop(record, user)
+    )
+
+
 @router.put("/{questionnaire_id}/entries/{entry_id}/answers")
 async def record_answers(
     questionnaire_id: str,
@@ -1671,6 +1699,12 @@ async def record_answers(
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=False
     )
+    # AN EMPTY BATCH IS REFUSED (audit M6). It wrote nothing and answered with every answer of the
+    # sitting, so it was a read of somebody else's sitting that ``GET /{id}`` withholds.
+    if not payload.answers:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="There are no answers to save."
+        )
     try:
         result = await save_answers(
             entry, payload.answers, user_id=current_user.id, is_admin=is_content_admin(current_user)
@@ -1679,7 +1713,14 @@ async def record_answers(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-    answers = await db.questionnaireformanswer.find_many(where={"entryId": entry.id})
+    where: dict[str, Any] = {"entryId": entry.id}
+    # The same narrowing as the read: a sitting that is not the caller's, on a form whose sittings
+    # they may not all see, answers with the caller's own rows only.
+    if entry.createdById != current_user.id and not await _sees_every_sitting(
+        record, current_user
+    ):
+        where["answeredById"] = current_user.id
+    answers = await db.questionnaireformanswer.find_many(where=where)
     return public_encode({"saved": result, "answers": answers})
 
 
@@ -1765,15 +1806,15 @@ async def delete_questionnaire(
     questionnaire_id: str,
     current_user: Any = Depends(get_current_user),
 ) -> Response:
-    """Delete a questionnaire. Content admins only.
+    """Delete a questionnaire. Its author or a content admin (owner, 22 Oct 2026).
 
     A SOFT delete (owner, 2026-10-20), as a design workshop's is: only ``deletedAt`` and
     ``deletedById`` are written. Its sections, questions, sittings and answers stay exactly as they
     were, every read here stops finding it, and ``POST /questionnaires/{id}/restore`` brings it back
     whole. Nothing cascades either way.
     """
-    assert_can_delete(current_user)
     record = await _require_questionnaire(questionnaire_id, current_user)
+    _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
     await db.questionnaire.update(
         where={"id": questionnaire_id},
@@ -1785,15 +1826,16 @@ async def delete_questionnaire(
 @router.post("/{questionnaire_id}/restore")
 async def restore_questionnaire(
     questionnaire_id: str,
-    current_user: Any = Depends(require_content_admin),
+    current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Undo a questionnaire's soft delete. Content admins only.
+    """Undo a questionnaire's soft delete. Its author or a content admin (owner, 22 Oct 2026).
 
     The pair is cleared together, as ``restore_design_workshop`` clears its own. Idempotent on a
     live form, so a double-clicked Restore answers 200. Whoever holds a post on the form's workshop
     is refused, as on the delete. Sittings deleted one by one stay deleted: each has its own restore.
     """
     record = await require_record(db.questionnaire, questionnaire_id)
+    _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
     restored = await db.questionnaire.update(
         where={"id": questionnaire_id}, data={"deletedAt": None, "deletedById": None}

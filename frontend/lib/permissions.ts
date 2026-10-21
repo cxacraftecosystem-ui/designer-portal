@@ -444,6 +444,16 @@ export function canEditOwnOrAdmin(user: User | null | undefined, ownerId?: strin
 }
 
 /**
+ * A questionnaire FORM and everything in it — its sections, its questions (Remove), a re-upload that
+ * drops questions, the form's Delete and its Restore — is its author's or a content admin's (owner,
+ * 22 Oct 2026), the server's `_require_owner`. Deleting a sitting or a recording stays
+ * `isContentAdmin` alone, and so do sharing with everyone, the default form and workshop binding.
+ */
+export function mayDeleteQuestionnaire(user: User | null | undefined, ownerId?: string | null) {
+  return canEditOwnOrAdmin(user, ownerId);
+}
+
+/**
  * Provenance — created-by plus the per-field edit history. Android parity
  * (MainActivity `canViewProvenance = isAdmin || user.canViewProvenance`): admins always, plus
  * anyone the master admin granted the capability. Admin view may hide it from an admin, but a

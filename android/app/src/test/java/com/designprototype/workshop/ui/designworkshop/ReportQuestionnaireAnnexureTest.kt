@@ -186,8 +186,8 @@ class ReportQuestionnaireAnnexureTest {
                     "the answer was given under: a question reworded after it was answered is shown " +
                     "here as it was asked, marked “no longer asked”. A required question left blank " +
                     "is printed as “Not recorded.” so that a gap in the fieldwork is visible as a gap.",
-                "T|Questionnaire,Questions,Sittings,Answers recorded|" +
-                    "Barpali loom survey || 4 || 1 || 3",
+                "T|Questionnaire,Kind,Questions,Sittings,Answers recorded|" +
+                    "Barpali loom survey || Kind not stated || 4 || 1 || 3",
                 "H2|1.1|Barpali loom survey",
                 "P|NOTE|The designer's own questionnaire, attached to this workshop · 1 sitting " +
                     "· 4 questions · version 3 · from barpali.xlsx · questionnaire cmq0001",
@@ -213,8 +213,8 @@ class ReportQuestionnaireAnnexureTest {
     fun `the index table's columns are the server's, and they still sum to 100`() {
         val table = annexureBlocks(cacheOf(item)).filterIsInstance<TableBlock>().first()
         assertEquals(
-            listOf("Questionnaire" to 46.0f, "Questions" to 16.0f, "Sittings" to 16.0f,
-                "Answers recorded" to 22.0f),
+            listOf("Questionnaire" to 36.0f, "Kind" to 18.0f, "Questions" to 14.0f, "Sittings" to 14.0f,
+                "Answers recorded" to 18.0f),
             table.columns.map { it.header to it.widthPct },
         )
         // `numeric` IS PART OF THE SHAPE, not a rendering preference. Both writers right-align a
@@ -223,7 +223,7 @@ class ReportQuestionnaireAnnexureTest {
         // exists to be read side by side with the office's copy. Pinned because the widths above
         // would have gone on passing while the three counts drifted left.
         assertEquals(
-            listOf(false, true, true, true),
+            listOf(false, false, true, true, true),
             table.columns.map { it.numeric },
         )
         assertEquals(
@@ -540,5 +540,31 @@ class ReportQuestionnaireAnnexureTest {
             warnings = emptyList(), accent = "", imageFor = { null }, plan = plan,
         )
         assertEquals(emptyList<Block>(), nothing.blocks)
+    }
+
+    // ── M16 (audit 21 Oct 2026): the kind, as the server groups and prints it ─────────────────────
+
+    @Test
+    fun `stated kinds group under their stage, in stage order, and unstated ones keep their shape`() {
+        val stages = listOf(
+            com.designprototype.workshop.data.StageDto(number = 6, key = "EXISTING_PRODUCTS_BASELINE", title = "Existing Products Baseline"),
+            com.designprototype.workshop.data.StageDto(number = 8, key = "MARKET_SURVEY_CAPTURE", title = "Market Survey & Field Data"),
+        )
+        val survey = item.copy(questionnaireId = "s", title = "Survey", kind = "MARKET_SURVEY")
+        val interview = item.copy(questionnaireId = "i", title = "Interview", kind = "WORKSHOP_INTERVIEW")
+        val plain = item.copy(questionnaireId = "p", title = "Plain", kind = "")
+        val groups = questionnairesByStage(listOf(plain, survey, interview), stages)
+        assertEquals(
+            listOf(
+                "Workshop interview — stage 6, Existing Products Baseline",
+                "Market survey — stage 8, Market Survey & Field Data",
+                "",
+            ),
+            groups.map { it.first },
+        )
+        assertEquals(listOf("Plain"), groups.last().second.map { it.title })
+        assertTrue(questionnaireProvenance(survey, stages).contains("filed as Market survey, under stage 8 (Market Survey & Field Data)"))
+        val index = questionnaireIndexBlock(listOf(survey))
+        assertEquals("Market survey", index.rows.single()[1].joinToString("") { it.text })
     }
 }

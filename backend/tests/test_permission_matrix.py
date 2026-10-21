@@ -991,11 +991,10 @@ CONTENT_DELETES = [
     ("DELETE", "/questionnaire/questions/x1"),
     ("DELETE", "/questionnaire/interviews/x1"),
     ("POST", "/questionnaire/interviews/x1/merge-into/x2"),
-    ("DELETE", "/questionnaires/x1"),
+    # A form's own delete, restore and question removal are its AUTHOR's as well (owner, 22 Oct
+    # 2026) and live in ``AUTHOR_OR_ADMIN_DELETES`` below. A sitting stays a content admin's.
     ("DELETE", "/questionnaires/x1/entries/e1"),
-    ("POST", "/questionnaires/x1/restore"),
     ("POST", "/questionnaires/x1/entries/e1/restore"),
-    ("DELETE", "/questionnaires/x1/questions/q1"),
     ("DELETE", "/tasks/x1"),
     ("DELETE", "/tasks/batch/b1"),
     ("DELETE", "/workshop-types/x1"),
@@ -1030,6 +1029,62 @@ def test_every_content_admin_deletes(api: _Api, method: str, path: str, role: st
     outcome = api.as_(_user(role)).call(method, path)
 
     assert outcome.reached, outcome
+
+
+# --- A questionnaire form: its author OR a content admin deletes (owner, 22 Oct 2026) -------------
+#
+# "The author should be able to edit/delete the questionnaire apart from the admins." The form's
+# delete, its restore and the removal of one of its questions are reached by the form's author
+# (``ownerId``) and by every content admin; every other role, a designer included, is refused 403.
+# Unlike ``CONTENT_DELETES`` the gate needs the row (it asks who owns it), so the form is preloaded.
+
+AUTHOR_OR_ADMIN_DELETES = [
+    ("DELETE", "/questionnaires/x1"),
+    ("POST", "/questionnaires/x1/restore"),
+    ("DELETE", "/questionnaires/x1/questions/q1"),
+]
+
+
+class _AuthoredForm:
+    """``db.questionnaire`` holding one unattached form authored by ``u1``; any write is the handler
+    doing its work."""
+
+    def __init__(self) -> None:
+        self.find_unique = _returning(
+            SimpleNamespace(id="x1", ownerId="u1", deletedAt=None, designWorkshopId=None)
+        )
+
+    async def update(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise _DatabaseTouched("questionnaire.update")
+
+
+@pytest.mark.parametrize("method,path", AUTHOR_OR_ADMIN_DELETES)
+def test_the_forms_author_deletes_restores_and_removes_its_questions(
+    api: _Api, method: str, path: str
+) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user("DESIGNER", "u1")).call(
+        method, path
+    )
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", CONTENT_ADMINS)
+@pytest.mark.parametrize("method,path", AUTHOR_OR_ADMIN_DELETES)
+def test_a_content_admin_deletes_somebody_elses_form(
+    api: _Api, method: str, path: str, role: str
+) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(method, path)
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", NOT_CONTENT_ADMINS)
+@pytest.mark.parametrize("method,path", AUTHOR_OR_ADMIN_DELETES)
+def test_nobody_else_deletes_a_form(api: _Api, method: str, path: str, role: str) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(method, path)
+
+    assert outcome.refused, outcome
 
 
 class _Comments:
