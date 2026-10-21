@@ -11,7 +11,6 @@ import asyncio
 import uuid
 
 import pytest
-
 from conftest import DATABASE_URL, needs_db
 
 pytestmark = needs_db
