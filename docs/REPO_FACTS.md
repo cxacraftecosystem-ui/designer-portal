@@ -173,7 +173,7 @@ and this one asserted an absence it had never looked for.
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
 | `backend/app` | 327 | 199,408 | 327 | 199,408 |
-| `frontend/app` | 123 | 61,574 | 123 | 61,574 |
+| `frontend/app` | 123 | 61,576 | 123 | 61,576 |
 | `frontend/components` | 403 | 149,384 | 403 | 149,384 |
 | `frontend/lib` | 197 | 84,440 | 197 | 84,440 |
 | `android/app/src/main/java` | 371 | 259,633 | 371 | 259,633 |
