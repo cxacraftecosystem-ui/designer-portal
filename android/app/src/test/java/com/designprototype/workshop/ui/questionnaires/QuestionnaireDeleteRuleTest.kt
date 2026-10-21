@@ -5,6 +5,7 @@ import com.designprototype.workshop.data.CustomEntryDto
 import com.designprototype.workshop.data.CustomQuestionDto
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.qLiveSource
+import com.designprototype.workshop.ui.FieldPermissions
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,8 +17,9 @@ class QuestionnaireDeleteRuleTest {
 
     @Test
     fun `only content admins may remove a question`() {
-        listOf("ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN").forEach { assertTrue(it, mayDeleteQuestionnaireItems(user(it))) }
-        listOf("DESIGNER", "RESEARCHER", "PROFESSOR").forEach { assertFalse(it, mayDeleteQuestionnaireItems(user(it))) }
+        // The content-admin set itself, not a copy of it: a list typed here would be a second ladder.
+        FieldPermissions.CONTENT_ADMIN_ROLES.forEach { assertTrue(it, mayDeleteQuestionnaireItems(user(it))) }
+        listOf("DESIGNER", "RESEARCHER").forEach { assertFalse(it, mayDeleteQuestionnaireItems(user(it))) }
         assertFalse(mayDeleteQuestionnaireItems(null))
     }
 
