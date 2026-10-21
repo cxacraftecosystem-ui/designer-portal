@@ -5408,7 +5408,11 @@ private fun HomeScreen(
                     screen = Screen.QuestionnaireAnswers(s.questionnaireId, entryId)
                 },
                 onMessage = { showMessage(it) },
-                onError = { showError(it) }
+                onError = { showError(it) },
+                // M12: once a questionnaire created offline has uploaded, reopen it by its real id.
+                onResolvedId = { real -> screen = Screen.QuestionnaireDetail(real) },
+                // L9: a deleted questionnaire is no longer there to look at.
+                onDeleted = { message = null; screen = Screen.Questionnaires },
             )
 
             is Screen.QuestionnaireAnswers -> QuestionnaireAnswerScreen(

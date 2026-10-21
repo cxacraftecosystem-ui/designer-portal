@@ -58,6 +58,10 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.RecordProseField
 import kotlinx.coroutines.CancellationException
+import com.designprototype.workshop.data.TempIdMap
+import com.designprototype.workshop.data.isTempId
+import com.designprototype.workshop.data.resolveTempId
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -91,6 +95,14 @@ fun QuestionnaireDetailScreen(
     onOpenEntry: (entryId: String) -> Unit,
     onMessage: (String) -> Unit,
     onError: (String) -> Unit,
+    /**
+     * M12 (21 Oct 2026): a questionnaire created offline is opened under its temporary id. Once its
+     * queued create lands, the router reopens it under the server's id so every server call on this
+     * screen names a real questionnaire.
+     */
+    onResolvedId: (serverId: String) -> Unit = {},
+    /** L9: called after a content admin deletes this questionnaire. */
+    onDeleted: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     // The application context, so the cache write below cannot outlive an Activity it holds.
@@ -266,6 +278,30 @@ fun QuestionnaireDetailScreen(
 
     LaunchedEffect(questionnaireId) { workshops = attachableDesignWorkshops(repository) }
 
+    // M12: watch for the queued create to land, then hand the server id to the router.
+    LaunchedEffect(questionnaireId) {
+        if (!isTempId(questionnaireId)) return@LaunchedEffect
+        while (true) {
+            val real = runCatching { TempIdMap.all(appContext) }.getOrNull()?.let { resolveTempId(questionnaireId, it) }
+            if (real != null && !isTempId(real)) {
+                onResolvedId(real)
+                break
+            }
+            delay(TEMP_ID_POLL_MS)
+        }
+    }
+
+    /**
+     * M12: the server calls that name the questionnaire itself (attach, kind, deactivate, a new
+     * sitting, the spreadsheet and the handoff) wait until it has uploaded. Authoring steps do not:
+     * they are queued under the temporary id and replayed in order.
+     */
+    fun uploadedOrSay(): Boolean {
+        if (!isTempId(questionnaireId)) return true
+        onError(QUESTIONNAIRE_STILL_UPLOADING)
+        return false
+    }
+
     /** Run a write, then re-read the form. Every mutation on this screen goes through here. */
     fun mutate(failure: String, block: suspend () -> String?) {
         if (busy) return
@@ -314,6 +350,7 @@ fun QuestionnaireDetailScreen(
                     workshops = workshops,
                     onRename = { renaming = true },
                     onAttach = { workshopId ->
+                        if (!uploadedOrSay()) return@HeaderCard
                         mutate("The questionnaire could not be attached.") {
                             repository.updateCustomQuestionnaire(
                                 id = questionnaireId,
@@ -330,6 +367,7 @@ fun QuestionnaireDetailScreen(
                         }
                     },
                     onSetKind = { kind ->
+                        if (!uploadedOrSay()) return@HeaderCard
                         mutate("The kind could not be changed.") {
                             repository.updateCustomQuestionnaire(
                                 id = questionnaireId,
@@ -347,6 +385,7 @@ fun QuestionnaireDetailScreen(
                         }
                     },
                     onSetActive = { active ->
+                        if (!uploadedOrSay()) return@HeaderCard
                         mutate("The questionnaire could not be updated.") {
                             repository.updateCustomQuestionnaire(id = questionnaireId, isActive = active)
                             if (active) {
@@ -365,9 +404,10 @@ fun QuestionnaireDetailScreen(
                     reuploading = reuploading,
                     savedQuestionSetTo = savedQuestionSetTo,
                     savedWorkbookTo = savedWorkbookTo,
-                    onDownload = ::download,
+                    onDownload = { if (uploadedOrSay()) download(it) },
                     // Asked at the tap, before the file picker opens: see QuestionnaireOfflineCopy.kt.
                     onPickWorkbook = {
+                        if (!uploadedOrSay()) return@InterchangeCard
                         if (repository.isOnline(appContext)) pickWorkbook() else onError(WORKBOOK_UPLOAD_OFFLINE)
                     },
                 )
@@ -396,7 +436,7 @@ fun QuestionnaireDetailScreen(
                  * this API's stand-in for a delete and a retired instrument is exactly the thing a
                  * designer lifts for a new round.
                  */
-                ReuseCard(busy = reuseBusy, onOpen = { reusing = true })
+                ReuseCard(busy = reuseBusy, onOpen = { if (uploadedOrSay()) reusing = true })
 
                 uploadReport?.let { report ->
                     UploadReportPanel(report = report, onDismiss = { uploadReport = null })
@@ -420,6 +460,7 @@ fun QuestionnaireDetailScreen(
                     form = loaded,
                     busy = busy,
                     onStart = {
+                        if (!uploadedOrSay()) return@SittingsCard
                         if (repository.isOnline(appContext)) startingSitting = true else onError(SITTING_START_OFFLINE)
                     },
                     onOpenEntry = onOpenEntry,

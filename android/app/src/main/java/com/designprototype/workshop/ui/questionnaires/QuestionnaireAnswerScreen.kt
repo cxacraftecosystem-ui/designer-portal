@@ -53,6 +53,7 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.RecordProseField
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -189,6 +190,32 @@ fun QuestionnaireAnswerScreen(
             }
         }
         loading = false
+    }
+
+    /*
+     * M12 (21 Oct 2026): A SAVED COPY STEPS ASIDE WHEN THE SIGNAL RETURNS. The screen used to stay
+     * read-only for as long as it was open. Now, while it shows a copy, it re-reads the live form
+     * whenever the phone is online, and swaps it in WITHOUT touching the boxes: what the server
+     * holds becomes the baseline, and every answer typed meanwhile stays on screen, unsaved.
+     */
+    LaunchedEffect(questionnaireId, entryId, cachedNotice != null) {
+        while (cachedNotice != null) {
+            delay(CACHED_COPY_RECHECK_MS)
+            if (!repository.isOnline(appContext)) continue
+            val read = runCatching {
+                repository.customQuestionnaireCached(context = appContext, id = questionnaireId, includeRetired = false)
+            }.getOrNull() ?: continue
+            if (read.fromCache) continue
+            val live = read.form.entries.firstOrNull { it.id == entryId } ?: continue
+            form = read.form
+            baseline = live.answers.associate { it.questionId to (it.answerText.orEmpty() to it.notes.orEmpty()) }
+            live.answers.forEach { answer ->
+                if (answer.questionId !in answers) answers[answer.questionId] = answer.answerText.orEmpty()
+                if (answer.questionId !in notes) notes[answer.questionId] = answer.notes.orEmpty()
+            }
+            locked = if (admin) emptySet() else othersAnswers(live.answers, me)
+            cachedNotice = null
+        }
     }
 
     val loaded = form
