@@ -676,6 +676,10 @@ QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
         "IDS of the sitting. Carrying it would smuggle in the roster the names refusal excludes, "
         "in one string."
     ),
+    # The soft-delete pair (audit H5, 21 Oct 2026): bookkeeping about the RECORD, not a fact about
+    # the people or the craft. A deleted interview is not offered to the picker at all.
+    "deletedAt": "bookkeeping: when the interview was soft-deleted. Not a fact a report cites.",
+    "deletedById": "bookkeeping: who soft-deleted the interview. Not a fact a report cites.",
     # `_reference_place` returns `(row.place, '', '')` for every model but `Artisan`, and this model
     # does not include `location` at all — the cleanest form of the refusal. Its own docstring's
     # worked example is this exact scenario: "a researcher interviews six artisans in one afternoon

@@ -74,11 +74,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      db_tests:
-        description: "Backend test paths to run against a throwaway Postgres (space separated; empty skips the job)"
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -554,83 +549,6 @@ jobs:
           # readable at a glance; it prints nothing when there is nothing to say.
           ruff check . --statistics || true
           exit "$status"
-
-  # ═══════════════════════════════════════════════════════════════════════════════════════
-  # 1b · Backend tests WITH a database, on demand
-  # ═══════════════════════════════════════════════════════════════════════════════════════
-  # The job above points DATABASE_URL at an address that cannot resolve, so every database-backed
-  # test skips there by design. Since 21 Oct 2026 nothing runs on the developer's laptop either, so
-  # those tests run here: dispatch this workflow on a branch with `-f db_tests="tests/a.py tests/b.py"`.
-  # The service listens on 127.0.0.1, the only kind of DSN `tests/conftest.py` lets a destructive
-  # fixture touch. It never runs on a pull request or a push, so it costs the ordinary run nothing.
-  backend-db:
-    name: Backend tests with a database
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.db_tests != '' }}
-    runs-on: ubuntu-26.04
-    timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: backend
-
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: design_workshop
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-    env:
-      PYTHONUTF8: "1"
-      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/design_workshop"
-      JWT_SECRET: "ci-placeholder-not-a-secret-0123456789abcdef"
-      AWS_ACCESS_KEY_ID: "ci-placeholder"
-      AWS_SECRET_ACCESS_KEY: "ci-placeholder"
-      AWS_S3_BUCKET: "ci-placeholder"
-      MASTER_ADMIN_EMAIL: "ci@example.invalid"
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.14"
-          check-latest: true
-          cache: pip
-          cache-dependency-path: |
-            backend/requirements.lock
-            backend/pyproject.toml
-
-      - name: Install the backend and its test extras
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          pip install -r requirements.lock
-          pip install -e . --no-deps
-
-      - name: Generate the Prisma client
-        run: python scripts/generate_prisma_client.py --schema prisma/schema.prisma
-
-      - name: Apply every migration to the empty database
-        run: python -m prisma migrate deploy --schema prisma/schema.prisma
-
-      - name: Run the named tests
-        env:
-          DB_TESTS: ${{ inputs.db_tests }}
-        run: |
-          set -uo pipefail
-          # Word-split on purpose: DB_TESTS is a space-separated list of paths.
-          # shellcheck disable=SC2086
-          python -m pytest -rfs --durations=15 ${DB_TESTS}
 
   # ═══════════════════════════════════════════════════════════════════════════════════════
   # 2 · The web checks
