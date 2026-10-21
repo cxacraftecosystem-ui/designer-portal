@@ -43,6 +43,7 @@ import os
 import signal
 import time
 from contextlib import suppress
+from typing import Any
 
 from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
@@ -70,6 +71,20 @@ SEARCH_EMBED_BATCH = 32
 #: Seconds between queue compactions while UNIFIED_SEARCH_ENABLED is off.
 SEARCH_COMPACT_INTERVAL_SECONDS = 600.0
 
+#: How often the drain sweeps for work a dead worker left locked — media jobs PROCESSING, e-mails
+#: SENDING, ministry exports RUNNING. Each sweep only acts on a lock older than fifteen or thirty
+#: minutes, yet all of them ran on every pass: on production (pg_stat_statements, 2026-10-21) they
+#: were eight of the sixteen statements an idle five-second pass issued (the two export sweeps each
+#: wrapped in its own transaction), every one of them matching nothing. Once a minute recovers the
+#: same rows at most a minute later on a fifteen-minute clock; the first pass after a start sweeps.
+#: THE MINUTE STARTS ONLY FROM A SWEEP THAT HELD: a pass whose recovering service raised (the
+#: database dropped mid-sweep, say) leaves the clock where it was, so the very next pass sweeps again.
+RECOVERY_INTERVAL_SECONDS = 60.0
+
+#: The loop's clock. A name of its own so a test can drive ``_run``'s gates without touching
+#: ``time.monotonic``, which the event loop itself reads.
+_clock = time.monotonic
+
 _last_search_compaction = {"at": float("-inf")}
 
 
@@ -89,6 +104,89 @@ async def run_search_index_pass(settings) -> None:
     await embed_search_documents(batch=SEARCH_EMBED_BATCH, settings=settings)
 
 
+async def drain_pass(settings: Any, *, recover: bool, search: bool) -> bool:
+    """One pass of the drain, every service in its own try. ``_run`` calls it every interval.
+
+    ``recover``: sweep for stale locks this pass (see :data:`RECOVERY_INTERVAL_SECONDS`).
+    ``search``: run the search-index pass this pass (see :data:`SEARCH_INDEX_INTERVAL_SECONDS`).
+
+    Answers whether every service that was asked to recover got through its turn without raising —
+    i.e. whether the sweep can be counted as done. ``True`` when ``recover`` was not asked.
+    """
+    swept = True
+    try:
+        # Self-heal like the web app: probe the connection each iteration and, when the probe
+        # fails (or a previous iteration broke the engine), disconnect-first then reconnect —
+        # is_connected() alone can read True while the engine is actually unusable.
+        await ensure_db_connected()
+        await process_next_media_jobs(
+            limit=settings.media_queue_batch_size,
+            worker_id="queue-service",
+            settings=settings,
+            recover=recover,
+        )
+    except Exception:  # one bad iteration must never kill the worker
+        swept = False
+        logger.exception("Media queue iteration failed; backing off")
+    # THE E-MAIL OUTBOX RIDES THE SAME LOOP (app/services/email_outbox.py), in its own try so
+    # a media failure cannot hold mail back and the reverse. A no-op when mail is not
+    # configured.
+    try:
+        await process_next_email_jobs(worker_id="queue-service", settings=settings, recover=recover)
+    except Exception:
+        swept = False
+        logger.exception("E-mail outbox iteration failed; backing off")
+    # Round snapshots of workshops deleted over a year ago (throttled; never raises).
+    await purge_expired_snapshots()
+    # THE MINISTRY STAGE-DATA EXPORT (C15) rides the same loop, in its own try, one job per
+    # turn so a large export cannot hold the media queue or the outbox back for long.
+    try:
+        await process_next_ministry_exports(worker_id="queue-service", recover=recover)
+    except Exception:
+        swept = False
+        logger.exception("Ministry export iteration failed; backing off")
+    try:
+        # Regulation 18(3): at most once a day, and cheap when nothing is due.
+        await aadhaar_log_retention.maybe_run(settings)
+    except Exception:
+        logger.exception("Aadhaar log retention pass failed; it runs again tomorrow")
+    # THE MONDAY SUMMARY (app/services/weekly_digest.py), in its own try, after the outbox. It
+    # runs when mail is off too: the in-app half still goes. Outside Monday 08:00-23:59 IST,
+    # or within ten minutes of the last check, it returns without a query.
+    try:
+        await run_weekly_digests(settings=settings)
+    except Exception:
+        logger.exception("Weekly digest pass failed")
+    # THE SEARCH INDEX RIDES IT TOO, every SEARCH_INDEX_INTERVAL_SECONDS, in its own try.
+    if search:
+        try:
+            await run_search_index_pass(settings)
+        except Exception:
+            logger.exception("Search index pass failed; backing off")
+    try:
+        await artisan_duplicates.maybe_run(settings)
+    except Exception:
+        logger.exception("Duplicate-artisan scan failed; it runs again tomorrow")
+    try:
+        await artisan_merge.maybe_purge(settings)
+    except Exception:
+        logger.exception("Artisan merge snapshot purge failed; it runs again tomorrow")
+    # THE MINISTRY'S MONTHLY EXPORT PACKS (app/services/ministry_exports.py), third and in its own
+    # try for the same reason. A no-op while MINISTRY_EXPORTS_ENABLED is off; otherwise it builds
+    # at most one pack per pass and checks the monthly schedule every ten minutes.
+    try:
+        await ministry_exports.maybe_run(settings)
+    except Exception:
+        logger.exception("Ministry export iteration failed; backing off")
+    return swept or not recover
+
+
+async def _wait_for_stop(stop: asyncio.Event, interval: float) -> None:
+    """Sleep for the interval but wake immediately on shutdown."""
+    with suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(stop.wait(), timeout=interval)
+
+
 async def _run() -> None:
     settings = get_settings()
     interval = max(settings.media_queue_interval_seconds, 1.0)
@@ -106,72 +204,19 @@ async def _run() -> None:
 
     logger.info("Media queue worker started (interval=%.1fs)", interval)
     last_search_pass = 0.0
+    last_recovery = float("-inf")
     try:
         while not stop.is_set():
-            try:
-                # Self-heal like the web app: probe the connection each iteration and, when the probe
-                # fails (or a previous iteration broke the engine), disconnect-first then reconnect —
-                # is_connected() alone can read True while the engine is actually unusable.
-                await ensure_db_connected()
-                await process_next_media_jobs(
-                    limit=settings.media_queue_batch_size,
-                    worker_id="queue-service",
-                    settings=settings,
-                )
-            except Exception:  # one bad iteration must never kill the worker
-                logger.exception("Media queue iteration failed; backing off")
-            # THE E-MAIL OUTBOX RIDES THE SAME LOOP (app/services/email_outbox.py), in its own try so
-            # a media failure cannot hold mail back and the reverse. A no-op when mail is not
-            # configured.
-            try:
-                await process_next_email_jobs(worker_id="queue-service", settings=settings)
-            except Exception:
-                logger.exception("E-mail outbox iteration failed; backing off")
-            # Round snapshots of workshops deleted over a year ago (throttled; never raises).
-            await purge_expired_snapshots()
-            # THE MINISTRY STAGE-DATA EXPORT (C15) rides the same loop, in its own try, one job per
-            # turn so a large export cannot hold the media queue or the outbox back for long.
-            try:
-                await process_next_ministry_exports(worker_id="queue-service")
-            except Exception:
-                logger.exception("Ministry export iteration failed; backing off")
-            try:
-                # Regulation 18(3): at most once a day, and cheap when nothing is due.
-                await aadhaar_log_retention.maybe_run(settings)
-            except Exception:
-                logger.exception("Aadhaar log retention pass failed; it runs again tomorrow")
-            # THE MONDAY SUMMARY (app/services/weekly_digest.py), in its own try, after the outbox. It
-            # runs when mail is off too: the in-app half still goes. Outside Monday 08:00-23:59 IST,
-            # or within ten minutes of the last check, it returns without a query.
-            try:
-                await run_weekly_digests(settings=settings)
-            except Exception:
-                logger.exception("Weekly digest pass failed")
-            # THE SEARCH INDEX RIDES IT TOO, every SEARCH_INDEX_INTERVAL_SECONDS, in its own try.
-            if time.monotonic() - last_search_pass >= SEARCH_INDEX_INTERVAL_SECONDS:
-                last_search_pass = time.monotonic()
-                try:
-                    await run_search_index_pass(settings)
-                except Exception:
-                    logger.exception("Search index pass failed; backing off")
-            try:
-                await artisan_duplicates.maybe_run(settings)
-            except Exception:
-                logger.exception("Duplicate-artisan scan failed; it runs again tomorrow")
-            try:
-                await artisan_merge.maybe_purge(settings)
-            except Exception:
-                logger.exception("Artisan merge snapshot purge failed; it runs again tomorrow")
-            # THE MINISTRY'S MONTHLY EXPORT PACKS (app/services/ministry_exports.py), third and in its own
-            # try for the same reason. A no-op while MINISTRY_EXPORTS_ENABLED is off; otherwise it builds
-            # at most one pack per pass and checks the monthly schedule every ten minutes.
-            try:
-                await ministry_exports.maybe_run(settings)
-            except Exception:
-                logger.exception("Ministry export iteration failed; backing off")
-            # Sleep for the interval but wake immediately on shutdown.
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=interval)
+            now = _clock()
+            recover = now - last_recovery >= RECOVERY_INTERVAL_SECONDS
+            search = now - last_search_pass >= SEARCH_INDEX_INTERVAL_SECONDS
+            if search:
+                last_search_pass = now
+            swept = await drain_pass(settings, recover=recover, search=search)
+            # The minute restarts only from a sweep that held; a failed one is tried next pass.
+            if recover and swept:
+                last_recovery = now
+            await _wait_for_stop(stop, interval)
     finally:
         await disconnect_db()
         logger.info("Media queue worker stopped")

@@ -52,6 +52,7 @@ import com.designprototype.workshop.data.outboxDiscardConfirmation
 import com.designprototype.workshop.data.outboxFailureRows
 import com.designprototype.workshop.data.outboxRetryAllMessage
 import com.designprototype.workshop.data.outboxRetryMessage
+import com.designprototype.workshop.data.outboxSendWithoutConflictsLabel
 import com.designprototype.workshop.data.repickEmptyLine
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -389,6 +390,14 @@ fun OfflineOutboxTray(
                                     )
                                 }
                             },
+                            onSendWithoutConflicts = {
+                                act {
+                                    outboxRetryMessage(
+                                        label = row.label,
+                                        result = repository.sendWithoutConflictingAnswers(appContext, row.entryId),
+                                    )
+                                }
+                            },
                         )
                     }
                 }
@@ -463,6 +472,7 @@ private fun OutboxFailureCard(
     onRetype: () -> Unit = {},
     onSamePerson: (String) -> Unit = {},
     onDifferentPerson: () -> Unit = {},
+    onSendWithoutConflicts: () -> Unit = {},
 ) {
     val heldFor = row.possibleDuplicates.firstOrNull()
     Column(
@@ -618,6 +628,13 @@ private fun OutboxFailureCard(
                     // this row. A bare Try again would fetch the identical refusal.
                     OutlinedButton(onClick = onReview, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
                         Text("Review changes", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                if (row.conflictingAnswers > 0) {
+                    // H4: the one act that moves this row. Another researcher's answers stay theirs;
+                    // everything else on the interview, clips included, goes.
+                    OutlinedButton(onClick = onSendWithoutConflicts, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(outboxSendWithoutConflictsLabel(row.conflictingAnswers), style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 if (row.repickKeys.isNotEmpty()) {

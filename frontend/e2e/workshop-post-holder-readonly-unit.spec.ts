@@ -197,7 +197,9 @@ test("three states: still asking holds the writes, none known releases them, and
   expect(hook).toContain("if (!asks) return null;");
   expect(hook).toMatch(/\?\s*heldPostEditRefusal\(answer\.posts\)\s*:\s*undefined;/);
   // Every path ends in an answer: a workshop only this device holds is "none", and so is any failure.
-  expect(hook).toContain("if (serverId) posts = await readHeldWorkshopPosts(serverId, user);");
+  // One read for every workshop (`myWorkshopPosts`); a server without that route is asked per workshop.
+  expect(hook).toContain("const mine = await myWorkshopPosts(user);");
+  expect(hook).toContain("posts = mine ? (mine.get(serverId) ?? []) : await readHeldWorkshopPosts(serverId, user);");
   expect(hook).toMatch(/\} catch \{\s*posts = \[\];\s*\}/);
 });
 

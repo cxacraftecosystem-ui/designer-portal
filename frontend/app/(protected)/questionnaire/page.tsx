@@ -11,7 +11,7 @@ import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictatio
 import { EmptyState } from "@/components/EmptyState";
 import { Field, MultiNoteField, Select, TextArea, TextInput } from "@/components/FormControls";
 import { CarryContextBanner, carryScope, useCarryContext } from "@/components/forms/CarryContextBanner";
-import { LocationFields } from "@/components/forms/LocationFields";
+import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { QuestionnaireCaptureControls, useCapturePrefs } from "@/components/forms/QuestionnaireCaptureControls";
 import { useWorkshopPicker, WorkshopPicker } from "@/components/forms/WorkshopPicker";
@@ -89,6 +89,18 @@ import { AnswerDraftsPanel, isMachineSuggested, MachineSuggestedBadge } from "@/
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 import { phoneOf } from "@/lib/standardValues";
+import { cachedInstrumentNotice, loadInstrumentWithCache } from "@/lib/questionnaireInstrumentCache";
+import { DeletedInterviewsCard } from "@/components/questionnaires/DeletedInterviewsCard";
+import {
+  answersByQuestion,
+  interviewDictationFields,
+  mayPrefill,
+  notesPatch,
+  ownedAnswerRefusal,
+  ownedAnswerSentence,
+  responsesToSend,
+  statusPatch
+} from "@/lib/interviewEdit";
 
 /** Section ids the two questionnaire upload paths publish under, for the page-level tray. */
 const INTERVIEW_SECTION = "interview-audio";
@@ -528,6 +540,8 @@ function QuestionnairePageBody() {
     if (interviewLink) router.replace(`/questionnaire/interviews/${encodeURIComponent(interviewLink)}`);
   }, [interviewLink, router]);
   const [sections, setSections] = useState<QuestionnaireSection[]>([]);
+  /** Null on a live read; the stored copy's fetch time when the instrument came out of storage (H7). */
+  const [instrumentCachedAt, setInstrumentCachedAt] = useState<string | null>(null);
   const [data, setData] = useState<PageResult<QuestionnaireInterview> | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   /**
@@ -998,16 +1012,21 @@ function QuestionnairePageBody() {
     answers,
     machineText,
     workshopId: workshop.designWorkshopId,
-    language
+    language,
+    interviewId: editingInterview?.id ?? null,
+    artisanIds: selectedArtisanIds
   });
   useEffect(() => {
     liveRef.current = {
       answers,
       machineText,
       workshopId: workshop.designWorkshopId,
-      language
+      language,
+      // H3: the clip's own artisans are asked as well as the workshop's.
+      interviewId: editingInterview?.id ?? null,
+      artisanIds: selectedArtisanIds
     };
-  }, [answers, machineText, workshop.designWorkshopId, language]);
+  }, [answers, machineText, workshop.designWorkshopId, language, editingInterview, selectedArtisanIds]);
 
   const questions = useMemo(() => sections.flatMap((section) => section.questions), [sections]);
   const questionsById = useMemo(() => new Map(questions.map((question) => [question.id, question])), [questions]);
@@ -1188,6 +1207,10 @@ function QuestionnairePageBody() {
     // the researcher" but really meant the RESP block froze on the FIRST artisan picked: change the
     // primary artisan and the interview kept the previous artisan's name, craft, place, gender and
     // phone, and saved them against the new one.
+    // H4: never over an answer the shared entry already holds — that is somebody else's answer, and
+    // sending today's date over it was a 403 that could strand a queued sitting.
+    const shared =
+      existingEntry && existingEntry.id !== editingInterview?.id ? answersByQuestion(existingEntry.responses) : null;
     const previous = prefilled.current;
     prefilled.current = respondentAnswers;
     setAnswers((current) => {
@@ -1195,14 +1218,14 @@ function QuestionnairePageBody() {
       let changed = false;
       Object.entries(respondentAnswers).forEach(([questionId, value]) => {
         const existing = next[questionId] ?? "";
-        if (existing && existing !== (previous[questionId] ?? "")) return;
+        if (!mayPrefill(questionId, existing, previous[questionId], shared)) return;
         if (existing === value) return;
         next[questionId] = value;
         changed = true;
       });
       return changed ? next : current;
     });
-  }, [questions, selectedArtisan, user]);
+  }, [questions, selectedArtisan, user, existingEntry, editingInterview]);
 
   /**
    * The instrument — the sections and questions the rest of this screen draws. They change only when
@@ -1218,8 +1241,11 @@ function QuestionnairePageBody() {
    */
   async function loadMeta() {
     try {
-      const sectionList = await apiFetch<QuestionnaireSection[]>("/questionnaire/sections");
-      setSections(sectionList);
+      // H7: the last copy this account downloaded is served when nothing reaches the server, so the
+      // form opens offline and a sitting can still be banked in the outbox.
+      const read = await loadInstrumentWithCache(user?.id ?? null);
+      setSections(read.sections);
+      setInstrumentCachedAt(read.fromCache ? read.cachedAt ?? "" : null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load questionnaire");
@@ -1280,7 +1306,8 @@ function QuestionnairePageBody() {
 
   useEffect(() => {
     loadMeta();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read once the account resolves, so the copy is stored under it
+  }, [user?.id]);
 
   // Backend already returns interviews most-recent-first (createdAt desc); the funnel narrows by
   // artisan AND by workshop, and the search box by text.
@@ -1646,7 +1673,12 @@ function QuestionnairePageBody() {
     }
     setTranscribing((current) => ({ ...current, [key]: true }));
     try {
-      const result = await dictateAudio(file, liveRef.current.language, workshopId);
+      const result = await dictateAudio(
+        file,
+        liveRef.current.language,
+        workshopId,
+        interviewDictationFields(liveRef.current.interviewId, liveRef.current.artisanIds)
+      );
       const text = (result.text ?? "").trim();
       // `dictationAnswerSentence` owns every non-COMPLETED outcome — EMPTY, FAILED, RATE_LIMITED and
       // a status this build has not heard of — so the sentences a designer meets here are the same
@@ -1788,9 +1820,14 @@ function QuestionnairePageBody() {
     // fresh refusal is the reassurance this panel exists to make true.
     setMergeOutcome(null);
     const artisanIds = selectedArtisanIds;
-    const responses = Object.entries(answers)
-      .filter(([, answerText]) => answerText.trim())
-      .map(([questionId, answerText]) => ({ questionId, answerText: answerText.trim() }));
+    // H4: only what differs from what the server already holds — the record being edited, or the
+    // shared entry this create folds into. Blank boxes are never sent.
+    const answerBaseline = editingInterview
+      ? answersByQuestion(editingInterview.responses)
+      : existingEntry
+        ? answersByQuestion(existingEntry.responses)
+        : null;
+    const responses = responsesToSend(answers, answerBaseline);
     // HOISTED OUT OF THE `try` because the CATCH needs it: whether this press was an edit is what
     // decides whether a colliding artisan set can be offered a fold at all, and a create must never
     // be — see `offerMergeIntoHolder`. Declared here rather than read off `editingInterview` again in
@@ -1816,8 +1853,6 @@ function QuestionnairePageBody() {
           title: interviewTitle,
           place: textValue(form, "place"),
           language: textValue(form, "language"),
-          notes: textValue(form, "notes"),
-          status: canPickStatus ? textValue(form, "status") || "APPROVED" : "PENDING",
           workshopId: workshop.workshopId || null,
           designWorkshopId: workshop.designWorkshopId || null,
           artisanIds,
@@ -1841,9 +1876,21 @@ function QuestionnairePageBody() {
           form does send one, and a reader comparing the two should know the difference is a schema
           difference rather than a missing feature.
       */
+      // C1 / H2: an edit sends notes and status only when the reader changed them; a capture never
+      // sets status (the server decides it by rank).
       const interviewPayload = editingId
-        ? { ...commonPayload, ...(location ? { location } : {}) }
-        : { ...commonPayload, recordedAt, recordedTimezone, location };
+        ? {
+            ...commonPayload,
+            ...notesPatch(textValue(form, "notes"), editingInterview?.notes),
+            ...statusPatch({
+              canPick: canPickStatus,
+              editing: true,
+              picked: textValue(form, "status"),
+              stored: editingInterview?.status
+            }),
+            ...(location ? { location } : {})
+          }
+        : { ...commonPayload, notes: textValue(form, "notes"), recordedAt, recordedTimezone, location };
       // Offline this queues the whole interview — answers, the interview audio and every
       // per-question or whole-section clip — to the outbox. An interview is the one record that
       // cannot be reconstructed later: the artisan has gone home.
@@ -2184,6 +2231,15 @@ function QuestionnairePageBody() {
         );
         return;
       }
+      const owned = err instanceof ApiError && err.status === 403 ? ownedAnswerRefusal(err.payload) : null;
+      if (owned) {
+        setError(
+          `Nothing was saved. ${ownedAnswerSentence(
+            owned.questionIds.map((questionId) => questionsById.get(questionId)?.prompt ?? "")
+          )}`
+        );
+        return;
+      }
       setError(err instanceof Error ? err.message : "Unable to save interview");
     } finally {
       setSaving(false);
@@ -2196,8 +2252,7 @@ function QuestionnairePageBody() {
     const ok = await confirm(
       deleteConfirm(
         "Delete this interview?",
-        "The interview, its answers and recordings are deleted permanently.",
-        "This can't be undone."
+        "Its answers and recordings are kept, and an admin can restore it."
       )
     );
     if (!ok) return;
@@ -2253,6 +2308,11 @@ function QuestionnairePageBody() {
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+      {instrumentCachedAt !== null ? (
+        <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700" role="status">
+          {cachedInstrumentNotice(instrumentCachedAt ? formatDateTime(instrumentCachedAt) : null)}
+        </div>
+      ) : null}
       {/* Its own banner, not `error`: the list loader owns that one and clears it on every refresh.
           `role="alert"` because this one appears after a press that looked like it succeeded. */}
       {uploadError ? (
@@ -2610,9 +2670,11 @@ function QuestionnairePageBody() {
             form has no dirty tracking to raise. The grep there covers this control too.
           */}
           <WorkshopPicker state={workshop} saving={saving} disabled={filing.recordHeld} />
+          {/* H2: a capture never sets status; a reviewer changes it on an edit. */}
+          {canPickStatus && !editingInterview ? null : (
           <Field label="Status">
             {canPickStatus ? (
-              <Select name="status" defaultValue="APPROVED">
+              <Select name="status" defaultValue={editingInterview?.status ?? ""}>
                 {["DRAFT", "PENDING", "APPROVED", "REJECTED"].map((status) => (
                   <option key={status}>{status}</option>
                 ))}
@@ -2627,6 +2689,7 @@ function QuestionnairePageBody() {
               </span>
             )}
           </Field>
+          )}
           {/*
             ── ONE CONTROL FOR THE WHOLE SET, AND THE TWO IT REPLACED ───────────────────────────
             This was a single-select "Primary artisan" and a multi-select "Additional artisans",
@@ -2825,7 +2888,15 @@ function QuestionnairePageBody() {
           />
         </div>
         <UploadProgress progress={interviewProgress} sectionId={INTERVIEW_SECTION} label={INTERVIEW_SECTION_LABEL} files={mediaFiles} />
-        <LocationFields />
+        {/* H1: an edit passes the record's own location, so nothing is captured over it. */}
+        <LocationFields
+          {...(editingInterview
+            ? {
+                initial:
+                  (editingInterview as QuestionnaireInterview & { location?: LocationInitialValues | null }).location ?? null
+              }
+            : {})}
+        />
         <div className="grid gap-3" data-field="answers">
           {orderedGroups.map(([code, group], index) => {
             const sectionClips = savedClips.bySection.get(group.section.id) ?? [];
@@ -3147,7 +3218,7 @@ function QuestionnairePageBody() {
           section" means.
         */}
         <SavedClips heading="Other saved recordings & media" items={savedClips.other} onOpenPreview={setActivePreview} />
-        <MultiNoteField name="notes" label="Interview notes" />
+        <MultiNoteField name="notes" label="Interview notes" defaultValue={editingInterview?.notes} />
         {/* Why Save is held, beside it — see `filing`. */}
         <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
         <div>
@@ -3332,6 +3403,9 @@ function QuestionnairePageBody() {
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
       </MegaCard>
+
+      {/* H5: interviews are soft-deleted; content admins restore them here. */}
+      {adminMode && canDeleteRecords ? <DeletedInterviewsCard onRestored={() => void loadInterviews()} /> : null}
 
       {/* Collapsed by default, and half the rail — see the rail's header for why it is no longer at
           the top of the page. */}

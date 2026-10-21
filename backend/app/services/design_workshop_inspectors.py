@@ -768,6 +768,17 @@ async def inspected_workshop_ids(user_id: str) -> set[str]:
     return {row.designWorkshopId for row in rows}
 
 
+async def inspected_live_workshop_ids(user_id: str) -> set[str]:
+    """:func:`inspected_workshop_ids` without the soft-deleted workshops — the set a staffing read
+    of each workshop would have found, since that read answers 404 for a deleted one. One read."""
+    if not user_id or _UNSTORABLE_IN_AN_ID.search(user_id):
+        return set()
+    rows = await db.designworkshopinspector.find_many(
+        where={"userId": user_id, "designWorkshop": {"is": {"deletedAt": None}}}
+    )
+    return {row.designWorkshopId for row in rows}
+
+
 # --------------------------------------------------------------------------------------
 # The refusal everybody else gets on the inspector's own surface
 # --------------------------------------------------------------------------------------

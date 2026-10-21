@@ -732,6 +732,9 @@ export type QuestionnaireInterview = {
   createdBy?: User;
   createdById: string;
   createdAt: string;
+  /** Soft delete (H5, 21 Oct 2026): set only on rows from the deleted-interviews list. */
+  deletedAt?: string | null;
+  deletedByName?: string | null;
 };
 
 export type DataAccessTier = "DOWNLOAD" | "COMMENT" | "EDIT";

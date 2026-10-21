@@ -10,6 +10,12 @@ import retrofit2.HttpException
  * the media is gone), and offline there is nothing cached to show. Both read as "draw nothing", never
  * as an error banner over the transcript a researcher came to read.
  */
+/** The server's ceiling on `GET media/insights?ids=` (`transcript_insights.BATCH_MAX`). */
+const val TRANSCRIPT_INSIGHTS_BATCH_MAX = 50
+
+/** The server's ceiling on `GET media/batch?ids=` (`media.MEDIA_BATCH_MAX`). */
+const val MEDIA_BATCH_MAX = 100
+
 suspend fun <T> insightOrHidden(call: suspend () -> T): T? =
     try {
         call()

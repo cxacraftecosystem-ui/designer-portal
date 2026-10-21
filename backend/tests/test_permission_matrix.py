@@ -991,11 +991,10 @@ CONTENT_DELETES = [
     ("DELETE", "/questionnaire/questions/x1"),
     ("DELETE", "/questionnaire/interviews/x1"),
     ("POST", "/questionnaire/interviews/x1/merge-into/x2"),
-    ("DELETE", "/questionnaires/x1"),
+    # A form's own delete, restore and question removal are its AUTHOR's as well (owner, 22 Oct
+    # 2026) and live in ``AUTHOR_OR_ADMIN_DELETES`` below. A sitting stays a content admin's.
     ("DELETE", "/questionnaires/x1/entries/e1"),
-    ("POST", "/questionnaires/x1/restore"),
     ("POST", "/questionnaires/x1/entries/e1/restore"),
-    ("DELETE", "/questionnaires/x1/questions/q1"),
     ("DELETE", "/tasks/x1"),
     ("DELETE", "/tasks/batch/b1"),
     ("DELETE", "/workshop-types/x1"),
@@ -1028,6 +1027,178 @@ def test_no_role_below_the_content_admins_deletes(api: _Api, method: str, path: 
 @pytest.mark.parametrize("method,path", CONTENT_DELETES)
 def test_every_content_admin_deletes(api: _Api, method: str, path: str, role: str) -> None:
     outcome = api.as_(_user(role)).call(method, path)
+
+    assert outcome.reached, outcome
+
+
+# --- A questionnaire form: its author OR a content admin deletes (owner, 22 Oct 2026) -------------
+#
+# "The author should be able to edit/delete the questionnaire apart from the admins." The form's
+# delete, its restore and the removal of one of its questions are reached by the form's author
+# (``ownerId``) and by every content admin; every other role, a designer included, is refused 403.
+# Unlike ``CONTENT_DELETES`` the gate needs the row (it asks who owns it), so the form is preloaded.
+
+AUTHOR_OR_ADMIN_DELETES = [
+    ("DELETE", "/questionnaires/x1"),
+    ("POST", "/questionnaires/x1/restore"),
+    ("DELETE", "/questionnaires/x1/questions/q1"),
+]
+
+
+class _AuthoredForm:
+    """``db.questionnaire`` holding one unattached form authored by ``u1``; any write is the handler
+    doing its work."""
+
+    def __init__(self) -> None:
+        self.find_unique = _returning(
+            SimpleNamespace(id="x1", ownerId="u1", deletedAt=None, designWorkshopId=None)
+        )
+
+    async def update(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise _DatabaseTouched("questionnaire.update")
+
+
+@pytest.mark.parametrize("method,path", AUTHOR_OR_ADMIN_DELETES)
+def test_the_forms_author_deletes_restores_and_removes_its_questions(
+    api: _Api, method: str, path: str
+) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user("DESIGNER", "u1")).call(
+        method, path
+    )
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", CONTENT_ADMINS)
+@pytest.mark.parametrize("method,path", AUTHOR_OR_ADMIN_DELETES)
+def test_a_content_admin_deletes_somebody_elses_form(
+    api: _Api, method: str, path: str, role: str
+) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(method, path)
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", NOT_CONTENT_ADMINS)
+@pytest.mark.parametrize("method,path", AUTHOR_OR_ADMIN_DELETES)
+def test_nobody_else_deletes_a_form(api: _Api, method: str, path: str, role: str) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(method, path)
+
+    assert outcome.refused, outcome
+
+
+# --- A questionnaire form: its author OR a content admin EDITS it (owner, 22 Oct 2026) ------------
+#
+# The same rule as the deletes above, on every route that changes a form: its details, a section
+# added or changed (taking one out included), a question added or changed, and a workbook re-upload.
+# Every other role, a designer included, is refused 403 before anything is read past the form.
+
+AUTHOR_OR_ADMIN_EDITS = [
+    ("PATCH", "/questionnaires/x1", {"title": "Renamed"}),
+    ("POST", "/questionnaires/x1/sections", {"title": "New section"}),
+    ("PATCH", "/questionnaires/x1/sections/s1", {"title": "Renamed section"}),
+    ("PATCH", "/questionnaires/x1/sections/s1", {"isActive": False}),
+    ("POST", "/questionnaires/x1/sections/s1/questions", {"prompt": "A new question?"}),
+    ("PATCH", "/questionnaires/x1/questions/q1", {"prompt": "Reworded?"}),
+]
+
+_WORKBOOK = {
+    "file": (
+        "form.xlsx",
+        b"not parsed: the parser is the handler's first step past the gate",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+}
+
+
+@pytest.fixture
+def reupload_reaches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A re-upload past the gate parses the workbook next; that call IS "the handler ran"."""
+    from app.api.routes import questionnaire_forms as routes
+
+    def parsed(*_args: Any, **_kwargs: Any) -> Any:
+        raise _DatabaseTouched("parse_questionnaire_workbook")
+
+    monkeypatch.setattr(routes, "parse_questionnaire_workbook", parsed)
+
+
+@pytest.mark.parametrize("method,path,body", AUTHOR_OR_ADMIN_EDITS)
+def test_the_forms_author_edits_it(api: _Api, method: str, path: str, body: dict[str, Any]) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user("DESIGNER", "u1")).call(
+        method, path, body
+    )
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", CONTENT_ADMINS)
+@pytest.mark.parametrize("method,path,body", AUTHOR_OR_ADMIN_EDITS)
+def test_a_content_admin_edits_somebody_elses_form(
+    api: _Api, method: str, path: str, body: dict[str, Any], role: str
+) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(
+        method, path, body
+    )
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", NOT_CONTENT_ADMINS)
+@pytest.mark.parametrize("method,path,body", AUTHOR_OR_ADMIN_EDITS)
+def test_nobody_else_edits_a_form(
+    api: _Api, method: str, path: str, body: dict[str, Any], role: str
+) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(
+        method, path, body
+    )
+
+    assert outcome.refused, outcome
+
+
+def test_the_forms_author_reuploads_its_workbook(api: _Api, reupload_reaches: None) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user("DESIGNER", "u1")).call(
+        "POST", "/questionnaires/x1/upload", files=_WORKBOOK
+    )
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", CONTENT_ADMINS)
+def test_a_content_admin_reuploads_somebody_elses_workbook(
+    api: _Api, reupload_reaches: None, role: str
+) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(
+        "POST", "/questionnaires/x1/upload", files=_WORKBOOK
+    )
+
+    assert outcome.reached, outcome
+
+
+@pytest.mark.parametrize("role", NOT_CONTENT_ADMINS)
+def test_nobody_else_reuploads_a_forms_workbook(
+    api: _Api, reupload_reaches: None, role: str
+) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(
+        "POST", "/questionnaires/x1/upload", files=_WORKBOOK
+    )
+
+    assert outcome.refused, outcome
+
+
+def test_the_author_does_not_publish_their_form_to_everyone(api: _Api) -> None:
+    """Sharing with everyone (the standard form) stays a content admin's act, author or not."""
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user("DESIGNER", "u1")).call(
+        "PATCH", "/questionnaires/x1", {"isShared": True}
+    )
+
+    assert outcome.refused, outcome
+
+
+@pytest.mark.parametrize("role", CONTENT_ADMINS)
+def test_a_content_admin_publishes_a_form_to_everyone(api: _Api, role: str) -> None:
+    outcome = api.preload("questionnaire", _AuthoredForm()).as_(_user(role, "u2")).call(
+        "PATCH", "/questionnaires/x1", {"isShared": True}
+    )
 
     assert outcome.reached, outcome
 

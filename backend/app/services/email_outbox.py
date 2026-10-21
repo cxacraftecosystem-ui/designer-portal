@@ -99,9 +99,27 @@ async def wants(user_id: str, kind: str) -> bool:
     if column is None:
         return True
     row = await db.userpreference.find_unique(where={"userId": user_id})
-    if row is None:
+    return wants_by(row, kind)
+
+
+def wants_by(row: Any | None, kind: str) -> bool:
+    """:func:`wants`, answered from a preference row already in hand (``None``: the person has none)."""
+    column = PREFERENCE_FOR_KIND.get(kind)
+    if column is None or row is None:
         return True
     return bool(getattr(row, column, True) is not False)
+
+
+async def preferences_of(user_ids: list[str]) -> dict[str, Any]:
+    """``{user id: preference row}`` for many people in ONE read; a person with no row is absent.
+
+    For a notice that fans out: asking :func:`wants` person by person was a read per recipient.
+    """
+    ids = sorted({str(uid) for uid in user_ids if uid})
+    if not ids:
+        return {}
+    rows = await db.userpreference.find_many(where={"userId": {"in": ids}})
+    return {str(row.userId): row for row in rows}
 
 
 def hand_in_mode(row: Any) -> str:
@@ -476,13 +494,20 @@ async def _queue_for(
 ) -> int:
     queued = 0
     seen: set[str] = set()
+    audience: list[Any] = []
     for person in people[:MAX_FANOUT]:
         person_id = _value(person, "id")
         address = _value(person, "email")
         if not person_id or not address or person_id == actor_id or person_id in seen:
             continue
         seen.add(person_id)
-        if not await wants(person_id, kind):
+        audience.append(person)
+    # Everybody's preference in one read, where it was one read per recipient.
+    preferences = await preferences_of(list(seen)) if PREFERENCE_FOR_KIND.get(kind) else {}
+    for person in audience:
+        person_id = _value(person, "id")
+        address = _value(person, "email")
+        if not wants_by(preferences.get(str(person_id)), kind):
             continue
         if await enqueue(
             kind,
@@ -579,6 +604,12 @@ async def send_setup_reminders(
     since = datetime.now(UTC) - REMINDER_COOLDOWN
     recent_rows = await db.emailmessage.find_many(where={"topic": topic, "createdAt": {"gte": since}})
     recently = {row.recipientId for row in recent_rows}
+    # Every designer's preference in one read, where it was one read per designer.
+    preferences = (
+        await preferences_of([_value(person, "id") for person in designers[:MAX_FANOUT]])
+        if PREFERENCE_FOR_KIND.get(mailer.SETUP_REMINDER)
+        else {}
+    )
     for person in designers[:MAX_FANOUT]:
         person_id = _value(person, "id")
         address = _value(person, "email")
@@ -588,7 +619,7 @@ async def send_setup_reminders(
         if person_id in recently:
             tally["recent"] += 1
             continue
-        if not await wants(person_id, mailer.SETUP_REMINDER):
+        if not wants_by(preferences.get(str(person_id)), mailer.SETUP_REMINDER):
             tally["optedOut"] += 1
             continue
         row = await enqueue(
@@ -847,11 +878,15 @@ async def notify_handed_in(
     try:
         workshop_id = str(_value(record, "id"))
         actor_id = _value(actor, "id")
-        for person, approver in (await hand_in_audience(workshop_id))[: MAX_FANOUT * 2]:
-            if not person.email or person.id == actor_id:
-                continue
-            preference = await db.userpreference.find_unique(where={"userId": person.id})
-            mode = hand_in_mode(preference)
+        audience = [
+            (person, approver)
+            for person, approver in (await hand_in_audience(workshop_id))[: MAX_FANOUT * 2]
+            if person.email and person.id != actor_id
+        ]
+        # Every recipient's choice in one read, where it was one read per recipient.
+        preferences = await preferences_of([person.id for person, _ in audience])
+        for person, approver in audience:
+            mode = hand_in_mode(preferences.get(str(person.id)))
             if mode == HAND_IN_OFF:
                 continue
             params = {

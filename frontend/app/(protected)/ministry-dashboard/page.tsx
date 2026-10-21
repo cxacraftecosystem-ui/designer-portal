@@ -410,15 +410,26 @@ export default function MinistryDashboardPage() {
   const openPeople = PEOPLE_KINDS.filter((entry) => peopleCards.isOpen(entry.id))
     .map((entry) => entry.id)
     .join(",");
+  /*
+    WHICH CARD'S ANSWER IS ALREADY IN FOR THE CURRENT TOKEN. Opening a second card used to re-read
+    every open card, because the effect below re-runs on the joined `openPeople` string; now a run on
+    an unchanged token asks only for the cards whose answer for that token has not landed — the one
+    just opened, or one whose read the re-run cancelled. A new token (poll, filter, pager, Refresh)
+    still re-reads every open card.
+  */
+  const peopleLanded = useRef<Partial<Record<PeopleKind, number>>>({});
 
   useEffect(() => {
     if (!allowed || !openPeople) return;
     let cancelled = false;
-    const kinds = openPeople.split(",") as PeopleKind[];
+    const kinds = (openPeople.split(",") as PeopleKind[]).filter(
+      (peopleKind) => peopleLanded.current[peopleKind] !== loadToken
+    );
     kinds.forEach((peopleKind) => {
       listRegisterPeople(peopleKind, { page: peoplePage[peopleKind] ?? 1, pageSize: PEOPLE_PAGE_SIZE })
         .then((result) => {
           if (cancelled) return;
+          peopleLanded.current[peopleKind] = loadToken;
           setPeople((current) => ({ ...current, [peopleKind]: result }));
           setPeopleError((current) => ({ ...current, [peopleKind]: undefined }));
         })

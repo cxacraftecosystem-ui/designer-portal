@@ -36,7 +36,7 @@ from app.core.deps import (
 from app.services import answer_drafts as ad, dictation_consent
 from app.services.access import effective_tier_for_record
 from app.services.record_design_workshop import assert_may_write_a_record_filed_under
-from app.services.records import public_encode, require_record, viewable_where
+from app.services.records import public_encode, require_live_record, viewable_where
 
 router = APIRouter(prefix="/questionnaire", tags=["questionnaire"])
 
@@ -66,15 +66,15 @@ async def may_edit_interview(interview: Any, user: Any) -> bool:
 async def _readable_interview(interview_id: str, user: Any) -> Any:
     vis = await viewable_where(user)
     if not vis:
-        return await require_record(db.questionnaireinterview, interview_id)
-    interview = await db.questionnaireinterview.find_first(where={"AND": [{"id": interview_id}, vis]})
+        return await require_live_record(db.questionnaireinterview, interview_id)
+    interview = await db.questionnaireinterview.find_first(where={"AND": [{"id": interview_id, "deletedAt": None}, vis]})
     if interview is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     return interview
 
 
 async def _editable_interview(interview_id: str, user: Any) -> Any:
-    interview = await require_record(db.questionnaireinterview, interview_id)
+    interview = await require_live_record(db.questionnaireinterview, interview_id)
     # The workshop's inspector and directors may not change a sitting filed under it (2026-10-09).
     await assert_may_write_a_record_filed_under(get_value(interview, "designWorkshopId"), user)
     if not await may_edit_interview(interview, user):

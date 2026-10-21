@@ -737,6 +737,23 @@ def test_the_batch_caps_at_50_and_leaves_out_unknown_ids(fake, provider):
     assert body["items"][media.id]["insight"]["translation"]["text"] is None
 
 
+def test_with_include_translation_the_batch_answers_each_id_exactly_as_the_single_read(fake, provider):
+    """The handset's transcript cards ask together (one batch per screen, translation included)
+    where each card used to read its own ``GET /media/{id}/insights``; each item must be that read."""
+    first = _ready(fake, provider)
+    second = _ready(fake, provider)
+    client = _client(OTHER)
+    body = client.get(f"/api/media/insights?ids={first.id},{second.id},nope&includeTranslation=true").json()
+    assert body["translationIncluded"] is True
+    assert sorted(body["items"]) == sorted([first.id, second.id])
+    for media in (first, second):
+        assert body["items"][media.id] == client.get(f"/api/media/{media.id}/insights").json()
+    # Without the flag nothing changes: no marker, translation text left out.
+    plain = client.get(f"/api/media/insights?ids={first.id}").json()
+    assert "translationIncluded" not in plain
+    assert plain["items"][first.id]["insight"]["translation"]["text"] is None
+
+
 def test_the_batch_route_is_not_swallowed_by_the_media_id_route(fake):
     response = _client(OWNER).get("/api/media/insights?ids=")
     assert response.status_code == 200 and response.json() == {"items": {}}

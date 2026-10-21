@@ -367,7 +367,7 @@ async def reindex_all(entity_type: str | None = None) -> int:
         "processes": 'SELECT \'processes\', "id" FROM "Process"',
         "media": 'SELECT \'media\', "id" FROM "MediaFile"',
         "transcripts": "SELECT 'transcripts', \"id\" FROM \"MediaFile\" WHERE btrim(coalesce(\"transcriptText\", '')) <> ''",
-        "interviews": 'SELECT \'interviews\', "id" FROM "QuestionnaireInterview"',
+        "interviews": 'SELECT \'interviews\', "id" FROM "QuestionnaireInterview" WHERE "deletedAt" IS NULL',
         "designWorkshops": 'SELECT \'designWorkshops\', "id" FROM "DesignWorkshop" WHERE "deletedAt" IS NULL',
         "reports": 'SELECT \'reports\', "id" FROM "DwReportExport"',
         "clusters": (

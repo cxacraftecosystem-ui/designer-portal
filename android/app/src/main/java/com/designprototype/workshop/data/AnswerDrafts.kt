@@ -1,6 +1,9 @@
 package com.designprototype.workshop.data
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.Serializable
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -74,11 +77,33 @@ interface AnswerDraftsApi {
 }
 
 class AnswerDraftsClient(val api: AnswerDraftsApi) {
-    suspend fun enabled(): Boolean = runCatching { api.status().enabled }.getOrDefault(false)
+    /**
+     * ONE STATUS READ AND ONE LIST READ FOR ALL THE SECTIONS OF AN INTERVIEW. A card is drawn under
+     * every open section and each asked both for itself — 2 x sections identical requests every time
+     * the form opened. Reads asked while the same one is out ride it ([sharedRead]); nothing is kept
+     * once it answers, so the next opening reads afresh exactly as before.
+     */
+    suspend fun enabled(): Boolean = runCatching { reads.read("status") { api.status() }.enabled }.getOrDefault(false)
+
+    /** `GET questionnaire/interviews/{id}/drafts`, shared with any card asking for the same interview. */
+    suspend fun list(interviewId: String): AnswerDraftListDto = reads.read("list:$interviewId") { api.list(interviewId) }
+
+    private val reads = SharedReads(CoroutineScope(SupervisorJob() + Dispatchers.IO))
 
     companion object {
+        @Volatile
+        private var shared: AnswerDraftsClient? = null
+
+        /**
+         * One client for the process, not one per card: every card used to build its own Retrofit
+         * and OkHttp client — its own connection pool, so a fresh TLS handshake per section.
+         */
         fun create(context: Context): AnswerDraftsClient =
-            AnswerDraftsClient(ApiClient.retrofit(TokenStore(context.applicationContext)).create(AnswerDraftsApi::class.java))
+            shared ?: synchronized(this) {
+                shared ?: AnswerDraftsClient(
+                    ApiClient.retrofit(TokenStore(context.applicationContext)).create(AnswerDraftsApi::class.java)
+                ).also { shared = it }
+            }
     }
 }
 

@@ -946,14 +946,16 @@ async def get_artisan_questionnaire(
         db.artisan.find_unique(where={"id": artisan_id}),
         db.questionnaireresponse.find_many(
             where={
-                "interview": {"is": {"artisans": {"some": {"artisanId": artisan_id}}}},
+                "interview": {
+                    "is": {"artisans": {"some": {"artisanId": artisan_id}}, "deletedAt": None}
+                },
                 "answerText": {"not": None},
             },
             include={"question": True, "interview": True, "answeredBy": True},
             order={"createdAt": "asc"},
         ),
         db.questionnaireinterview.find_many(
-            where={"artisans": {"some": {"artisanId": artisan_id}}},
+            where={"artisans": {"some": {"artisanId": artisan_id}}, "deletedAt": None},
             include={"artisans": {"include": {"artisan": True}}, "media": True},
             order={"createdAt": "desc"},
         ),

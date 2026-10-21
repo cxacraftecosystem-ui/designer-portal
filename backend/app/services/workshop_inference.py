@@ -452,7 +452,9 @@ async def run_ladder() -> LadderRun:
         db.workshop.find_many(),
         # NOTHING A DESIGN WORKSHOP CLAIMS IS A CANDIDATE (2026-10-09) — see the module header.
         db.questionnaireinterview.find_many(
-            where=_UNFILED_RECORD, include={"artisans": True}, order={"createdAt": "asc"}
+            where={**_UNFILED_RECORD, "deletedAt": None},
+            include={"artisans": True},
+            order={"createdAt": "asc"},
         ),
         db.mediafile.find_many(where=_UNFILED_MEDIA, order={"createdAt": "asc"}),
         db.productdocumentation.find_many(where=_UNFILED_RECORD, order={"createdAt": "asc"}),
@@ -1256,7 +1258,7 @@ async def count_unassigned_interviews(artisan_ids: Iterable[str] | None = None) 
     only shortfall that explains THIS matrix. An empty (but not None) collection means "no artisans in
     scope", for which the honest answer is zero rather than every unassigned interview in the corpus.
     """
-    where: dict[str, Any] = {"workshopId": None}
+    where: dict[str, Any] = {"workshopId": None, "deletedAt": None}
     if artisan_ids is not None:
         ids = [value for value in artisan_ids if value]
         if not ids:

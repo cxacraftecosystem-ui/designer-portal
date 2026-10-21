@@ -636,6 +636,39 @@ async def supervisory_workshops_of(user: Any) -> set[str]:
     return {str(row.designWorkshopId) for row in overseen if row.designWorkshopId} | set(inspected)
 
 
+async def staffing_held_by(user_id: str) -> dict[str, dict[str, list[dict[str, str]]]]:
+    """``{workshop id: {"oversight": [...], "inspectors": [...]}}`` — the caller's OWN rows only.
+
+    The batch form of reading ``GET /design-workshop-oversight/{id}`` and
+    ``GET /design-workshop-inspections/{id}/inspectors`` for every workshop and keeping the rows that
+    name this account: the same two row shapes (``capacity`` + ``userId``, and ``userId``), so a
+    client derives the posts held with the very function it ran over the two per-workshop reads.
+    Soft-deleted workshops are left out, as those reads answer 404 for them. Two indexed reads
+    (``userId``), gathered, whatever the number of workshops — where a list screen used to spend two
+    requests per workshop on its rows.
+    """
+    from app.services.design_workshop_inspectors import inspected_live_workshop_ids
+
+    if not user_id:
+        return {}
+    overseen, inspected = await gather_reads(
+        db.designworkshopoversight.find_many(
+            where={"userId": user_id, "designWorkshop": {"is": {"deletedAt": None}}}
+        ),
+        inspected_live_workshop_ids(user_id),
+    )
+    held: dict[str, dict[str, list[dict[str, str]]]] = {}
+    for row in overseen:
+        entry = held.setdefault(str(row.designWorkshopId), {"oversight": [], "inspectors": []})
+        entry["oversight"].append(
+            {"capacity": str(getattr(row.capacity, "value", row.capacity)), "userId": user_id}
+        )
+    for workshop_id in inspected:
+        entry = held.setdefault(str(workshop_id), {"oversight": [], "inspectors": []})
+        entry["inspectors"].append({"userId": user_id})
+    return held
+
+
 #: :func:`stage_media_workshop_ids`' statement asked of MANY files and only the workshops that
 #: matter: which of the ids in ``$1`` the live stage entries of the workshops in ``$2`` hold, in any
 #: field that can. ``$3`` and ``$4`` are :func:`_media_bearing_fields`, exactly as there.

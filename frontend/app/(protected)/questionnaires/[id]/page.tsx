@@ -56,7 +56,7 @@ import { useToast } from "@/components/ui/Toast";
 import { listDesignWorkshops, saveBlobToDisk, type DwSummary } from "@/lib/designWorkshops";
 import { formatDateTime } from "@/lib/format";
 import { apiFetch } from "@/lib/api";
-import { canEditOwnOrAdmin, isContentAdmin } from "@/lib/permissions";
+import { canEditOwnOrAdmin, isContentAdmin, mayDeleteQuestionnaire } from "@/lib/permissions";
 import { cachedQuestionnaireNotice, loadQuestionnaireWithCache } from "@/lib/questionnaireFormCache";
 import { Toggle } from "@/components/ui/Toggle";
 import {
@@ -102,7 +102,8 @@ export default function QuestionnaireDetailPage() {
   const { user, loading: authLoading } = useAuth();
   const confirm = useConfirm();
   const { toast } = useToast();
-  // Deleting the form or a sitting is a content admin's act, admin view or not (2026-10-21);
+  // Deleting the FORM (and removing its questions) is its author's or a content admin's (owner,
+  // 22 Oct 2026). Deleting a SITTING is a content admin's act, admin view or not (2026-10-21), and
   // restoring one stays in admin view.
   const { adminMode, canDeleteRecords } = useAdminView();
   /** Bumped after a sitting is deleted, so the admin's "Deleted answers" list re-reads. */
@@ -291,12 +292,13 @@ export default function QuestionnaireDetailPage() {
   */
   const attachedHold = useHeldPostRefusal(form?.designWorkshopId ?? null);
   const mayEdit = owns && attachedHold === null;
-  const mayDelete = mayEdit && canDeleteRecords;
+  const mayDelete = mayEdit && mayDeleteQuestionnaire(user, form?.ownerId);
+  const mayDeleteSittings = mayEdit && canDeleteRecords;
 
   async function deleteForm() {
     if (!form) return;
     const ok = await confirm(
-      deleteConfirm(`Delete “${form.title}”?`, "Its questions and answers are kept.", "An admin can restore it.")
+      deleteConfirm(`Delete “${form.title}”?`, "Its questions and answers are kept.", "Its author or an admin can restore it.")
     );
     if (!ok) return;
     const done = await run(() => apiFetch(`/questionnaires/${id}`, { method: "DELETE" }), "Unable to delete this questionnaire");
@@ -1061,7 +1063,7 @@ export default function QuestionnaireDetailPage() {
                     <Link className={rowAction("edit")} href={`/questionnaires/${id}/answer?entry=${entry.id}`}>
                       Open
                     </Link>
-                    {mayDelete ? (
+                    {mayDeleteSittings ? (
                       <button
                         type="button"
                         data-danger
@@ -1081,7 +1083,7 @@ export default function QuestionnaireDetailPage() {
       </section>
 
       {/* Restoring a sitting is a content admin's act, in admin view (2026-10-20). */}
-      {mayDelete && adminMode ? (
+      {mayDeleteSittings && adminMode ? (
         <DeletedSittings questionnaireId={id} refreshToken={deletedSittingsToken} onRestored={() => void load()} />
       ) : null}
 

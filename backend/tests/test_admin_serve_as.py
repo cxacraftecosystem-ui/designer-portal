@@ -1236,13 +1236,14 @@ def test_the_ladder_reads_no_row_a_design_workshop_claims():
     # Whitespace dropped, so a reflowed call still matches.
     ladder = "".join(inspect.getsource(inference.run_ladder).split())
     for table in (
-        "questionnaireinterview",
         "productdocumentation",
         "tooldocumentation",
         "process",
         "artisan",
     ):
         assert f"db.{table}.find_many(where=_UNFILED_RECORD" in ladder, table
+    # Interviews add the soft-delete filter (audit H5, 21 Oct 2026) to the same unfiled clause.
+    assert 'db.questionnaireinterview.find_many(where={**_UNFILED_RECORD,"deletedAt":None}' in ladder
     assert "db.mediafile.find_many(where=_UNFILED_MEDIA" in ladder
 
 

@@ -309,7 +309,8 @@ async def _interview(entity_id: str) -> dict[str, Any] | None:
         where={"id": entity_id},
         include={"artisans": True, "location": True, "responses": {"include": {"question": True}}},
     )
-    if row is None:
+    # A soft-deleted interview (audit H5) leaves search exactly as a removed one did.
+    if row is None or row.deletedAt is not None:
         return None
     answers: list[str] = []
     for response in row.responses or []:

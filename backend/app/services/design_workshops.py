@@ -449,7 +449,11 @@ async def entry_rows(workshop_id: str, *, stage_key: str | None = None) -> list[
     where: dict[str, Any] = {"designWorkshopId": workshop_id, "deletedAt": None}
     if stage_key:
         where["stageKey"] = stage_key
-    return await db.dwstageentry.find_many(where=where, order={"ordinal": "asc"})
+    # A TOTAL ORDER: new rows of one save arrive in one `create_many` (one statement, one `now()`), so
+    # `ordinal` then `createdAt` can tie and only `id` settles which comes first, the same on every read.
+    return await db.dwstageentry.find_many(
+        where=where, order=[{"ordinal": "asc"}, {"createdAt": "asc"}, {"id": "asc"}]
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -2731,6 +2735,8 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
     # workflow. This model touches none of it.
     "QuestionnaireInterview": ReferenceModel(
         delegate="questionnaireinterview",
+        # A soft-deleted interview (audit H5) is not offered; one already cited still resolves by id.
+        offered_where={"deletedAt": None},
         # `title` ASCENDING, AND `interviewDate` DESCENDING IS A TRAP RATHER THAN A PREFERENCE.
         # `interviewDate` is NULLABLE and Postgres sorts NULLs FIRST under DESC, so ordering by
         # recency floats every undated interview to the top of the picker — the rows carrying the
@@ -3685,7 +3691,7 @@ async def _in_record_options(
     rows = await db.dwstageentry.find_many(
         where={"designWorkshopId": record.id, "entityKey": entity.key, "deletedAt": None}
         | ({"OR": [{"id": record_id}, {"clientKey": record_id}]} if record_id else {}),
-        order={"ordinal": "asc"},
+        order=[{"ordinal": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     label_key = entity.label_field or next((f.key for f in entity.fields if f.is_free_text), "")
     # A second printable field, so two prototypes both called "Bag" are told apart by their code.
@@ -6094,8 +6100,11 @@ async def save_stage(
             # every new row starts where a re-read will find it; writing the column here would only
             # be a way to get it wrong. The INSERT side of this race is guarded by the unique index
             # on the reserved client key, not by a counter — see `_absorb_key_collisions` below.
-            for data in creates:
-                await tx.dwstageentry.create(data=data)
+            # ONE INSERT FOR EVERY NEW ROW, not one each: a collection of twelve new rows was twelve
+            # statements. A clash on the reserved client key still raises UniqueViolationError and
+            # rolls the whole write back, exactly as the first failing single INSERT did.
+            if creates:
+                await tx.dwstageentry.create_many(data=creates)
             if removed:
                 # NOT VERSION-GUARDED, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. The sweep
                 # writes one timestamp onto rows the client no longer holds; it is idempotent, it

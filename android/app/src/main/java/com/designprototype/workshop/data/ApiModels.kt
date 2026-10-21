@@ -4427,6 +4427,22 @@ data class CustomQuestionnaireSummaryDto(
     val sourceFilename: String? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
+    /** L9: null on every live row; set only in the trash (`deletedOnly`). */
+    val deletedAt: String? = null,
+    val deletedByName: String? = null,
+)
+
+/** L9 (21 Oct 2026): one sitting in a questionnaire's trash — `GET /questionnaires/{id}/deleted-entries`. */
+@Serializable
+data class DeletedCustomEntryDto(
+    val id: String,
+    val title: String = "",
+    val respondentName: String? = null,
+    val source: String? = null,
+    val createdAt: String? = null,
+    val createdByName: String? = null,
+    val deletedAt: String? = null,
+    val deletedByName: String? = null,
 )
 
 @Serializable
@@ -4636,12 +4652,27 @@ data class CustomAnswerSaveCountsDto(
     val created: Int = 0,
     val updated: Int = 0,
     val unchanged: Int = 0,
+    /**
+     * M5 (21 Oct 2026): the answers this save did NOT write, each with the server's sentence. The
+     * others in the same batch were saved. Codes: `QUESTION_RETIRED`, `ANSWER_OWNED_BY_OTHER`.
+     */
+    val rejected: List<CustomAnswerRejectedDto> = emptyList(),
+)
+
+@Serializable
+data class CustomAnswerRejectedDto(
+    val questionId: String = "",
+    val code: String = "",
+    val message: String = "",
 )
 
 @Serializable
 data class CustomAnswerSaveResultDto(
     val saved: CustomAnswerSaveCountsDto = CustomAnswerSaveCountsDto(),
-    /** Every answer now on the sitting, not only the ones just sent. */
+    /**
+     * The sitting's answers this account may see: every answer for anybody entitled to the whole
+     * sitting, otherwise only the caller's own (M6). A row missing here was not deleted.
+     */
     val answers: List<CustomAnswerDto> = emptyList(),
 )
 
@@ -5197,4 +5228,14 @@ data class TranscriptInsightViewDto(
 )
 
 @Serializable
-data class TranscriptInsightBatchDto(val items: Map<String, TranscriptInsightViewDto> = emptyMap())
+data class MediaBatchDto(
+    val items: List<MediaFileDto> = emptyList(),
+    val missing: List<String> = emptyList()
+)
+
+@Serializable
+data class TranscriptInsightBatchDto(
+    val items: Map<String, TranscriptInsightViewDto> = emptyMap(),
+    // True only from a server that honoured `includeTranslation=true`; an older one leaves it out.
+    val translationIncluded: Boolean = false
+)

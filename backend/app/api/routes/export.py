@@ -388,7 +388,7 @@ async def dataset_manifest(
             where=rec_where, take=EXPORT_TAKE, include=_TOOL_INCLUDE, order=_EXPORT_ORDER
         ),
         db.questionnaireinterview.find_many(
-            where=rec_where, take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
+            where={"AND": [rec_where, {"deletedAt": None}]}, take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
         ),
         db.process.find_many(
             where=rec_where, take=EXPORT_TAKE, include=_PROCESS_INCLUDE, order=_EXPORT_ORDER

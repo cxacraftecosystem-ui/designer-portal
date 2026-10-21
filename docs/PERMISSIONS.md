@@ -786,7 +786,8 @@ neither, and are unchanged.
 | Media file (every type), transcripts, relink, transcribe-now, job retry | uploader and record editors; content admins on any media | content admins (uploaders no longer delete their own) |
 | Comments | the author (`PATCH /data-access/comments/{id}`) | content admins |
 | Questionnaire sections and questions | questionnaire managers, plus content admins | content admins |
-| Questionnaire forms, sittings, form questions | the owner, plus content admins on any form | content admins (`DELETE /questionnaires/{id}`, `DELETE /questionnaires/{id}/entries/{entry_id}`, both soft); restore: content admins (`POST .../restore`) |
+| Questionnaire forms, their sections and form questions (re-upload removals included) | the author (`ownerId`), plus content admins on any form | the author or content admins (`DELETE /questionnaires/{id}`, soft; `DELETE .../questions/{id}`; a section taken out); restore: the author or content admins (`POST /questionnaires/{id}/restore`); trash: content admins see every deleted form, an author their own (owner, 2026-10-22) |
+| Questionnaire sittings | the owner, plus content admins on any form | content admins (`DELETE /questionnaires/{id}/entries/{entry_id}`, soft); restore: content admins (`POST .../entries/{entry_id}/restore`) |
 | Interview merge (source removed) | – | content admins |
 | Design workshop | create: `DESIGN_WORKSHOP_CREATOR_ROLES` = the three; edit: content admins without a viewer grant | content admins (soft); restore: content admins |
 | Workshop types, craft codes mapping, unmapped records, duplicates, completion override | content admins | content admins |
@@ -806,7 +807,10 @@ on (owner, 2026-10-21): `canDeleteRecords` on the web, `mayDelete` / `LocalMayDe
 `canDelete`) on the handset. No other role is ever offered one. Admin view still governs everything
 else it did (restore cards, merges, the completion override, admin chrome); its default is on for
 the master admin and off for everyone else.
-`tests/test_permission_matrix.py` drives every content delete over all eleven tiers.
+`tests/test_permission_matrix.py` drives every content delete over all eleven tiers; a questionnaire
+form's delete, restore and question removal are driven separately (`AUTHOR_OR_ADMIN_DELETES`): the
+form's author and the content admins reach them, every other tier is refused. Those controls are
+drawn for the author too (`mayDeleteQuestionnaire` on the web and the handset).
 
 ### 2.1 Create, edit, delete — as a decision tree
 
