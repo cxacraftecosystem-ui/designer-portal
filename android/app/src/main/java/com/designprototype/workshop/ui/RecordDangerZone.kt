@@ -62,6 +62,10 @@ fun RecordDangerZoneCard(
     delete: suspend () -> Unit,
     onDeleted: () -> Unit,
     onError: (Throwable) -> Unit,
+    /** In place of "Permanently deletes…", for a record that is not deleted permanently. */
+    body: String? = null,
+    /** In place of the confirmation's "This permanently deletes the record." */
+    confirmBody: String? = null,
 ) {
     val scope = rememberCoroutineScope()
     var confirm by remember { mutableStateOf(false) }
@@ -73,7 +77,7 @@ fun RecordDangerZoneCard(
     ) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(RecordDangerZone.TITLE, display = true, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
-            Text(RecordDangerZone.body(noun), color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text(body ?: RecordDangerZone.body(noun), color = Muted, style = MaterialTheme.typography.bodySmall)
             OutlinedButton(
                 onClick = { confirm = true },
                 enabled = !deleting,
@@ -90,7 +94,7 @@ fun RecordDangerZoneCard(
         AlertDialog(
             onDismissRequest = { if (!deleting) confirm = false },
             title = { Text(RecordDangerZone.confirmTitle(noun)) },
-            text = { Text(RecordDangerZone.CONFIRM_BODY) },
+            text = { Text(confirmBody ?: RecordDangerZone.CONFIRM_BODY) },
             confirmButton = {
                 TextButton(
                     enabled = !deleting,

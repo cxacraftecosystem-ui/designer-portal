@@ -5074,7 +5074,9 @@ private fun HomeScreen(
                 // Ungated HERE for the same reason as the row above it, and the index HIDES this one
                 // from a non-admin rather than explaining it — see the comment on that control.
                 onOpenProvenance = { message = null; screen = Screen.DesignWorkshopProvenance(s.workshopId) },
-                onError = { showError(it) }
+                onError = { showError(it) },
+                canDelete = canDelete,
+                onDeleted = { message = "Design workshop deleted"; screen = Screen.DesignWorkshops() },
             )
 
             is Screen.DesignWorkshopStage -> StageScreen(

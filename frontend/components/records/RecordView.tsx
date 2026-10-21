@@ -12,6 +12,8 @@ import { TranscriptBlock } from "@/components/media/TranscriptBlock";
 import { PageHeader } from "@/components/PageHeader";
 import { CompletenessMeter } from "@/components/records/CompletenessMeter";
 import { StatusBadge } from "@/components/StatusBadge";
+import { RecordDangerZone } from "@/components/records/RecordDangerZone";
+import { RECORD_LIST_HREF } from "@/components/records/dangerZoneRules";
 import type { RecordFieldRow } from "@/components/records/recordFields";
 import { ApiError, apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
@@ -130,6 +132,7 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
             </div>
           ) : null}
           {children(record)}
+          <RecordDangerZone noun={noun} endpoint={endpoint} afterHref={RECORD_LIST_HREF[kind] ?? "/dashboard"} />
         </div>
       ) : error ? null : (
         <div className="panel p-4 text-sm text-ink-500">Loading {noun}…</div>

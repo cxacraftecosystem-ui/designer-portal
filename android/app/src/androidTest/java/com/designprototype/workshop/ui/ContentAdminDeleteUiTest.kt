@@ -53,6 +53,10 @@ class ContentAdminDeleteUiTest {
         var removed = 0
         show(user("ma", "MINISTRY_ADMIN"), adminView = true, onRemove = { removed++ })
         compose.onNodeWithText("Remove").assertIsDisplayed().performClick()
+        // Asked first: nothing is removed until the confirmation.
+        compose.onNodeWithText("Delete this comment?").assertIsDisplayed()
+        assertEquals(0, removed)
+        compose.onNodeWithText("Delete").performClick()
         assertEquals(1, removed)
         // Not the author: no Edit.
         compose.onNodeWithText("Edit").assertDoesNotExist()

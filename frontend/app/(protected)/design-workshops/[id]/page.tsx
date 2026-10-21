@@ -53,6 +53,7 @@ import { HeldPostNotice, heldPostReason, useHeldPostRefusal } from "@/components
 import { WorkshopSearchPanel } from "@/components/designworkshop/WorkshopSearchPanel";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
+import { RecordDangerZone } from "@/components/records/RecordDangerZone";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import {
@@ -1950,6 +1951,17 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           The form has new fields since this workshop was last saved.
         </p>
       ) : null}
+
+      {/* Content admins in admin view; a soft delete, so it says where the workshop goes. */}
+      <div className="mt-5">
+        <RecordDangerZone
+          noun="design workshop"
+          endpoint={`/design-workshops/${encodeURIComponent(id)}`}
+          afterHref="/design-workshops"
+          body="Moves this design workshop to Deleted workshops. An admin can restore it."
+          confirmBody="An admin can restore it from Deleted workshops."
+        />
+      </div>
     </>
   );
 }
