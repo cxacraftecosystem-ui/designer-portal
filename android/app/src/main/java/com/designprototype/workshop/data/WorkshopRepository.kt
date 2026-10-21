@@ -7701,6 +7701,23 @@ class WorkshopRepository(
      *   is recorded as one ([UNFILED_BY_CHOICE]) so the replay sends the explicit null the server
      *   needs rather than an omitted key it would read as "leave it alone".
      */
+    /** H4: send a queued interview without the answers another researcher owns. */
+    suspend fun sendWithoutConflictingAnswers(context: Context, entryId: String): OutboxRetryResult {
+        val online = isOnline(context)
+        if (!OfflineOutbox.dropConflictingAnswers(context, entryId)) {
+            return OutboxRetryResult(false, 0, 1, 0, attempted = false)
+        }
+        val moved = syncOutbox(context)
+        val stillQueued = OfflineOutbox.all(context).any { it.id == entryId }
+        return OutboxRetryResult(
+            requestedSent = !stillQueued,
+            refusedSent = if (stillQueued) 0 else 1,
+            refusedTried = 1,
+            othersSent = (moved - if (stillQueued) 0 else 1).coerceAtLeast(0),
+            attempted = online,
+        )
+    }
+
     suspend fun repickOutboxEntry(
         context: Context,
         entryId: String,
@@ -8310,6 +8327,7 @@ class WorkshopRepository(
                             stale = outcome.stale,
                             currentUpdatedAt = outcome.currentUpdatedAt,
                             duplicateCandidates = outcome.duplicateCandidates,
+                            conflictingAnswerIds = outcome.conflictingAnswerIds,
                         )
                         // SAID WHEN IT CHANGES, NOT ON EVERY PASS THAT REACHES IT. Until a schema
                         // refusal could be re-attempted, an entry was refused exactly once and this
@@ -8413,6 +8431,8 @@ class WorkshopRepository(
              * Not a [conflict]: see [PendingEntry.duplicateCandidates].
              */
             val duplicateCandidates: List<OutboxDuplicateCandidate> = emptyList(),
+            /** H4: answers another researcher owns (403 `ANSWER_OWNED_BY_OTHER`). */
+            val conflictingAnswerIds: List<String> = emptyList(),
         ) : ReplayOutcome
     }
 
@@ -8488,6 +8508,17 @@ class WorkshopRepository(
                         conflict = false,
                         stale = true,
                         currentUpdatedAt = staleAt.ifBlank { null },
+                    )
+                }
+                // ANSWERS ANOTHER RESEARCHER OWNS (403 `ANSWER_OWNED_BY_OTHER`, H4 21 Oct 2026). Not a
+                // dead end: the tray offers "Send without them", which drops only those answers.
+                val owned = if (e is HttpException) ownedAnswersRefusal(e.code(), peekErrorBody(e)) else null
+                if (owned != null) {
+                    return ReplayOutcome.Rejected(
+                        owned.message,
+                        schemaSkew = false,
+                        conflict = false,
+                        conflictingAnswerIds = owned.questionIds,
                     )
                 }
                 // A LIKELY DUPLICATE IS ITS OWN ARM, NOT A CLASH (409 `artisan_possible_duplicate`):

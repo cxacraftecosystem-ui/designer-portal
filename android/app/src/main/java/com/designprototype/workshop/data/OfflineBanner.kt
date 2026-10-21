@@ -343,6 +343,11 @@ data class OutboxFailureRow(
      * person" instead of Try again. See `PendingEntry.duplicateCandidates`.
      */
     val possibleDuplicates: List<OutboxDuplicateCandidate> = emptyList(),
+    /**
+     * H4 (21 Oct 2026): how many queued answers another researcher owns. Above zero, the tray offers
+     * "Send without them", which sends the rest of the interview and its clips.
+     */
+    val conflictingAnswers: Int = 0,
 )
 
 /**
@@ -500,6 +505,10 @@ fun outboxRetryAllMessage(result: OutboxRetryResult): String {
  *
  * DEFAULTED, so every existing caller and every pinned row is unchanged.
  */
+/** H4: the tray's label for sending an interview without the answers another researcher owns. */
+fun outboxSendWithoutConflictsLabel(count: Int): String =
+    if (count == 1) "Send without that answer" else "Send without those $count answers"
+
 fun outboxFailureRows(
     entries: List<PendingEntry>,
     signedInUserId: String? = null,
@@ -548,6 +557,7 @@ fun outboxFailureRows(
                 needsAadhaar = entry.createdId == null && AadhaarAtRest.numberWithheld(entry.payloadJson),
                 aadhaarLast4 = AadhaarAtRest.withheldLast4(entry.payloadJson),
                 possibleDuplicates = entry.duplicateCandidates,
+                conflictingAnswers = entry.conflictingAnswerIds.size,
             )
         }
 

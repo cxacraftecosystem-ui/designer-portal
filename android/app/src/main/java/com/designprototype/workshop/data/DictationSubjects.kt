@@ -1,6 +1,21 @@
 package com.designprototype.workshop.data
 
 /**
+ * The answers an interview save sends (H4, 21 Oct 2026): only the ones this person typed or changed,
+ * in question order. An untouched answer is never sent, so a second researcher's answers are never
+ * re-sent under the saver's name and a shared interview is never refused over them.
+ */
+fun interviewAnswersToSend(
+    questionIds: List<String>,
+    current: (String) -> String?,
+    initial: Map<String, String?>,
+): List<Pair<String, String>> = questionIds.mapNotNull { id ->
+    val now = current(id)?.trim().orEmpty()
+    val before = initial[id]?.trim().orEmpty()
+    if (now.isNotBlank() && now != before) id to now else null
+}
+
+/**
  * Who an interview dictation is about, as the two optional multipart parts of
  * `POST /design-workshops/{id}/dictate` (H3, 21 Oct 2026).
  *

@@ -413,6 +413,12 @@ data class PendingEntry(
     val duplicateCandidates: List<OutboxDuplicateCandidate> = emptyList(),
     /** "Same person" was chosen: [createdId] is an existing record and nothing new was created. */
     val attachedToExisting: Boolean = false,
+    /**
+     * H4 (21 Oct 2026): the questions whose answers another researcher wrote, named by a 403
+     * `ANSWER_OWNED_BY_OTHER`. The tray offers "Send without them", which drops just these answers
+     * from the queued body and sends the rest with its clips. Empty on every other entry.
+     */
+    val conflictingAnswerIds: List<String> = emptyList(),
 ) {
     /**
      * The link columns this entry's author DELIBERATELY emptied, and which a replay must therefore
@@ -1407,6 +1413,7 @@ object OfflineOutbox {
         stale: Boolean = false,
         currentUpdatedAt: String? = null,
         duplicateCandidates: List<OutboxDuplicateCandidate> = emptyList(),
+        conflictingAnswerIds: List<String> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(context)
@@ -1425,6 +1432,7 @@ object OfflineOutbox {
                                 currentUpdatedAt = currentUpdatedAt,
                                 // Written on every call, like the flags above it.
                                 duplicateCandidates = duplicateCandidates,
+                                conflictingAnswerIds = conflictingAnswerIds,
                             )
                         } else {
                             it
@@ -1461,6 +1469,40 @@ object OfflineOutbox {
      * @param value the new id, or null/blank for "file it under nothing".
      * @return true when an entry with that id was found and rewritten.
      */
+    /**
+     * H4: drop the answers another researcher owns from a queued interview and unpark it, so the
+     * next pass sends everything else with its clips. False when nothing could be rewritten.
+     */
+    suspend fun dropConflictingAnswers(context: Context, entryId: String): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = read(context)
+            val entry = current.firstOrNull { it.id == entryId } ?: return@withLock false
+            if (entry.conflictingAnswerIds.isEmpty()) return@withLock false
+            val rewritten = withoutAnswers(entry.payloadJson, entry.conflictingAnswerIds) ?: return@withLock false
+            write(
+                context,
+                current.map {
+                    if (it.id == entryId) {
+                        it.copy(
+                            payloadJson = rewritten,
+                            failure = null,
+                            failedAt = null,
+                            skewRun = null,
+                            conflict = false,
+                            danglingField = null,
+                            duplicateCandidates = emptyList(),
+                            staleCorrection = false,
+                            conflictingAnswerIds = emptyList(),
+                        )
+                    } else {
+                        it
+                    }
+                }
+            )
+            true
+        }
+    }
+
     suspend fun repick(
         context: Context,
         entryId: String,
@@ -1496,6 +1538,7 @@ object OfflineOutbox {
                             danglingField = null,
                             duplicateCandidates = emptyList(),
                             staleCorrection = false,
+                            conflictingAnswerIds = emptyList(),
                         )
                     } else {
                         it
@@ -1699,6 +1742,7 @@ object OfflineOutbox {
                             danglingField = null,
                             duplicateCandidates = emptyList(),
                             staleCorrection = false,
+                            conflictingAnswerIds = emptyList(),
                         )
                     } else {
                         it
@@ -1787,6 +1831,7 @@ object OfflineOutbox {
                             danglingField = null,
                             duplicateCandidates = emptyList(),
                             staleCorrection = false,
+                            conflictingAnswerIds = emptyList(),
                         )
                     }
                 }
@@ -2060,6 +2105,39 @@ private fun readableJson(value: kotlinx.serialization.json.JsonElement?): String
 }
 
 /** The error body of [error] without consuming it, so the classification after it still reads it. */
+/** A 403 `ANSWER_OWNED_BY_OTHER` (H4, 21 Oct 2026): the server's sentence and the answers it names. */
+data class OwnedAnswersRefusal(val message: String, val questionIds: List<String>)
+
+/** Reads [OwnedAnswersRefusal] from a refusal body, or null for any other refusal. Pure. */
+fun ownedAnswersRefusal(code: Int, body: String?): OwnedAnswersRefusal? {
+    if (code != 403 || body.isNullOrBlank()) return null
+    val root = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+    val detail = root["detail"] as? JsonObject ?: return null
+    if ((detail["code"] as? JsonPrimitive)?.contentOrNull != "ANSWER_OWNED_BY_OTHER") return null
+    val ids = (detail["questionIds"] as? kotlinx.serialization.json.JsonArray)
+        ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { id -> id.isNotEmpty() } }
+        .orEmpty()
+    if (ids.isEmpty()) return null
+    val message = (detail["message"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        .ifEmpty { "Another researcher wrote some of these answers." }
+    return OwnedAnswersRefusal(message, ids.distinct())
+}
+
+/**
+ * A queued interview body without the answers to [questionIds] (H4). Every other key stays as it
+ * was; null when the body is not an object. Pure.
+ */
+fun withoutAnswers(payloadJson: String, questionIds: Collection<String>): String? {
+    val body = runCatching { Json.parseToJsonElement(payloadJson) as? JsonObject }.getOrNull() ?: return null
+    val drop = questionIds.toSet()
+    val responses = body["responses"] as? kotlinx.serialization.json.JsonArray ?: return payloadJson
+    val kept = responses.filterNot { item ->
+        ((item as? JsonObject)?.get("questionId") as? JsonPrimitive)?.contentOrNull in drop
+    }
+    val rewritten = body.toMutableMap().apply { put("responses", kotlinx.serialization.json.JsonArray(kept)) }
+    return Json.encodeToString(JsonObject.serializer(), JsonObject(rewritten))
+}
+
 fun peekErrorBody(error: retrofit2.HttpException): String? = runCatching {
     val source = error.response()?.errorBody()?.source() ?: return@runCatching null
     source.request(Long.MAX_VALUE)
