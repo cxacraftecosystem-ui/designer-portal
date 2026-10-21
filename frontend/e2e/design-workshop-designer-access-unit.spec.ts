@@ -141,7 +141,7 @@ test("the design workshop list mounts the existing picker rather than growing a 
   expect(source.match(/<DesignWorkshopViewersPanel/g)?.length).toBe(1);
 });
 
-test("the viewers panel respects admin view, exactly as the delete control on this page does", () => {
+test("the viewers panel respects admin view; the delete control on this page does not (2026-10-21)", () => {
   /*
     `AdminViewProvider` states it on the field itself — "True only when the user has admin rights AND
     has admin view turned on. Gate admin UI on this" — and its default leaves every admin but the
@@ -154,10 +154,11 @@ test("the viewers panel respects admin view, exactly as the delete control on th
     in that list, because designers live on it, so the exemption does not travel with the component.
   */
   expect(source).toContain("{isAdmin(user) && adminMode ? (");
-  // The same shape as the older admin affordance further down the file, so the two cannot drift.
-  expect(source).toContain("{allowDelete && adminMode ? (");
-  // `isAdmin` alone must not be what gates a rendered admin surface here. (`allowDelete` is derived
-  // from it at the top of the file and then ANDed with the toggle, which is the correct shape.)
+  // Delete is the one exception (owner, 2026-10-21): content admins see it whether or not admin view
+  // is on, so `allowDelete` (`isContentAdmin`) gates it alone.
+  expect(source).toContain("{allowDelete ? (");
+  expect(source).toContain("const allowDelete = isContentAdmin(user);");
+  // `isAdmin` alone must not be what gates a rendered admin surface here.
   expect(source).not.toContain("{isAdmin(user) ? (");
 });
 
