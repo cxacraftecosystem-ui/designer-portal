@@ -78,4 +78,38 @@ class ContentAdminDeleteUiTest {
         assertEquals(1, edited)
         compose.onNodeWithText("Remove").assertDoesNotExist()
     }
+
+    // ── The record page's "Danger zone" card (owner, 2026-10-21) ─────────────────────────────────
+
+    private fun showDangerZone(viewer: UserDto, adminView: Boolean, delete: () -> Unit = {}, deleted: () -> Unit = {}) {
+        compose.setContent {
+            MaterialTheme {
+                if (RecordDangerZone.visible(viewer, adminView)) {
+                    RecordDangerZoneCard(noun = "artisan", delete = { delete() }, onDeleted = deleted, onError = {})
+                }
+            }
+        }
+    }
+
+    @Test
+    fun aMinistryAdminSeesTheDangerZoneAndDeletesOnlyAfterConfirming() {
+        var calls = 0
+        var done = 0
+        showDangerZone(user("ma", "MINISTRY_ADMIN"), adminView = true, delete = { calls++ }, deleted = { done++ })
+        compose.onNodeWithText("Danger zone").assertIsDisplayed()
+        compose.onNodeWithText("Delete this artisan").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Delete artisan?").assertIsDisplayed()
+        assertEquals("nothing is deleted before the confirmation", 0, calls)
+        compose.onNodeWithText("Delete").performClick()
+        compose.waitForIdle()
+        assertEquals(1, calls)
+        assertEquals(1, done)
+    }
+
+    @Test
+    fun aDesignerNeverSeesTheDangerZone() {
+        showDangerZone(user("d1", "DESIGNER"), adminView = true)
+        compose.onNodeWithText("Danger zone").assertDoesNotExist()
+        compose.onNodeWithText("Delete this artisan").assertDoesNotExist()
+    }
 }
