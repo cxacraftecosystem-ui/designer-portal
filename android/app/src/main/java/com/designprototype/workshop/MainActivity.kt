@@ -10786,6 +10786,9 @@ private fun DeleteRecordSection(
         delete = { deleteByMode(repository, mode, recordId) },
         onDeleted = onDeleted,
         onError = { onError(it.userMessage(RecordDangerZone.FAILED)) },
+        // H5: an interview's delete is soft, and says so.
+        body = if (mode == EntryMode.QUESTIONNAIRE) RecordDangerZone.INTERVIEW_BODY else null,
+        confirmBody = if (mode == EntryMode.QUESTIONNAIRE) RecordDangerZone.INTERVIEW_CONFIRM_BODY else null,
     )
 }
 
