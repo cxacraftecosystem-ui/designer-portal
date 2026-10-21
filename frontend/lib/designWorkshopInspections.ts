@@ -107,7 +107,7 @@ import {
   type DwValue
 } from "@/lib/designWorkshops";
 import type { DwCustomDefinition } from "@/lib/customSections";
-import { shareInFlight } from "@/lib/inFlight";
+import { shareInFlight, startNewReadGeneration } from "@/lib/inFlight";
 import { forgetMyWorkshopPosts } from "@/lib/myWorkshopPosts";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, isInspectorTier } from "@/lib/permissions";
@@ -237,9 +237,12 @@ export function putDesignWorkshopInspectors(workshopId: string, userIds: string[
   return apiFetch<DwInspectorList>(`/design-workshop-inspections/${workshopId}/inspectors`, {
     method: "PUT",
     body: JSON.stringify({ userIds })
-  }).then((answer) => {
-    forgetMyWorkshopPosts(); // a post may have moved; the next held-post question reads it fresh
-    return answer;
+  }).finally(() => {
+    // A read sent before this save must not answer the reload after it, and a post may have moved:
+    // the next inspector read and the next held-post question both go to the server. On a refusal
+    // too — a lost answer says nothing about what the set now holds.
+    startNewReadGeneration();
+    forgetMyWorkshopPosts();
   });
 }
 

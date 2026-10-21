@@ -85,7 +85,7 @@
 
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { fetchFile } from "@/lib/fileDownload";
-import { shareInFlight } from "@/lib/inFlight";
+import { shareInFlight, startNewReadGeneration } from "@/lib/inFlight";
 import { forgetMyWorkshopPosts } from "@/lib/myWorkshopPosts";
 import type { DwCustomDefinition } from "@/lib/customSections";
 import { designerCreateFields } from "@/lib/designWorkshops";
@@ -419,9 +419,12 @@ export function putWorkshopOversight(
   return apiFetch<{ oversight: DwOversightAssignment[] }>(
     `/design-workshop-oversight/${encodeURIComponent(workshopId)}`,
     { method: "PUT", body: JSON.stringify(body) }
-  ).then((answer) => {
-    forgetMyWorkshopPosts(); // a post may have moved; the next held-post question reads it fresh
-    return answer;
+  ).finally(() => {
+    // A read sent before this save must not answer the reload after it, and a post may have moved:
+    // the next oversight read and the next held-post question both go to the server. On a refusal
+    // too — a 409 or a lost answer says nothing about what the row now holds.
+    startNewReadGeneration();
+    forgetMyWorkshopPosts();
   });
 }
 

@@ -3,8 +3,15 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { inFlightCount, shareInFlight } from "@/lib/inFlight";
-import { forgetMyWorkshopPosts, myWorkshopPosts, resetMyWorkshopPosts } from "@/lib/myWorkshopPosts";
+import { getWorkshopOversight, putWorkshopOversight } from "@/app/(protected)/officers/oversight";
+import { listDesignWorkshopInspectors, putDesignWorkshopInspectors } from "@/lib/designWorkshopInspections";
+import { inFlightCount, shareInFlight, startNewReadGeneration } from "@/lib/inFlight";
+import {
+  FRESH_MS,
+  forgetMyWorkshopPosts,
+  myWorkshopPosts,
+  resetMyWorkshopPosts
+} from "@/lib/myWorkshopPosts";
 import type { User } from "@/lib/types";
 
 import { installSessionCookie } from "./support/fakeSessionCookie";
@@ -41,6 +48,42 @@ function serve(answer: (url: string) => { status: number; body?: unknown }) {
     });
   };
   return asked;
+}
+
+/**
+ * A server whose GETs wait until the test lets them answer — so a read can be held in the air across
+ * a save. `release(i, body)` answers the i-th held GET; anything that is not a GET answers at once.
+ */
+function serveHeld(other: (url: string, method: string) => { status: number; body?: unknown }) {
+  const asked: { url: string; method: string }[] = [];
+  const held: ((body: unknown) => void)[] = [];
+  (globalThis as Record<string, unknown>).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    asked.push({ url, method });
+    if (method !== "GET") {
+      const reply = other(url, method);
+      return new Response(JSON.stringify(reply.body ?? {}), {
+        status: reply.status,
+        headers: { "content-type": "application/json" }
+      });
+    }
+    return new Promise<Response>((resolve) => {
+      held.push((body) =>
+        resolve(new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }))
+      );
+    });
+  };
+  const gets = () => asked.filter((a) => a.method === "GET");
+  return {
+    asked,
+    gets,
+    release: (i: number, body: unknown) => held[i](body),
+    async heldCount(n: number) {
+      for (let spin = 0; spin < 200 && held.length < n; spin += 1) await new Promise((r) => setTimeout(r, 0));
+      expect(held.length).toBe(n);
+    }
+  };
 }
 
 test.beforeEach(() => {
@@ -91,13 +134,81 @@ test("a failed shared read fails every caller that rode it, and is not kept", as
   expect(inFlightCount()).toBe(0);
 });
 
-test("the oversight read and the inspector list are both shared while they are out", () => {
-  expect(read("app", "(protected)", "officers", "oversight.ts")).toContain(
-    "return shareInFlight(path, () => apiFetch<DwWorkshopOversight>(path));"
-  );
-  expect(read("lib", "designWorkshopInspections.ts")).toContain(
-    "return shareInFlight(path, () => apiFetch<DwInspectorList>(path));"
-  );
+test("a read asked after a new generation never rides one asked before it", async () => {
+  let started = 0;
+  const answers: ((value: number) => void)[] = [];
+  const fetchHeld = () => {
+    started += 1;
+    return new Promise<number>((resolve) => answers.push(resolve));
+  };
+  const before = shareInFlight("gen", fetchHeld);
+  startNewReadGeneration();
+  const after = shareInFlight("gen", fetchHeld);
+  expect(started).toBe(2);
+  answers[0](1);
+  answers[1](2);
+  expect(await before).toBe(1);
+  expect(await after).toBe(2);
+  expect(inFlightCount()).toBe(0);
+});
+
+test("the oversight read and the inspector list are both shared while they are out", async () => {
+  const server = serveHeld(() => ({ status: 200 }));
+  const oversight = Promise.all([getWorkshopOversight("w1"), getWorkshopOversight("w1")]);
+  const inspectors = Promise.all([listDesignWorkshopInspectors("w1"), listDesignWorkshopInspectors("w1")]);
+  await server.heldCount(2);
+  expect(server.gets()).toHaveLength(2);
+  server.release(0, { workshopId: "w1", oversight: [] });
+  server.release(1, { inspectors: [] });
+  const [o1, o2] = await oversight;
+  expect(o1).toEqual(o2);
+  await inspectors;
+});
+
+test("the reload after an oversight save never rides a read sent before the save", async () => {
+  const server = serveHeld(() => ({ status: 200, body: { oversight: [{ capacity: "REGIONAL_DIRECTOR", userId: "u-new" }] } }));
+  const stale = getWorkshopOversight("w1");
+  await server.heldCount(1);
+  await putWorkshopOversight("w1", { regionalDirectorId: "u-new" });
+  const reload = getWorkshopOversight("w1");
+  await server.heldCount(2);
+  server.release(0, { workshopId: "w1", oversight: [{ capacity: "REGIONAL_DIRECTOR", userId: "u-old" }] });
+  server.release(1, { workshopId: "w1", oversight: [{ capacity: "REGIONAL_DIRECTOR", userId: "u-new" }] });
+  expect((await stale).oversight[0].userId).toBe("u-old");
+  expect((await reload).oversight[0].userId).toBe("u-new");
+});
+
+test("a refused oversight save still starts a new generation", async () => {
+  const server = serveHeld(() => ({ status: 409, body: { detail: "Changed by someone else" } }));
+  const stale = getWorkshopOversight("w1");
+  await server.heldCount(1);
+  await expect(putWorkshopOversight("w1", { regionalDirectorId: "u-new" })).rejects.toThrow();
+  const reload = getWorkshopOversight("w1");
+  await server.heldCount(2);
+  server.release(0, { workshopId: "w1", oversight: [] });
+  server.release(1, { workshopId: "w1", oversight: [] });
+  await Promise.all([stale, reload]);
+});
+
+test("the reload after an inspector save never rides a read sent before the save", async () => {
+  const server = serveHeld(() => ({ status: 200, body: { inspectors: [] } }));
+  const stale = listDesignWorkshopInspectors("w1");
+  await server.heldCount(1);
+  await putDesignWorkshopInspectors("w1", ["u-new"]);
+  const reload = listDesignWorkshopInspectors("w1");
+  await server.heldCount(2);
+  server.release(0, { inspectors: [{ userId: "u-old" }] });
+  server.release(1, { inspectors: [{ userId: "u-new" }] });
+  expect(await stale).toEqual({ inspectors: [{ userId: "u-old" }] });
+  expect(await reload).toEqual({ inspectors: [{ userId: "u-new" }] });
+});
+
+test("signing out starts a new read generation and drops the held posts", () => {
+  const provider = read("components", "AuthProvider.tsx");
+  const logout = provider.slice(provider.indexOf("const logout = useCallback("));
+  const body = logout.slice(0, logout.indexOf("}, [adopt]);"));
+  expect(body).toContain("startNewReadGeneration();");
+  expect(body).toContain("forgetMyWorkshopPosts();");
 });
 
 /* ── lib/myWorkshopPosts ──────────────────────────────────────────────────── */
@@ -145,10 +256,45 @@ test("any other failure is none known, and the next screen asks again", async ()
   expect(asked).toHaveLength(2);
 });
 
-test("a save of oversight or inspectors drops the held answer", () => {
-  expect(read("app", "(protected)", "officers", "oversight.ts")).toContain("forgetMyWorkshopPosts();");
-  expect(read("lib", "designWorkshopInspections.ts")).toContain("forgetMyWorkshopPosts();");
+test("the held answer lasts seconds, not half a minute", () => {
+  expect(FRESH_MS).toBeLessThanOrEqual(5_000);
 });
+
+test("the held answer is asked again once it is older than FRESH_MS", async () => {
+  const asked = serve(() => ({ status: 200, body: MY_POSTS }));
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    await myWorkshopPosts(admin);
+    now += FRESH_MS - 1;
+    await myWorkshopPosts(admin);
+    expect(asked).toHaveLength(1);
+    now += 2;
+    await myWorkshopPosts(admin);
+    expect(asked).toHaveLength(2);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+for (const [name, save] of [
+  ["an oversight save", () => putWorkshopOversight("w1", { regionalDirectorId: null })],
+  ["an inspector save", () => putDesignWorkshopInspectors("w1", [])]
+] as const) {
+  test(`${name} drops the held answer, answered or refused`, async () => {
+    for (const status of [200, 409]) {
+      resetMyWorkshopPosts();
+      const asked = serve((url) =>
+        url.includes("/my-posts") ? { status: 200, body: MY_POSTS } : { status, body: { oversight: [], inspectors: [] } }
+      );
+      await myWorkshopPosts(admin);
+      await save().catch(() => undefined);
+      await myWorkshopPosts(admin);
+      expect(asked.filter((url) => url.includes("/my-posts"))).toHaveLength(2);
+    }
+  });
+}
 
 /* ── Screens ──────────────────────────────────────────────────────────────── */
 
