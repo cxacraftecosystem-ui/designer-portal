@@ -48,6 +48,15 @@ val QUESTIONNAIRE_KIND_LABELS: Map<String, String> = linkedMapOf(
  */
 const val QUESTIONNAIRE_KIND_NOT_STATED = "Kind not stated"
 
+/**
+ * Which stage each kind's answers are filed under in the report — `KIND_STAGE_KEYS` in
+ * `questionnaire_kinds.py`, mirrored for the offline annexure (M16, 21 Oct 2026).
+ */
+val QUESTIONNAIRE_KIND_STAGE_KEYS: Map<String, String> = mapOf(
+    "WORKSHOP_INTERVIEW" to "EXISTING_PRODUCTS_BASELINE",
+    "MARKET_SURVEY" to "MARKET_SURVEY_CAPTURE",
+)
+
 /** The label to print for a kind off the wire. Unknown tokens print themselves — see the header. */
 fun labelForQuestionnaireKind(kind: String?): String {
     if (kind.isNullOrBlank()) return QUESTIONNAIRE_KIND_NOT_STATED

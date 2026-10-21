@@ -48,6 +48,13 @@ object RecordDangerZone {
     const val FAILED = "Unable to delete (admin only)"
 
     fun body(noun: String): String = "Permanently deletes this $noun and its links."
+
+    /**
+     * H5 (21 Oct 2026): an interview is soft-deleted. Its answers and recordings stay, and an admin
+     * can restore it, so "permanently" would be untrue.
+     */
+    const val INTERVIEW_BODY = "Moves this interview to Deleted. Its answers and recordings are kept, and an admin can restore it."
+    const val INTERVIEW_CONFIRM_BODY = "Its answers and recordings are kept. An admin can restore it."
     fun button(noun: String): String = "Delete this $noun"
     fun confirmTitle(noun: String): String = "Delete $noun?"
 

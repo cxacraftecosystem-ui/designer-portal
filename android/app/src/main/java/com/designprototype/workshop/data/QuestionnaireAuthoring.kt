@@ -125,6 +125,27 @@ object TempIdMap {
     }
 }
 
+/**
+ * M13 (21 Oct 2026): a stable `Idempotency-Key` for one step of adopting a received questionnaire,
+ * derived from the received file's id and the step, so every retry of that step sends the same key.
+ * Only `[A-Za-z0-9_-]` survive, and the key stays within the server's 8 to 128 characters.
+ */
+fun adoptionIdempotencyKey(rowId: String, vararg step: String): String {
+    val clean = (listOf("adopt", rowId) + step).joinToString("-") { part -> part.filter { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' || it == '-' } }
+    return clean.padEnd(8, '0').take(128)
+}
+
+/**
+ * What a designer is told when an authoring step is kept on the phone (L11, 21 Oct 2026), named for
+ * what is actually holding it. Pure, pinned by a JVM test.
+ */
+fun queuedAuthoringMessage(online: Boolean, waitsForParent: Boolean, earlierRefused: Boolean): String = when {
+    !online -> "Saved on this phone; added when online."
+    earlierRefused -> "Saved on this phone. An earlier change was not accepted; open Saved on this phone to fix it."
+    waitsForParent -> "Saved on this phone; added once the questionnaire has uploaded."
+    else -> "Saved on this phone; added after the changes queued before it."
+}
+
 /** [id] with a temporary id swapped for its server id where one is known. */
 fun resolveTempId(id: String?, map: Map<String, String>): String? = if (isTempId(id)) map[id] ?: id else id
 

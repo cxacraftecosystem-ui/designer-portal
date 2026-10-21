@@ -341,6 +341,7 @@ fun StageIndexScreen(
                 // with no signal carry what the artisans said.
                 com.designprototype.workshop.data.DwTranscriptStore.keep(
                     appContext, workshopId, schema, remote.stages, remote.transcripts,
+                    repository.cachedUser()?.id,
                 )
             }
             // Refreshed opportunistically, and only ever ADDING to what was read off disk above: a

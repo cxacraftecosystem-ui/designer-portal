@@ -36,4 +36,14 @@ class RecordDangerZoneTest {
         assertEquals("Delete artisan?", RecordDangerZone.confirmTitle("artisan"))
         assertEquals("This permanently deletes the record.", RecordDangerZone.CONFIRM_BODY)
     }
+
+    @Test
+    fun `an interview is not deleted permanently and the page says so`() {
+        // H5 (21 Oct 2026): the interview delete is soft; its recordings stay and an admin restores it.
+        assertFalse(RecordDangerZone.INTERVIEW_BODY.contains("ermanent"))
+        assertTrue(RecordDangerZone.INTERVIEW_BODY.contains("restore"))
+        assertTrue(RecordDangerZone.INTERVIEW_CONFIRM_BODY.contains("recordings are kept"))
+        val main = com.designprototype.workshop.qLiveSource("app/src/main/java/com/designprototype/workshop/MainActivity.kt").readText()
+        assertTrue(main.contains("body = if (mode == EntryMode.QUESTIONNAIRE) RecordDangerZone.INTERVIEW_BODY else null"))
+    }
 }

@@ -38,3 +38,16 @@ const val SITTING_START_OFFLINE =
 const val REUSE_KEPT_OFFLINE =
     "Kept on this phone. The copy is made as soon as there is a connection, and appears in your " +
         "questionnaires then."
+
+/**
+ * M12 (21 Oct 2026): a questionnaire created with no signal is known by a temporary id until its
+ * queued create lands. Actions that name the questionnaire on the server wait for that.
+ */
+const val QUESTIONNAIRE_STILL_UPLOADING =
+    "This questionnaire is still being sent. Try again once it has uploaded."
+
+/** How often the detail screen checks whether its queued create has landed. */
+const val TEMP_ID_POLL_MS = 3_000L
+
+/** How often a saved copy on the answer screen checks whether the signal is back. */
+const val CACHED_COPY_RECHECK_MS = 5_000L

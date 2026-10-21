@@ -359,6 +359,16 @@ fun QuestionnaireListScreen(
             onError = onError,
         )
 
+        // L9 (21 Oct 2026): the trash, for content admins alone.
+        if (mayDeleteQuestionnaireItems(repository.cachedUser())) {
+            DeletedQuestionnairesCard(
+                repository = repository,
+                onRestored = { reload++ },
+                onMessage = onMessage,
+                onError = onError,
+            )
+        }
+
         AppToggle(
             label = "Show deactivated",
             checked = showDeactivated,
