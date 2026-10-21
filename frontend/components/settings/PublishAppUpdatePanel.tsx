@@ -33,33 +33,27 @@ type Release = {
 };
 
 /**
- * "1.1.19" -> 1001019, the derivation `android/app/build.gradle.kts` actually uses. Null when it
- * does not parse.
- *
- * THE DEFECT THIS REPLACED, because it made the panel refuse every valid release. This function
- * computed `major * 10000 + minor * 100 + patch`, while BOTH of the other two implementations of the
- * same scheme use thousand-wide buckets — `android/app/build.gradle.kts:28` and
- * `backend/app/api/routes/app_release.py:56`, and the backend OVERRIDES whatever the browser sends.
- * So for a published 1.1.19 the stored code is 1,001,019 while this panel derived 10,120 for the
- * next version, `tooOld = 10120 <= 1001019` was true, and the publish path refused a perfectly good
- * build with a message quoting two numbers that plainly disagree.
- *
- * The bound moved with the formula: 999, not 99, mirroring `_derive_version_code`. With `> 99` a
- * legitimate `1.1.100` — which the scheme in the build file explicitly rolls through — parsed as
- * null and silently skipped the too-old check altogether.
+ * The version code typed in the panel, or null. Since 2026-10-21 the code is no longer derived from
+ * the name: the name restarted at 0.0.1 and the code keeps counting up (it is `appVersionCode` in
+ * android/app/build.gradle.kts), and the server stores it as sent.
  */
-function versionCodeFor(versionName: string): number | null {
-  const parts = versionName.trim().split(".");
-  if (parts.length !== 3) return null;
-  const [major, minor, patch] = parts.map((part) => Number(part));
-  if ([major, minor, patch].some((n) => !Number.isInteger(n) || n < 0 || n > 999)) return null;
-  return major * 1_000_000 + minor * 1_000 + patch;
+function parseVersionCode(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
+/** MAJOR.MINOR.PATCH, three plain numbers. */
+function isVersionName(text: string): boolean {
+  return /^\d+\.\d+\.\d+$/.test(text.trim());
 }
 
 export function PublishAppUpdatePanel() {
   const [current, setCurrent] = useState<Release | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [versionName, setVersionName] = useState("");
+  const [versionCodeText, setVersionCodeText] = useState("");
   const [notes, setNotes] = useState("");
   const [progress, setProgress] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,14 +66,16 @@ export function PublishAppUpdatePanel() {
       .catch(() => setCurrent(null));
   }, []);
 
-  const derived = versionName.trim() ? versionCodeFor(versionName) : null;
+  const derived = parseVersionCode(versionCodeText);
+  const nextCode = current?.versionCode ? current.versionCode + 1 : 1;
   const tooOld = derived !== null && current?.versionCode !== undefined && derived <= current.versionCode;
 
   async function publish(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
     if (!file) return setError("Choose the signed APK first.");
-    if (!derived) return setError("Version name must be three numbers, like 1.1.18.");
+    if (!isVersionName(versionName)) return setError("Version name must be three numbers, like 0.0.2.");
+    if (!derived) return setError("Version code must be a whole number above the published one.");
     if (tooOld) {
       return setError(
         `Version ${versionName.trim()} is code ${derived}, which is not above the published ${current?.versionCode}. ` +
@@ -122,6 +118,7 @@ export function PublishAppUpdatePanel() {
       setCurrent(published);
       setFile(null);
       setVersionName("");
+      setVersionCodeText("");
       setNotes("");
       toast({
         title: `v${published.versionName} published`,
@@ -173,13 +170,19 @@ export function PublishAppUpdatePanel() {
               name="versionName"
               value={versionName}
               onChange={(event) => setVersionName(event.target.value)}
-              placeholder="1.1.18"
+              placeholder="0.0.2"
             />
             <p className="mt-1 text-xs text-ink-500">Three numbers, e.g. 1.4.2, matching the app being published.</p>
           </Field>
           <Field label="Version code">
-            <TextInput name="versionCode" value={derived ? String(derived) : ""} readOnly onChange={() => undefined} />
-            <p className="mt-1 text-xs text-ink-500">Worked out from the version name.</p>
+            <TextInput
+              name="versionCode"
+              inputMode="numeric"
+              value={versionCodeText}
+              onChange={(event) => setVersionCodeText(event.target.value)}
+              placeholder={String(nextCode)}
+            />
+            <p className="mt-1 text-xs text-ink-500">The app&apos;s appVersionCode, above the published code.</p>
           </Field>
         </div>
 
