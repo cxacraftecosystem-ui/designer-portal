@@ -40,5 +40,11 @@ class QuestionnaireDeleteRuleTest {
         assertTrue(questionRemovalRetires(question, listOf(notesOnly)))
         assertFalse(questionRemovalRetires(question, listOf(blank)))
         assertTrue(questionRemovalRetires(question.copy(hasAnswers = true), emptyList()))
+        val screen = qLiveSource(
+            "app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireDetailScreen.kt"
+        ).readText()
+        assertTrue(screen.contains("val retires = questionRemovalRetires(question, loaded?.entries.orEmpty())"))
+        // The old warning sent the designer to remove a blank answer the server now clears itself.
+        assertFalse(screen.contains("so it can't be deleted. Remove that blank first"))
     }
 }

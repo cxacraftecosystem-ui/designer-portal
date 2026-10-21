@@ -639,24 +639,9 @@ fun QuestionnaireDetailScreen(
     }
 
     removingQuestion?.let { question ->
-        val retires = question.hasAnswers
-        /*
-         * A sitting holds an answer ROW for this question whose text is blank.
-         *
-         * VERIFIED AGAINST THE RUNNING API, and it is the one case where the two halves of the rule
-         * disagree. `guard_question_edit` counts only answers with text, so a blank row leaves
-         * `hasAnswers` false and the server takes the real-delete path — while the database's
-         * ON DELETE RESTRICT counts the ROW, and refuses. The DELETE comes back 500
-         * (ForeignKeyViolationError), which reaches the designer as "something went wrong on the
-         * server" about a question they can see perfectly well.
-         *
-         * Blank rows are ordinary: clearing an answer that was recorded earlier leaves one. So the
-         * warning states the fact this client can actually see — a sitting points at this question —
-         * rather than promising an outcome. Nothing here works around it; the fix belongs on the
-         * server, which owns both halves of the rule.
-         */
-        val blankAnswerRow = !retires && loaded != null &&
-            loaded.entries.any { entry -> entry.answers.any { it.questionId == question.id } }
+        // M17 (21 Oct 2026): an answer with notes but no text still counts, as on the server, so
+        // its question is retired and the notes kept. Blank rows are cleared by the server first.
+        val retires = questionRemovalRetires(question, loaded?.entries.orEmpty())
         AlertDialog(
             onDismissRequest = { if (!busy) removingQuestion = null },
             title = { Text(if (retires) "Retire this question?" else "Remove this question?") },
@@ -672,13 +657,6 @@ fun QuestionnaireDetailScreen(
                         color = MaterialTheme.field.muted,
                         style = MaterialTheme.typography.bodySmall
                     )
-                    if (blankAnswerRow) {
-                        Text(
-                            "A sitting holds a blank answer here, so it can't be deleted. Remove that blank first.",
-                            color = MaterialTheme.field.warning,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
                 }
             },
             confirmButton = {
