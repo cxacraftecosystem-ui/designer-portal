@@ -19,6 +19,8 @@ import com.designprototype.workshop.ui.ConsolidatedQuestionnaireDto
 import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.mustChangePasswordBlocks
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
@@ -947,6 +949,12 @@ class WorkshopRepository(
     private val api: WorkshopRepositoryApi,
     private val tokenStore: TokenStore
 ) {
+    /** Where coalesced reads ([CoalescedLoader]) are flushed: outlives any one screen's coroutine. */
+    private val loaderScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Identical reference-list reads asked at the same moment ride one request. */
+    private val referenceReads = SharedReads(loaderScope)
+
     // Generous timeouts (large videos over slow field connections) + automatic connection retry.
     private val storageClient = OkHttpClient.Builder()
         .retryOnConnectionFailure(true)
@@ -1385,31 +1393,36 @@ class WorkshopRepository(
 
         // EVERY PAGE when the caller did not ask for a size (the pickers): one page held 50 of the
         // 459 crafts. A caller that names a `limit` (the bulk add) still gets that one page.
+        //
+        // SHARED WHILE OUT ([SharedReads]): the reference fields and suggestion boxes of one stage
+        // that name the same model ask this same page at the same moment, and each used to send it.
         suspend fun page(offset: Int, size: Int?): DwReferenceResponseDto =
-            api.designWorkshopReferences(
-                id = target,
-                model = model,
-                // THE SCOPE TRAVELS. It used to stop here: this function has always taken a `scope`,
-                // and spent all of it on the cache key above, while the request went out without it.
-                // The route defaults an absent `scope` to ALL rather than deriving one (its own
-                // docstring says deriving it server-side was deliberately rejected, so that the form
-                // and the server cannot hold two ideas of how wide the list is), so "not sent" was
-                // read as "the client asked for everything". The four WORKSHOP-scoped REF fields on
-                // the phone were answered with the first fifty rows of the whole table — strangers in
-                // the artisan picker at stage 6, whose name, village and craft `hydrateFromReference`
-                // then wrote onto the row and the report printed.
-                //
-                // `takeIf { it.isNotBlank() }` and NOT `?: "ALL"`. A blank `refScope` means the
-                // registry did not say; asserting ALL here is precisely the client-invents-a-default
-                // failure the schema's own KDoc forbids. Blank must reach the wire as an omitted
-                // parameter, not as `scope=` — the empty string is a 422 from `reference_options`,
-                // which the `runCatching` below turns into a picker that silently stops refreshing.
-                scope = scope.takeIf { it.isNotBlank() },
-                filterBy = filterValue.takeIf { it.isNotBlank() },
-                search = null,
-                limit = size,
-                offset = offset.takeIf { it > 0 },
-            )
+            referenceReads.read("refs|$target|$model|$scope|$filterValue|$offset|$size") {
+                api.designWorkshopReferences(
+                    id = target,
+                    model = model,
+                    // THE SCOPE TRAVELS. It used to stop here: this function has always taken a `scope`,
+                    // and spent all of it on the cache key above, while the request went out without it.
+                    // The route defaults an absent `scope` to ALL rather than deriving one (its own
+                    // docstring says deriving it server-side was deliberately rejected, so that the form
+                    // and the server cannot hold two ideas of how wide the list is), so "not sent" was
+                    // read as "the client asked for everything". The four WORKSHOP-scoped REF fields on
+                    // the phone were answered with the first fifty rows of the whole table — strangers in
+                    // the artisan picker at stage 6, whose name, village and craft `hydrateFromReference`
+                    // then wrote onto the row and the report printed.
+                    //
+                    // `takeIf { it.isNotBlank() }` and NOT `?: "ALL"`. A blank `refScope` means the
+                    // registry did not say; asserting ALL here is precisely the client-invents-a-default
+                    // failure the schema's own KDoc forbids. Blank must reach the wire as an omitted
+                    // parameter, not as `scope=` — the empty string is a 422 from `reference_options`,
+                    // which the `runCatching` below turns into a picker that silently stops refreshing.
+                    scope = scope.takeIf { it.isNotBlank() },
+                    filterBy = filterValue.takeIf { it.isNotBlank() },
+                    search = null,
+                    limit = size,
+                    offset = offset.takeIf { it > 0 },
+                )
+            }
         val pages = runCatching {
             if (limit == null) {
                 dwReadAllReferencePages { offset, size -> page(offset, size) }
@@ -5476,6 +5489,19 @@ class WorkshopRepository(
     suspend fun mediaJobs(statusFilter: String? = null, pageSize: Int = 20): List<MediaProcessingJobDto> =
         api.mediaJobs(statusFilter = statusFilter, pageSize = pageSize).items
 
+    /**
+     * The jobs card's one read per refresh: the page, and how many jobs have FAILED. With the FAILED
+     * filter on, the page's own `total` is that count, so it is not asked for a second time — the card
+     * used to send two requests on every fifteen-second poll whatever the filter.
+     */
+    suspend fun mediaJobsWithFailedCount(failedOnly: Boolean, pageSize: Int = 20): Pair<List<MediaProcessingJobDto>, Int> {
+        if (failedOnly) {
+            val page = api.mediaJobs(statusFilter = "FAILED", pageSize = pageSize)
+            return page.items to page.total
+        }
+        return mediaJobs(statusFilter = null, pageSize = pageSize) to mediaJobCount("FAILED")
+    }
+
     /** How many jobs are in one state — for saying "3 failed" without paging through the queue. */
     suspend fun mediaJobCount(statusFilter: String): Int =
         api.mediaJobs(statusFilter = statusFilter, pageSize = 1).total
@@ -5524,8 +5550,34 @@ class WorkshopRepository(
      * off (404), the caller may not read it, the media is gone, or the phone is offline. Never cached
      * and never an error banner.
      */
-    suspend fun transcriptInsight(mediaId: String): TranscriptInsightViewDto? =
-        insightOrHidden { api.transcriptInsight(mediaId) }
+    suspend fun transcriptInsight(mediaId: String): TranscriptInsightViewDto? = insightLoader.load(mediaId)
+
+    /**
+     * THE CARDS OF ONE SCREEN ASK TOGETHER. Every transcript on a record draws its own
+     * [TranscriptInsightsCard], and each used to send its own `GET media/{id}/insights` — and again
+     * every fifteen seconds while a summary was being written. Asked within one frame, they now go as
+     * one `GET media/insights?ids=…&includeTranslation=true`, which answers each id exactly as the
+     * single read does (translation included). See [CoalescedLoader].
+     */
+    private val insightLoader = CoalescedLoader(
+        scope = loaderScope,
+        maxBatch = TRANSCRIPT_INSIGHTS_BATCH_MAX,
+        fetchBatch = ::transcriptInsightsWithTranslation,
+        fetchOne = { id -> insightOrHidden { api.transcriptInsight(id) } }
+    )
+
+    private suspend fun transcriptInsightsWithTranslation(ids: List<String>): Map<String, TranscriptInsightViewDto>? {
+        val batch = try {
+            api.transcriptInsights(ids.joinToString(","), includeTranslation = true)
+        } catch (_: HttpException) {
+            // Switched off, or refused: every card hides, as each single read's 404 would hide it.
+            return emptyMap()
+        } catch (_: IOException) {
+            return emptyMap()
+        }
+        // An older server leaves the translation out of the batch: ask those one by one, as before.
+        return if (batch.translationIncluded) batch.items else null
+    }
 
     /**
      * Download an update APK to the cache and return the file, for handing to the system installer.
@@ -6214,6 +6266,37 @@ class WorkshopRepository(
     suspend fun mediaItem(id: String): MediaFileDto = api.getMedia(id)
 
     /**
+     * One media row, or null for any failure — asked TOGETHER with every other row asked for in the
+     * same moment, as one `GET media/batch` ([CoalescedLoader]). For the readers that already treat a
+     * failed read as "nothing to draw": the signed-URL refresh every saved-media row runs when its
+     * cached link has expired (a list whose links all expired at once used to send one
+     * `GET media/{id}` per row) and the profile's photograph, signature and CV.
+     */
+    suspend fun mediaItemOrNull(id: String): MediaFileDto? = mediaRowLoader.load(id)
+
+    private var mediaBatchUnsupported = false
+
+    private val mediaRowLoader = CoalescedLoader(
+        scope = loaderScope,
+        maxBatch = MEDIA_BATCH_MAX,
+        fetchBatch = ::mediaRowsTogether,
+        fetchOne = { id -> api.getMedia(id) }
+    )
+
+    private suspend fun mediaRowsTogether(ids: List<String>): Map<String, MediaFileDto>? {
+        if (mediaBatchUnsupported || ids.size == 1) return null
+        return try {
+            api.getMediaBatch(ids.joinToString(",")).items.associateBy { it.id }
+        } catch (error: HttpException) {
+            // A server from before the batch route answers it as `media/{id}` with id "batch": 404.
+            // Ask one by one from now on, as before. Any other refusal is asked one by one this time
+            // only, so one bad row cannot blank the rest (the web's rule, `lib/mediaRows.ts`).
+            if (error.code() == 404 || error.code() == 405) mediaBatchUnsupported = true
+            null
+        }
+    }
+
+    /**
      * A media URL that failed, replaced ONCE with whatever the server serves for that row now.
      *
      * ── WHY THIS EXISTS ───────────────────────────────────────────────────────────────────────
@@ -6251,7 +6334,7 @@ class WorkshopRepository(
             // as "refresh once" for the reason written there.
             httpStatus = null,
             online = ConnectivityObserver.isOnline(context),
-        ) { id -> api.getMedia(id).url }
+        ) { id -> mediaRowLoader.load(id)?.url }
 
     /** Delete one saved media file (its DB row + S3 object). Backend allows the uploader or an admin. */
     suspend fun deleteMedia(id: String) = api.deleteMedia(id)

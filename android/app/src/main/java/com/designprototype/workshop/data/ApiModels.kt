@@ -5197,4 +5197,14 @@ data class TranscriptInsightViewDto(
 )
 
 @Serializable
-data class TranscriptInsightBatchDto(val items: Map<String, TranscriptInsightViewDto> = emptyMap())
+data class MediaBatchDto(
+    val items: List<MediaFileDto> = emptyList(),
+    val missing: List<String> = emptyList()
+)
+
+@Serializable
+data class TranscriptInsightBatchDto(
+    val items: Map<String, TranscriptInsightViewDto> = emptyMap(),
+    // True only from a server that honoured `includeTranslation=true`; an older one leaves it out.
+    val translationIncluded: Boolean = false
+)

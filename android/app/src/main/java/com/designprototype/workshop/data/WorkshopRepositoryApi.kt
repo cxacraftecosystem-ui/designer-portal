@@ -645,6 +645,11 @@ interface WorkshopRepositoryApi {
     @GET("media/{id}")
     suspend fun getMedia(@Path("id") id: String): MediaFileDto
 
+    // Several `media/{id}` answers in one request (at most 100 ids): the same rows, `url` included
+    // exactly where the single read includes it; an id with no row is listed under `missing`.
+    @GET("media/batch")
+    suspend fun getMediaBatch(@Query("ids") ids: String): MediaBatchDto
+
     // ONE LIST ROUTE, AND UNTIL NOW THIS CLIENT COULD ONLY PAGE THROUGH IT BLINDLY.
     //
     // `list_media` (backend/app/api/routes/media.py, `@router.get("")`) accepts `search`,
@@ -756,9 +761,13 @@ interface WorkshopRepositoryApi {
     @GET("media/{id}/insights")
     suspend fun transcriptInsight(@Path("id") id: String): TranscriptInsightViewDto
 
-    // The same for up to 50 media at once (comma-separated ids); translation text left out.
+    // The same for up to 50 media at once (comma-separated ids). Translation text is left out unless
+    // `includeTranslation` is true, and a server that honours it says so in `translationIncluded`.
     @GET("media/insights")
-    suspend fun transcriptInsights(@Query("ids") ids: String): TranscriptInsightBatchDto
+    suspend fun transcriptInsights(
+        @Query("ids") ids: String,
+        @Query("includeTranslation") includeTranslation: Boolean? = null
+    ): TranscriptInsightBatchDto
 
     // Save an (approved, AI-refined) transcript in place of the stored one. Uploader or admin only.
     @POST("media/{id}/transcript")
