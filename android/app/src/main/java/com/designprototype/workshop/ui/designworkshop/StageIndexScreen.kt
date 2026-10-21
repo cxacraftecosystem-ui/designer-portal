@@ -237,7 +237,7 @@ fun StageIndexScreen(
      */
     onOpenProvenance: () -> Unit,
     onError: (String) -> Unit,
-    /** Content admins in admin view: the index ends with the "Danger zone" card. */
+    /** Content admins, admin view or not: the index ends with the "Danger zone" card. */
     canDelete: Boolean = false,
     onDeleted: () -> Unit = {},
 ) {

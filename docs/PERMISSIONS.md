@@ -800,8 +800,12 @@ decisions, workshop assignments, settings, secrets, app release and transcriptio
 approval, Aadhaar decisions, feedback acknowledgement. Separation-of-duty refusals stay for every role,
 admins included: the frozen workshop, the post-holder refusal and the sanctioning-officer refusal.
 
-Clients: Delete controls read admin view (`adminMode` on the web, `canDelete` on the handset), which
-only a content admin can turn on; the default is on for the master admin and off for everyone else.
+Clients: Delete controls — list rows, a record page's closing "Danger zone" card, files, comments,
+questionnaire sections and questions — are drawn for the content admins WHETHER OR NOT admin view is
+on (owner, 2026-10-21): `canDeleteRecords` on the web, `mayDelete` / `LocalMayDelete` (as
+`canDelete`) on the handset. No other role is ever offered one. Admin view still governs everything
+else it did (restore cards, merges, the completion override, admin chrome); its default is on for
+the master admin and off for everyone else.
 `tests/test_permission_matrix.py` drives every content delete over all eleven tiers.
 
 ### 2.1 Create, edit, delete — as a decision tree

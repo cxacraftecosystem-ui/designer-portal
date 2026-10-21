@@ -1392,10 +1392,9 @@ function DesignWorkshopsPageBody() {
           Move into a workshop
         </button>
       ) : null}
-      {/* Deleting is stricter than editing everywhere in this app, and the
-          control additionally respects admin view so an admin browsing as an
-          ordinary user is not offered it. */}
-      {allowDelete && adminMode ? (
+      {/* Deleting is stricter than editing everywhere in this app: the content admins'
+          alone, whether or not admin view is on (owner, 2026-10-21). */}
+      {allowDelete ? (
         <button type="button" data-danger className={rowAction("danger")} onClick={() => remove(workshop)}>
           Delete
         </button>
@@ -1894,14 +1893,14 @@ function DesignWorkshopsPageBody() {
         admin rights AND has admin view turned on. Gate admin UI on this" — and its default leaves
         every admin but the master admin OUT of admin view. Without it a plain ADMIN arriving here
         with default settings was handed a full workshop-administration panel while the Delete
-        control further down this same file, gated `allowDelete && adminMode`, was correctly hidden
+        control further down this same file, then gated `allowDelete && adminMode`, was correctly hidden
         from them: two admin affordances on one page disagreeing about what admin view means.
 
         The panel's own docblock reasons that it is safe to render unconditionally because
         /workshop-access/manage is in ADMIN_CHROME_ROUTES — a route that IS admin chrome, where the
         toggle is not applied because the whole page is the exemption. /design-workshops is not in
         that list and must not be: designers live on this page. So the exemption does not carry over
-        and the toggle governs here, exactly as it governs Delete below.
+        and the toggle governs here. (Delete below no longer reads it: content admins always see it.)
 
         ── MOUNTED, NOT REBUILT ────────────────────────────────────────────────────────────────────
 

@@ -97,7 +97,7 @@ export default function CraftsPage() {
 function CraftsPageBody() {
   const confirm = useConfirm();
   const { user } = useAuth();
-  const { adminMode } = useAdminView();
+  const { adminMode, canDeleteRecords } = useAdminView();
   const { addCompleted } = useUploads();
   const searchParams = useSearchParams();
   const allowManage = canManageCrafts(user);
@@ -445,7 +445,7 @@ function CraftsPageBody() {
           ) : null}
         </div>
       ) : tab === "categories" ? (
-        <CraftCategoriesTab catalogue={catalogue} canEdit={contentAdmin} canDelete={contentAdmin && adminMode} onChanged={reloadCatalogue} />
+        <CraftCategoriesTab catalogue={catalogue} canEdit={contentAdmin} canDelete={canDeleteRecords} onChanged={reloadCatalogue} />
       ) : tab === "review" && contentAdmin ? (
         <CraftReviewQueue catalogue={catalogue} onChanged={reloadCatalogue} />
       ) : (
@@ -714,7 +714,7 @@ function CraftsPageBody() {
                             <button className={rowAction("neutral")} onClick={() => setCollabId(craft.id)}>
                               Discuss
                             </button>
-                            {adminMode ? (
+                            {canDeleteRecords ? (
                               <button data-danger className={rowAction("danger")} onClick={() => void remove(craft)}>
                                 Delete
                               </button>

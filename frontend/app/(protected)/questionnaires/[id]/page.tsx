@@ -102,8 +102,9 @@ export default function QuestionnaireDetailPage() {
   const { user, loading: authLoading } = useAuth();
   const confirm = useConfirm();
   const { toast } = useToast();
-  // Deleting the form or a sitting is a content admin's act, in admin view (2026-10-20).
-  const { adminMode } = useAdminView();
+  // Deleting the form or a sitting is a content admin's act, admin view or not (2026-10-21);
+  // restoring one stays in admin view.
+  const { adminMode, canDeleteRecords } = useAdminView();
   /** Bumped after a sitting is deleted, so the admin's "Deleted answers" list re-reads. */
   const [deletedSittingsToken, setDeletedSittingsToken] = useState(0);
 
@@ -290,7 +291,7 @@ export default function QuestionnaireDetailPage() {
   */
   const attachedHold = useHeldPostRefusal(form?.designWorkshopId ?? null);
   const mayEdit = owns && attachedHold === null;
-  const mayDelete = mayEdit && adminMode;
+  const mayDelete = mayEdit && canDeleteRecords;
 
   async function deleteForm() {
     if (!form) return;
@@ -1080,7 +1081,7 @@ export default function QuestionnaireDetailPage() {
       </section>
 
       {/* Restoring a sitting is a content admin's act, in admin view (2026-10-20). */}
-      {mayDelete ? (
+      {mayDelete && adminMode ? (
         <DeletedSittings questionnaireId={id} refreshToken={deletedSittingsToken} onRestored={() => void load()} />
       ) : null}
 

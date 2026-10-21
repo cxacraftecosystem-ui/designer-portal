@@ -287,7 +287,7 @@ test.describe("edit mode says what it is and what it will not touch", () => {
     */
     const rowActions = PAGE.slice(PAGE.indexOf("<RowActions>"), PAGE.indexOf("</RowActions>"));
     expect(rowActions).toContain("href={`/questionnaire?edit=${interview.id}`}");
-    const beforeAdminGate = rowActions.slice(0, rowActions.indexOf("adminMode ?"));
+    const beforeAdminGate = rowActions.slice(0, rowActions.indexOf("canDeleteRecords ?"));
     expect(beforeAdminGate, "the Edit link is inside the admin-view gate").toContain("?edit=");
   });
 });

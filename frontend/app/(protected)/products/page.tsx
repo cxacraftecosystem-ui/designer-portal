@@ -33,7 +33,7 @@ import { exportFilename } from "@/lib/naming";
 export default function ProductsPage() {
   const { user } = useAuth();
   const confirm = useConfirm();
-  const { adminMode } = useAdminView();
+  const { canDeleteRecords } = useAdminView();
   const [data, setData] = useState<PageResult<ProductDocumentation> | null>(null);
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
@@ -264,7 +264,7 @@ export default function ProductsPage() {
                         <button className={rowAction("neutral")} onClick={() => setCollabId(product.id)}>
                           Discuss
                         </button>
-                        {adminMode ? (
+                        {canDeleteRecords ? (
                           <button data-danger className={rowAction("danger")} onClick={() => remove(product.id)}>
                             Delete
                           </button>

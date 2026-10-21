@@ -30,7 +30,7 @@ import type { Artisan, PageResult } from "@/lib/types";
 import { phoneOf } from "@/lib/standardValues";
 
 export default function ArtisansPage() {
-  const { adminMode } = useAdminView();
+  const { canDeleteRecords } = useAdminView();
   const confirm = useConfirm();
   const [data, setData] = useState<PageResult<Artisan> | null>(null);
   const { user } = useAuth();
@@ -316,7 +316,7 @@ export default function ArtisansPage() {
                         <button className={rowAction("neutral")} onClick={() => setCollabId(artisan.id)}>
                           Discuss
                         </button>
-                        {adminMode ? (
+                        {canDeleteRecords ? (
                           <button data-danger className={rowAction("danger")} onClick={() => remove(artisan.id)}>
                             Delete
                           </button>

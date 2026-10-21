@@ -304,7 +304,7 @@ export default function MediaPage() {
 
 function MediaPageBody() {
   const confirm = useConfirm();
-  const { adminMode } = useAdminView();
+  const { adminMode, canDeleteRecords } = useAdminView();
   const { user } = useAuth();
   const { addCompleted } = useUploads();
   const [data, setData] = useState<PageResult<MediaFile> | null>(null);
@@ -728,7 +728,7 @@ function MediaPageBody() {
               : "Transcribe now"}
         </button>
       ) : null}
-      {adminMode ? (
+      {canDeleteRecords ? (
         <button
           data-danger className={rowAction("danger")}
           onClick={() => remove(item)}

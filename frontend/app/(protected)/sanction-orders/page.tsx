@@ -216,8 +216,8 @@ export default function SanctionOrdersPage() {
    * Update — this screen has never edited an order, and a view must not start to.
    */
   const [viewing, setViewing] = useState<SanctionOrder | null>(null);
-  // Deleting an order is a content admin's act, in admin view (owner's ruling, 2026-10-20).
-  const { adminMode } = useAdminView();
+  // Deleting an order is a content admin's act, admin view or not (owner, 2026-10-21).
+  const { canDeleteRecords } = useAdminView();
   const confirm = useConfirm();
 
   async function deleteOrder(order: SanctionOrder) {
@@ -1084,7 +1084,7 @@ export default function SanctionOrdersPage() {
       <RecordDetailsDialog
         open={viewing !== null}
         onClose={() => setViewing(null)}
-        onDelete={viewing && adminMode ? () => void deleteOrder(viewing) : undefined}
+        onDelete={viewing && canDeleteRecords ? () => void deleteOrder(viewing) : undefined}
         title={viewing ? `Sanction order ${viewing.sanctionOrderNo}` : "Sanction order"}
         details={
           viewing

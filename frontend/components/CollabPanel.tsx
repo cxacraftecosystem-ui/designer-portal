@@ -29,8 +29,8 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const { user } = useAuth();
-  // Deleting is the content admins' alone, in admin view (owner's ruling, 2026-10-20).
-  const { adminMode } = useAdminView();
+  // Deleting is the content admins' alone, admin view or not (owner, 2026-10-21).
+  const { canDeleteRecords } = useAdminView();
   const confirm = useConfirm();
 
   const load = useCallback(async () => {
@@ -77,7 +77,7 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
    * the web or on the handset: the comment was permanent.
    *
    * WHO IS OFFERED IT MIRRORS THE HANDLER, read rather than assumed: since 2026-10-20 it 403s unless
-   * the caller is a content admin (`isContentAdmin`), so it is drawn only in admin view (`adminMode`).
+   * the caller is a content admin (`isContentAdmin`), so it is drawn for them alone (`canDeleteRecords`).
    * The author edits instead — see `saveEdit`.
    *
    * Confirmed first, and in the danger tone, because there is no undo — the row is deleted outright
@@ -175,7 +175,7 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
                   </button>
                 ) : null}
                 {/* Only where the server would allow it — see `removeComment`. */}
-                {user && adminMode ? (
+                {user && canDeleteRecords ? (
                   <button
                     type="button"
                     className="inline-flex items-center gap-1 text-error-600 underline underline-offset-2 disabled:no-underline disabled:opacity-60"
