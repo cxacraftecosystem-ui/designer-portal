@@ -357,7 +357,8 @@ async def run_export(row: Any) -> None:
         batch = records[start : start + EXPORT_READ_BATCH]
         entries = await db.dwstageentry.find_many(
             where={"designWorkshopId": {"in": [str(r.id) for r in batch]}, "deletedAt": None},
-            order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}],
+            # `createdAt`, `id`: a save's new rows share one `create_many` timestamp; `id` makes it total.
+            order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         by_workshop: dict[str, list[Any]] = {}
         for entry in entries:

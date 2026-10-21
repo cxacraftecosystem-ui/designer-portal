@@ -449,7 +449,11 @@ async def entry_rows(workshop_id: str, *, stage_key: str | None = None) -> list[
     where: dict[str, Any] = {"designWorkshopId": workshop_id, "deletedAt": None}
     if stage_key:
         where["stageKey"] = stage_key
-    return await db.dwstageentry.find_many(where=where, order={"ordinal": "asc"})
+    # A TOTAL ORDER: new rows of one save arrive in one `create_many` (one statement, one `now()`), so
+    # `ordinal` then `createdAt` can tie and only `id` settles which comes first, the same on every read.
+    return await db.dwstageentry.find_many(
+        where=where, order=[{"ordinal": "asc"}, {"createdAt": "asc"}, {"id": "asc"}]
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -3685,7 +3689,7 @@ async def _in_record_options(
     rows = await db.dwstageentry.find_many(
         where={"designWorkshopId": record.id, "entityKey": entity.key, "deletedAt": None}
         | ({"OR": [{"id": record_id}, {"clientKey": record_id}]} if record_id else {}),
-        order={"ordinal": "asc"},
+        order=[{"ordinal": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     label_key = entity.label_field or next((f.key for f in entity.fields if f.is_free_text), "")
     # A second printable field, so two prototypes both called "Bag" are told apart by their code.

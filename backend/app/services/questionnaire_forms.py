@@ -201,7 +201,7 @@ async def load_form(
     sections, entries = await gather_reads(
         db.questionnaireformsection.find_many(
             where={"questionnaireId": questionnaire_id},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         ),
         db.questionnaireformentry.find_many(
             where={"questionnaireId": questionnaire_id},
@@ -213,7 +213,7 @@ async def load_form(
     questions = (
         await db.questionnaireformquestion.find_many(
             where={"sectionId": {"in": section_ids}},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else []
@@ -373,7 +373,7 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
     sections, entries = await gather_reads(
         db.questionnaireformsection.find_many(
             where={"questionnaireId": {"in": ids}},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         ),
         db.questionnaireformentry.find_many(
             where={"questionnaireId": {"in": ids}, "deletedAt": None},
@@ -386,7 +386,7 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
     questions, answers = await gather_reads(
         db.questionnaireformquestion.find_many(
             where={"sectionId": {"in": section_ids}},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else _none(),
@@ -573,13 +573,13 @@ async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
 
     sections = await db.questionnaireformsection.find_many(
         where={"questionnaireId": questionnaire_id, "isActive": True},
-        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     section_ids = [s.id for s in sections]
     questions = (
         await db.questionnaireformquestion.find_many(
             where={"sectionId": {"in": section_ids}, "isActive": True},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else []
@@ -1361,7 +1361,7 @@ async def apply_parsed_edit(
 
     sections = await db.questionnaireformsection.find_many(
         where={"questionnaireId": questionnaire_id},
-        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     section_ids = [s.id for s in sections]
     questions = (
@@ -1371,7 +1371,7 @@ async def apply_parsed_edit(
             # a given wording, so an unordered read would resolve a duplicate prompt differently on
             # different runs — the same upload editing a different question depending on what
             # Postgres felt like returning first.
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else []

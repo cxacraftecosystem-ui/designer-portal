@@ -1751,8 +1751,11 @@ async def load_definition(workshop_id: str) -> CustomDefinition:
     )
     if not sections:
         return EMPTY_DEFINITION
+    # `id` breaks a `sortOrder` tie the same way on every read; the new fields of one plan land in one
+    # `create_many`, so `createdAt` cannot.
     field_rows = await db.dwcustomfield.find_many(
-        where={"sectionId": {"in": [s.id for s in sections]}}, order={"sortOrder": "asc"}
+        where={"sectionId": {"in": [s.id for s in sections]}},
+        order=[{"sortOrder": "asc"}, {"id": "asc"}],
     )
     grouped: dict[str, list[CustomFieldSpec]] = {}
     for row in field_rows:
