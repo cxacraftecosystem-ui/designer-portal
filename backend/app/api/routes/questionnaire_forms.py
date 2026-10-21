@@ -1312,24 +1312,32 @@ async def create_section(
     code = (payload.code or "").strip()
     if not code or code.lower() in codes:
         code = derive_section_code(payload.title, codes)
-    made = await db.questionnaireformsection.create(
-        data={
-            "questionnaireId": questionnaire_id,
-            "code": code,
-            "title": payload.title.strip(),
-            "sortOrder": payload.sortOrder or (max((s.sortOrder for s in existing), default=0) + 1),
-        }
-    )
-    for position, question in enumerate(payload.questions, start=1):
-        await db.questionnaireformquestion.create(
+    # ONE TRANSACTION, TWO STATEMENTS (audit M4, 21 Oct 2026): the section and every question in it
+    # land together or not at all, as ``POST /questionnaires`` has since D2. A failure part way used
+    # to leave a section holding the first few of its questions.
+    async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
+        made = await tx.questionnaireformsection.create(
             data={
-                "sectionId": made.id,
-                "prompt": question.prompt.strip(),
-                "helpText": question.helpText,
-                "isRequired": question.isRequired,
-                "sortOrder": question.sortOrder or position,
+                "questionnaireId": questionnaire_id,
+                "code": code,
+                "title": payload.title.strip(),
+                "sortOrder": payload.sortOrder
+                or (max((s.sortOrder for s in existing), default=0) + 1),
             }
         )
+        if payload.questions:
+            await tx.questionnaireformquestion.create_many(
+                data=[
+                    {
+                        "sectionId": made.id,
+                        "prompt": question.prompt.strip(),
+                        "helpText": question.helpText,
+                        "isRequired": question.isRequired,
+                        "sortOrder": question.sortOrder or position,
+                    }
+                    for position, question in enumerate(payload.questions, start=1)
+                ]
+            )
     await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
     return public_encode(await load_form(questionnaire_id))
 

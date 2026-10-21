@@ -784,53 +784,88 @@ async def create_from_parsed(
     be shown verbatim, and the same sentence is pushed into ``report["problems"]`` so that every
     client which already renders the parser's problem list tells the designer about this without
     needing to be changed first. Silence was the whole defect; it is not permitted in either branch.
-    """
-    questionnaire = await db.questionnaire.create(
-        data={
-            "title": (title or parsed.title or "Untitled questionnaire").strip(),
-            "description": (description or parsed.description or None),
-            "ownerId": owner_id,
-            "designWorkshopId": design_workshop_id,
-            # NOT PARSED OUT OF THE WORKBOOK, and that is the decision rather than a gap. The
-            # pro-forma has no kind cell, and adding one would mean an .xlsx that predates it — every
-            # workbook already in a designer's Downloads folder — silently importing as "not stated"
-            # while looking as though it had been asked. The uploader states the kind on the upload
-            # form instead, where the workshop picker beside it already lives, and both travel on the
-            # same multipart body. ``None`` when nothing was chosen, which is the honest default.
-            "kind": kind,
-            "sourceFilename": source_filename,
-        }
-    )
-    created_questions: dict[int, str] = {}  # row number -> question id, to attach uploaded answers
-    codes_taken: set[str] = set()
-    for index, section in enumerate(parsed.sections[:MAX_SECTIONS], start=1):
-        code = _unique_code(section.code, section.title, codes_taken)
-        made = await db.questionnaireformsection.create(
-            data={
-                "questionnaireId": questionnaire.id,
-                "code": code,
-                "title": section.title or code,
-                "sortOrder": index,
-            }
-        )
-        for position, question in enumerate(section.questions, start=1):
-            row = await db.questionnaireformquestion.create(
-                data={
-                    "sectionId": made.id,
-                    "prompt": question.prompt,
-                    "helpText": question.helpText,
-                    "isRequired": question.isRequired,
-                    "sortOrder": position,
-                }
-            )
-            created_questions[question.row] = row.id
 
+    ONE TRANSACTION (audit M4, 21 Oct 2026). Sections, questions and imported sittings used to be
+    written a row at a time with nothing around them, so a failure part way left a truncated
+    questionnaire — the D2 defect ``POST /questionnaires`` was already fixed for. Now the form, its
+    sections and questions (``create_many`` each) and any imported sittings commit together.
+    """
+    codes_taken: set[str] = set()
+    planned_sections = [
+        (index, _unique_code(section.code, section.title, codes_taken), section)
+        for index, section in enumerate(parsed.sections[:MAX_SECTIONS], start=1)
+    ]
     problems = [p.payload() for p in parsed.problems]
     answer_rows = _uploaded_answer_rows(parsed)
     evidence = _came_out_of_the_platform(parsed) if answer_rows else None
     entries_created = 0
     answers_imported = 0
     provenance: dict[str, Any] | None = None
+    created_questions: dict[int, str] = {}  # row number -> question id, to attach uploaded answers
+
+    async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
+        questionnaire = await tx.questionnaire.create(
+            data={
+                "title": (title or parsed.title or "Untitled questionnaire").strip(),
+                "description": (description or parsed.description or None),
+                "ownerId": owner_id,
+                "designWorkshopId": design_workshop_id,
+                # NOT PARSED OUT OF THE WORKBOOK, and that is the decision rather than a gap. The
+                # pro-forma has no kind cell, and adding one would mean an .xlsx that predates it — every
+                # workbook already in a designer's Downloads folder — silently importing as "not stated"
+                # while looking as though it had been asked. The uploader states the kind on the upload
+                # form instead, where the workshop picker beside it already lives, and both travel on the
+                # same multipart body. ``None`` when nothing was chosen, which is the honest default.
+                "kind": kind,
+                "sourceFilename": source_filename,
+            }
+        )
+        if planned_sections:
+            await tx.questionnaireformsection.create_many(
+                data=[
+                    {
+                        "questionnaireId": questionnaire.id,
+                        "code": code,
+                        "title": section.title or code,
+                        "sortOrder": index,
+                    }
+                    for index, code, section in planned_sections
+                ]
+            )
+            written = await tx.questionnaireformsection.find_many(
+                where={"questionnaireId": questionnaire.id}
+            )
+            id_by_code = {row.code: row.id for row in written}
+            question_data = [
+                {
+                    "sectionId": id_by_code[code],
+                    "prompt": question.prompt,
+                    "helpText": question.helpText,
+                    "isRequired": question.isRequired,
+                    "sortOrder": position,
+                }
+                for _index, code, section in planned_sections
+                for position, question in enumerate(section.questions, start=1)
+            ]
+            if question_data:
+                await tx.questionnaireformquestion.create_many(data=question_data)
+                stored = await tx.questionnaireformquestion.find_many(
+                    where={"sectionId": {"in": sorted(id_by_code.values())}}
+                )
+                # (section, position) is unique among the rows just written, so it names each one.
+                id_by_place = {(row.sectionId, row.sortOrder): row.id for row in stored}
+                for _index, code, section in planned_sections:
+                    for position, question in enumerate(section.questions, start=1):
+                        created_questions[question.row] = id_by_place[(id_by_code[code], position)]
+        if answer_rows and not evidence:
+            entries_created, answers_imported = await _store_uploaded_answers(
+                questionnaire.id,
+                parsed,
+                created_questions,
+                owner_id,
+                source_filename=source_filename,
+                client=tx,
+            )
 
     if answer_rows and evidence:
         provenance = {
@@ -856,9 +891,6 @@ async def create_from_parsed(
             }
         )
     elif answer_rows:
-        entries_created, answers_imported = await _store_uploaded_answers(
-            questionnaire.id, parsed, created_questions, owner_id, source_filename=source_filename
-        )
         provenance = {
             "action": "answersImported",
             "sourceQuestionnaireId": None,
@@ -922,8 +954,11 @@ async def _store_uploaded_answers(
     user_id: str,
     *,
     source_filename: str | None = None,
+    client: Any = None,
 ) -> tuple[int, int]:
     """Answers that came in already filled on the spreadsheet, one sitting per answer column.
+
+    ``client`` is the caller's transaction (audit M4), so the sittings commit with the form.
 
     Returns ``(sittings created, answer rows written)`` so the change report can state what happened
     with real numbers rather than with the number of answer COLUMNS, which is not the same thing.
@@ -969,7 +1004,8 @@ async def _store_uploaded_answers(
                 )
         if not rows:
             continue
-        entry = await db.questionnaireformentry.create(
+        writer = db if client is None else client
+        entry = await writer.questionnaireformentry.create(
             data={
                 "questionnaireId": questionnaire_id,
                 "title": label,
@@ -980,7 +1016,7 @@ async def _store_uploaded_answers(
                 "createdById": user_id,
             }
         )
-        await db.questionnaireformanswer.create_many(
+        await writer.questionnaireformanswer.create_many(
             data=[row | {"entryId": entry.id} for row in rows]
         )
         entries_created += 1
