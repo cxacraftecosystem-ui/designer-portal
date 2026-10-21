@@ -88,8 +88,9 @@ const NO_WORKSHOP_ROWS: readonly DwSummary[] = [];
 export default function QuestionnairesPage() {
   const router = useRouter();
   const { toast } = useToast();
-  // The trash and its Restore are a content admin's, in admin view (2026-10-20).
-  const { adminMode } = useAdminView();
+  // The trash and its Restore: a content admin sees every deleted form, in admin view (2026-10-20);
+  // anyone else sees the forms they authored, which they may restore (owner, 22 Oct 2026).
+  const { adminMode, canDeleteRecords } = useAdminView();
   const [data, setData] = useState<PageResult<QFormSummary> | null>(null);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
@@ -861,7 +862,9 @@ export default function QuestionnairesPage() {
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
 
-      {adminMode ? <DeletedQuestionnairesCard onRestored={() => void load()} /> : null}
+      {adminMode || !canDeleteRecords ? (
+        <DeletedQuestionnairesCard ownOnly={!canDeleteRecords} onRestored={() => void load()} />
+      ) : null}
 
       {/*
         `key` on the questionnaire id, so the dialog is a FRESH component per row rather than the

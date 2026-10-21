@@ -359,10 +359,13 @@ fun QuestionnaireListScreen(
             onError = onError,
         )
 
-        // L9 (21 Oct 2026): the trash, for content admins alone.
-        if (mayDeleteQuestionnaireItems(repository.cachedUser())) {
+        // L9 (21 Oct 2026): the trash. A content admin sees every deleted form; a designer sees the
+        // forms they authored, which they may restore (owner, 22 Oct 2026). The server scopes it.
+        val trashUser = repository.cachedUser()
+        if (trashUser != null && (mayDeleteQuestionnaireItems(trashUser) || FieldPermissions.canRunDesignWorkshops(trashUser))) {
             DeletedQuestionnairesCard(
                 repository = repository,
+                ownOnly = !mayDeleteQuestionnaireItems(trashUser),
                 onRestored = { reload++ },
                 onMessage = onMessage,
                 onError = onError,

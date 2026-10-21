@@ -2,9 +2,10 @@
 
 * **M1** an admin's re-upload that drops a question with only BLANK answer rows deletes it (it used to
   500 on the RESTRICT foreign key and leave the edit half applied);
-* **M2** a designer's re-upload never removes or retires a question left out of the file; it is kept
-  and reported, because removing questionnaire items is a content admin's on every path (owner,
-  21 Oct 2026); and taking a section out through PATCH is refused the same way;
+* **M2** one removal rule on every path: a question left out of a re-uploaded file is removed or
+  retired for the form's author or a content admin, and anybody else's re-upload is refused 403
+  (owner, 21 Oct 2026, amended 22 Oct: "the author should be able to edit/delete the questionnaire
+  apart from the admins"); taking a section out through PATCH follows the same rule;
 * **M3** answers typed into a re-uploaded workbook are counted and reported, not dropped in silence;
 * **M5** one retired question, or one answer somebody else wrote, is rejected on its own and the rest
   of the batch is saved;
@@ -147,29 +148,86 @@ def _read(env, form, slug="owner") -> dict[str, Any]:
 # ── M2: one removal rule, re-upload included ─────────────────────────────────────────────────
 
 
-def test_a_designers_re_upload_keeps_the_questions_it_leaves_out(env):
+def test_the_authors_re_upload_removes_the_questions_it_leaves_out(env):
     form = _form(env, ["How many looms?", "Who taught you?", "Which dyes?"])
     ids = _ids(form)
+    entry_id = _sitting(env, form)
+    saved = _put(env, form, entry_id, [{"questionId": ids["Which dyes?"], "answerText": "Indigo"}])
+    assert saved.status_code == 200, saved.text
     response = _reupload(env, form, [(ids["How many looms?"], "How many looms?")], slug="owner")
     assert response.status_code == 200, response.text
     report = response.json()["report"]
-    assert report["kept"] == 2
-    assert report["removed"] == 0 and report["retired"] == 0
-    assert sum("Only an admin can remove questions" in p["reason"] for p in report["problems"]) == 2
+    assert report["kept"] == 0
+    assert report["removed"] == 1 and report["retired"] == 1
+    stored = _read(env, form)
+    assert ids["Who taught you?"] not in stored
+    assert stored[ids["Which dyes?"]]["isActive"] is False
+
+
+def test_a_content_admins_re_upload_removes_the_questions_it_leaves_out(env):
+    form = _form(env, ["How many looms?", "Who taught you?"])
+    ids = _ids(form)
+    response = _reupload(env, form, [(ids["How many looms?"], "How many looms?")], slug="admin")
+    assert response.status_code == 200, response.text
+    assert response.json()["report"]["removed"] == 1
+    assert ids["Who taught you?"] not in _read(env, form)
+
+
+def test_another_designers_re_upload_is_refused_and_removes_nothing(env):
+    form = _form(env, ["How many looms?", "Who taught you?"])
+    ids = _ids(form)
+    response = _reupload(env, form, [(ids["How many looms?"], "How many looms?")], slug="stranger")
+    assert response.status_code == 403, response.text
     stored = _read(env, form)
     assert all(stored[qid]["isActive"] for qid in ids.values())
 
 
-def test_a_designer_cannot_take_a_section_out_but_an_admin_can(env):
+def test_the_author_or_an_admin_takes_a_section_out_and_nobody_else(env):
     form = _form(env, ["How many looms?"])
     section_id = form["sections"][0]["id"]
     path = f"/api/questionnaires/{form['id']}/sections/{section_id}"
-    refused = env["client"].patch(path, json={"isActive": False}, headers=_as(env, "owner"))
+    refused = env["client"].patch(path, json={"isActive": False}, headers=_as(env, "stranger"))
     assert refused.status_code == 403, refused.text
-    allowed = env["client"].patch(path, json={"isActive": False}, headers=_as(env, "admin"))
-    assert allowed.status_code == 200, allowed.text
+    by_author = env["client"].patch(path, json={"isActive": False}, headers=_as(env, "owner"))
+    assert by_author.status_code == 200, by_author.text
     back = env["client"].patch(path, json={"isActive": True}, headers=_as(env, "owner"))
     assert back.status_code == 200, back.text
+    by_admin = env["client"].patch(path, json={"isActive": False}, headers=_as(env, "admin"))
+    assert by_admin.status_code == 200, by_admin.text
+
+
+def test_the_author_or_an_admin_removes_a_question_and_nobody_else(env):
+    form = _form(env, ["How many looms?", "Who taught you?", "Which dyes?"])
+    ids = _ids(form)
+
+    def remove(prompt: str, slug: str):
+        return env["client"].delete(
+            f"/api/questionnaires/{form['id']}/questions/{ids[prompt]}", headers=_as(env, slug)
+        )
+
+    refused = remove("How many looms?", "stranger")
+    assert refused.status_code == 403, refused.text
+    by_author = remove("Who taught you?", "owner")
+    assert by_author.status_code == 200, by_author.text
+    assert by_author.json()["action"] == "deleted"
+    by_admin = remove("Which dyes?", "admin")
+    assert by_admin.status_code == 200, by_admin.text
+    stored = _read(env, form)
+    assert ids["How many looms?"] in stored
+    assert ids["Who taught you?"] not in stored and ids["Which dyes?"] not in stored
+
+
+def test_the_author_or_an_admin_edits_the_form_and_nobody_else(env):
+    form = _form(env, ["How many looms?"])
+    ids = _ids(form)
+    path = f"/api/questionnaires/{form['id']}"
+    q_path = f"{path}/questions/{ids['How many looms?']}"
+    assert env["client"].patch(path, json={"title": "Taken"}, headers=_as(env, "stranger")).status_code == 403
+    assert env["client"].patch(q_path, json={"prompt": "Mine"}, headers=_as(env, "stranger")).status_code == 403
+    by_author = env["client"].patch(path, json={"title": "Renamed by author"}, headers=_as(env, "owner"))
+    assert by_author.status_code == 200, by_author.text
+    by_admin = env["client"].patch(q_path, json={"prompt": "How many looms now?"}, headers=_as(env, "admin"))
+    assert by_admin.status_code == 200, by_admin.text
 
 
 # ── M1: a blank answer row no longer turns an admin's re-upload into a 500 ──────────────────

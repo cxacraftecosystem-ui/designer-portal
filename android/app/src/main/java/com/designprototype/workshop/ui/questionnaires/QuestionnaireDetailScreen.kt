@@ -325,8 +325,10 @@ fun QuestionnaireDetailScreen(
 
     val loaded = form
     val mayEdit = remember(loaded?.ownerId) { mayEditQuestionnaire(repository, loaded?.ownerId) }
-    // M2 (21 Oct 2026): removing a question is a delete, and deletes are content admins' alone.
-    val mayDelete = remember { mayDeleteQuestionnaireItems(repository.cachedUser()) }
+    // Removing a question and deleting the form are the author's or a content admin's (owner,
+    // 22 Oct 2026); deleting or restoring a sitting stays a content admin's alone.
+    val mayDelete = remember(loaded?.ownerId) { mayDeleteQuestionnaire(repository.cachedUser(), loaded?.ownerId) }
+    val mayDeleteSittings = remember { mayDeleteQuestionnaireItems(repository.cachedUser()) }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -466,7 +468,7 @@ fun QuestionnaireDetailScreen(
                 SittingsCard(
                     form = loaded,
                     busy = busy,
-                    onDeleteEntry = if (mayDelete && !isTempId(questionnaireId)) ({ deletingEntry = it }) else null,
+                    onDeleteEntry = if (mayDeleteSittings && !isTempId(questionnaireId)) ({ deletingEntry = it }) else null,
                     onStart = {
                         if (!uploadedOrSay()) return@SittingsCard
                         if (repository.isOnline(appContext)) startingSitting = true else onError(SITTING_START_OFFLINE)
@@ -486,8 +488,8 @@ fun QuestionnaireDetailScreen(
                     onRemoveQuestion = { removingQuestion = it },
                 )
 
-                // L9 (21 Oct 2026): soft delete and restore, content admins only.
-                if (mayDelete && !isTempId(questionnaireId)) {
+                // L9 (21 Oct 2026): a sitting's trash, content admins only.
+                if (mayDeleteSittings && !isTempId(questionnaireId)) {
                     DeletedSittingsCard(
                         repository = repository,
                         questionnaireId = questionnaireId,
@@ -496,11 +498,14 @@ fun QuestionnaireDetailScreen(
                         onMessage = onMessage,
                         onError = onError,
                     )
+                }
+                // The form's own soft delete: its author or a content admin (owner, 22 Oct 2026).
+                if (mayDelete && !isTempId(questionnaireId)) {
                     com.designprototype.workshop.ui.RecordDangerZoneCard(
                         noun = "questionnaire",
                         delete = { repository.deleteCustomQuestionnaire(questionnaireId) },
                         onDeleted = {
-                            onMessage("Questionnaire deleted. An admin can restore it.")
+                            onMessage("Questionnaire deleted. Its author or an admin can restore it.")
                             onDeleted()
                         },
                         onError = { onError(it.apiErrorMessage("The questionnaire could not be deleted.")) },
@@ -1389,7 +1394,7 @@ private fun QuestionRow(
                 if (mayEdit) {
                     TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, style = MaterialTheme.typography.labelMedium) }
                 }
-                // M2: content admins only, the server's rule on every path.
+                // M2: the form's author or a content admin, the server's rule on every path.
                 if (mayDelete) {
                     TextButton(onClick = onRemove, enabled = !busy) {
                         Text(if (question.hasAnswers) "Retire" else "Delete", style = MaterialTheme.typography.labelMedium)

@@ -1377,9 +1377,10 @@ async def apply_parsed_edit(
     their corrections — an edit that silently supersedes six questions is indistinguishable, from
     the outside, from one that silently lost them.
 
-    ``may_remove`` (owner, 21 Oct 2026: removing questionnaire items is a content admin's, on every
-    path, this one included). Without it, a question left out of the file is KEPT and the report
-    says so (``kept`` plus one warning each); with it, the rule below retires or deletes it.
+    ``may_remove`` (owner, 21 Oct 2026, amended 22 Oct: removing a form's questions is its author's
+    or a content admin's, on every path, this one included). Without it, a question left out of the
+    file is KEPT and the report says so (``kept`` plus one warning each); with it, the rule below
+    retires or deletes it.
 
     ANSWERS TYPED INTO THE FILE ARE NOT IMPORTED HERE (audit M3), and the report now says how many
     (``answersNotImported`` plus a warning) instead of dropping them in silence. A re-upload edits
@@ -1680,8 +1681,9 @@ async def _remove_absent(
     nothing to orphan and a form littered with every question its author ever thought better of is
     not a form. Returns how many version bumps this earned.
 
-    ONLY FOR A CONTENT ADMIN (``may_remove``). Anyone else's absent rows are kept and reported, so
-    the one removal rule holds on this path as it does on ``DELETE .../questions/{id}`` (audit M2).
+    ONLY WITH ``may_remove`` (the form's author or a content admin, owner 22 Oct 2026). Otherwise
+    absent rows are kept and reported, so the one removal rule holds on this path as it does on
+    ``DELETE .../questions/{id}`` (audit M2).
 
     THE BLANK ANSWER ROWS GO FIRST (audit M1). ``QuestionnaireFormAnswer.questionId`` is RESTRICT,
     and the app writes a blank row when somebody tabs through a sitting, so deleting the question
@@ -1700,8 +1702,8 @@ async def _remove_absent(
                     "row": None,
                     "severity": "warning",
                     "reason": (
-                        "This question is not in your file but was kept. Only an admin can "
-                        "remove questions."
+                        "This question is not in your file but was kept. Only the form's author "
+                        "or an admin can remove questions."
                     ),
                     "value": question.prompt[:120],
                 }

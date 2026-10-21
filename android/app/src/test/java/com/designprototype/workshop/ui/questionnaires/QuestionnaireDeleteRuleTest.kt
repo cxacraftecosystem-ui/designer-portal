@@ -16,7 +16,7 @@ class QuestionnaireDeleteRuleTest {
     private fun user(role: String) = UserDto(id = role, email = "$role@example.org", name = role, role = role)
 
     @Test
-    fun `only content admins may remove a question`() {
+    fun `only content admins may delete a sitting or a recording`() {
         // The content-admin set itself, not a copy of it: a list typed here would be a second ladder.
         FieldPermissions.CONTENT_ADMIN_ROLES.forEach { assertTrue(it, mayDeleteQuestionnaireItems(user(it))) }
         listOf("DESIGNER", "RESEARCHER").forEach { assertFalse(it, mayDeleteQuestionnaireItems(user(it))) }
@@ -24,14 +24,33 @@ class QuestionnaireDeleteRuleTest {
     }
 
     @Test
-    fun `the Remove control is drawn for content admins alone`() {
+    fun `a form and its questions are deleted by its author or a content admin and nobody else`() {
+        // Owner, 22 Oct 2026: "the author should be able to edit/delete the questionnaire apart from
+        // the admins". The author is the form's ownerId.
+        val author = user("DESIGNER")
+        assertTrue(mayDeleteQuestionnaire(author, author.id))
+        FieldPermissions.CONTENT_ADMIN_ROLES.forEach { assertTrue(it, mayDeleteQuestionnaire(user(it), "someone-else")) }
+        listOf("DESIGNER", "RESEARCHER").forEach { assertFalse(it, mayDeleteQuestionnaire(user(it), "someone-else")) }
+        assertFalse(mayDeleteQuestionnaire(null, "someone-else"))
+        assertFalse(mayDeleteQuestionnaire(author, null))
+        assertFalse(mayDeleteQuestionnaire(author, ""))
+    }
+
+    @Test
+    fun `the Remove control is drawn for the author or a content admin, a sitting's Delete for admins`() {
         val screen = qLiveSource(
             "app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireDetailScreen.kt"
         ).readText()
         val row = screen.substringAfter("private fun QuestionRow(")
         val remove = row.substringBefore("TextButton(onClick = onRemove")
         assertTrue(remove.trimEnd().endsWith("if (mayDelete) {"))
-        assertTrue(screen.contains("mayDeleteQuestionnaireItems(repository.cachedUser())"))
+        assertTrue(screen.contains("mayDeleteQuestionnaire(repository.cachedUser(), loaded?.ownerId)"))
+        assertTrue(screen.contains("val mayDeleteSittings = remember { mayDeleteQuestionnaireItems(repository.cachedUser()) }"))
+        // Editing asks the same author-or-content-admin rule as deleting.
+        val common = qLiveSource(
+            "app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireCommon.kt"
+        ).readText()
+        assertTrue(common.contains("mayDeleteQuestionnaire(repository.cachedUser(), ownerId)"))
     }
 
     @Test

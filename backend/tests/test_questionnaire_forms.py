@@ -1217,7 +1217,7 @@ async def test_a_questionnaire_cannot_be_attached_to_a_deleted_workshop(client, 
     assert created.status_code == 201, created.text
     questionnaire_id = created.json()["id"]
 
-    # Deleting is admin-only (assert_can_delete), which is why the admin account does it here.
+    # A form is deleted by its author or a content admin (owner, 22 Oct 2026); the admin does it here.
     removed = client.delete(
         f"/api/design-workshops/{workshop_id}", headers=_headers(world, "admin")
     )

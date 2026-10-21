@@ -36,18 +36,20 @@ import kotlinx.coroutines.launch
  * SOFT DELETE AND RESTORE FOR CUSTOM QUESTIONNAIRES ON ANDROID (audit L9, 21 Oct 2026).
  *
  * The server has soft-deleted forms and sittings since 20 Oct and the web offers a trash; the
- * handset offered neither. Content admins only, by the owner's delete rule
- * ([mayDeleteQuestionnaireItems]); nobody else is shown any of it.
+ * handset offered neither. A form is deleted and restored by its author or a content admin
+ * ([mayDeleteQuestionnaire], owner 22 Oct 2026); a sitting by a content admin alone
+ * ([mayDeleteQuestionnaireItems]).
  *
  * The words live in [QuestionnaireTrashCopy] so a JVM test pins them.
  */
 object QuestionnaireTrashCopy {
     const val QUESTIONNAIRE_BODY =
-        "Moves this questionnaire to Deleted. Its sittings and answers are kept, and an admin can restore it."
-    const val QUESTIONNAIRE_CONFIRM = "Its sittings and answers are kept. An admin can restore it."
+        "Moves this questionnaire to Deleted. Its sittings and answers are kept, and its author or an admin can restore it."
+    const val QUESTIONNAIRE_CONFIRM = "Its sittings and answers are kept. Its author or an admin can restore it."
     const val SITTING_CONFIRM_TITLE = "Delete this sitting?"
     const val SITTING_CONFIRM = "Its answers are kept. An admin can restore it."
     const val DELETED_QUESTIONNAIRES = "Deleted questionnaires"
+    const val YOUR_DELETED_QUESTIONNAIRES = "Your deleted questionnaires"
     const val DELETED_SITTINGS = "Deleted sittings"
     const val NOTHING_DELETED = "Nothing here."
     const val RESTORE = "Restore"
@@ -134,16 +136,20 @@ private fun <T> TrashCard(
     }
 }
 
-/** The questionnaire trash on the list screen. Content admins only — the caller checks. */
+/**
+ * The questionnaire trash on the list screen. A content admin's lists every deleted form; anyone
+ * else's ([ownOnly]) lists the forms they authored, which the server scopes and lets them restore.
+ */
 @Composable
 fun DeletedQuestionnairesCard(
     repository: WorkshopRepository,
     onRestored: () -> Unit,
     onMessage: (String) -> Unit,
     onError: (String) -> Unit,
+    ownOnly: Boolean = false,
 ) {
     TrashCard(
-        heading = QuestionnaireTrashCopy.DELETED_QUESTIONNAIRES,
+        heading = if (ownOnly) QuestionnaireTrashCopy.YOUR_DELETED_QUESTIONNAIRES else QuestionnaireTrashCopy.DELETED_QUESTIONNAIRES,
         reloadKey = null,
         load = { repository.deletedCustomQuestionnaires() },
         title = { it.title.ifBlank { "Untitled questionnaire" } },

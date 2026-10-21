@@ -318,19 +318,36 @@ def test_the_re_upload_passes_the_removal_rule_and_runs_in_one_transaction():
     from app.services import questionnaire_forms
 
     route = inspect.getsource(routes.reupload_questionnaire)
-    assert "may_remove=is_content_admin(current_user)" in route
+    # Author or content admin (owner, 22 Oct 2026): `_require_owner` admits exactly those two, and
+    # it runs before the workbook is applied, so whoever reaches the edit may remove.
+    assert "may_remove=True" in route
+    assert route.index("_require_owner(record, current_user)") < route.index("apply_parsed_edit(")
     edit = inspect.getsource(questionnaire_forms.apply_parsed_edit)
     assert "async with db.tx(" in edit
     assert "await db.questionnaireformquestion.update(" not in edit
     assert "answersNotImported" in edit
 
 
-def test_taking_a_section_out_is_a_removal():
+def test_taking_a_section_out_is_the_authors_or_an_admins():
     from app.api.routes import questionnaire_forms
 
     code = inspect.getsource(questionnaire_forms.update_section)
-    assert 'if data.get("isActive") is False and section.isActive:' in code
-    assert "assert_can_delete(current_user)" in code
+    assert "_require_owner(record, current_user)" in code
+    assert "assert_can_delete(current_user)" not in code
+
+
+def test_a_forms_delete_restore_and_question_removal_are_the_authors_or_an_admins():
+    """Owner, 22 Oct 2026: the author OR a content admin; a sitting's delete stays admin-only."""
+    from app.api.routes import questionnaire_forms as routes
+
+    for handler in (routes.delete_questionnaire, routes.restore_questionnaire, routes.remove_question):
+        code = inspect.getsource(handler).split('"""')[-1]
+        assert "_require_owner(record, current_user)" in code, handler.__name__
+        assert "assert_can_delete" not in code and "require_content_admin" not in code, (
+            handler.__name__
+        )
+    assert "assert_can_delete(current_user)" in inspect.getsource(routes.delete_entry)
+    assert "require_content_admin" in inspect.getsource(routes.restore_entry)
 
 
 # ── M4: atomic creates ──────────────────────────────────────────────────────────────────────

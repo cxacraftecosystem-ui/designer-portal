@@ -32,7 +32,8 @@ import com.designprototype.workshop.ui.field
  * May this account change the QUESTIONS on this questionnaire?
  *
  * Mirrors `_require_owner` in backend/app/api/routes/questionnaire_forms.py: the designer who created
- * it, or an admin. Everybody with design-workshop access can still READ it and RECORD ANSWERS against
+ * it, or a content admin (Admin, Master Admin, Ministry Admin) — the same rule as deleting the form,
+ * [mayDeleteQuestionnaire] (owner, 22 Oct 2026). Everybody with design-workshop access can still READ it and RECORD ANSWERS against
  * it — that split is deliberate on the server ("what lets a designer hand a colleague a form to fill
  * in without also handing them the ability to reword it halfway through the fieldwork"), and a client
  * that collapsed the two would either hide the answer sheet from the colleague the form was handed to
@@ -41,11 +42,8 @@ import com.designprototype.workshop.ui.field
  * This hides EDITING CONTROLS, never data. The endpoint behind each of them is checked again on the
  * server, so this is an honesty measure — do not add a guard here over anything that is only readable.
  */
-internal fun mayEditQuestionnaire(repository: WorkshopRepository, ownerId: String?): Boolean {
-    val user = repository.cachedUser() ?: return false
-    if (FieldPermissions.isAdmin(user)) return true
-    return !ownerId.isNullOrBlank() && ownerId == user.id
-}
+internal fun mayEditQuestionnaire(repository: WorkshopRepository, ownerId: String?): Boolean =
+    mayDeleteQuestionnaire(repository.cachedUser(), ownerId)
 
 /** The signed-in account's id, for deciding whose answers this device may overwrite. */
 internal fun signedInUserId(repository: WorkshopRepository): String? = repository.cachedUser()?.id

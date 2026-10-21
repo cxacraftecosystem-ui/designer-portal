@@ -40,7 +40,7 @@ class QuestionnaireTrashTest {
     }
 
     @Test
-    fun `every control is for content admins and calls the soft-delete routes`() {
+    fun `the form's controls are the author's or an admin's, a sitting's an admin's, on the soft-delete routes`() {
         val api = qLiveSource("app/src/main/java/com/designprototype/workshop/data/WorkshopRepositoryApi.kt").readText()
         listOf(
             "@DELETE(\"questionnaires/{id}\")",
@@ -51,9 +51,12 @@ class QuestionnaireTrashTest {
             "@Query(\"deletedOnly\")",
         ).forEach { assertTrue(it, api.contains(it)) }
         val list = qLiveSource("app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireListScreen.kt").readText()
-        assertTrue(list.substringBefore("DeletedQuestionnairesCard(").takeLast(120).contains("mayDeleteQuestionnaireItems(repository.cachedUser())"))
+        // The trash is offered to designers too (their own forms) and to content admins (every form).
+        assertTrue(list.substringBefore("DeletedQuestionnairesCard(").takeLast(200).contains("FieldPermissions.canRunDesignWorkshops(trashUser)"))
+        assertTrue(list.contains("ownOnly = !mayDeleteQuestionnaireItems(trashUser),"))
         val detail = qLiveSource("app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireDetailScreen.kt").readText()
-        assertTrue(detail.contains("onDeleteEntry = if (mayDelete && !isTempId(questionnaireId))"))
-        assertTrue(detail.substringBefore("DeletedSittingsCard(").takeLast(150).contains("if (mayDelete && !isTempId(questionnaireId))"))
+        assertTrue(detail.contains("onDeleteEntry = if (mayDeleteSittings && !isTempId(questionnaireId))"))
+        assertTrue(detail.substringBefore("DeletedSittingsCard(").takeLast(150).contains("if (mayDeleteSittings && !isTempId(questionnaireId))"))
+        assertTrue(detail.substringBefore("RecordDangerZoneCard(").takeLast(200).contains("if (mayDelete && !isTempId(questionnaireId))"))
     }
 }

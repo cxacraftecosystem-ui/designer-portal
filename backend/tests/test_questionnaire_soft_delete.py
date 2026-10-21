@@ -1,13 +1,16 @@
-"""A questionnaire form and a sitting are SOFT-deleted, and a content admin restores them.
+"""A questionnaire form and a sitting are SOFT-deleted, and can be restored.
 
-Owner, 2026-10-20: deleting a form or a sitting is a content admin's act, and it must be undoable.
+Owner, 2026-10-20: deleting must be undoable. Amended 2026-10-22: a FORM is deleted and restored by
+its author or a content admin; a SITTING stays a content admin's alone.
 ``DELETE /questionnaires/{id}`` and ``DELETE /questionnaires/{id}/entries/{entryId}`` set
 ``deletedAt``; every read stops finding the row; ``GET ?deletedOnly=true`` and
-``GET /{id}/deleted-entries`` list them for a content admin; ``POST .../restore`` puts them back whole.
+``GET /{id}/deleted-entries`` list them; ``POST .../restore`` puts them back whole.
 
 What this file proves, against a real database:
 
-  * a designer (even the form's owner) neither deletes, lists the trash nor restores;
+  * the form's author deletes it, sees it in their own trash and restores it;
+  * another designer can neither delete nor restore it, and never sees it in their trash;
+  * the author still neither lists deleted sittings nor deletes or restores a sitting;
   * a Ministry Admin deletes, and the form disappears from the read, the list and the dropdown while
     every section, question, sitting and answer stays in the table;
   * the restore brings the form back with its answers, and a deleted sitting comes back the same way;
@@ -59,6 +62,7 @@ async def env():
     try:
         for slug, role, name in (
             ("owner", "DESIGNER", "Form Owner Designer"),
+            ("stranger", "DESIGNER", "Another Designer"),
             ("ministry", "MINISTRY_ADMIN", "Ministry Admin Restorer"),
             ("admin", "ADMIN", "Questionnaire Admin"),
         ):
@@ -119,28 +123,43 @@ def _listed_ids(client, env, slug: str, **params: Any) -> list[str]:
     return [row["id"] for row in response.json()["items"]]
 
 
-def test_the_owner_cannot_delete_list_the_trash_or_restore(client, env):
-    form, _entry = _form_with_an_answer(client, env, "Owner may not delete")
+def test_the_author_deletes_lists_and_restores_their_own_form_and_nobody_else_does(client, env):
+    form, entry_id = _form_with_an_answer(client, env, "The author deletes this one")
+    form_id = form["id"]
 
+    # Another designer: refused on the delete, and the form stays live.
+    assert client.delete(f"/api/questionnaires/{form_id}", headers=_as(env, "stranger")).status_code == 403
+    assert client.get(f"/api/questionnaires/{form_id}", headers=_as(env, "owner")).status_code == 200
+
+    # The author deletes it softly, and it is in THEIR trash and not in the other designer's.
+    assert client.delete(f"/api/questionnaires/{form_id}", headers=_as(env, "owner")).status_code == 204
+    assert form_id in _listed_ids(client, env, "owner", deletedOnly=True)
+    assert form_id not in _listed_ids(client, env, "stranger", deletedOnly=True)
+    assert form_id not in _listed_ids(client, env, "owner")
+
+    # Another designer cannot restore it; the author can.
+    assert client.post(f"/api/questionnaires/{form_id}/restore", headers=_as(env, "stranger")).status_code == 403
+    restored = client.post(f"/api/questionnaires/{form_id}/restore", headers=_as(env, "owner"))
+    assert restored.status_code == 200, restored.text
+    assert form_id in _listed_ids(client, env, "owner")
+
+    # Sittings stay a content admin's: the author neither deletes one, lists the deleted ones nor
+    # restores one.
     assert (
-        client.delete(f"/api/questionnaires/{form['id']}", headers=_as(env, "owner")).status_code
+        client.delete(
+            f"/api/questionnaires/{form_id}/entries/{entry_id}", headers=_as(env, "owner")
+        ).status_code
         == 403
     )
     assert (
         client.get(
-            "/api/questionnaires", params={"deletedOnly": True}, headers=_as(env, "owner")
+            f"/api/questionnaires/{form_id}/deleted-entries", headers=_as(env, "owner")
         ).status_code
         == 403
     )
     assert (
         client.post(
-            f"/api/questionnaires/{form['id']}/restore", headers=_as(env, "owner")
-        ).status_code
-        == 403
-    )
-    assert (
-        client.get(
-            f"/api/questionnaires/{form['id']}/deleted-entries", headers=_as(env, "owner")
+            f"/api/questionnaires/{form_id}/entries/{entry_id}/restore", headers=_as(env, "owner")
         ).status_code
         == 403
     )
