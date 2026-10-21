@@ -255,7 +255,7 @@ private fun DwFieldHelpCard(field: FieldDto, widthPx: Int, onDismiss: () -> Unit
                     Text(
                         field.label,
                         color = MaterialTheme.colorScheme.onSurface,
-                        style = MaterialTheme.typography.titleSmall,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f),
                     )
