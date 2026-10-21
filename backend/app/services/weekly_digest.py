@@ -187,10 +187,15 @@ async def is_authority(user: Any) -> bool:
     return await holds_inspection_post(str(getattr(user, "id", "") or ""))
 
 
+async def inspection_holders() -> set[str]:
+    """Every account that holds an inspection post on any workshop. One read."""
+    posts = await db.designworkshopinspector.find_many(distinct=["userId"])
+    return {row.userId for row in posts}
+
+
 async def eligible_users(*, after: str | None = None, take: int = BATCH_SIZE) -> list[Any]:
     """One page of eligible accounts, by id. E-mail is optional: the in-app half always goes."""
-    posts = await db.designworkshopinspector.find_many(distinct=["userId"])
-    holders = sorted({row.userId for row in posts})
+    holders = sorted(await inspection_holders())
     who: list[dict[str, Any]] = [{"role": {"in": sorted(AUTHORITY_ROLES)}}]
     if holders:
         who.append({"id": {"in": holders}})
@@ -266,18 +271,37 @@ def _in_scope(scope: _Scope, *parts: dict[str, Any]) -> dict[str, Any]:
     return {"AND": clauses}
 
 
-async def _count_or_zero(scope: _Scope, *parts: dict[str, Any]) -> int:
+async def _count_or_zero(
+    scope: _Scope, *parts: dict[str, Any], shared: dict[str, Any] | None = None, key: str = ""
+) -> int:
     if scope.empty:
         return 0
+    if scope.clause is None:
+        # The whole estate is the same answer for every administrator in the pass: read it once.
+        return await _memo(
+            shared, f"estate:{key}", lambda: db.designworkshop.count(where=_in_scope(scope, *parts))
+        )
     return await db.designworkshop.count(where=_in_scope(scope, *parts))
 
 
-async def _rows_or_none(scope: _Scope, order: dict[str, str], *parts: dict[str, Any]) -> list[Any]:
+async def _rows_or_none(
+    scope: _Scope,
+    order: dict[str, str],
+    *parts: dict[str, Any],
+    shared: dict[str, Any] | None = None,
+    key: str = "",
+) -> list[Any]:
     if scope.empty:
         return []
-    return await db.designworkshop.find_many(
-        where=_in_scope(scope, *parts), order=order, take=ITEMS_PER_SECTION
-    )
+
+    def read() -> Any:
+        return db.designworkshop.find_many(
+            where=_in_scope(scope, *parts), order=order, take=ITEMS_PER_SECTION
+        )
+
+    if scope.clause is None:
+        return await _memo(shared, f"estate:{key}", read)
+    return await read()
 
 
 async def _inspection_waiting(user_id: str) -> list[Any]:
@@ -399,7 +423,12 @@ async def build_payload(
 
     now = _aware(now)
     user_id = str(user.id)
-    holds_posts = await holds_inspection_post(user_id)
+    # Who holds a post is one read per pass, not one per person (``eligible_users`` reads the same set).
+    holds_posts = (
+        user_id in await _memo(shared, "inspectionHolders", inspection_holders)
+        if shared is not None and user_id
+        else await holds_inspection_post(user_id)
+    )
     scope = await _scope(user, holds_posts)
     approver = can_approve_design_workshops(user)
     recorder = can_record_sanction_orders(user)
@@ -480,12 +509,14 @@ async def build_payload(
         )
         if reviewer
         else none(),
-        _count_or_zero(scope, open_overdue),
-        _rows_or_none(scope, {"endDate": "asc"}, open_overdue),
-        _count_or_zero(scope, {"lastHandedInAt": week}),
-        _count_or_zero(scope, {"createdAt": week}),
-        _count_or_zero(scope, ended, {"submissionRound": {"gt": 0}}),
-        _count_or_zero(scope, ended),
+        # Scoped to the person, except that the whole-estate scope is shared by every administrator
+        # and so is read once per pass (the ``key``); see ``_count_or_zero``.
+        _count_or_zero(scope, open_overdue, shared=shared, key="stagesLate"),
+        _rows_or_none(scope, {"endDate": "asc"}, open_overdue, shared=shared, key="stagesLateItems"),
+        _count_or_zero(scope, {"lastHandedInAt": week}, shared=shared, key="newHandedIn"),
+        _count_or_zero(scope, {"createdAt": week}, shared=shared, key="newRegistered"),
+        _count_or_zero(scope, ended, {"submissionRound": {"gt": 0}}, shared=shared, key="coverageIn"),
+        _count_or_zero(scope, ended, shared=shared, key="coverageOf"),
     )
 
     inspections = inspections or []
@@ -625,7 +656,9 @@ async def _send(
         link=f"/digest/{row.id}",
         email_kind=mailer.WEEKLY_DIGEST,
         email_params={"digestId": row.id, **payload},
-        preference=PREFERENCE,
+        # The opt-out was read at the top of this function and this person wants the e-mail; naming
+        # the preference again would read the same row a second time inside ``notify``.
+        preference=None,
         settings=settings,
     )
     if delivery.notification is None and delivery.email is None:

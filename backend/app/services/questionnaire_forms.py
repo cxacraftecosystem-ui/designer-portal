@@ -76,6 +76,7 @@ from typing import Any
 
 from app.core.db import db
 from app.services.concurrency import gather_reads
+from app.services.cross_portal_codes import question_code
 from app.services.questionnaire_kinds import label_for
 from app.services.questionnaire_xlsx import (
     MAX_QUESTIONS,
@@ -200,7 +201,7 @@ async def load_form(
     sections, entries = await gather_reads(
         db.questionnaireformsection.find_many(
             where={"questionnaireId": questionnaire_id},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         ),
         db.questionnaireformentry.find_many(
             where={"questionnaireId": questionnaire_id},
@@ -212,7 +213,7 @@ async def load_form(
     questions = (
         await db.questionnaireformquestion.find_many(
             where={"sectionId": {"in": section_ids}},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else []
@@ -372,7 +373,7 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
     sections, entries = await gather_reads(
         db.questionnaireformsection.find_many(
             where={"questionnaireId": {"in": ids}},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         ),
         db.questionnaireformentry.find_many(
             where={"questionnaireId": {"in": ids}, "deletedAt": None},
@@ -385,7 +386,7 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
     questions, answers = await gather_reads(
         db.questionnaireformquestion.find_many(
             where={"sectionId": {"in": section_ids}},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else _none(),
@@ -572,13 +573,13 @@ async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
 
     sections = await db.questionnaireformsection.find_many(
         where={"questionnaireId": questionnaire_id, "isActive": True},
-        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     section_ids = [s.id for s in sections]
     questions = (
         await db.questionnaireformquestion.find_many(
             where={"sectionId": {"in": section_ids}, "isActive": True},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else []
@@ -813,17 +814,28 @@ async def create_from_parsed(
                 "sortOrder": index,
             }
         )
-        for position, question in enumerate(section.questions, start=1):
-            row = await db.questionnaireformquestion.create(
-                data={
-                    "sectionId": made.id,
-                    "prompt": question.prompt,
-                    "helpText": question.helpText,
-                    "isRequired": question.isRequired,
-                    "sortOrder": position,
-                }
+        # THE SECTION'S QUESTIONS IN ONE WRITE AND ONE READ-BACK, not one INSERT each: positions are
+        # 1..n within the new section, so reading it back by ``sortOrder`` pairs every row with the
+        # workbook row it came from. The shared ``questionCode`` is stamped here too, so the
+        # ``reconcile_form_question_codes`` the route runs next has nothing left to write.
+        if section.questions:
+            await db.questionnaireformquestion.create_many(
+                data=[
+                    {
+                        "sectionId": made.id,
+                        "prompt": question.prompt,
+                        "helpText": question.helpText,
+                        "isRequired": question.isRequired,
+                        "sortOrder": position,
+                        "questionCode": question_code(code, question.prompt),
+                    }
+                    for position, question in enumerate(section.questions, start=1)
+                ]
             )
-            created_questions[question.row] = row.id
+            stored = await db.questionnaireformquestion.find_many(where={"sectionId": made.id})
+            id_by_position = {row.sortOrder: row.id for row in stored}
+            for position, question in enumerate(section.questions, start=1):
+                created_questions[question.row] = id_by_position[position]
 
     problems = [p.payload() for p in parsed.problems]
     answer_rows = _uploaded_answer_rows(parsed)
@@ -1233,6 +1245,9 @@ async def reuse_questionnaire(
                     "helpText": question["helpText"],
                     "isRequired": question["isRequired"],
                     "sortOrder": position,
+                    # Stamped at the copy, so the route's ``reconcile_form_question_codes`` writes
+                    # nothing: it used to UPDATE every question of a toolkit copy one by one.
+                    "questionCode": question_code(code, question["prompt"]),
                 }
                 for code, questions in kept_by_code.items()
                 for position, question in enumerate(questions, start=1)
@@ -1346,7 +1361,7 @@ async def apply_parsed_edit(
 
     sections = await db.questionnaireformsection.find_many(
         where={"questionnaireId": questionnaire_id},
-        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     section_ids = [s.id for s in sections]
     questions = (
@@ -1356,7 +1371,7 @@ async def apply_parsed_edit(
             # a given wording, so an unordered read would resolve a duplicate prompt differently on
             # different runs — the same upload editing a different question depending on what
             # Postgres felt like returning first.
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}],
+            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else []

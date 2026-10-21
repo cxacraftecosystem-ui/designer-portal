@@ -1868,8 +1868,9 @@ async def process_media_processing_jobs(
     systemd unit, so the stale-lock recovery would be judging locks held by a process it cannot see:
     a provider call hung past the 30-minute cutoff would be reset to QUEUED here and immediately
     re-sent while the queue process is still awaiting the first answer. See
-    ``media_queue.process_next_media_jobs`` for the full argument; recovery still happens on every
-    pass of the queue process itself.
+    ``media_queue.process_next_media_jobs`` for the full argument; recovery still happens in the
+    queue process itself, once a minute (``worker.RECOVERY_INTERVAL_SECONDS``) and on the next pass
+    after a sweep that failed.
     """
     return await process_next_media_jobs(limit=limit, worker_id="manual-api", recover=False)
 

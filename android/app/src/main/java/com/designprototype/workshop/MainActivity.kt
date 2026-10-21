@@ -19239,8 +19239,7 @@ private fun MediaProcessingJobsCard(
 
     LaunchedEffect(reloadKey, failedOnly, tick) {
         runCatching {
-            val loaded = repository.mediaJobs(statusFilter = if (failedOnly) "FAILED" else null, pageSize = 20)
-            loaded to repository.mediaJobCount("FAILED")
+            repository.mediaJobsWithFailedCount(failedOnly = failedOnly, pageSize = 20)
         }.onSuccess { (loaded, failed) ->
             jobs = loaded
             failedCount = failed

@@ -60,7 +60,7 @@ fun AnswerDraftsCard(
     var note by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(interviewId) {
         if (client.enabled()) {
-            list = runCatching { client.api.list(interviewId) }.getOrNull()
+            list = runCatching { client.list(interviewId) }.getOrNull()
             source = list?.transcripts?.firstOrNull()?.id
         }
     }

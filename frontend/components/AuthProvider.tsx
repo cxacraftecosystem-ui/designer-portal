@@ -3,6 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { forgetOfflinePages } from "@/components/OfflineAppShell";
+import { startNewReadGeneration } from "@/lib/inFlight";
+import { forgetMyWorkshopPosts } from "@/lib/myWorkshopPosts";
 import { clearReportCache } from "@/lib/offlineReport/reportCache";
 import { clearReviewTrays } from "@/lib/reviewAids";
 
@@ -262,6 +264,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       forgetOfflinePages();
       // Review notes drafted but not sent are this account's too.
       clearReviewTrays();
+      // Reads still in the air, and the posts held for a moment, were asked as this account.
+      startNewReadGeneration();
+      forgetMyWorkshopPosts();
     }
   }, [adopt]);
 

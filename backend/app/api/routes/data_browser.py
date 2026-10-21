@@ -1774,10 +1774,14 @@ async def _dw_entries(wid: str) -> list[Any]:
     because ``ordinal`` is the single ordering input in this product and it is a hand-made
     arrangement. ``services/design_workshop_data.py`` deliberately does not re-sort what it is
     given, so the order this query applies is the order that reaches the file.
+
+    ``id`` LAST, BECAUSE ``createdAt`` IS NOT A TIE-BREAK ANY MORE: a stage save inserts its new rows
+    with one ``create_many``, one statement and so one ``now()``, and rows of a single-row entity all
+    sit at ordinal 0. Without ``id`` two reads of the same workshop could order those rows apart.
     """
     return await db.dwstageentry.find_many(
         where={"designWorkshopId": wid, "deletedAt": None},
-        order=[{"ordinal": "asc"}, {"createdAt": "asc"}],
+        order=[{"ordinal": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         take=TAKE,
     )
 

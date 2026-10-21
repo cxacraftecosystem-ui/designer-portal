@@ -491,8 +491,9 @@ async def process_next_media_jobs(
     succeeds and defends nothing. The same recording is sent twice, billed twice, and the two results
     race to write ``MediaFile.transcriptText``.
 
-    Recovery is not lost by skipping it here: the queue process calls this every pass, so a genuinely
-    dead lock is cleared within one drain interval instead of within one button press.
+    Recovery is not lost by skipping it here: the queue process sweeps once a minute
+    (``worker.RECOVERY_INTERVAL_SECONDS``), and again on the very next pass when a sweep fails, so a
+    genuinely dead lock is cleared within about a minute instead of within one button press.
     """
     settings = settings or get_settings()
     batch_size = max(1, limit or settings.media_queue_batch_size)

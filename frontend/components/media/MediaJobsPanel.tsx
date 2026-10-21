@@ -136,6 +136,11 @@ export function MediaJobsPanel() {
 
   const load = useCallback(async (pageToLoad: number, filter: string) => {
     try {
+      // With the Failed pill on, the list's own `total` IS the failed count, so it is not asked twice.
+      if (filter === "FAILED") {
+        const result = await listMediaProcessingJobs({ page: pageToLoad, pageSize: 20, statusFilter: filter });
+        return { result, failedTotal: result.total };
+      }
       const [result, failed] = await Promise.all([
         listMediaProcessingJobs({ page: pageToLoad, pageSize: 20, statusFilter: filter }),
         // A failed job is ordered by createdAt like every other, so on a 12-page queue it can sit

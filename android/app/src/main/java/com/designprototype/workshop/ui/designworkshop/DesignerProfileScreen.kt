@@ -101,6 +101,9 @@ import com.designprototype.workshop.ui.recordDocFromStored
 import com.designprototype.workshop.report.toPlain
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -791,23 +794,24 @@ fun DesignerProfileScreen(
             form.cvMediaId.takeIf { it.isNotBlank() }?.let { ProfileMediaSlot.CV to it },
         )
         var resolved = remotePreview
-        wanted.forEach { (slot, id) ->
-            /*
-              A CANCELLATION IS RETHROWN AND NOT READ AS "no url", because this effect's keys change
-              IN PLACE: every successful upload assigns a new media id, which re-keys this block while
-              the previous resolve is still in flight.
+        /*
+          THE THREE ROWS ARE ASKED TOGETHER — one `GET media/batch` through `mediaItemOrNull` — where
+          they were three reads one after another.
 
-              Swallowed, the cancelled run does not stop — `getOrNull()` hands it null, `return@forEach`
-              skips to the next id, each of those throws too, and the run reaches `remotePreview =
-              resolved` at the bottom carrying the map it captured BEFORE the upload. That write can
-              land after the replacement run's, putting the URL of the file that was just REPLACED
-              back on screen; and `cvDescriptor` is written from inside the same loop, so the filename
-              row can end up naming the old document over the new one's page. That is the same defect
-              `DwDocumentPreview`'s cache key was just fixed for, arriving by a second route.
-            */
-            val item = runCatching { repository.mediaItem(id) }
-                .onFailure { if (it is CancellationException) throw it }
-                .getOrNull() ?: return@forEach
+          A CANCELLATION IS STILL RETHROWN AND NOT READ AS "no url", because this effect's keys change
+          IN PLACE: every successful upload assigns a new media id, which re-keys this block while
+          the previous resolve is still in flight. `coroutineScope` rethrows it from `awaitAll`, so a
+          cancelled run never reaches `remotePreview = resolved` below carrying the map it captured
+          BEFORE the upload — the write that could land after the replacement run's, putting the URL
+          of the file that was just REPLACED back on screen, with `cvDescriptor` naming the old
+          document over the new one's page. That is the same defect `DwDocumentPreview`'s cache key
+          was fixed for, arriving by a second route.
+        */
+        val rows = coroutineScope {
+            wanted.map { (slot, id) -> async { slot to repository.mediaItemOrNull(id) } }.awaitAll()
+        }
+        rows.forEach { (slot, found) ->
+            val item = found ?: return@forEach
             // The CV's name and type are kept even when the URL is withheld: "cv.pdf is stored, but
             // this account may not open the file itself" is a far better sentence than a blank frame,
             // and it needs the filename the entitlement answer still carries.

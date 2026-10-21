@@ -357,7 +357,8 @@ async def run_export(row: Any) -> None:
         batch = records[start : start + EXPORT_READ_BATCH]
         entries = await db.dwstageentry.find_many(
             where={"designWorkshopId": {"in": [str(r.id) for r in batch]}, "deletedAt": None},
-            order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}],
+            # `createdAt`, `id`: a save's new rows share one `create_many` timestamp; `id` makes it total.
+            order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         by_workshop: dict[str, list[Any]] = {}
         for entry in entries:
@@ -396,9 +397,24 @@ async def run_export(row: Any) -> None:
     )
 
 
-async def recover_and_purge(now: datetime | None = None) -> None:
-    """Re-queue exports a dead worker left RUNNING; drop files past their keep-until date."""
+async def recover_and_purge(now: datetime | None = None, *, recover: bool = True) -> None:
+    """Re-queue exports a dead worker left RUNNING; drop files past their keep-until date.
+
+    ``recover=False`` skips the two stale-lock sweeps and keeps the expiry: a lock is only stale after
+    :data:`STALE_AFTER` (thirty minutes), so the queue process sweeps for it once a minute rather than
+    on every five-second pass (``worker.RECOVERY_INTERVAL_SECONDS``), while an expired file still stops
+    being READY on the pass it expires, as before.
+    """
     now = now or datetime.now(UTC)
+    if recover:
+        await _recover_stale(now)
+    await db.ministrydataexport.update_many(
+        where={"status": READY, "expiresAt": {"lt": now}},
+        data={"content": None, "status": EXPIRED},
+    )
+
+
+async def _recover_stale(now: datetime) -> None:
     await db.ministrydataexport.update_many(
         where={
             "status": RUNNING,
@@ -419,15 +435,16 @@ async def recover_and_purge(now: datetime | None = None) -> None:
             "lockedAt": None,
         },
     )
-    await db.ministrydataexport.update_many(
-        where={"status": READY, "expiresAt": {"lt": now}},
-        data={"content": None, "status": EXPIRED},
-    )
 
 
-async def process_next_ministry_exports(*, worker_id: str, limit: int = 1) -> int:
-    """The worker's turn: recover, purge, then build up to ``limit`` queued exports. Returns built."""
-    await recover_and_purge()
+async def process_next_ministry_exports(
+    *, worker_id: str, limit: int = 1, recover: bool = True
+) -> int:
+    """The worker's turn: recover, purge, then build up to ``limit`` queued exports. Returns built.
+
+    ``recover`` is :func:`recover_and_purge`'s: the queue process passes False between its once-a-
+    minute sweeps."""
+    await recover_and_purge(recover=recover)
     queued = await db.ministrydataexport.find_many(
         where={"status": QUEUED}, order={"createdAt": "asc"}, take=limit
     )

@@ -334,6 +334,19 @@ async def list_assignable_designers(
     }
 
 
+@router.get("/my-posts")
+async def read_my_workshop_posts(current_user: Any = Depends(require_workshop_assigner)) -> dict[str, Any]:
+    """The caller's own oversight and inspection rows on every live workshop, in ONE answer.
+
+    What a screen that draws write controls over rows from many workshops needs — "does this
+    account hold a post there?" — which it used to ask as ``GET /{id}`` plus the inspector list,
+    two requests PER WORKSHOP on the page. Same gate as those two reads, same row shapes (see
+    ``design_workshop_posts.staffing_held_by``); a workshop absent from ``workshops`` is one the
+    caller holds nothing on.
+    """
+    return {"workshops": await posts.staffing_held_by(str(current_user.id))}
+
+
 @router.get("/artisan-pro-forma")
 async def download_artisan_pro_forma(
     workshopId: str | None = Query(None, max_length=64),

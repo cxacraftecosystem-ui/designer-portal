@@ -85,6 +85,8 @@
 
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { fetchFile } from "@/lib/fileDownload";
+import { shareInFlight, startNewReadGeneration } from "@/lib/inFlight";
+import { forgetMyWorkshopPosts } from "@/lib/myWorkshopPosts";
 import type { DwCustomDefinition } from "@/lib/customSections";
 import { designerCreateFields } from "@/lib/designWorkshops";
 import type {
@@ -399,9 +401,10 @@ export function createOversightWorkshop(body: DwOversightCreateBody) {
 }
 
 export function getWorkshopOversight(workshopId: string) {
-  return apiFetch<DwWorkshopOversight>(
-    `/design-workshop-oversight/${encodeURIComponent(workshopId)}`
-  );
+  // The page, the designer panel and the oversight panel all read this on the same pick; one request
+  // carries them (`lib/inFlight`), and nothing is kept once it answers.
+  const path = `/design-workshop-oversight/${encodeURIComponent(workshopId)}`;
+  return shareInFlight(path, () => apiFetch<DwWorkshopOversight>(path));
 }
 
 /**
@@ -416,7 +419,13 @@ export function putWorkshopOversight(
   return apiFetch<{ oversight: DwOversightAssignment[] }>(
     `/design-workshop-oversight/${encodeURIComponent(workshopId)}`,
     { method: "PUT", body: JSON.stringify(body) }
-  );
+  ).finally(() => {
+    // A read sent before this save must not answer the reload after it, and a post may have moved:
+    // the next oversight read and the next held-post question both go to the server. On a refusal
+    // too — a 409 or a lost answer says nothing about what the row now holds.
+    startNewReadGeneration();
+    forgetMyWorkshopPosts();
+  });
 }
 
 // --- Who holds what on one workshop ---------------------------------------------------------
