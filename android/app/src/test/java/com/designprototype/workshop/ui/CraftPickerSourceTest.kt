@@ -42,6 +42,18 @@ class CraftPickerSourceTest {
     }
 
     @Test
+    fun `the stage craft link is the catalogue picker, as in the Field Repository`() {
+        val field = read("ui/designworkshop/DwReferenceField.kt")
+        // A Craft REF draws the shared picker, and its pick still goes through `choose`.
+        assertTrue(field.contains("if (field.refModel == \"Craft\") {"))
+        val branch = field.substringAfter("if (field.refModel == \"Craft\") {").substringBefore("} else SearchableSelectField(")
+        assertTrue(branch.contains("CraftPickerField("))
+        assertTrue(branch.contains("choose(chosen, known)"))
+        assertTrue(branch.contains("designWorkshopReferenceById("))
+        assertTrue(branch.contains("craftCatalogue(context)"))
+    }
+
+    @Test
     fun `stage one's craft name is always read-only beside its craft link`() {
         val renderer = read("ui/designworkshop/FieldRenderer.kt")
         assertTrue(renderer.contains("enabled = enabled && !dwCraftNameLocked(field, siblings)"))

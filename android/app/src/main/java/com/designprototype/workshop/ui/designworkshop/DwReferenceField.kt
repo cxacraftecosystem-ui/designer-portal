@@ -67,6 +67,7 @@ import com.designprototype.workshop.ui.DwQrLiveScanControl
 import com.designprototype.workshop.ui.DwQrScanControl
 import com.designprototype.workshop.ui.RecordOpen
 import com.designprototype.workshop.ui.SearchableMultiSelectField
+import com.designprototype.workshop.ui.CraftPickerField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectCreateAction
 import com.designprototype.workshop.ui.SelectOption
@@ -762,6 +763,9 @@ internal fun DwReferenceSelectField(
 
     /** The kind of card this field can be filled from, or null when none is printed for its model. */
     val scannable = remember(field.refModel) { dwScannableRecordType(field.refModel) }
+    /** For the craft picker's by-id description: the value as it is NOW, so a stale answer is dropped. */
+    val craftScope = rememberCoroutineScope()
+    val currentValue = rememberUpdatedState(value)
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         // The help line — the same caption every other field draws; holding the field opens its details.
@@ -777,7 +781,46 @@ internal fun DwReferenceSelectField(
             )
         }
 
-        SearchableSelectField(
+        if (field.refModel == "Craft") {
+            /*
+             * A CRAFT IS PICKED FROM THE CRAFT LIST, EXACTLY AS EVERY OTHER CRAFT PICKER IN THE APP.
+             *
+             * [CraftPickerField] is the shared picker (Field Repository's, byte for byte): grouped
+             * under "Category › Sub-category", searched by name, aliases, states, category and
+             * sub-category, and read from the offline catalogue cache. The pick still goes through
+             * [choose], so hydration is unchanged. A craft this device's reference list has not
+             * described yet is asked for by id; with no answer it waits in [pendingHydration] and
+             * the server fills the row in at save.
+             */
+            CraftPickerField(
+                // [fieldLabel] already ends in " *"; the picker adds its own for `required`.
+                label = label.removeSuffix(" *"),
+                selectedIds = listOfNotNull(selectedId.ifBlank { null }),
+                enabled = enabled && bridge != null,
+                required = field.required,
+                fallbackNames = options.filter { it.value.isNotBlank() }.associate { it.value to it.label },
+                refresh = { bridge?.repository?.craftCatalogue(context) },
+            ) { ids ->
+                val chosen = ids.firstOrNull().orEmpty()
+                val known = list?.items?.firstOrNull { it.id == chosen }
+                choose(chosen, known)
+                val target = bridge?.workshopId
+                if (chosen.isNotBlank() && known == null && target != null) {
+                    craftScope.launch {
+                        val described = runCatching {
+                            bridge.repository.designWorkshopReferenceById(
+                                workshopId = target,
+                                model = field.refModel,
+                                scope = field.refScope,
+                                filterValue = "",
+                                recordId = chosen,
+                            ).options.firstOrNull { it.id == chosen }
+                        }.getOrNull()
+                        if (described != null && dwRefId(currentValue.value) == chosen) choose(chosen, described)
+                    }
+                }
+            }
+        } else SearchableSelectField(
             label = label,
             options = options,
             selectedValue = selectedId,

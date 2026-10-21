@@ -965,8 +965,12 @@ RELATION_LEDGER = {
         ),
         "workshops": "join key — the WorkshopCraft reading of workshop scope",
         "code": "NOT INCLUDED — the shared code row (C26); see craftCode",
-        # The master craft list (2026-10-20). Nothing includes these; a stage reads the craft itself.
-        "subCategory": "NOT INCLUDED — the taxonomy row; the category name crosses as `category`",
+        # The master craft list (2026-10-20). A stage reads the craft itself; the picker reads its path.
+        "subCategory": (
+            "read by the picker — the sublabel's \"Category › Sub-category\", via "
+            "include={'subCategory': {'include': {'category': True}}} (design_workshops._craft_path). "
+            "Nothing hydrates from it; the category name still crosses as `category`."
+        ),
         "mergedInto": "NOT INCLUDED — list bookkeeping; a MERGED craft is never offered",
         "mergedFrom": "NOT INCLUDED — list bookkeeping",
         "designWorkshops": "the back-reference of DesignWorkshop.craftId (promoted from craftRef)",
@@ -4278,6 +4282,7 @@ def test_no_reference_model_joins_a_relation_none_of_its_lambdas_reads():
         "Craft": {
             "media": "workshopSetup.craftMediaNote",
             "workshop": "workshopSetup.craftDocumentedAtWorkshop (Workshop.title)",
+            "subCategory": "the picker's sublabel, \"Category › Sub-category\" (_craft_path)",
         },
         # THE SIXTH MODEL, AND THE ONLY ROW HERE WHOSE JOIN LOADS CONFIDENTIAL COLUMNS.
         #

@@ -89,6 +89,7 @@ import {
 // the ISO stamp on a cached picker answer meets a locale.
 import { formatDate } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
+import { CraftSelect } from "@/components/forms/CraftSelect";
 import { canManageCrafts } from "@/lib/permissions";
 import { loadStageReferences } from "@/lib/referenceCache";
 import { workshopRecordTypeLabel, type WorkshopCodeRef, type WorkshopRecordType } from "@/lib/workshopCodes";
@@ -1457,6 +1458,34 @@ export function StageReferenceSelect({
   }, [choose, field, filterValue]);
 
   /**
+   * A craft picked from the shared craft list (`CraftSelect`), taken up through `choose` like any
+   * other pick, so hydration is unchanged. The list a craft is picked from is the catalogue, not the
+   * reference page, so the record's description is asked for by id-and-name; when it cannot be had
+   * (offline, a local-only workshop) only the id is written and the server fills the row at save.
+   * Never `hydrateFromReference` with an empty `data`: that would clear what the last pick wrote.
+   */
+  const chooseCraft = useCallback(
+    async (id: string, name: string) => {
+      if (!id) {
+        onChange(null);
+        return;
+      }
+      const listed = (payload?.options ?? []).find((option) => option.id === id);
+      if (listed) {
+        choose(listed);
+        return;
+      }
+      const described = await describeRecord(workshopId, field, filterValue, id, name);
+      if (described) {
+        choose(described);
+        return;
+      }
+      onChange(id);
+    },
+    [choose, field, filterValue, onChange, payload, workshopId]
+  );
+
+  /**
    * A record created from inside this picker: linked at once, hydrated when the server can say what
    * belongs on the row.
    *
@@ -1819,6 +1848,26 @@ export function StageReferenceSelect({
 
   return (
     <div className="grid gap-1" ref={wrapperRef}>
+      {field.refModel === "Craft" ? (
+        /*
+          THE CRAFT LIST'S OWN PICKER, the one every other craft field in both portals uses: grouped
+          under "Category › Sub-category", searched by name, aliases, states, category and
+          sub-category. Byte-identical to the Field Repository's (`components/forms/CraftSelect.tsx`).
+        */
+        <>
+          <CraftSelect
+            labelledBy={labelId}
+            value={selectedId}
+            required={field.required}
+            disabled={disabled}
+            canAddCraft={craftManager}
+            onChange={(id, craft) => void chooseCraft(id, craft?.name ?? "")}
+          />
+          {!disabled && !craftManager && !selectedId ? (
+            <p className="text-xs leading-5 text-ink-500">{CRAFT_REGISTER_BLOCKED}</p>
+          ) : null}
+        </>
+      ) : (
       <div className="relative">
         <button
           type="button"
@@ -1999,6 +2048,7 @@ export function StageReferenceSelect({
           </div>
         ) : null}
       </div>
+      )}
 
       {/*
         THE CARD ITSELF, AS A WAY OF ANSWERING THIS BOX.

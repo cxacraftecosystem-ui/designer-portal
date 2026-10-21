@@ -1362,6 +1362,21 @@ def _joined(*parts: Any) -> str:
     return " · ".join(str(p).strip() for p in parts if p not in (None, "") and str(p).strip())
 
 
+def _craft_path(craft: Any) -> str | None:
+    """"Category › Sub-category" for a craft on the master list — the line every craft picker prints.
+
+    Read from the included ``subCategory.category``; a craft recorded before the list (no
+    sub-category) falls back to its free-text ``category`` copy, and ``None`` when it has neither.
+    """
+    sub = _rel_obj(craft, "subCategory")
+    sub_name = str(getattr(sub, "name", "") or "").strip() if sub is not None else ""
+    category = _rel_obj(sub, "category") if sub is not None else None
+    category_name = str(getattr(category, "name", "") or "").strip() if category is not None else ""
+    if category_name and sub_name:
+        return f"{category_name} › {sub_name}"
+    return category_name or sub_name or (str(getattr(craft, "category", "") or "").strip() or None)
+
+
 def _decimal(value: Any) -> float | None:
     """A Prisma ``Decimal`` as the plain number a registry DECIMAL field stores.
 
@@ -2614,7 +2629,11 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # weaker fact. Nothing at render time reads `row.workshop` (`_reference_place` reads
         # `location` and `place`), so this include cannot change what an already-submitted report
         # prints — the check the `location` include on the product and the tool had to pass.
-        include={"media": True, "workshop": True},
+        #
+        # `subCategory` → `category`: the craft's place on the master list, which is what the picker
+        # prints under each name ("Category › Sub-category") — the same line every craft picker in
+        # both portals draws. See :func:`_craft_path`.
+        include={"media": True, "workshop": True, "subCategory": {"include": {"category": True}}},
         order={"name": "asc"},
         search_fields=("name", "localName", "category"),
         workshop_where=lambda wid: {
@@ -2625,7 +2644,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         # craft a stored entry already names still resolves, because a re-read by id adds no clause.
         offered_where={"status": "ACTIVE"},
         label=lambda r: str(r.name or ""),
-        sublabel=lambda r: _joined(r.category, r.place),
+        sublabel=lambda r: _joined(_craft_path(r), r.place),
         # ── THE CRAFT RECORD, IN FULL — AND THE ARGUMENT THIS REPLACES WAS THE LAST 1:1 GAP ─────
         #
         # This carried two of the five things the crafts page collects. The note that stood here
