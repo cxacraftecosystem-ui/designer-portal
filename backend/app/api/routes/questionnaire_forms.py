@@ -107,6 +107,7 @@ from app.services.questionnaire_forms import (
     visible_questionnaire_where,
 )
 from app.services.questionnaire_kinds import coerce_kind, label_for
+from app.questionnaire import authoring as questionnaire_authoring
 from app.services.questionnaire_xlsx import (
     PRO_FORMA_FILENAME,
     QuestionnaireXlsxError,
@@ -348,7 +349,8 @@ _visible_questionnaire_where = visible_questionnaire_where
 
 
 def _require_owner(record: Any, user: Any) -> None:
-    if record.ownerId != user.id and not is_content_admin(user):
+    # The one author rule of both portals (owner, 22 Oct 2026): app/questionnaire/authoring.py.
+    if not questionnaire_authoring.may_change_form(user, record):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the designer who created this questionnaire, or an admin, can change it.",

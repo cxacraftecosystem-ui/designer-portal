@@ -728,6 +728,16 @@ class Settings(BaseSettings):
     # is labelled machine-suggested. Runs on the researcher's own AI key or the deployment's.
     ai_answer_drafts_enabled: bool = Field(default=False, alias="AI_ANSWER_DRAFTS_ENABLED")
 
+    # ── THE SHARED QUESTIONNAIRE (C:/dev/IIT/docs/questionnaire/UNIFY_2026-10-21.md) ─────────────
+    # OFF BY DEFAULT, AND NOTHING READS THEM YET: the shared package (app/questionnaire) and its
+    # tables ship dark here (U0); U1 mounts its routes behind QUESTIONNAIRE_V2, exactly as
+    # documentation-portal does, and the forms keep working as they are until then. The answer-lock
+    # switch is the one rule of owner decision 2 (app/questionnaire/answer_lock.py), off until every
+    # client shows the lock. Turning either on in code makes
+    # tests/test_questionnaire_feature_parity.py demand every client's marker.
+    questionnaire_v2: bool = Field(default=False, alias="QUESTIONNAIRE_V2")
+    questionnaire_answer_locks: bool = Field(default=False, alias="QUESTIONNAIRE_ANSWER_LOCKS")
+
     # ── CROSS-PORTAL ARTISAN IDENTITY (C27; docs/ENVIRONMENT.md) ────────────────────────────────
     #
     # OFF BY DEFAULT, AND OFF UNTIL BOTH PORTALS HAVE IT. The lookup works only when the flag is on

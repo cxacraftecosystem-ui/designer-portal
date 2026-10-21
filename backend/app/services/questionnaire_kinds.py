@@ -48,6 +48,8 @@ held to this file by ``tests/test_questionnaire_kinds.py``, which reads the othe
 
 from __future__ import annotations
 
+from app.questionnaire import kinds as _shared_kinds
+
 #: The vocabulary: token -> the label BOTH CLIENTS SHOW. Ordered as the pickers order it.
 #:
 #: TWO MEMBERS, AND NO ``OTHER``. ``WORKSHOP_KIND`` carries an OTHER and argues for it on the grounds
@@ -58,10 +60,9 @@ from __future__ import annotations
 #: question about and that the report still could not place. NULL already says "not stated", and
 #: says it without pretending a decision was made. If a third genuine kind appears it arrives here
 #: WITH its stage — see :data:`KIND_STAGE_KEYS`, whose completeness is asserted by the tests.
-KIND_LABELS: dict[str, str] = {
-    "WORKSHOP_INTERVIEW": "Workshop interview",
-    "MARKET_SURVEY": "Market survey",
-}
+#: SHARED SINCE 22 OCT 2026 (UNIFY U0): the vocabulary now lives once, in the questionnaire package
+#: both portals carry byte for byte (``app/questionnaire/kinds.py``, ``shared/questionnaire-kinds.json``).
+KIND_LABELS: dict[str, str] = dict(_shared_kinds.KIND_LABELS)
 
 #: The tokens alone, for validation. A frozenset because this is a membership test on every write.
 KIND_TOKENS: frozenset[str] = frozenset(KIND_LABELS)
@@ -101,10 +102,7 @@ KIND_TOKENS: frozenset[str] = frozenset(KIND_LABELS)
 #: MARKET survey: consumers, retailers, wholesalers, exporters. A different instrument and a
 #: different population"*. That sentence is this whole module in miniature, written before this
 #: column existed.
-KIND_STAGE_KEYS: dict[str, str] = {
-    "WORKSHOP_INTERVIEW": "EXISTING_PRODUCTS_BASELINE",
-    "MARKET_SURVEY": "MARKET_SURVEY_CAPTURE",
-}
+KIND_STAGE_KEYS: dict[str, str] = dict(_shared_kinds.STAGE_KEYS["designer-portal"])
 
 #: What an unstated kind is CALLED wherever kinds are shown. Never a member of the vocabulary: a
 #: questionnaire with no kind has not been filed anywhere, and giving that state a token would make
