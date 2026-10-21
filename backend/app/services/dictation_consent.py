@@ -1417,9 +1417,9 @@ def split_ids(raw: str | None) -> list[str]:
     """A comma-separated id list from a multipart form field, blanks dropped, order kept."""
     seen: dict[str, None] = {}
     for part in (raw if isinstance(raw, str) else "").split(","):
-        part = part.strip()
-        if part:
-            seen.setdefault(part, None)
+        cleaned = part.strip()
+        if cleaned:
+            seen.setdefault(cleaned, None)
     return list(seen)
 
 
