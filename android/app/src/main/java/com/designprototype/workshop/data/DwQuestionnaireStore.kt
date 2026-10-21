@@ -380,9 +380,9 @@ suspend fun WorkshopRepository.designWorkshopQuestionnaires(
             page = page,
             pageSize = size,
             designWorkshopId = workshopId,
-            // Deactivation is what this API has instead of a delete, and `report_items` refuses to
-            // print a deactivated questionnaire for the reason it gives: the report is a list, and
-            // this would be the one surface where a record the designer retired came back.
+            // `report_items` refuses to print a deactivated questionnaire for the reason it gives:
+            // the report is a list, and this would be the one surface where a record the designer
+            // retired came back. (A deleted one is never listed here at all.)
             activeOnly = true,
         )
     }

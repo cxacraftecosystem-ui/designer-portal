@@ -3248,6 +3248,26 @@ class WorkshopRepository(
         mineOnly = mineOnly,
     )
 
+    // ── L9 (21 Oct 2026): soft delete and restore, content admins only ───────────────────────────
+
+    suspend fun deleteCustomQuestionnaire(id: String) = api.deleteCustomQuestionnaire(id)
+
+    suspend fun restoreCustomQuestionnaire(id: String) {
+        api.restoreCustomQuestionnaire(id)
+    }
+
+    /** The trash, newest deletion first. One page of a hundred: a trash is reviewed, not browsed. */
+    suspend fun deletedCustomQuestionnaires(): List<CustomQuestionnaireSummaryDto> =
+        api.customQuestionnaires(page = 1, pageSize = 100, activeOnly = false, deletedOnly = true).items
+
+    suspend fun deleteCustomEntry(id: String, entryId: String) = api.deleteCustomEntry(id, entryId)
+
+    suspend fun deletedCustomEntries(id: String): List<DeletedCustomEntryDto> = api.deletedCustomEntries(id)
+
+    suspend fun restoreCustomEntry(id: String, entryId: String) {
+        api.restoreCustomEntry(id, entryId)
+    }
+
     suspend fun customQuestionnaireOptions(
         designWorkshopId: String? = null
     ): List<CustomQuestionnaireOptionDto> =

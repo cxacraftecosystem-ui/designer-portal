@@ -2520,11 +2520,31 @@ interface WorkshopRepositoryApi {
         @Query("pageSize") pageSize: Int = 20,
         @Query("search") search: String? = null,
         @Query("designWorkshopId") designWorkshopId: String? = null,
-        // Deactivation is what this API has instead of a delete, so `false` is the only way to see a
-        // questionnaire somebody took out of circulation — and its answers with it.
+        // Deactivation takes a questionnaire out of new sittings; `false` shows those too. A DELETE
+        // (content admins, soft since 20 Oct 2026) is separate: see `deletedOnly`.
         @Query("activeOnly") activeOnly: Boolean = true,
-        @Query("mineOnly") mineOnly: Boolean = false
+        @Query("mineOnly") mineOnly: Boolean = false,
+        // L9 (21 Oct 2026): the trash, newest deletion first. Content admins only; 403 otherwise.
+        @Query("deletedOnly") deletedOnly: Boolean = false,
     ): PageResponse<CustomQuestionnaireSummaryDto>
+
+    // ── L9 (21 Oct 2026): soft delete and restore, content admins only on every path ──────────────
+    // A delete sets `deletedAt` and nothing cascades: sections, questions, sittings and answers stay,
+    // and restore brings the questionnaire back whole. A sitting is deleted and restored on its own.
+    @DELETE("questionnaires/{id}")
+    suspend fun deleteCustomQuestionnaire(@Path("id") id: String)
+
+    @POST("questionnaires/{id}/restore")
+    suspend fun restoreCustomQuestionnaire(@Path("id") id: String): JsonElement
+
+    @DELETE("questionnaires/{id}/entries/{entryId}")
+    suspend fun deleteCustomEntry(@Path("id") id: String, @Path("entryId") entryId: String)
+
+    @GET("questionnaires/{id}/deleted-entries")
+    suspend fun deletedCustomEntries(@Path("id") id: String): List<DeletedCustomEntryDto>
+
+    @POST("questionnaires/{id}/entries/{entryId}/restore")
+    suspend fun restoreCustomEntry(@Path("id") id: String, @Path("entryId") entryId: String): JsonElement
 
     // Its own endpoint rather than a page-size-500 list call, for the reason the route gives: a
     // dropdown that silently stops at page one is a designer who cannot find the questionnaire they
@@ -2583,9 +2603,9 @@ interface WorkshopRepositoryApi {
     // grant, so offer only workshops this account can already write to (404 for one it cannot see,
     // 409 for a soft-deleted one), and ask BEFORE anything is written so a refusal leaves no orphan.
     //
-    // A DEACTIVATED SOURCE IS STILL REUSABLE and that is deliberate — `isActive: false` is this
-    // API's stand-in for a delete, and a retired instrument is exactly the thing a designer wants to
-    // lift for a new round. Do not filter it out of whatever list offers this.
+    // A DEACTIVATED SOURCE IS STILL REUSABLE and that is deliberate — a retired instrument is
+    // exactly the thing a designer wants to lift for a new round. Do not filter it out of whatever
+    // list offers this. (A DELETED one is not offered: only content admins see the trash.)
     //
     // JsonObject for the reason [customQuestionnaireUpdateJson] gives, on a different field:
     // `description` is a tri-state the server reads through `exclude_unset`, and the converter's

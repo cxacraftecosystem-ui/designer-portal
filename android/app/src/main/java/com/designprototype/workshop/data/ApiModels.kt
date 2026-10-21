@@ -4427,6 +4427,22 @@ data class CustomQuestionnaireSummaryDto(
     val sourceFilename: String? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
+    /** L9: null on every live row; set only in the trash (`deletedOnly`). */
+    val deletedAt: String? = null,
+    val deletedByName: String? = null,
+)
+
+/** L9 (21 Oct 2026): one sitting in a questionnaire's trash — `GET /questionnaires/{id}/deleted-entries`. */
+@Serializable
+data class DeletedCustomEntryDto(
+    val id: String,
+    val title: String = "",
+    val respondentName: String? = null,
+    val source: String? = null,
+    val createdAt: String? = null,
+    val createdByName: String? = null,
+    val deletedAt: String? = null,
+    val deletedByName: String? = null,
 )
 
 @Serializable

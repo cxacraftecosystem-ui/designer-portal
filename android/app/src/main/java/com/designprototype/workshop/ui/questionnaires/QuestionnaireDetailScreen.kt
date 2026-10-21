@@ -121,6 +121,8 @@ fun QuestionnaireDetailScreen(
     var addingQuestionTo by remember { mutableStateOf<CustomSectionDto?>(null) }
     var editingQuestion by remember { mutableStateOf<CustomQuestionDto?>(null) }
     var removingQuestion by remember { mutableStateOf<CustomQuestionDto?>(null) }
+    /** L9: the sitting a content admin asked to delete, awaiting the confirmation. */
+    var deletingEntry by remember { mutableStateOf<CustomEntryDto?>(null) }
     var startingSitting by remember { mutableStateOf(false) }
     /**
      * M13 (21 Oct 2026): the last sitting start that did not come back, as (what was sent, its key).
@@ -465,6 +467,7 @@ fun QuestionnaireDetailScreen(
                 SittingsCard(
                     form = loaded,
                     busy = busy,
+                    onDeleteEntry = if (mayDelete && !isTempId(questionnaireId)) ({ deletingEntry = it }) else null,
                     onStart = {
                         if (!uploadedOrSay()) return@SittingsCard
                         if (repository.isOnline(appContext)) startingSitting = true else onError(SITTING_START_OFFLINE)
@@ -483,6 +486,29 @@ fun QuestionnaireDetailScreen(
                     onEditQuestion = { editingQuestion = it },
                     onRemoveQuestion = { removingQuestion = it },
                 )
+
+                // L9 (21 Oct 2026): soft delete and restore, content admins only.
+                if (mayDelete && !isTempId(questionnaireId)) {
+                    DeletedSittingsCard(
+                        repository = repository,
+                        questionnaireId = questionnaireId,
+                        reloadKey = reload,
+                        onRestored = { reload++ },
+                        onMessage = onMessage,
+                        onError = onError,
+                    )
+                    com.designprototype.workshop.ui.RecordDangerZoneCard(
+                        noun = "questionnaire",
+                        delete = { repository.deleteCustomQuestionnaire(questionnaireId) },
+                        onDeleted = {
+                            onMessage("Questionnaire deleted. An admin can restore it.")
+                            onDeleted()
+                        },
+                        onError = { onError(it.apiErrorMessage("The questionnaire could not be deleted.")) },
+                        body = QuestionnaireTrashCopy.QUESTIONNAIRE_BODY,
+                        confirmBody = QuestionnaireTrashCopy.QUESTIONNAIRE_CONFIRM,
+                    )
+                }
             }
         }
         Spacer(Modifier.padding(bottom = 8.dp))
@@ -723,6 +749,36 @@ fun QuestionnaireDetailScreen(
             },
             dismissButton = {
                 TextButton(enabled = !busy, onClick = { removingQuestion = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    deletingEntry?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { if (!busy) deletingEntry = null },
+            title = { Text(QuestionnaireTrashCopy.SITTING_CONFIRM_TITLE) },
+            text = {
+                Text(
+                    (entry.respondentName?.takeIf { it.isNotBlank() } ?: entry.title.ifBlank { "This sitting" }) +
+                        ". " + QuestionnaireTrashCopy.SITTING_CONFIRM,
+                    color = MaterialTheme.field.body,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        deletingEntry = null
+                        mutate("The sitting could not be deleted.") {
+                            repository.deleteCustomEntry(questionnaireId, entry.id)
+                            "Sitting deleted. An admin can restore it."
+                        }
+                    }
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = { deletingEntry = null }) { Text("Cancel") }
             }
         )
     }
@@ -1039,6 +1095,8 @@ private fun SittingsCard(
     busy: Boolean,
     onStart: () -> Unit,
     onOpenEntry: (String) -> Unit,
+    /** L9: null unless this account may delete sittings (content admins). */
+    onDeleteEntry: ((CustomEntryDto) -> Unit)? = null,
 ) {
     val total = activeQuestionCount(form)
     ElevatedCard(
@@ -1069,6 +1127,7 @@ private fun SittingsCard(
                     total = total,
                     form = form,
                     onOpen = { onOpenEntry(entry.id) },
+                    onDelete = onDeleteEntry?.let { delete -> { delete(entry) } },
                 )
             }
 
@@ -1102,6 +1161,7 @@ private fun SittingRow(
     total: Int,
     form: CustomQuestionnaireDto,
     onOpen: () -> Unit,
+    onDelete: (() -> Unit)? = null,
 ) {
     var expanded by remember(entry.id) { mutableStateOf(false) }
     val promptById = remember(form) {
@@ -1132,6 +1192,12 @@ private fun SittingRow(
                 Text(entrySubtitle(entry, total), color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             OutlinedButton(onClick = onOpen) { Text("Answer") }
+        }
+        if (onDelete != null) {
+            // L9: content admins only; the sitting and its answers are kept and can be restored.
+            TextButton(onClick = onDelete, modifier = Modifier.align(Alignment.End)) {
+                Text("Delete sitting", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+            }
         }
         if (expanded) {
             val recorded = entry.answers.filter { !it.answerText.isNullOrBlank() || !it.notes.isNullOrBlank() }
