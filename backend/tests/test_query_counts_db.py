@@ -153,6 +153,88 @@ def test_a_drain_pass_hands_recover_to_every_sweep_it_runs(monkeypatch):
         assert seen == {"media": recover, "email": recover, "exports": recover}
 
 
+def _quiet_drain(monkeypatch: Any, worker: Any) -> None:
+    """Every service ``drain_pass`` calls, answering nothing."""
+
+    async def nothing(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "ensure_db_connected", nothing)
+    for name in ("process_next_media_jobs", "process_next_email_jobs", "process_next_ministry_exports"):
+        monkeypatch.setattr(worker, name, nothing)
+    monkeypatch.setattr(worker, "purge_expired_snapshots", nothing)
+    monkeypatch.setattr(worker.aadhaar_log_retention, "maybe_run", nothing)
+    monkeypatch.setattr(worker, "run_weekly_digests", nothing)
+    monkeypatch.setattr(worker.artisan_duplicates, "maybe_run", nothing)
+    monkeypatch.setattr(worker.artisan_merge, "maybe_purge", nothing)
+    monkeypatch.setattr(worker.ministry_exports, "maybe_run", nothing)
+
+
+def test_a_drain_pass_says_whether_its_sweep_held(monkeypatch):
+    """A recovering service that raises makes the pass answer False — the sweep did not happen."""
+    from app import worker
+
+    _quiet_drain(monkeypatch, worker)
+    settings = SimpleNamespace(media_queue_batch_size=3)
+    assert asyncio.run(worker.drain_pass(settings, recover=True, search=False)) is True
+
+    for failing in ("process_next_media_jobs", "process_next_email_jobs", "process_next_ministry_exports"):
+        _quiet_drain(monkeypatch, worker)
+
+        async def down(*_args: Any, **_kwargs: Any) -> None:
+            raise ConnectionError("database went away")
+
+        monkeypatch.setattr(worker, failing, down)
+        assert asyncio.run(worker.drain_pass(settings, recover=True, search=False)) is False, failing
+        # Not asked to recover, a failure says nothing about the sweep's clock.
+        assert asyncio.run(worker.drain_pass(settings, recover=False, search=False)) is True, failing
+
+
+def test_the_minute_gate_restarts_only_from_a_sweep_that_held(monkeypatch):
+    """``_run``: the first pass sweeps; a failed sweep is tried again on the very next pass; a sweep
+    that held starts the minute, and nothing sweeps again until it has passed."""
+    import pytest
+
+    from app import worker
+
+    class Stop(Exception):
+        pass
+
+    async def nothing(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    # (clock reading, what the pass answers when asked to sweep)
+    script = [(0.0, False), (5.0, True), (10.0, True), (64.0, True), (65.0, True), (70.0, True)]
+    clock = iter(at for at, _ in script)
+    outcomes = iter(held for _, held in script)
+    asked: list[bool] = []
+
+    async def drain(_settings: Any, *, recover: bool, search: bool) -> bool:
+        if len(asked) == len(script):
+            raise Stop
+        asked.append(recover)
+        held = next(outcomes)
+        return held if recover else True
+
+    def tick() -> float:
+        try:
+            return next(clock)
+        except StopIteration:
+            return 1000.0
+
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace(media_queue_interval_seconds=5.0))
+    monkeypatch.setattr(worker, "connect_db", nothing)
+    monkeypatch.setattr(worker, "disconnect_db", nothing)
+    monkeypatch.setattr(worker, "_wait_for_stop", nothing)
+    monkeypatch.setattr(worker, "_clock", tick)
+    monkeypatch.setattr(worker, "drain_pass", drain)
+    with pytest.raises(Stop):
+        asyncio.run(worker._run())
+    # 0 s: first pass sweeps and fails. 5 s: tried again at once, holds. 10 s, 64 s: inside the
+    # minute that began at 5 s. 65 s: the minute is up. 70 s: inside the next one.
+    assert asked == [True, True, False, False, True, False]
+
+
 # ── E-mail fan-out: one preference read per notice, not per recipient ───────────────────────────
 
 

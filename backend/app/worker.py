@@ -77,7 +77,13 @@ SEARCH_COMPACT_INTERVAL_SECONDS = 600.0
 #: were eight of the sixteen statements an idle five-second pass issued (the two export sweeps each
 #: wrapped in its own transaction), every one of them matching nothing. Once a minute recovers the
 #: same rows at most a minute later on a fifteen-minute clock; the first pass after a start sweeps.
+#: THE MINUTE STARTS ONLY FROM A SWEEP THAT HELD: a pass whose recovering service raised (the
+#: database dropped mid-sweep, say) leaves the clock where it was, so the very next pass sweeps again.
 RECOVERY_INTERVAL_SECONDS = 60.0
+
+#: The loop's clock. A name of its own so a test can drive ``_run``'s gates without touching
+#: ``time.monotonic``, which the event loop itself reads.
+_clock = time.monotonic
 
 _last_search_compaction = {"at": float("-inf")}
 
@@ -98,12 +104,16 @@ async def run_search_index_pass(settings) -> None:
     await embed_search_documents(batch=SEARCH_EMBED_BATCH, settings=settings)
 
 
-async def drain_pass(settings: Any, *, recover: bool, search: bool) -> None:
+async def drain_pass(settings: Any, *, recover: bool, search: bool) -> bool:
     """One pass of the drain, every service in its own try. ``_run`` calls it every interval.
 
     ``recover``: sweep for stale locks this pass (see :data:`RECOVERY_INTERVAL_SECONDS`).
     ``search``: run the search-index pass this pass (see :data:`SEARCH_INDEX_INTERVAL_SECONDS`).
+
+    Answers whether every service that was asked to recover got through its turn without raising —
+    i.e. whether the sweep can be counted as done. ``True`` when ``recover`` was not asked.
     """
+    swept = True
     try:
         # Self-heal like the web app: probe the connection each iteration and, when the probe
         # fails (or a previous iteration broke the engine), disconnect-first then reconnect —
@@ -116,6 +126,7 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> None:
             recover=recover,
         )
     except Exception:  # one bad iteration must never kill the worker
+        swept = False
         logger.exception("Media queue iteration failed; backing off")
     # THE E-MAIL OUTBOX RIDES THE SAME LOOP (app/services/email_outbox.py), in its own try so
     # a media failure cannot hold mail back and the reverse. A no-op when mail is not
@@ -123,6 +134,7 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> None:
     try:
         await process_next_email_jobs(worker_id="queue-service", settings=settings, recover=recover)
     except Exception:
+        swept = False
         logger.exception("E-mail outbox iteration failed; backing off")
     # Round snapshots of workshops deleted over a year ago (throttled; never raises).
     await purge_expired_snapshots()
@@ -131,6 +143,7 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> None:
     try:
         await process_next_ministry_exports(worker_id="queue-service", recover=recover)
     except Exception:
+        swept = False
         logger.exception("Ministry export iteration failed; backing off")
     try:
         # Regulation 18(3): at most once a day, and cheap when nothing is due.
@@ -165,6 +178,13 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> None:
         await ministry_exports.maybe_run(settings)
     except Exception:
         logger.exception("Ministry export iteration failed; backing off")
+    return swept or not recover
+
+
+async def _wait_for_stop(stop: asyncio.Event, interval: float) -> None:
+    """Sleep for the interval but wake immediately on shutdown."""
+    with suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(stop.wait(), timeout=interval)
 
 
 async def _run() -> None:
@@ -187,17 +207,16 @@ async def _run() -> None:
     last_recovery = float("-inf")
     try:
         while not stop.is_set():
-            now = time.monotonic()
+            now = _clock()
             recover = now - last_recovery >= RECOVERY_INTERVAL_SECONDS
-            if recover:
-                last_recovery = now
             search = now - last_search_pass >= SEARCH_INDEX_INTERVAL_SECONDS
             if search:
                 last_search_pass = now
-            await drain_pass(settings, recover=recover, search=search)
-            # Sleep for the interval but wake immediately on shutdown.
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=interval)
+            swept = await drain_pass(settings, recover=recover, search=search)
+            # The minute restarts only from a sweep that held; a failed one is tried next pass.
+            if recover and swept:
+                last_recovery = now
+            await _wait_for_stop(stop, interval)
     finally:
         await disconnect_db()
         logger.info("Media queue worker stopped")
