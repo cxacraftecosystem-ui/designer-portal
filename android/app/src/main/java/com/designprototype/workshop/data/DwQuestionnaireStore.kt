@@ -165,6 +165,12 @@ data class DwQuestionnaireItem(
      */
     val questionCount: Int = 0,
     /**
+     * `Questionnaire.kind` (M16, 21 Oct 2026): `WORKSHOP_INTERVIEW`, `MARKET_SURVEY`, or "" when not
+     * stated. The annexure groups by the stage each kind belongs to and prints it in the index, as
+     * `report_questionnaires` does. "" on every copy an earlier build wrote, which prints unchanged.
+     */
+    val kind: String = "",
+    /**
      * Whether this device has actually READ this questionnaire's sittings, as opposed to merely
      * knowing from the list that it is attached.
      *
@@ -289,6 +295,7 @@ fun dwQuestionnaireItemOf(dto: CustomQuestionnaireDto): DwQuestionnaireItem {
         version = dto.version,
         sourceFilename = dto.sourceFilename.orEmpty(),
         questionCount = pairs.count { (_, question) -> question.isActive },
+        kind = dto.kind.orEmpty(),
         answersHeld = true,
         sittings = dto.entries.map { entry ->
             val recorded = entry.answers.associateBy { it.questionId }
@@ -324,6 +331,7 @@ private fun dwUnreadItemOf(summary: CustomQuestionnaireSummaryDto) = DwQuestionn
     description = summary.description.orEmpty(),
     version = summary.version,
     sourceFilename = summary.sourceFilename.orEmpty(),
+    kind = summary.kind.orEmpty(),
     // No questionCount: the summary does not carry one, and printing 0 would read as "a form with no
     // questions" rather than as "we have not opened it". The index block prints "—" for 0.
     answersHeld = false,

@@ -2372,7 +2372,7 @@ private fun renderSpecialSection(
         //
         // With no copy on the device it still draws nothing and still warns, exactly as before.
         SpecialSection.ANNEXURE_QUESTIONNAIRES ->
-            renderQuestionnaireAnnexure(builder, section, plan, questionnaires)
+            renderQuestionnaireAnnexure(builder, section, plan, questionnaires, schema.stages)
 
         // THE SECOND SECTION THIS DEVICE DOES NOT EMIT, and — like the transcripts above — the gap
         // is the DATA and not the drawing. An AI layer is a row on the server carrying which model
