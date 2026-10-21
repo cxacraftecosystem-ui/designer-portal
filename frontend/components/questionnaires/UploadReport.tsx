@@ -42,6 +42,7 @@ function tallies(report: QFormUploadReport, copied: boolean): Array<{ label: str
     { label: "reworded into new questions", value: report.superseded },
     { label: "retired", value: report.retired },
     { label: "removed", value: report.removed },
+    { label: "kept (only an admin can remove)", value: report.kept ?? 0 },
     { label: "sittings recorded from the sheet", value: report.entriesCreated ?? 0 },
     { label: "answers imported", value: report.answersImported ?? 0 },
     // Printed as its own count rather than folded into the provenance sentence below, because a

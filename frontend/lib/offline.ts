@@ -410,6 +410,12 @@ export type OutboxEntry = {
    * carries the list and the reason the other record types are not on it.
    */
   clientKey?: string | null;
+  /**
+   * M13 (21 Oct 2026): the `Idempotency-Key` HEADER for a queued create whose route takes no body
+   * `clientKey` — interviews, custom questionnaires, their sittings and reuse copies. Minted once at
+   * queue time, so every replay of a lost create carries the same key and the server writes it once.
+   */
+  idempotencyKey?: string | null;
 };
 
 /**
@@ -1088,6 +1094,28 @@ const CLIENT_KEY_ENDPOINTS: ReadonlySet<string> = new Set([
  * disagreement between builds, re-attempted once per app run, for ever. The correction's own
  * idempotency question is a different one with a different answer: see `expectedUpdatedAt`.
  */
+/**
+ * The queued creates that carry an `Idempotency-Key` header (M13). The server honours the header on
+ * these routes (`backend/app/core/idempotency.py`); their bodies are `extra="forbid"`, so a body
+ * `clientKey` would be a 422.
+ */
+const IDEMPOTENCY_HEADER_ENDPOINTS: readonly RegExp[] = [
+  /^\/questionnaire\/interviews\/?$/,
+  /^\/questionnaires\/?$/,
+  /^\/questionnaires\/[^/]+\/entries\/?$/,
+  /^\/questionnaires\/[^/]+\/reuse\/?$/
+];
+
+export function outboxSendsIdempotencyHeader(entry: Pick<OutboxEntry, "endpoint" | "method">): boolean {
+  return entry.method === "POST" && IDEMPOTENCY_HEADER_ENDPOINTS.some((pattern) => pattern.test(entry.endpoint));
+}
+
+/** The header a replay sends, or none for an entry without a key. */
+export function replayHeaders(entry: Pick<OutboxEntry, "idempotencyKey">): Record<string, string> {
+  const key = typeof entry.idempotencyKey === "string" ? entry.idempotencyKey.trim() : "";
+  return key ? { "Idempotency-Key": key } : {};
+}
+
 export function outboxMintsClientKey(
   entry: Pick<OutboxEntry, "endpoint" | "method">
 ): boolean {
@@ -1148,7 +1176,9 @@ export async function queueOffline(
         future path minted deliberately (a re-queue that must keep its identity). Nothing does that
         today; the `??` is what makes it safe when something does.
       */
-      clientKey: outboxMintsClientKey(entry) ? (entry.clientKey ?? mintClientKey()) : null
+      clientKey: outboxMintsClientKey(entry) ? (entry.clientKey ?? mintClientKey()) : null,
+      // M13: the same reasoning, for the routes that take the key as a header.
+      idempotencyKey: outboxSendsIdempotencyHeader(entry) ? (entry.idempotencyKey ?? mintClientKey()) : null
     } as OutboxEntry)
   );
   // AFTER the write, never before: a save the device refused is not a save, and announcing one would
@@ -2097,7 +2127,7 @@ async function runSync(): Promise<SyncResult> {
           const answer = await apiFetch<ReplayAnswer>(
             progress.endpoint,
             // NOT `progress.body`: see {@link bodyWithClearances}, which carries the argument.
-            { method: progress.method, body: bodyWithClearances(progress) },
+            { method: progress.method, body: bodyWithClearances(progress), headers: replayHeaders(progress) },
             // A BACKGROUND PASS MUST NOT NAVIGATE. This runs on an `online` event and on mount, with
             // nobody having asked for anything: a token that expired while the tab sat open would
             // otherwise throw the researcher off whatever screen they were on, mid-edit, with the
@@ -2494,8 +2524,18 @@ export async function saveOrQueue<T extends { id: string }>({
   media?: OutboxMediaBatch[];
 }): Promise<SaveOutcome<T>> {
   const payload = JSON.stringify(body);
+  // M13: one key for the online attempt AND the queued replay, so a create whose answer was lost on
+  // the way back is not written a second time when the outbox sends it again.
+  const idempotencyKey = outboxSendsIdempotencyHeader({ endpoint, method }) ? mintClientKey() : null;
   const queue = async () => {
-    await queueOffline({ label, endpoint, method, body: payload, media: (media ?? []).filter((batch) => batch.files.length) });
+    await queueOffline({
+      label,
+      endpoint,
+      method,
+      body: payload,
+      media: (media ?? []).filter((batch) => batch.files.length),
+      idempotencyKey
+    });
     return { queued: true } as const;
   };
 
@@ -2503,7 +2543,10 @@ export async function saveOrQueue<T extends { id: string }>({
   if (typeof navigator !== "undefined" && navigator.onLine === false) return queue();
 
   try {
-    return { queued: false, saved: await apiFetch<T>(endpoint, { method, body: payload }) };
+    return {
+      queued: false,
+      saved: await apiFetch<T>(endpoint, { method, body: payload, headers: replayHeaders({ idempotencyKey }) })
+    };
   } catch (error) {
     // Only a request that never reached the server may be queued. A 4xx means the server saw it and
     // said no; queueing that would replay a rejection forever and hide the real problem from the user.
