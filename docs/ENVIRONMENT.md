@@ -568,7 +568,6 @@ Secrets go to the GitHub Actions secrets **and** the box `.env`.
 |---|---|---|---|---|
 | `AI_ANSWER_DRAFTS_ENABLED` | No | **`false`** | No | Lets a researcher draft a section's unanswered questions from the interview's transcript. Drafts are inert until a person accepts or edits the section; accepted answers carry `answerOrigin` `MACHINE_SUGGESTED` / `MACHINE_SUGGESTED_EDITED`, are labelled "Machine-suggested" on screen and in every export. Runs on the researcher's own AI key or the deployment's (the keys above). Off: every `/api/questionnaire/*/drafts` route answers 404. |
 | `QUESTIONNAIRE_V2` | No | **`false`** | No | The shared questionnaire (UNIFY_2026-10-21.md). Its tables ship dark (U0) and no route reads it until U1 mounts it; leave it off until the owner switches designer-portal on. |
-| `QUESTIONNAIRE_ANSWER_LOCKS` | No | **`false`** | No | The one answer-lock rule (owner decision 2): an answer with text is changed only by its author, a session lead or an admin. Off until every client shows the lock. |
 
 ### Not read by `config.py`
 
