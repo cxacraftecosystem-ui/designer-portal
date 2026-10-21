@@ -766,7 +766,13 @@ async def reupload_questionnaire(
         )
     try:
         report = await apply_parsed_edit(
-            questionnaire_id, parsed, user_id=current_user.id, title=title
+            questionnaire_id,
+            parsed,
+            user_id=current_user.id,
+            title=title,
+            # ONE REMOVAL RULE ON EVERY PATH (owner, 21 Oct 2026; audit M2): a question left out of
+            # the file is retired or deleted only for a content admin, as on DELETE .../questions.
+            may_remove=is_content_admin(current_user),
         )
     except QuestionnaireEditError as exc:
         raise HTTPException(
@@ -1376,6 +1382,10 @@ async def update_section(
     )
     if "title" in data:
         data["title"] = data["title"].strip()
+    # TAKING A SECTION OUT IS A REMOVAL, and removals are a content admin's (owner, 21 Oct 2026: one
+    # rule on every path). Switching one back on is anybody's who may edit the form.
+    if data.get("isActive") is False and section.isActive:
+        assert_can_delete(current_user)
     if data:
         await db.questionnaireformsection.update(where={"id": section_id}, data=data)
     await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
@@ -1544,8 +1554,10 @@ async def remove_question(
     # Deleting the blank rows loses no fieldwork: they assert nothing, which is the same reason the
     # guard does not count them. Anything with text took the retire branch above and never reaches
     # here, so this cannot remove a recorded answer.
-    await db.questionnaireformanswer.delete_many(where={"questionId": question_id})
-    await db.questionnaireformquestion.delete(where={"id": question_id})
+    # Together or not at all: the blank rows and the question are one removal.
+    async with db.tx() as tx:
+        await tx.questionnaireformanswer.delete_many(where={"questionId": question_id})
+        await tx.questionnaireformquestion.delete(where={"id": question_id})
     return public_encode(
         {
             "action": "deleted",

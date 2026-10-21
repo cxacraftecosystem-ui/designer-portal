@@ -830,7 +830,9 @@ async def test_re_uploading_an_edited_workbook_supersedes_answered_and_retires_r
                 XLSX_MIME,
             )
         },
-        headers=_headers(world),
+        # AN ADMIN, because a re-upload removes a question only for a content admin (owner,
+        # 21 Oct 2026; audit M2). A designer's re-upload keeps it: ``test_questionnaire_live_fixes``.
+        headers=_headers(world, "admin"),
     )
     assert response.status_code == 200, response.text
     report = response.json()["report"]

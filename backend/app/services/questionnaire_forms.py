@@ -1367,6 +1367,7 @@ async def apply_parsed_edit(
     user_id: str,
     title: str | None = None,
     description: str | None = None,
+    may_remove: bool = False,
 ) -> dict[str, Any]:
     """Re-import a workbook over an existing questionnaire under the edit-after-answers rule.
 
@@ -1375,6 +1376,14 @@ async def apply_parsed_edit(
     designer who uploads a corrected spreadsheet needs to be told what the app decided to do with
     their corrections — an edit that silently supersedes six questions is indistinguishable, from
     the outside, from one that silently lost them.
+
+    ``may_remove`` (owner, 21 Oct 2026: removing questionnaire items is a content admin's, on every
+    path, this one included). Without it, a question left out of the file is KEPT and the report
+    says so (``kept`` plus one warning each); with it, the rule below retires or deletes it.
+
+    ANSWERS TYPED INTO THE FILE ARE NOT IMPORTED HERE (audit M3), and the report now says how many
+    (``answersNotImported`` plus a warning) instead of dropping them in silence. A re-upload edits
+    the questions; sittings are recorded in the app.
     """
     existing = await db.questionnaire.find_unique(where={"id": questionnaire_id})
     if existing is None:
@@ -1412,12 +1421,32 @@ async def apply_parsed_edit(
         if question.isActive:
             by_prompt.setdefault((question.sectionId, question.prompt.strip().lower()), question)
 
+    answers_in_file = _uploaded_answer_rows(parsed)
+    if answers_in_file:
+        problems.append(
+            {
+                "sheet": parsed.sheet,
+                "row": None,
+                "severity": "warning",
+                "reason": (
+                    f"This file carries {answers_in_file} "
+                    + ("answer" if answers_in_file == 1 else "answers")
+                    + ". Uploading it again changes the questions only, so "
+                    + ("it was" if answers_in_file == 1 else "they were")
+                    + " not imported. Record answers in a sitting in the app."
+                ),
+                "value": None,
+            }
+        )
+
     report = {
         "created": 0,
         "updated": 0,
         "superseded": 0,
         "retired": 0,
         "removed": 0,
+        "kept": 0,
+        "answersNotImported": answers_in_file,
         "unchanged": 0,
         "sections": 0,
         "versionBefore": existing.version,
@@ -1430,159 +1459,171 @@ async def apply_parsed_edit(
     touched_sections: set[str] = set()
     codes_taken = {s.code.strip().lower() for s in sections}
 
-    for index, parsed_section in enumerate(parsed.sections[:MAX_SECTIONS], start=1):
-        code = (parsed_section.code or "").strip()
-        section = section_by_code.get(code.lower()) if code else None
-        if section is None:
-            new_code = _unique_code(code, parsed_section.title, codes_taken)
-            section = await db.questionnaireformsection.create(
-                data={
-                    "questionnaireId": questionnaire_id,
-                    "code": new_code,
-                    "title": parsed_section.title or new_code,
-                    "sortOrder": index,
-                }
-            )
-            section_by_code[new_code.lower()] = section
-            section_by_id[section.id] = section
-            report["sections"] += 1
-        else:
-            # A section title may change even when answered: a heading is not the thing an answer
-            # answers. Reactivated on sight, so re-uploading a section a designer had removed brings
-            # it back rather than leaving a retired duplicate.
-            wanted_title = parsed_section.title or section.title
-            if section.title != wanted_title or section.sortOrder != index or not section.isActive:
-                section = await db.questionnaireformsection.update(
-                    where={"id": section.id},
-                    data={"title": wanted_title, "sortOrder": index, "isActive": True},
-                )
-        touched_sections.add(section.id)
-
-        for position, parsed_question in enumerate(parsed_section.questions, start=1):
-            match = _match_question(parsed_question, section, by_id, by_prompt, problems, parsed)
-            if match is None:
-                await db.questionnaireformquestion.create(
+    # ONE TRANSACTION FOR THE WHOLE EDIT (audit M1, 21 Oct 2026). A failure part way — the
+    # foreign-key refusal ``_remove_absent`` used to hit was one — left the questionnaire half
+    # edited, with no way to tell which half from the outside.
+    async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=120)) as tx:
+        for index, parsed_section in enumerate(parsed.sections[:MAX_SECTIONS], start=1):
+            code = (parsed_section.code or "").strip()
+            section = section_by_code.get(code.lower()) if code else None
+            if section is None:
+                new_code = _unique_code(code, parsed_section.title, codes_taken)
+                section = await tx.questionnaireformsection.create(
                     data={
-                        "sectionId": section.id,
-                        "prompt": parsed_question.prompt,
-                        "helpText": parsed_question.helpText,
-                        "isRequired": parsed_question.isRequired,
-                        "sortOrder": position,
+                        "questionnaireId": questionnaire_id,
+                        "code": new_code,
+                        "title": parsed_section.title or new_code,
+                        "sortOrder": index,
                     }
                 )
-                report["created"] += 1
-                continue
+                section_by_code[new_code.lower()] = section
+                section_by_id[section.id] = section
+                report["sections"] += 1
+            else:
+                # A section title may change even when answered: a heading is not the thing an answer
+                # answers. Reactivated on sight, so re-uploading a section a designer had removed brings
+                # it back rather than leaving a retired duplicate.
+                wanted_title = parsed_section.title or section.title
+                if section.title != wanted_title or section.sortOrder != index or not section.isActive:
+                    section = await tx.questionnaireformsection.update(
+                        where={"id": section.id},
+                        data={"title": wanted_title, "sortOrder": index, "isActive": True},
+                    )
+            touched_sections.add(section.id)
 
-            touched_questions.add(match.id)
-            reworded = match.prompt.strip() != parsed_question.prompt.strip()
-
-            if not match.isActive:
-                # A RETIRED question, matched by the id in the file. The export deliberately writes
-                # retired questions out — dropping them would lose the answers recorded against
-                # them — so every download carries these rows and every re-upload matches them. They
-                # are therefore LEFT ALONE. Reactivating on sight, which the section branch above can
-                # safely do, would here mean that downloading a questionnaire and uploading it back
-                # unchanged resurrects every question the designer has ever replaced, each one next
-                # to the replacement that superseded it.
-                if reworded:
-                    # Not applied, and therefore said out loud rather than dropped in silence.
-                    problems.append(
-                        {
-                            "sheet": parsed.sheet,
-                            "row": parsed_question.row,
-                            "severity": "warning",
-                            "reason": (
-                                "This question was retired because it already had answers recorded "
-                                "against it, so the new wording on this row was NOT applied. Edit "
-                                + (
-                                    "the question that replaced it"
-                                    if match.supersededById
-                                    else "an active question"
-                                )
-                                + " instead, or add a new row with a blank Question ID."
-                            ),
-                            "value": parsed_question.prompt[:120],
+            for position, parsed_question in enumerate(parsed_section.questions, start=1):
+                match = _match_question(parsed_question, section, by_id, by_prompt, problems, parsed)
+                if match is None:
+                    await tx.questionnaireformquestion.create(
+                        data={
+                            "sectionId": section.id,
+                            "prompt": parsed_question.prompt,
+                            "helpText": parsed_question.helpText,
+                            "isRequired": parsed_question.isRequired,
+                            "sortOrder": position,
                         }
                     )
-                report["unchanged"] += 1
-                continue
+                    report["created"] += 1
+                    continue
 
-            if reworded and match.id in answered:
-                # RULE 3. The recorded answers keep the wording they were given under; the new
-                # wording becomes a new question in the same place.
-                replacement = await db.questionnaireformquestion.create(
-                    data={
-                        "sectionId": section.id,
-                        "prompt": parsed_question.prompt,
-                        "helpText": parsed_question.helpText,
-                        "isRequired": parsed_question.isRequired,
-                        "sortOrder": position,
-                    }
-                )
-                await db.questionnaireformquestion.update(
-                    where={"id": match.id},
-                    data={
-                        "isActive": False,
-                        "retiredAt": _now(),
-                        "supersededById": replacement.id,
-                    },
-                )
-                touched_questions.add(replacement.id)
-                report["superseded"] += 1
-                version_bumps += 1
-                report["details"].append(
-                    {
-                        "action": "superseded",
-                        "questionId": match.id,
-                        "replacementId": replacement.id,
-                        "before": match.prompt,
-                        "after": parsed_question.prompt,
-                        "reason": (
-                            "This question already has answers recorded against it, so its original "
-                            "wording and those answers were kept and your new wording was added as a "
-                            "new question."
-                        ),
-                    }
-                )
-                continue
+                touched_questions.add(match.id)
+                reworded = match.prompt.strip() != parsed_question.prompt.strip()
 
-            data: dict[str, Any] = {}
-            if reworded:
-                data["prompt"] = parsed_question.prompt  # RULE 1: nobody has answered it
-            if match.helpText != parsed_question.helpText:
-                data["helpText"] = parsed_question.helpText
-            if match.isRequired != parsed_question.isRequired:
-                data["isRequired"] = parsed_question.isRequired
-            if match.sortOrder != position:
-                data["sortOrder"] = position
-            if match.sectionId != section.id:
-                data["sectionId"] = section.id
-            # No isActive branch here: a retired question was handled and skipped above. Bringing one
-            # back is a deliberate act through PATCH, never a side effect of re-uploading a file that
-            # always contained it.
-            if data:
-                await db.questionnaireformquestion.update(where={"id": match.id}, data=data)
-                report["updated"] += 1
-            else:
-                report["unchanged"] += 1
+                if not match.isActive:
+                    # A RETIRED question, matched by the id in the file. The export deliberately writes
+                    # retired questions out — dropping them would lose the answers recorded against
+                    # them — so every download carries these rows and every re-upload matches them. They
+                    # are therefore LEFT ALONE. Reactivating on sight, which the section branch above can
+                    # safely do, would here mean that downloading a questionnaire and uploading it back
+                    # unchanged resurrects every question the designer has ever replaced, each one next
+                    # to the replacement that superseded it.
+                    if reworded:
+                        # Not applied, and therefore said out loud rather than dropped in silence.
+                        problems.append(
+                            {
+                                "sheet": parsed.sheet,
+                                "row": parsed_question.row,
+                                "severity": "warning",
+                                "reason": (
+                                    "This question was retired because it already had answers recorded "
+                                    "against it, so the new wording on this row was NOT applied. Edit "
+                                    + (
+                                        "the question that replaced it"
+                                        if match.supersededById
+                                        else "an active question"
+                                    )
+                                    + " instead, or add a new row with a blank Question ID."
+                                ),
+                                "value": parsed_question.prompt[:120],
+                            }
+                        )
+                    report["unchanged"] += 1
+                    continue
 
-    version_bumps += await _remove_absent(
-        questions, sections, answered, touched_questions, touched_sections, report
-    )
+                if reworded and match.id in answered:
+                    # RULE 3. The recorded answers keep the wording they were given under; the new
+                    # wording becomes a new question in the same place.
+                    replacement = await tx.questionnaireformquestion.create(
+                        data={
+                            "sectionId": section.id,
+                            "prompt": parsed_question.prompt,
+                            "helpText": parsed_question.helpText,
+                            "isRequired": parsed_question.isRequired,
+                            "sortOrder": position,
+                        }
+                    )
+                    await tx.questionnaireformquestion.update(
+                        where={"id": match.id},
+                        data={
+                            "isActive": False,
+                            "retiredAt": _now(),
+                            "supersededById": replacement.id,
+                        },
+                    )
+                    touched_questions.add(replacement.id)
+                    report["superseded"] += 1
+                    version_bumps += 1
+                    report["details"].append(
+                        {
+                            "action": "superseded",
+                            "questionId": match.id,
+                            "replacementId": replacement.id,
+                            "before": match.prompt,
+                            "after": parsed_question.prompt,
+                            "reason": (
+                                "This question already has answers recorded against it, so its original "
+                                "wording and those answers were kept and your new wording was added as a "
+                                "new question."
+                            ),
+                        }
+                    )
+                    continue
 
-    updates: dict[str, Any] = {}
-    if title and title.strip() and title.strip() != existing.title:
-        updates["title"] = title.strip()
-    elif parsed.title and parsed.title.strip() != existing.title:
-        updates["title"] = parsed.title.strip()
-    if description is not None and description != existing.description:
-        updates["description"] = description
-    elif parsed.description and parsed.description != existing.description:
-        updates["description"] = parsed.description
-    if version_bumps:
-        updates["version"] = existing.version + version_bumps
-    if updates:
-        await db.questionnaire.update(where={"id": questionnaire_id}, data=updates)
+                data: dict[str, Any] = {}
+                if reworded:
+                    data["prompt"] = parsed_question.prompt  # RULE 1: nobody has answered it
+                if match.helpText != parsed_question.helpText:
+                    data["helpText"] = parsed_question.helpText
+                if match.isRequired != parsed_question.isRequired:
+                    data["isRequired"] = parsed_question.isRequired
+                if match.sortOrder != position:
+                    data["sortOrder"] = position
+                if match.sectionId != section.id:
+                    data["sectionId"] = section.id
+                # No isActive branch here: a retired question was handled and skipped above. Bringing one
+                # back is a deliberate act through PATCH, never a side effect of re-uploading a file that
+                # always contained it.
+                if data:
+                    await tx.questionnaireformquestion.update(where={"id": match.id}, data=data)
+                    report["updated"] += 1
+                else:
+                    report["unchanged"] += 1
+
+        version_bumps += await _remove_absent(
+            questions,
+            sections,
+            answered,
+            touched_questions,
+            touched_sections,
+            report,
+            client=tx,
+            may_remove=may_remove,
+            parsed=parsed,
+        )
+
+        updates: dict[str, Any] = {}
+        if title and title.strip() and title.strip() != existing.title:
+            updates["title"] = title.strip()
+        elif parsed.title and parsed.title.strip() != existing.title:
+            updates["title"] = parsed.title.strip()
+        if description is not None and description != existing.description:
+            updates["description"] = description
+        elif parsed.description and parsed.description != existing.description:
+            updates["description"] = parsed.description
+        if version_bumps:
+            updates["version"] = existing.version + version_bumps
+        if updates:
+            await tx.questionnaire.update(where={"id": questionnaire_id}, data=updates)
     report["versionAfter"] = existing.version + version_bumps
     return report
 
@@ -1628,20 +1669,51 @@ async def _remove_absent(
     touched_questions: set[str],
     touched_sections: set[str],
     report: dict[str, Any],
+    *,
+    client: Any = None,
+    may_remove: bool = False,
+    parsed: ParsedQuestionnaire | None = None,
 ) -> int:
     """RULE 4 and RULE 5: what happens to rows the designer took out of the spreadsheet.
 
     Answered -> retired, and its answers stay. Unanswered -> actually deleted, because there is
     nothing to orphan and a form littered with every question its author ever thought better of is
     not a form. Returns how many version bumps this earned.
+
+    ONLY FOR A CONTENT ADMIN (``may_remove``). Anyone else's absent rows are kept and reported, so
+    the one removal rule holds on this path as it does on ``DELETE .../questions/{id}`` (audit M2).
+
+    THE BLANK ANSWER ROWS GO FIRST (audit M1). ``QuestionnaireFormAnswer.questionId`` is RESTRICT,
+    and the app writes a blank row when somebody tabs through a sitting, so deleting the question
+    alone was the foreign-key 500 ``remove_question`` was already fixed for. "Answered" counts notes
+    as well as text (audit M17), so a blank row here asserts nothing at all.
     """
+    writer = db if client is None else client
+    if not may_remove:
+        for question in questions:
+            if question.id in touched_questions or not question.isActive:
+                continue
+            report["kept"] += 1
+            report["problems"].append(
+                {
+                    "sheet": parsed.sheet if parsed is not None else None,
+                    "row": None,
+                    "severity": "warning",
+                    "reason": (
+                        "This question is not in your file but was kept. Only an admin can "
+                        "remove questions."
+                    ),
+                    "value": question.prompt[:120],
+                }
+            )
+        return 0
     bumps = 0
     for question in questions:
         if question.id in touched_questions:
             continue
         if question.id in answered:
             if question.isActive:
-                await db.questionnaireformquestion.update(
+                await writer.questionnaireformquestion.update(
                     where={"id": question.id},
                     data={"isActive": False, "retiredAt": _now()},
                 )
@@ -1660,7 +1732,8 @@ async def _remove_absent(
                     }
                 )
             continue
-        await db.questionnaireformquestion.delete(where={"id": question.id})
+        await writer.questionnaireformanswer.delete_many(where={"questionId": question.id})
+        await writer.questionnaireformquestion.delete(where={"id": question.id})
         report["removed"] += 1
 
     answered_sections = {q.sectionId for q in questions if q.id in answered}
@@ -1669,28 +1742,37 @@ async def _remove_absent(
             continue
         if section.id in answered_sections:
             if section.isActive:
-                await db.questionnaireformsection.update(
+                await writer.questionnaireformsection.update(
                     where={"id": section.id}, data={"isActive": False}
                 )
             continue
-        # Safe to delete outright: nothing under it was ever answered, so the cascade to its
-        # questions cannot hit the ON DELETE RESTRICT that guards an answered one.
-        await db.questionnaireformsection.delete(where={"id": section.id})
+        # Safe to delete outright: nothing under it was ever answered, and the loop above has
+        # already removed its questions with their blank answer rows, so the cascade cannot hit the
+        # ON DELETE RESTRICT that guards an answer.
+        await writer.questionnaireformsection.delete(where={"id": section.id})
     return bumps
 
 
 async def _answered_question_ids(question_ids: list[str]) -> set[str]:
-    """Which of these questions have an answer with actual text against them.
+    """Which of these questions have an answer with actual text, or notes, against them.
 
     A blank answer row does not count. The app writes one when a designer opens a sitting, tabs
     through it and saves; treating that as "answered" would freeze a question nobody ever answered.
+
+    NOTES COUNT (audit M17, 21 Oct 2026). A row with notes and no answer text is somebody's
+    fieldwork ("declined to say", "ask the son"), and counting text alone sent such a question down
+    the DELETE branch, taking the notes with it.
     """
     if not question_ids:
         return set()
     rows = await db.questionnaireformanswer.find_many(where={"questionId": {"in": question_ids}})
     # Filtered here rather than in the where clause: "not null" is not the test — an answer saved as
     # a single space is null-ish to a person and non-null to Postgres, and only Python knows that.
-    return {row.questionId for row in rows if (row.answerText or "").strip()}
+    return {
+        row.questionId
+        for row in rows
+        if (row.answerText or "").strip() or (row.notes or "").strip()
+    }
 
 
 # --- Writing: single-question edits from the editor UI -------------------------------------------
