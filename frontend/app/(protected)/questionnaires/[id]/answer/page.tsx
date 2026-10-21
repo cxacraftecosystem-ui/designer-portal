@@ -68,12 +68,24 @@ import {
   answeredCount,
   answersByQuestion,
   createEntry,
+  patchEntry,
   saveAnswers,
   type QForm,
   type QFormEntry,
   type QFormSection
 } from "@/lib/questionnaireForms";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { isContentAdmin } from "@/lib/permissions";
+import {
+  blankRequiredIds,
+  LOCKED_ANSWER_NOTE,
+  lockedQuestionIds,
+  mayEditSitting,
+  rejectedBanner,
+  rejectionsByQuestion,
+  REQUIRED_ANSWER_NOTE,
+  requiredBanner
+} from "@/lib/sittingAnswers";
 
 /**
  * ══ WHICH FIELDS ON THIS SCREEN GOT A MICROPHONE, AND WHICH DID NOT (req 13) ═══════════════════
@@ -167,6 +179,13 @@ function AnswerPageBody() {
    */
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
+  /** M5: the server's per-answer refusals from the last save, shown under their own question. */
+  const [rejections, setRejections] = useState<Record<string, string>>({});
+  /** L7: required questions left blank when the section was last saved or left. */
+  const [missingRequired, setMissingRequired] = useState<Set<string>>(new Set());
+  /** L8: the sitting's details form, open or closed. */
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
   /** Question ids whose box has been touched since the last successful save of their section. */
   const dirty = useRef<Set<string>>(new Set());
   /**
@@ -323,6 +342,9 @@ function AnswerPageBody() {
     }
     if (seededFor.current === entry.id) return;
     seededFor.current = entry.id;
+    setRejections({});
+    setMissingRequired(new Set());
+    setDetailsOpen(false);
     const seededText: Record<string, string> = {};
     const seededNotes: Record<string, string> = {};
     for (const answer of entry.answers) {
@@ -342,6 +364,45 @@ function AnswerPageBody() {
   const sections = form?.sections ?? [];
   const section: QFormSection | null = sections[sectionIndex] ?? null;
   const progress = form && entry ? answeredCount(form, entry) : null;
+  const contentAdmin = isContentAdmin(user);
+  // M5: the handset's locks — an answer with text that someone else recorded is read-only here.
+  const locked = useMemo(
+    () => lockedQuestionIds(entry?.answers ?? [], user?.id ?? null, contentAdmin),
+    [entry, user?.id, contentAdmin]
+  );
+  const canEditSitting =
+    !!entry &&
+    !!form &&
+    mayEditSitting({
+      viewerId: user?.id ?? null,
+      entryCreatedById: entry.createdById,
+      formOwnerId: form.ownerId,
+      isContentAdmin: contentAdmin
+    });
+
+  /** L8: correct who answered, the label or the notes of the open sitting. */
+  async function saveSittingDetails(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    if (!entry) return;
+    setSavingDetails(true);
+    setError(null);
+    try {
+      const title = String(data.get("title") ?? "").trim();
+      await patchEntry(id, entry.id, {
+        respondentName: String(data.get("respondentName") ?? "").trim() || null,
+        ...(title ? { title } : {}),
+        notes: String(data.get("notes") ?? "").trim() || null
+      });
+      await load();
+      setDetailsOpen(false);
+      toast({ tone: "success", title: "Sitting details saved" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save the sitting details");
+    } finally {
+      setSavingDetails(false);
+    }
+  }
 
   async function startSitting(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -381,10 +442,23 @@ function AnswerPageBody() {
    * answers they did not give.
    */
   const saveSection = useCallback(
-    async (target: QFormSection | null, options?: { silent?: boolean }): Promise<boolean> => {
+    async (
+      target: QFormSection | null,
+      options?: { silent?: boolean; requireComplete?: boolean }
+    ): Promise<boolean> => {
       if (!target || !entryId) return true;
+      // L7: a required question left blank holds the section on Save, Next and Finish. Leaving through
+      // the unsaved-changes prompt still saves what was typed, so nothing is lost.
+      if (options?.requireComplete) {
+        const blank = blankRequiredIds(target.questions, draft);
+        setMissingRequired(new Set(blank));
+        if (blank.length) {
+          setError(requiredBanner(blank.length));
+          return false;
+        }
+      }
       const answers = answerableQuestions(target)
-        .filter((question) => dirty.current.has(question.id))
+        .filter((question) => dirty.current.has(question.id) && !locked.has(question.id))
         .map((question) => ({
           questionId: question.id,
           answerText: draft[question.id] ?? "",
@@ -420,11 +494,27 @@ function AnswerPageBody() {
       setSaving(true);
       setError(null);
       try {
-        await saveAnswers(id, entryId, answers);
-        for (const answer of answers) dirty.current.delete(answer.questionId);
+        const result = await saveAnswers(id, entryId, answers);
+        // M5: the server saves per answer and names the ones it would not take. Those stay unsaved
+        // (still dirty) with their reason under the question; everything else is recorded.
+        const refused = rejectionsByQuestion(result?.saved?.rejected);
+        for (const answer of answers) {
+          if (!refused[answer.questionId]) dirty.current.delete(answer.questionId);
+        }
         // Only what was SENT is cleared, and only after the server took it — a question typed into
         // while the request was in flight is still unsaved, and the prompt must still know about it.
         syncDirty();
+        setRejections((current) => {
+          const next = { ...current };
+          for (const answer of answers) delete next[answer.questionId];
+          return { ...next, ...refused };
+        });
+        const refusedCount = Object.keys(refused).length;
+        if (refusedCount) {
+          await load();
+          setError(rejectedBanner(refusedCount));
+          return false;
+        }
         // Re-read so the progress counter and the detail page's "N of M answered" agree with what
         // is stored rather than with what this tab believes it sent.
         await load();
@@ -447,7 +537,7 @@ function AnswerPageBody() {
         setSaving(false);
       }
     },
-    [draft, notes, entryId, id, load, toast, syncDirty]
+    [draft, notes, entryId, id, load, toast, syncDirty, locked]
   );
 
   /**
@@ -528,7 +618,8 @@ function AnswerPageBody() {
   async function goToSection(nextIndex: number) {
     // Saving BEFORE moving is what makes "next" safe. A designer who fills a section in and presses
     // next has finished it; asking them to also press Save is how a section gets lost.
-    const ok = await saveSection(section, { silent: true });
+    // Moving forward needs the required questions answered (L7); moving back does not.
+    const ok = await saveSection(section, { silent: true, requireComplete: nextIndex > sectionIndex });
     if (!ok) return;
     setSectionIndex(nextIndex);
     // The section heading is above the fold on arrival rather than wherever the previous section's
@@ -724,6 +815,41 @@ function AnswerPageBody() {
             {entry.createdAt ? ` · ${formatDateTime(entry.createdAt)}` : ""}
           </p>
         ) : null}
+        {entry && canEditSitting && !cached ? (
+          detailsOpen ? (
+            <form
+              key={entry.id}
+              onSubmit={saveSittingDetails}
+              className="grid gap-3 rounded-md border border-line-200 bg-surface-50 p-3 md:grid-cols-2"
+            >
+              <Field label="Who is answering">
+                <TextInput name="respondentName" maxLength={220} defaultValue={entry.respondentName ?? ""} />
+              </Field>
+              <Field label="Label for this sitting">
+                <TextInput name="title" maxLength={220} defaultValue={entry.title} />
+              </Field>
+              <div className="md:col-span-2">
+                <DictatedTextArea name="notes" label="Notes" defaultValue={entry.notes ?? ""} explainWhenUnavailable={false} />
+              </div>
+              <div className="md:col-span-2">
+                <ActionGroup>
+                  <button type="button" className="field-button-secondary" onClick={() => setDetailsOpen(false)}>
+                    Cancel
+                  </button>
+                  <button className="field-button" disabled={savingDetails}>
+                    {savingDetails ? "Saving…" : "Save details"}
+                  </button>
+                </ActionGroup>
+              </div>
+            </form>
+          ) : (
+            <ActionGroup>
+              <button type="button" className="field-button-secondary" onClick={() => setDetailsOpen(true)}>
+                Edit sitting details
+              </button>
+            </ActionGroup>
+          )
+        ) : null}
       </section>
 
       {!sections.length ? (
@@ -793,6 +919,12 @@ function AnswerPageBody() {
                   </li>
                 );
               }
+              const isLocked = locked.has(question.id);
+              const questionNote = rejections[question.id]
+                ? rejections[question.id]
+                : missingRequired.has(question.id) && !(draft[question.id] ?? "").trim()
+                  ? REQUIRED_ANSWER_NOTE
+                  : null;
               return (
                 <li key={question.id} className="grid gap-1">
                   <label className="grid gap-1">
@@ -805,7 +937,17 @@ function AnswerPageBody() {
                       className="field-input min-h-16"
                       value={draft[question.id] ?? ""}
                       maxLength={ANSWER_MAX}
-                      aria-describedby={(draft[question.id] ?? "").length >= ANSWER_MAX ? `${question.id}-full` : undefined}
+                      readOnly={isLocked}
+                      aria-invalid={questionNote ? true : undefined}
+                      aria-describedby={
+                        [
+                          (draft[question.id] ?? "").length >= ANSWER_MAX ? `${question.id}-full` : null,
+                          isLocked ? `${question.id}-locked` : null,
+                          questionNote ? `${question.id}-problem` : null
+                        ]
+                          .filter(Boolean)
+                          .join(" ") || undefined
+                      }
                       onChange={(event) => {
                         // THE KEYSTROKE THAT ARMS THE GUARDS. `markAnswerDirty`, never a bare
                         // `dirty.current.add(...)`: the ref alone re-renders nothing, so the back
@@ -831,6 +973,17 @@ function AnswerPageBody() {
                     because a prompt may run to two thousand characters and an aria-label that long
                     is spoken in full before the reader learns what the button does.
                   */}
+                  {isLocked ? (
+                    <p id={`${question.id}-locked`} className="text-xs leading-5 text-ink-500">
+                      {LOCKED_ANSWER_NOTE}
+                    </p>
+                  ) : null}
+                  {questionNote ? (
+                    <p id={`${question.id}-problem`} className="text-xs leading-5 text-error-600">
+                      {questionNote}
+                    </p>
+                  ) : null}
+                  {isLocked ? null : (
                   <OnDeviceDictationButton
                     fieldLabel={`answer ${index + 1}`}
                     explainWhenUnavailable={false}
@@ -848,6 +1001,7 @@ function AnswerPageBody() {
                       }));
                     }}
                   />
+                  )}
                   {/*
                     The ceiling, said on screen the moment it is reached — house rule 3. A box that
                     quietly stops accepting words is indistinguishable from a microphone that
@@ -864,6 +1018,7 @@ function AnswerPageBody() {
                       Full — {ANSWER_MAX.toLocaleString("en-IN")} characters maximum.
                     </p>
                   ) : null}
+                  {isLocked ? null : (
                   <details className="text-xs text-ink-500">
                     <summary className="cursor-pointer">Add a note about this answer</summary>
                     <input
@@ -902,6 +1057,7 @@ function AnswerPageBody() {
                       }}
                     />
                   </details>
+                  )}
                 </li>
               );
             })}
@@ -918,7 +1074,12 @@ function AnswerPageBody() {
               Previous section
             </button>
             <ActionGroup>
-              <button type="button" className="field-button-secondary" disabled={saving} onClick={() => saveSection(section)}>
+              <button
+                type="button"
+                className="field-button-secondary"
+                disabled={saving}
+                onClick={() => saveSection(section, { requireComplete: true })}
+              >
                 <Save className="h-4 w-4" aria-hidden />
                 {saving ? "Saving…" : "Save this section"}
               </button>
@@ -933,7 +1094,7 @@ function AnswerPageBody() {
                   className="field-button"
                   disabled={saving}
                   onClick={async () => {
-                    const ok = await saveSection(section, { silent: true });
+                    const ok = await saveSection(section, { silent: true, requireComplete: true });
                     if (!ok) return;
                     toast({
                       tone: "success",

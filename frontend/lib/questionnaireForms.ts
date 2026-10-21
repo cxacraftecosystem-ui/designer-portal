@@ -349,6 +349,8 @@ export type QFormUploadReport = {
   superseded: number;
   retired: number;
   removed: number;
+  /** M2 (21 Oct 2026): questions left out of a re-upload by someone who may not remove them, kept. */
+  kept?: number;
   unchanged: number;
   sections: number;
   versionBefore: number;
@@ -523,7 +525,16 @@ export type QFormAnswerInput = { questionId: string; answerText?: string | null;
  * authorship of work the saver never did.
  */
 export type QFormAnswerSaveResult = {
-  saved: { created: number; updated: number; unchanged: number };
+  saved: {
+    created: number;
+    updated: number;
+    unchanged: number;
+    /**
+     * M5 (21 Oct 2026): the answers the server would not take — a retired question, or an answer
+     * somebody else recorded. Everything else in the batch was saved. Absent from older servers.
+     */
+    rejected?: { questionId: string; code?: string | null; message?: string | null }[];
+  };
   answers: QFormAnswer[];
 };
 
