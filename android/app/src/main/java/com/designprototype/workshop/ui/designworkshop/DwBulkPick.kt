@@ -31,7 +31,7 @@ internal const val DW_STAGE_ENTRY_CAP = 500
 
 /**
  * How many options the bulk add asks the server for: its `REFERENCE_LIMIT_MAX` and the web's
- * `REFERENCE_PAGE_MAX`. The single pickers keep the server's default page of 50.
+ * `REFERENCE_PAGE_MAX`. The single pickers read every page (`dwReadAllReferencePages`).
  */
 internal const val DW_BULK_PAGE = 200
 

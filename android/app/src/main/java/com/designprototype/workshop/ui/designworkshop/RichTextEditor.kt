@@ -328,7 +328,7 @@ fun RichTextEditor(
     modifier: Modifier = Modifier,
     /**
      * Drawn in place of [help] when set — the stage form passes its `FieldCaption`, so a narrative
-     * field gets the same "i" for its details as every other field.
+     * field carries the same help line and hold-for-details as every other field.
      */
     helpRow: (@Composable () -> Unit)? = null,
     /**

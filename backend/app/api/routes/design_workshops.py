@@ -212,6 +212,7 @@ from app.services.entry_provenance import (
 from app.services.design_workshops import (
     REFERENCE_LIMIT_DEFAULT,
     REFERENCE_LIMIT_MAX,
+    REFERENCE_OFFSET_MAX,
     assemble_workshop_data,
     report_survey_sittings,
     assert_every_designer_may_be_named,
@@ -3252,9 +3253,13 @@ async def list_references(
     search: str | None = Query(None, max_length=120),
     recordId: str | None = Query(None, max_length=64),
     limit: int = Query(REFERENCE_LIMIT_DEFAULT, ge=1, le=REFERENCE_LIMIT_MAX),
+    offset: int = Query(0, ge=0, le=REFERENCE_OFFSET_MAX),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """The options one REF field's dropdown shows.
+
+    ``offset`` pages a repository list past ``REFERENCE_LIMIT_MAX`` (the handset reads the whole craft
+    list, 459 rows, in pages of 200). An in-workshop list is never paged: past the first page it is empty.
 
     This is the endpoint that lets a designer STOP RETYPING records the database already holds.
     Every REF field in the registry carries a ``refModel``, a ``refScope`` and sometimes a
@@ -3302,6 +3307,7 @@ async def list_references(
         filter_by=filterBy,
         search=search,
         limit=limit,
+        offset=offset,
         record_id=recordId,
         viewer=current_user,
     )

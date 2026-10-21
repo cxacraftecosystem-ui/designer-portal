@@ -1391,6 +1391,8 @@ internal fun DwDictationButton(
                 .background(
                     if (DwDictationAdornment.filled(state)) MaterialTheme.colorScheme.primary else Color.Transparent
                 )
+                // Its long press is the language menu, so the field's hold-for-help stands aside.
+                .dwClaimsHold()
                 .combinedClickable(
                     enabled = micEnabled,
                     role = Role.Button,

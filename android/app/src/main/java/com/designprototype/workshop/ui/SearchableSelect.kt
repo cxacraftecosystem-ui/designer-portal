@@ -306,6 +306,12 @@ private fun SelectOption.matches(terms: List<String>): Boolean {
 private fun queryTerms(query: String): List<String> =
     query.trim().split(' ', '\t', '\n').filter { it.isNotBlank() }
 
+/** Whether the sheet's own filter would show anything for [query] — the same match it draws with. */
+internal fun selectOptionsMatch(options: List<SelectOption>, query: String): Boolean {
+    val terms = queryTerms(query)
+    return options.any { it.matches(terms) }
+}
+
 /**
  * Which surface a single-select opens: the caller's ruling if it made one, otherwise the count.
  *
@@ -498,6 +504,12 @@ fun SearchableSelectField(
     onSearch: ((String) -> Unit)? = null,
     /** The next server page, for a list behind [onSearch]. Null draws no footer. */
     loadMore: SelectLoadMore? = null,
+    /**
+     * Told every term typed in the sheet's box, WITHOUT taking over the filtering (that is
+     * [onSearch]'s contract). For a local list that may be short — the design-workshop picker asks
+     * the server when the term finds nothing here and adds what it finds to [options].
+     */
+    onQueryChange: ((String) -> Unit)? = null,
     onSelect: (String) -> Unit
 ) {
     var sheetOpen by remember { mutableStateOf(false) }
@@ -717,6 +729,7 @@ fun SearchableSelectField(
             createAction = createAction,
             onSearch = onSearch,
             loadMore = loadMore,
+            onQueryChange = onQueryChange,
             onDismiss = { sheetOpen = false },
             onApply = { next -> onSelect(next.firstOrNull().orEmpty()) }
         )
@@ -805,6 +818,8 @@ fun SearchableMultiSelectField(
     bulk: Boolean = true,
     /** See [SearchableSelectField]'s own parameter — same action, same place, same reason. */
     createAction: SelectCreateAction? = null,
+    /** See [SearchableSelectField.onQueryChange]. */
+    onQueryChange: ((String) -> Unit)? = null,
     onSelectedChange: (Set<String>) -> Unit
 ) {
     var sheetOpen by remember { mutableStateOf(false) }
@@ -909,6 +924,7 @@ fun SearchableMultiSelectField(
             emptyMessage = emptyMessage,
             createAction = createAction,
             bulk = bulk,
+            onQueryChange = onQueryChange,
             onDismiss = { sheetOpen = false },
             onApply = onSelectedChange
         )
@@ -1086,6 +1102,8 @@ private fun SearchablePickerSheet(
     loadMore: SelectLoadMore? = null,
     /** See [SearchableMultiSelectSheet.note]. */
     note: String? = null,
+    /** See [SearchableSelectField.onQueryChange]. */
+    onQueryChange: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
     onApply: (Set<String>) -> Unit
 ) {
@@ -1133,6 +1151,7 @@ private fun SearchablePickerSheet(
     fun setQuery(next: String) {
         query = next
         onSearch?.invoke(next)
+        onQueryChange?.invoke(next)
     }
 
     fun commitSingle(value: String) {

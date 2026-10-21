@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DwDecodeResult
 import com.designprototype.workshop.data.DwFieldType
+import com.designprototype.workshop.data.DW_REFERENCE_PAGE
 import com.designprototype.workshop.data.DwReferenceList
 import com.designprototype.workshop.data.DwReferenceOption
 import com.designprototype.workshop.data.DwReferenceResponseDto
@@ -69,9 +70,11 @@ import com.designprototype.workshop.ui.SearchableMultiSelectField
 import com.designprototype.workshop.ui.SearchableSelectField
 import com.designprototype.workshop.ui.SelectCreateAction
 import com.designprototype.workshop.ui.SelectOption
+import com.designprototype.workshop.ui.selectOptionsMatch
 // The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -630,6 +633,17 @@ internal fun DwReferenceSelectField(
     }
 
     /** The word for this model, or null when it is not one a picker may create — see [INLINE_CREATABLE]. */
+    var searchTerm by remember(field.key) { mutableStateOf("") }
+    DwReferenceSearchOnMiss(
+        term = searchTerm,
+        options = options,
+        field = field,
+        bridge = bridge,
+        parentId = parentId,
+        active = !needsParent,
+        onList = { list = it },
+    )
+
     val noun = INLINE_CREATABLE[field.refModel]
     val inlineHost = bridge?.inlineRecords?.takeIf { noun != null && enabled }
 
@@ -750,7 +764,7 @@ internal fun DwReferenceSelectField(
     val scannable = remember(field.refModel) { dwScannableRecordType(field.refModel) }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        // The help line and the field's "i" — the same caption every other field draws (DW-14).
+        // The help line — the same caption every other field draws; holding the field opens its details.
         FieldCaption(field)
 
         if (needsParent) {
@@ -782,6 +796,7 @@ internal fun DwReferenceSelectField(
             } else {
                 null
             },
+            onQueryChange = { searchTerm = it },
             onSelect = { chosen -> choose(chosen) }
         )
 
@@ -996,11 +1011,22 @@ internal fun DwReferenceMultiSelectField(
             selected.filterNot { it in known }.map { held -> heldOption(held) }
     }
 
+    var searchTerm by remember(field.key) { mutableStateOf("") }
+    DwReferenceSearchOnMiss(
+        term = searchTerm,
+        options = options,
+        field = field,
+        bridge = bridge,
+        parentId = parentId,
+        active = !needsParent,
+        onList = { list = it },
+    )
+
     val noun = INLINE_CREATABLE[field.refModel]
     val inlineHost = bridge?.inlineRecords?.takeIf { noun != null && enabled && !needsParent }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        // The help line and the field's "i" — the same caption every other field draws (DW-14).
+        // The help line — the same caption every other field draws; holding the field opens its details.
         FieldCaption(field)
         if (needsParent) {
             Text(
@@ -1054,6 +1080,7 @@ internal fun DwReferenceMultiSelectField(
             } else {
                 null
             },
+            onQueryChange = { searchTerm = it },
             onSelectedChange = { chosen ->
                 // Written back in the LIST's order rather than the tick order, so two designers who
                 // chose the same three artisans produce the same stored array and the report's list
@@ -1076,6 +1103,49 @@ internal fun DwReferenceMultiSelectField(
  * be created; the same list refreshed nine days ago means nothing of the kind. Leaving them to guess
  * is how a duplicate artisan record gets made in the field.
  */
+/**
+ * A typed search that finds nothing on this device asks the server, and what it finds joins the
+ * list (and the cached copy, for offline). Waits for a pause in typing, and only for two or more
+ * characters, so a picker over a whole register costs no request while it is matching locally.
+ */
+@Composable
+private fun DwReferenceSearchOnMiss(
+    term: String,
+    options: List<SelectOption>,
+    field: FieldDto,
+    bridge: DwReferenceBridge?,
+    parentId: String,
+    active: Boolean,
+    onList: (DwReferenceList) -> Unit,
+) {
+    val context = LocalContext.current
+    LaunchedEffect(term, options, parentId, active) {
+        val query = term.trim()
+        if (bridge == null || !active || query.length < 2 || field.refModel.isBlank()) return@LaunchedEffect
+        if (selectOptionsMatch(options, query)) return@LaunchedEffect
+        delay(DW_REFERENCE_SEARCH_DEBOUNCE_MS)
+        val found = bridge.repository.designWorkshopReferenceSearch(
+            workshopId = bridge.workshopId,
+            model = field.refModel,
+            scope = field.refScope,
+            search = query,
+            limit = DW_REFERENCE_PAGE,
+            filterValue = parentId,
+        )?.options.orEmpty()
+        if (found.isEmpty()) return@LaunchedEffect
+        bridge.repository.designWorkshopReferenceMerge(
+            context = context,
+            workshopId = bridge.workshopId,
+            model = field.refModel,
+            scope = field.refScope,
+            filterValue = parentId,
+            found = found,
+        )?.let(onList)
+    }
+}
+
+internal const val DW_REFERENCE_SEARCH_DEBOUNCE_MS = 350L
+
 @Composable
 private fun ReferenceProvenance(
     list: DwReferenceList?,
