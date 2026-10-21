@@ -83,6 +83,7 @@ import com.designprototype.workshop.data.DW_COPYABLE_STAGES
 import com.designprototype.workshop.data.DW_PARTICIPANTS_STAGE
 import com.designprototype.workshop.data.dwCopiesAfterPush
 import com.designprototype.workshop.data.dwCopyIntoEmpty
+import com.designprototype.workshop.data.designerPrefillIntoEmpty
 import com.designprototype.workshop.data.dwPendingCopies
 import com.designprototype.workshop.data.DW_ROW_KEY_SEPARATOR
 import com.designprototype.workshop.data.DW_ROW_REFUSAL_KEY
@@ -1238,6 +1239,32 @@ private fun StageScreenBody(
                 deletedRows = deletedRows,
                 syncable = syncId != null,
             )
+        }
+    }
+
+    /*
+      THE DESIGNER'S PROFILE, INTO THE BOXES OF THIS STAGE THAT ARE STILL EMPTY — once per open.
+
+      The server copies the profile when a workshop is created or a designer is assigned, but a profile
+      filled in AFTER that, or a workshop started on this phone with no signal, reached no stage at all.
+      So every open asks [WorkshopRepository.designerPrefillFor] (the server's answer, its cached copy,
+      or the phone's own cached profile for a workshop it started) and fills EMPTY boxes only. A box
+      holding anything, typed or copied, is never touched. It goes through [edit], so it is saved and
+      sent like any other change.
+    */
+    var prefillDone by remember(workshopId, stageKey) { mutableStateOf(false) }
+    LaunchedEffect(workshopId, stageKey, loading) {
+        if (loading || prefillDone) return@LaunchedEffect
+        val spec = stage ?: return@LaunchedEffect
+        prefillDone = true
+        val values = runCatching { repository.designerPrefillFor(appContext, workshopId, syncId) }
+            .getOrDefault(emptyMap())
+        if (values.isEmpty()) return@LaunchedEffect
+        // Re-checked against the state as it is NOW, after the network wait: a box typed into
+        // meanwhile stays the designer's.
+        val filled = designerPrefillIntoEmpty(spec, state.singleton, values)
+        if (filled.isNotEmpty()) {
+            edit { current -> current.copy(singleton = current.singleton.putAll(designerPrefillIntoEmpty(spec, current.singleton, filled))) }
         }
     }
 

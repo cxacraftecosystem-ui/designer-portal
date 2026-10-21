@@ -2838,6 +2838,25 @@ async def get_stage_assist(
     return await load_assist(record, stage_key)
 
 
+@router.get("/{workshop_id}/designer-prefill")
+async def get_designer_prefill(
+    workshop_id: str, current_user: Any = Depends(get_current_user)
+) -> dict[str, Any]:
+    """The designer-profile values this workshop's stages start from, keyed by field key.
+
+    Read-only. Clients copy each value into a box only while that box is EMPTY, so nothing typed is
+    ever overwritten. See ``design_workshop_oversight.designer_prefill_for_workshop``.
+    """
+    from app.services.design_workshop_oversight import designer_prefill_for_workshop
+
+    record = await load_workshop_or_404(workshop_id, current_user)
+    designer_id, values = await designer_prefill_for_workshop(record)
+    return {
+        "designerId": designer_id,
+        "values": {key: value for key, value in values.items() if value not in (None, "", [])},
+    }
+
+
 @router.get("/{workshop_id}/provenance")
 async def workshop_provenance(
     workshop_id: str, current_user: Any = Depends(get_current_user)

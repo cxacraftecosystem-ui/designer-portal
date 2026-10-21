@@ -408,7 +408,9 @@ async def test_a_datetime_column_reaches_a_date_field_as_a_plain_yyyy_mm_dd(monk
     # The lookup is still by the profile's unique key. A prefill keyed on anything a second account
     # can share would seed one designer's institution, phone number and signature into another
     # designer's report.
-    assert designers.db.designerprofile.calls == [({"userId": "user-latha"}, {"user": True})]
+    assert designers.db.designerprofile.calls == [
+        ({"userId": "user-latha"}, {"user": True, "location": True})
+    ]
 
 
 async def test_every_prefilled_value_survives_the_coercion_that_seeds_it(monkeypatch):

@@ -1447,6 +1447,10 @@ interface WorkshopRepositoryApi {
     @GET("design-workshops/{id}")
     suspend fun designWorkshop(@Path("id") id: String): DesignWorkshopDetailDto
 
+    // The designer profile values this workshop's stages start from (`designers.PREFILL_MAP`). See DesignerPrefill.kt.
+    @GET("design-workshops/{id}/designer-prefill")
+    suspend fun designWorkshopDesignerPrefill(@Path("id") id: String): DesignerPrefillDto
+
     // Soft delete: the row and every stage entry stay, only `deletedAt` is set. Returns 204, so the
     // response is typed as bare Unit rather than a body that does not exist.
     @DELETE("design-workshops/{id}")

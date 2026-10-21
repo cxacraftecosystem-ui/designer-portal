@@ -1616,6 +1616,28 @@ async def _the_lead_among(
     return matches[0] if len(matches) == 1 else None
 
 
+async def designer_prefill_for_workshop(workshop: Any) -> tuple[str | None, dict[str, Any]]:
+    """Whose profile fills this workshop's designer boxes, and what it says.
+
+    The lead designer (:func:`_the_lead_among`); else the one named designer when there is exactly
+    one besides the creator; else the creator — the same profile ``seed_designer_prefill`` copies at
+    creation. Read-only: clients fill EMPTY boxes from ``values`` when a stage opens.
+    """
+    from app.services.designers import prefill_from_profile
+
+    rows = await design_workshop_viewers.viewer_rows(getattr(workshop, "id", ""))
+    lead = await _the_lead_among(workshop, rows)
+    creator_id = str(getattr(workshop, "createdById", "") or "") or None
+    if lead is not None:
+        user_id: str | None = lead["userId"]
+    else:
+        others = [row["userId"] for row in rows if row["userId"] != creator_id]
+        user_id = others[0] if len(others) == 1 else creator_id
+    if not user_id:
+        return None, {}
+    return user_id, await prefill_from_profile(user_id) or {}
+
+
 async def named_designer_rows(workshop: Any) -> list[dict[str, Any]]:
     """Who may open this workshop, and which of them the report names. **THE READ THE SCREEN OWED.**
 

@@ -756,7 +756,7 @@ fun DesignerProfileScreen(
     LaunchedEffect(targetUserId) {
         loading = true
         loadFailed = false
-        runCatching { repository.designerProfile(targetUserId) }
+        runCatching { repository.designerProfile(targetUserId, context) }
             .onSuccess { stored ->
                 // Null is the ORDINARY state of a designer who has signed in and never opened this
                 // screen: the row is created by the first save. An empty form is the correct

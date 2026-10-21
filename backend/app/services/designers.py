@@ -1482,6 +1482,26 @@ def _fold_to_one_line(text: str) -> str:
     return " ".join(part for part in lines if part)
 
 
+#: Profile column -> the ``Location`` attributes that answer it when the column is blank, in order.
+_LOCATION_FALLBACK: dict[str, tuple[str, ...]] = {
+    "addressLine": ("address",),
+    "city": ("district", "placeName"),
+    "state": ("state",),
+    "pincode": ("pincode",),
+}
+
+
+def _location_fallback(location: Any, column: str) -> str | None:
+    """The first non-blank ``Location`` attribute standing in for ``column``, or None."""
+    if location is None:
+        return None
+    for attribute in _LOCATION_FALLBACK.get(column, ()):
+        value = getattr(location, attribute, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
 async def prefill_from_profile(user_id: str) -> dict[str, Any]:
     """The stage-1 and stage-3 values a workshop this user creates should START with.
 
@@ -1509,7 +1529,7 @@ async def prefill_from_profile(user_id: str) -> dict[str, Any]:
     chore this exists to remove.
     """
     profile = await db.designerprofile.find_unique(
-        where={"userId": user_id}, include={"user": True}
+        where={"userId": user_id}, include={"user": True, "location": True}
     )
     if profile is None:
         return {}
@@ -1517,6 +1537,10 @@ async def prefill_from_profile(user_id: str) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for column, field_key in PREFILL_MAP:
         value = getattr(profile, column, None)
+        if value in (None, "") and column in _LOCATION_FALLBACK:
+            # The address the designer stated through the profile's Location card, used only where
+            # the matching column is blank: a typed column always wins.
+            value = _location_fallback(getattr(profile, "location", None), column)
         if column == "phone":
             value = compose_phone(getattr(profile, "phoneCountryCode", None), value)
         if isinstance(value, str):

@@ -105,6 +105,7 @@ import { useLeaveInterceptor } from "@/components/UnsavedChangesGuard";
 import { UploadTray } from "@/components/media/UploadTray";
 import { UploadsProvider } from "@/lib/uploads";
 import { ApiError } from "@/lib/api";
+import { loadDesignerPrefill, prefillPatch } from "@/lib/designerPrefill";
 import {
   DW_COPYABLE_STAGES,
   confirmCopiedFields,
@@ -675,6 +676,8 @@ function DesignWorkshopStagePageBody({
    * no-op `setState` (`setRemovedFrom([])` after a successful save) re-marking a stage unsent.
    */
   const banked = useRef<StageSnapshot | null>(null);
+  /** Bumped by every `seed`, so the designer-profile prefill re-checks the boxes a seed just drew. */
+  const [seedTick, setSeedTick] = useState(0);
   /**
    * The rows of this stage the REPOSITORY could be holding, by entity key — what makes a removal a
    * deletion rather than a change of mind.
@@ -807,6 +810,7 @@ function DesignWorkshopStagePageBody({
       // describes. Until this is set, no autosave can run at all — which is what makes seeding
       // unable to mark a stage edited. See {@link banked}.
       banked.current = { singleton: data.singleton, collections: data.collections, custom: held, removedFrom: removed };
+      setSeedTick((tick) => tick + 1);
       // WHICH OF THESE ROWS COULD BE ON THE SERVER — read off the same draft record the boxes were
       // just filled from, so the two can never describe different stages. Empty for a stage that has
       // neither been read from the repository nor pushed to it: nothing in it has ever crossed the
@@ -1288,6 +1292,27 @@ function DesignWorkshopStagePageBody({
     setSingleton((current) => ({ ...current, ...values }));
     dropCopyMarks(Object.keys(values));
   }, [dropCopyMarks]);
+
+  /*
+    THE DESIGNER'S PROFILE, INTO THE EMPTY BOXES OF THIS STAGE — once per seed, after the form is on
+    screen. Emptiness is re-checked against the state at the moment of writing, so a box typed into
+    while the request was in flight keeps what was typed. The write differs from `banked`, so the
+    ordinary autosave banks and sends it. A frozen workshop is never written.
+  */
+  useEffect(() => {
+    if (loading || !stage || !serverId || frozenReason || !banked.current) return;
+    let cancelled = false;
+    void loadDesignerPrefill(serverId).then((prefill) => {
+      if (cancelled || !prefill) return;
+      setSingleton((current) => {
+        const patch = prefillPatch(stage, current, prefill.values);
+        return Object.keys(patch).length ? { ...current, ...patch } : current;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, stage, serverId, frozenReason, seedTick]);
 
   /**
    * C9: the boxes holding copied text that is not counted yet — copied on this device and not yet

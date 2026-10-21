@@ -3091,10 +3091,57 @@ class WorkshopRepository(
      * created by the first save. Reporting that as an error would greet every new designer with a
      * red line on the screen they were sent to fill in.
      */
-    suspend fun designerProfile(userId: String? = null): DesignerProfileDto? = try {
-        if (userId == null) api.myDesignerProfile() else api.designerProfile(userId)
+    suspend fun designerProfile(userId: String? = null, context: Context? = null): DesignerProfileDto? = try {
+        if (userId == null) {
+            api.myDesignerProfile().also { own -> rememberOwnDesignerProfile(context, own) }
+        } else {
+            api.designerProfile(userId)
+        }
     } catch (e: HttpException) {
         if (e.code() == 404) null else throw e
+    }
+
+    /** Keeps the signed-in designer's own profile on the phone, for offline stage prefill. */
+    private fun rememberOwnDesignerProfile(context: Context?, profile: DesignerProfileDto) {
+        val target = (context ?: appContextForReplay)?.applicationContext ?: return
+        val me = cachedUser()?.id.orEmpty()
+        if (me.isBlank()) return
+        if (profile.userId.isNotBlank() && profile.userId != me) return
+        DesignerPrefillCache.saveOwnProfile(target, me, profile)
+    }
+
+    /**
+     * The designer-profile values this workshop's stages should start from, by field key.
+     *
+     * Online with a server id: the server's answer, cached per workshop. Otherwise the cached answer.
+     * Failing both, a workshop this phone started for its own signed-in designer (local id, and no
+     * other designer named on the draft) maps the cached own profile with [designerPrefillFromProfile].
+     * Anything else answers empty: another designer's details are never guessed from this account.
+     */
+    suspend fun designerPrefillFor(
+        context: Context,
+        localWorkshopId: String,
+        serverId: String?,
+    ): Map<String, JsonElement> {
+        if (!serverId.isNullOrBlank()) {
+            if (isOnline(context)) {
+                val answer = runCatching { api.designWorkshopDesignerPrefill(serverId) }.getOrNull()
+                if (answer != null) {
+                    DesignerPrefillCache.saveWorkshop(context, serverId, answer.values)
+                    return answer.values
+                }
+            }
+            DesignerPrefillCache.workshop(context, serverId)?.let { return it }
+        }
+        if (!isLocalOnlyWorkshop(localWorkshopId)) return emptyMap()
+        val me = cachedUser() ?: return emptyMap()
+        val draft = WorkshopDraftStore.load(context, localWorkshopId)
+        val owner = draft?.ownerUserId
+        val lead = draft?.designerUserId
+        if (!owner.isNullOrBlank() && owner != me.id) return emptyMap()
+        if (!lead.isNullOrBlank() && lead != me.id) return emptyMap()
+        val profile = DesignerPrefillCache.ownProfile(context, me.id) ?: DesignerProfileDto()
+        return designerPrefillFromProfile(profile, me.name)
     }
 
     /**
@@ -3115,11 +3162,17 @@ class WorkshopRepository(
     ): DesignerProfileDto? {
         if (isOnline(context)) {
             try {
-                return saveDesignerProfile(userId, body)
+                return saveDesignerProfile(userId, body, context)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 if (!isTransient(e)) throw e
+            }
+        }
+        if (userId == null) {
+            // Queued, not yet sent: the stage prefill on this phone should already see what was typed.
+            cachedUser()?.id?.takeIf { it.isNotBlank() }?.let { me ->
+                DesignerPrefillCache.saveOwnProfile(context, me, body.asProfile(DesignerPrefillCache.ownProfile(context, me)))
             }
         }
         val payload = kotlinx.serialization.json.buildJsonObject {
@@ -3142,11 +3195,12 @@ class WorkshopRepository(
 
     suspend fun saveDesignerProfile(
         userId: String?,
-        body: DesignerProfileUpdateBody
+        body: DesignerProfileUpdateBody,
+        context: Context? = null,
     ): DesignerProfileDto {
         val encoded = designerProfileUpdateJson(body)
         return if (userId == null) {
-            api.updateMyDesignerProfile(encoded)
+            api.updateMyDesignerProfile(encoded).also { own -> rememberOwnDesignerProfile(context, own) }
         } else {
             api.updateDesignerProfile(userId, encoded)
         }
