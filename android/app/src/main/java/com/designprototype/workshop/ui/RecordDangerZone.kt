@@ -33,7 +33,7 @@ import kotlinx.coroutines.launch
 /**
  * The "Danger zone" card that ends a record's page: its Delete, behind a confirmation.
  *
- * Identical in designer-portal and documentation-portal apart from the package line, so the two apps
+ * Identical in designer-portal and documentation-portal apart from the package and import lines, so the two apps
  * delete a record with the same card, words and gate. Drawn for content admins
  * ([FieldPermissions.isContentAdmin]: Admin, Master Admin, Ministry Admin) with admin view on —
  * [contentAdminChrome], the gate every other delete on the handset reads — and for nobody else; the
