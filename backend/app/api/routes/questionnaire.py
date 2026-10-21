@@ -509,6 +509,26 @@ async def replace_interview_artisans(
         )
 
 
+ANSWER_OWNED_BY_OTHER = "ANSWER_OWNED_BY_OTHER"
+
+
+def answer_owned_by_other_detail(question_ids: list[str]) -> dict[str, Any]:
+    """The 403 body for answers somebody else wrote: a code, a sentence, and which questions."""
+    one = len(set(question_ids)) == 1
+    return {
+        "code": ANSWER_OWNED_BY_OTHER,
+        "message": (
+            ("Another researcher wrote this answer. Only they or an admin can change it.")
+            if one
+            else (
+                f"Another researcher wrote {len(set(question_ids))} of these answers. "
+                "Only they or an admin can change them."
+            )
+        ),
+        "questionIds": sorted(set(question_ids)),
+    }
+
+
 async def upsert_responses(
     interview_id: str, responses: list[Any], current_user: Any, *, client: Any = None
 ) -> None:
@@ -581,6 +601,7 @@ async def upsert_responses(
     # researcher typed, and first-wins would contradict the update branch below, where two entries
     # for one stored row simply run two updates and the later one stands.
     deduped = {response.questionId: response for response in responses}
+    conflicts: list[str] = []
     for response in deduped.values():
         existing = by_question.get(response.questionId)
         if existing is None:
@@ -594,16 +615,18 @@ async def upsert_responses(
                 }
             )
             continue
+        # UNCHANGED FIRST, AUTHORSHIP SECOND (H4, 21 Oct 2026). Both clients send every answer they
+        # hold, so a second researcher adding to a shared interview re-sent the first one's answers
+        # word for word, and the authorship rule refused the whole save over rows it was never going
+        # to write. An identical answer changes nothing and is nobody's to refuse.
+        if existing.answerText == response.answerText and existing.notes == response.notes:
+            continue
         if (
             existing.answerText
             and existing.answeredById != current_user.id
             and not is_content_admin(current_user)
         ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the original answer contributor or an admin can change this response",
-            )
-        if existing.answerText == response.answerText and existing.notes == response.notes:
+            conflicts.append(response.questionId)
             continue
         to_update.append(
             (
@@ -620,6 +643,14 @@ async def upsert_responses(
                     ),
                 },
             )
+        )
+
+    if conflicts:
+        # EVERY conflicting question, named, so a client can offer "send without these" instead of
+        # a dead end (the Android outbox parked such a sitting for good). Raised before any write.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=answer_owned_by_other_detail(conflicts),
         )
 
     # Validation for the WHOLE batch has already run, so nothing below can leave a half-written set.
@@ -1208,10 +1239,15 @@ async def merge_into_interview(
     # Only the QUESTIONS are checked here. The artisans are not this path's to judge — the set is
     # whatever the canonical row already holds, and this fold does not rewrite the links.
     await assert_referenced_records_exist([], payload.responses)
-    if fill:
-        canonical = await db.questionnaireinterview.update(where={"id": existing.id}, data=fill)
-    if payload.responses:
-        await upsert_responses(existing.id, payload.responses, current_user)
+    # ONE TRANSACTION FOR THE FILL AND THE ANSWERS (H4, 21 Oct 2026). The 403 ``upsert_responses``
+    # raises for an answer somebody else wrote used to arrive with the scalar fill already committed.
+    async with db.tx() as tx:
+        if fill:
+            canonical = await tx.questionnaireinterview.update(
+                where={"id": existing.id}, data=fill
+            )
+        if payload.responses:
+            await upsert_responses(existing.id, payload.responses, current_user, client=tx)
     await hydrate_relations([canonical], RELATIONS)
     # The viewer, so the client that just folded into the shared entry can DRAW its recordings rather
     # than being told they exist. See the banner above ``_DUPLICATE_SET_DETAIL``.
