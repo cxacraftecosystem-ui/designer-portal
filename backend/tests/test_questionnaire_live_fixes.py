@@ -12,7 +12,7 @@
   caller may not read every sitting;
 * **M17** a notes-only answer counts as answered, so its question is retired and not deleted.
 
-Needs a LOCAL Postgres (``checks.yml``'s on-demand ``backend-db`` job provides one); skips otherwise.
+Needs a LOCAL Postgres (``checks.yml``'s Backend integration tests job provides one); skips otherwise.
 """
 
 import os

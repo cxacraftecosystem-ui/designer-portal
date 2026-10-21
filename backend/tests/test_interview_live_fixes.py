@@ -7,7 +7,7 @@
   keeps its answers, frees its artisan set, and a content admin restores it (409 when another live
   interview took the set meanwhile).
 
-Needs a LOCAL Postgres (``checks.yml``'s on-demand ``backend-db`` job provides one); skips otherwise.
+Needs a LOCAL Postgres (``checks.yml``'s Backend integration tests job provides one); skips otherwise.
 """
 
 import os
