@@ -994,13 +994,7 @@ async def read_questionnaire(
     not exist and the API handed it over.
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
-    entitled = (
-        record.ownerId == current_user.id
-        or is_content_admin(current_user)
-        # A co-designer on the workshop this form belongs to. See the helper for why the sittings
-        # come with it rather than being withheld.
-        or await _works_on_this_questionnaires_workshop(record, current_user)
-    )
+    entitled = await _sees_every_sitting(record, current_user)
     mine_only = None if entitled else current_user.id
     form = await load_form(
         questionnaire_id, include_retired=includeRetired, only_entries_of=mine_only
@@ -1665,6 +1659,18 @@ async def update_entry(
     return public_encode(entry)
 
 
+async def _sees_every_sitting(record: Any, user: Any) -> bool:
+    """May this account read every sitting of this form, or only its own? One answer for the read
+    and for the answers PUT, so the second cannot hand back what the first withholds (audit M6)."""
+    return (
+        record.ownerId == user.id
+        or is_content_admin(user)
+        # A co-designer on the workshop this form belongs to. See the helper for why the sittings
+        # come with it rather than being withheld.
+        or await _works_on_this_questionnaires_workshop(record, user)
+    )
+
+
 @router.put("/{questionnaire_id}/entries/{entry_id}/answers")
 async def record_answers(
     questionnaire_id: str,
@@ -1691,6 +1697,12 @@ async def record_answers(
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=False
     )
+    # AN EMPTY BATCH IS REFUSED (audit M6). It wrote nothing and answered with every answer of the
+    # sitting, so it was a read of somebody else's sitting that ``GET /{id}`` withholds.
+    if not payload.answers:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="There are no answers to save."
+        )
     try:
         result = await save_answers(
             entry, payload.answers, user_id=current_user.id, is_admin=is_content_admin(current_user)
@@ -1699,7 +1711,14 @@ async def record_answers(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-    answers = await db.questionnaireformanswer.find_many(where={"entryId": entry.id})
+    where: dict[str, Any] = {"entryId": entry.id}
+    # The same narrowing as the read: a sitting that is not the caller's, on a form whose sittings
+    # they may not all see, answers with the caller's own rows only.
+    if entry.createdById != current_user.id and not await _sees_every_sitting(
+        record, current_user
+    ):
+        where["answeredById"] = current_user.id
+    answers = await db.questionnaireformanswer.find_many(where=where)
     return public_encode({"saved": result, "answers": answers})
 
 

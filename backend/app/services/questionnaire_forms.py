@@ -1848,9 +1848,15 @@ async def save_answers(
     RETIRED QUESTIONS ARE REFUSED. A question that has been superseded or retired keeps the answers
     it already has, and must not collect new ones — otherwise the wording a designer deliberately
     replaced quietly carries on gathering evidence.
+
+    PER ITEM, NOT PER BATCH (audit M5, 21 Oct 2026). One retired question, or one answer somebody
+    else wrote, used to refuse the whole section with a sentence that did not say which answer. Now
+    each such answer comes back in ``rejected`` (``questionId``, ``code``, ``message``) and every
+    other answer in the batch is saved. Unknown or foreign question ids still refuse the batch: that
+    is a malformed request, not one answer a person can fix.
     """
     if not answers:
-        return {"created": 0, "updated": 0, "unchanged": 0}
+        return {"created": 0, "updated": 0, "unchanged": 0, "rejected": []}
 
     question_ids = sorted({a.questionId for a in answers if a.questionId})
     existing_rows, questions = await gather_reads(
@@ -1876,17 +1882,12 @@ async def save_answers(
         # The failure this prevents: an answer sheet for questionnaire A quietly accumulating
         # answers to questionnaire B's questions, which then appear in A's export.
         raise QuestionnaireEditError("Some of those questions belong to a different questionnaire.")
-    retired = [q.prompt for q in questions if not q.isActive]
-    if retired:
-        raise QuestionnaireEditError(
-            "These questions have been retired and can no longer be answered: "
-            + "; ".join(retired[:3])
-            + ("…" if len(retired) > 3 else "")
-        )
+    retired = {q.id for q in questions if not q.isActive}
 
     by_question = {row.questionId: row for row in existing_rows}
     to_create: list[dict[str, Any]] = []
     to_update: list[tuple[str, dict[str, Any]]] = []
+    rejected: list[dict[str, str]] = []
     unchanged = 0
     # ONE ENTRY PER QUESTION, LAST WINS — the same collapse the validation above already performs
     # with ``sorted({...})``. ``QuestionnaireFormAnswer`` is UNIQUE on ``(entryId, questionId)``, so a
@@ -1897,6 +1898,20 @@ async def save_answers(
     deduped = {answer.questionId: answer for answer in answers}
     for answer in deduped.values():
         current = by_question.get(answer.questionId)
+        unchanged_here = (
+            current is not None
+            and current.answerText == answer.answerText
+            and current.notes == answer.notes
+        )
+        if answer.questionId in retired and not unchanged_here:
+            rejected.append(
+                {
+                    "questionId": answer.questionId,
+                    "code": QUESTION_RETIRED,
+                    "message": "This question was retired, so it takes no new answers.",
+                }
+            )
+            continue
         if current is None:
             to_create.append(
                 {
@@ -1908,12 +1923,18 @@ async def save_answers(
                 }
             )
             continue
-        if current.answerText and current.answeredById != user_id and not is_admin:
-            raise QuestionnaireEditError(
-                "Only the person who recorded this answer, or an admin, can change it."
-            )
-        if current.answerText == answer.answerText and current.notes == answer.notes:
+        # Unchanged first: re-sending somebody else's answer word for word changes nothing.
+        if unchanged_here:
             unchanged += 1
+            continue
+        if current.answerText and current.answeredById != user_id and not is_admin:
+            rejected.append(
+                {
+                    "questionId": answer.questionId,
+                    "code": ANSWER_OWNED_BY_OTHER,
+                    "message": "Someone else recorded this answer. Only they or an admin can change it.",
+                }
+            )
             continue
         to_update.append(
             (
@@ -1931,4 +1952,14 @@ async def save_answers(
         await db.questionnaireformanswer.create_many(data=to_create)
     for row_id, data in to_update:
         await db.questionnaireformanswer.update(where={"id": row_id}, data=data)
-    return {"created": len(to_create), "updated": len(to_update), "unchanged": unchanged}
+    return {
+        "created": len(to_create),
+        "updated": len(to_update),
+        "unchanged": unchanged,
+        "rejected": rejected,
+    }
+
+
+#: Per-item refusal codes in ``save_answers``'s ``rejected`` list (UPPER_SNAKE, as the shared design).
+QUESTION_RETIRED = "QUESTION_RETIRED"
+ANSWER_OWNED_BY_OTHER = "ANSWER_OWNED_BY_OTHER"

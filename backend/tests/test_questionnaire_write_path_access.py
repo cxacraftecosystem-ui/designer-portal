@@ -343,7 +343,7 @@ def test_the_owner_still_records_sittings_and_answers_on_their_own_attached_form
         headers=_as(env, "lead"),
     )
     assert answers.status_code == 200, answers.text
-    assert answers.json()["saved"] == {"created": 1, "updated": 0, "unchanged": 0}
+    assert answers.json()["saved"] == {"created": 1, "updated": 0, "unchanged": 0, "rejected": []}
 
 
 def test_any_designer_still_answers_an_unattached_form_handed_to_them(client, env):
@@ -368,7 +368,7 @@ def test_any_designer_still_answers_an_unattached_form_handed_to_them(client, en
         headers=_as(env, "outsider"),
     )
     assert answers.status_code == 200, answers.text
-    assert answers.json()["saved"] == {"created": 1, "updated": 0, "unchanged": 0}
+    assert answers.json()["saved"] == {"created": 1, "updated": 0, "unchanged": 0, "rejected": []}
 
 
 def test_the_gate_is_the_grant_and_revoking_it_stops_the_writes_too(client, env):

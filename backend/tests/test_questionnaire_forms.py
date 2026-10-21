@@ -741,8 +741,16 @@ async def test_a_retired_question_cannot_collect_new_answers(client, world):
         json={"answers": [{"questionId": original["id"], "answerText": "4"}]},
         headers=_headers(world),
     )
-    assert response.status_code == 422, response.text
-    assert "retired" in response.json()["detail"]
+    # PER ITEM since audit M5 (21 Oct 2026): the answer comes back rejected, named and coded, and
+    # nothing is written for it.
+    assert response.status_code == 200, response.text
+    saved = response.json()["saved"]
+    assert saved["created"] == 0
+    assert [(r["questionId"], r["code"]) for r in saved["rejected"]] == [
+        (original["id"], "QUESTION_RETIRED")
+    ]
+    assert "retired" in saved["rejected"][0]["message"]
+    assert response.json()["answers"] == []
 
 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
@@ -1017,14 +1025,14 @@ async def test_answers_are_recorded_in_the_app_and_saving_twice_changes_nothing(
         headers=_headers(world),
     )
     assert first.status_code == 200, first.text
-    assert first.json()["saved"] == {"created": 2, "updated": 0, "unchanged": 0}
+    assert first.json()["saved"] == {"created": 2, "updated": 0, "unchanged": 0, "rejected": []}
 
     again = client.put(
         f"/api/questionnaires/{created['id']}/entries/{entry['id']}/answers",
         json=batch,
         headers=_headers(world),
     )
-    assert again.json()["saved"] == {"created": 0, "updated": 0, "unchanged": 2}
+    assert again.json()["saved"] == {"created": 0, "updated": 0, "unchanged": 2, "rejected": []}
     assert len(again.json()["answers"]) == 2
 
 
