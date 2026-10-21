@@ -282,6 +282,8 @@ fun QuestionnaireDetailScreen(
 
     val loaded = form
     val mayEdit = remember(loaded?.ownerId) { mayEditQuestionnaire(repository, loaded?.ownerId) }
+    // M2 (21 Oct 2026): removing a question is a delete, and deletes are content admins' alone.
+    val mayDelete = remember { mayDeleteQuestionnaireItems(repository.cachedUser()) }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -426,6 +428,7 @@ fun QuestionnaireDetailScreen(
                 FormCard(
                     form = loaded,
                     mayEdit = mayEdit,
+                    mayDelete = mayDelete,
                     busy = busy,
                     onAddSection = { addingSection = true },
                     onRenameSection = { renamingSection = it },
@@ -1146,6 +1149,7 @@ private fun SittingRow(
 private fun FormCard(
     form: CustomQuestionnaireDto,
     mayEdit: Boolean,
+    mayDelete: Boolean,
     busy: Boolean,
     onAddSection: () -> Unit,
     onRenameSection: (CustomSectionDto) -> Unit,
@@ -1207,6 +1211,7 @@ private fun FormCard(
                         QuestionRow(
                             question = question,
                             mayEdit = mayEdit,
+                            mayDelete = mayDelete,
                             busy = busy,
                             onEdit = { onEditQuestion(question) },
                             onRemove = { onRemoveQuestion(question) },
@@ -1236,6 +1241,7 @@ private fun FormCard(
 private fun QuestionRow(
     question: CustomQuestionDto,
     mayEdit: Boolean,
+    mayDelete: Boolean,
     busy: Boolean,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
@@ -1283,11 +1289,16 @@ private fun QuestionRow(
         // A retired question is offered NO controls at all. Editing one is refused by the server (and
         // the re-upload path says so in as many words), and "deleting" something already gone would
         // only be a way to hit the ON DELETE RESTRICT on its answers.
-        if (mayEdit && question.isActive) {
+        if ((mayEdit || mayDelete) && question.isActive) {
             ActionRow {
-                TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, style = MaterialTheme.typography.labelMedium) }
-                TextButton(onClick = onRemove, enabled = !busy) {
-                    Text(if (question.hasAnswers) "Retire" else "Delete", style = MaterialTheme.typography.labelMedium)
+                if (mayEdit) {
+                    TextButton(onClick = onEdit, enabled = !busy) { Text(RecordOpen.UPDATE_LABEL, style = MaterialTheme.typography.labelMedium) }
+                }
+                // M2: content admins only, the server's rule on every path.
+                if (mayDelete) {
+                    TextButton(onClick = onRemove, enabled = !busy) {
+                        Text(if (question.hasAnswers) "Retire" else "Delete", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }
