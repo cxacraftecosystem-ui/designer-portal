@@ -137,9 +137,9 @@ async def rich_world(user: Any, t: str) -> dict[str, Any]:
     slot = 1_000_000 + int(t[:6], 16) * 2
     s1 = await db.questionnairesection.create(data={"code": f"Z{t}1", "title": "S1", "sortOrder": slot})
     s2 = await db.questionnairesection.create(data={"code": f"Z{t}2", "title": "S2", "sortOrder": slot + 1})
-    await db.questionnairesectionstatus.create(data={"artisanId": keep.id, "sectionId": s1.id, "status": "DONE", "setById": user.id})
-    await db.questionnairesectionstatus.create(data={"artisanId": gone.id, "sectionId": s1.id, "status": "SKIPPED", "setById": user.id})
-    await db.questionnairesectionstatus.create(data={"artisanId": gone.id, "sectionId": s2.id, "status": "DONE", "setById": user.id})
+    await db.questionnairesectionstatus.create(data={"artisanId": keep.id, "sectionId": s1.id, "status": "COMPLETED", "setById": user.id})
+    await db.questionnairesectionstatus.create(data={"artisanId": gone.id, "sectionId": s1.id, "status": "NEEDS_REDO", "setById": user.id})
+    await db.questionnairesectionstatus.create(data={"artisanId": gone.id, "sectionId": s2.id, "status": "COMPLETED", "setById": user.id})
     await db.recordrevision.create(data={"recordType": "artisan", "recordId": gone.id, "editedById": user.id, "changes": Json({"phone": {"old": None, "new": "(value recorded)"}})})
     await db.reviewlog.create(data={"recordType": "ARTISAN", "recordId": gone.id, "status": "APPROVED", "reviewerId": user.id})
     await db.entrycomment.create(data={"recordType": "artisan", "recordId": gone.id, "authorId": user.id, "body": "Check the photo"})
