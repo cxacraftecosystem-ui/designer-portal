@@ -979,6 +979,7 @@ async def list_tasks(
     assigneeId: str | None = Query(None),
     batchId: str | None = Query(None),
     withDerived: bool = Query(True),
+    withStatusCounts: bool = Query(False),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -988,6 +989,11 @@ async def list_tasks(
     Every item carries its resolved workshop title, artisan names and section codes/titles plus
     both the reported and the derived progress, so a task board renders from this one call. Pass
     ``withDerived=false`` to skip the data-backed counts when only the list itself is needed.
+
+    ``withStatusCounts=true`` adds ``statusCounts`` — every status's total under the same filters
+    WITHOUT the status filter, i.e. exactly what ``total`` would be for each status asked one by one.
+    The task board's filter chips used to spend four whole list requests (``pageSize=1``) on those
+    numbers; this is one ``GROUP BY`` beside the page.
     """
     if view not in VIEWS:
         raise HTTPException(
@@ -1018,7 +1024,7 @@ async def list_tasks(
     page, page_size, skip = normalize_pagination(page, pageSize)
     # Count and page together — the shape ``records.count_and_page`` exists for, spelled out here
     # because this read needs ``include=INCLUDE`` and that helper takes ``relations``.
-    total, tasks = await gather_reads(
+    reads: list[Any] = [
         db.assignedtask.count(where=where),
         db.assignedtask.find_many(
             where=where,
@@ -1030,9 +1036,19 @@ async def list_tasks(
             # repeat or drop rows that sorted equal on page 1.
             order=[{"dueAt": "asc"}, {"createdAt": "desc"}, {"id": "desc"}],
         ),
-    )
+    ]
+    if withStatusCounts:
+        unfiltered = {key: value for key, value in where.items() if key != "status"}
+        reads.append(db.assignedtask.group_by(by=["status"], count=True, where=unfiltered))
+    total, tasks, *grouped = await gather_reads(*reads)
     items = await serialize_tasks(tasks, with_derived=withDerived)
-    return page_payload(items, total, page, page_size)
+    payload = page_payload(items, total, page, page_size)
+    if withStatusCounts:
+        counts = dict.fromkeys(sorted(TASK_STATUSES), 0)
+        for group in grouped[0]:
+            counts[str(group["status"])] = group["_count"]["_all"]
+        payload["statusCounts"] = counts
+    return payload
 
 
 @router.get("/batches")

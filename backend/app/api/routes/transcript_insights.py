@@ -114,18 +114,26 @@ def _conflict(detail: str, code: str) -> JSONResponse:
 @router.get("/insights", dependencies=[Depends(require_enabled)])
 async def list_insights(
     ids: str = Query("", max_length=4_000),
+    includeTranslation: bool = Query(False),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """``{"items": {mediaId: view}}`` for up to 50 media ids, translation text left out. Ids that do
-    not exist, or whose transcript this caller may not read, are left out."""
+    not exist, or whose transcript this caller may not read, are left out.
+
+    ``includeTranslation=true`` keeps the translation, so each item is exactly what
+    ``GET /{media_id}/insights`` answers for that id, and the answer carries
+    ``"translationIncluded": true`` so a client can tell this server from one that ignored the
+    parameter. The handset asks this way for every transcript card on a screen at once, where it used
+    to read each card's insight on its own (and again on every poll)."""
     wanted = list(dict.fromkeys(part.strip() for part in ids.split(",") if part.strip()))
     if len(wanted) > BATCH_MAX:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Ask for at most {BATCH_MAX} at a time.",
         )
+    marker = {"translationIncluded": True} if includeTranslation else {}
     if not wanted:
-        return {"items": {}}
+        return {"items": {}, **marker}
     found_rows = await db.mediafile.find_many(where={"id": {"in": wanted}})
     readable = await readable_media_ids(found_rows, current_user)
     media_rows = [m for m in found_rows if str(m.id) in readable]
@@ -138,11 +146,11 @@ async def list_insights(
             rows.get(str(m.id)),
             jobs.get(str(m.id)),
             may_edit=may_edit(current_user, m),
-            include_translation=False,
+            include_translation=includeTranslation,
         )
         for m in media_rows
     }
-    return {"items": items}
+    return {"items": items, **marker}
 
 
 @router.get("/{media_id}/insights", dependencies=[Depends(require_enabled)])

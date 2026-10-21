@@ -1912,15 +1912,15 @@ async def apply_definition_plan(
                 await tx.dwcustomsection.delete(where={"id": section_id})
                 continue
 
+            # A section's NEW fields go in as ONE insert after its other field writes, not one INSERT
+            # each: a new section of twelve questions was twelve statements. Nothing below reads a
+            # created field back, and a CREATE never shares a key with a field the same plan edits,
+            # retires or deletes, so the order of the writes inside the transaction changes nothing.
+            new_fields: list[dict[str, Any]] = []
             for field_plan in section_plan.fields:
                 spec = field_plan.spec
                 if field_plan.action == "CREATE" and spec is not None:
-                    await tx.dwcustomfield.create(
-                        data={
-                            "sectionId": section_id,
-                            **_field_columns(spec),
-                        }
-                    )
+                    new_fields.append({"sectionId": section_id, **_field_columns(spec)})
                 elif field_plan.action == "EDIT" and spec is not None:
                     await tx.dwcustomfield.update(
                         where={"id": field_plan.field_id},
@@ -1954,6 +1954,8 @@ async def apply_definition_plan(
                     )
                 elif field_plan.action == "DELETE":
                     await tx.dwcustomfield.delete(where={"id": field_plan.field_id})
+            if new_fields:
+                await tx.dwcustomfield.create_many(data=new_fields)
 
 
 __all__ = [

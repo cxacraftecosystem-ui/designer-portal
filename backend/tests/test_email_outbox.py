@@ -91,6 +91,13 @@ class _Preferences:
         value = self.rows.get(where["userId"])
         return None if value is None else SimpleNamespace(emailReviewNotes=value)
 
+    async def find_many(self, where: dict[str, Any]) -> list[Any]:
+        return [
+            SimpleNamespace(userId=user_id, emailReviewNotes=self.rows[user_id])
+            for user_id in where["userId"]["in"]
+            if self.rows.get(user_id) is not None
+        ]
+
 
 class _Viewers:
     def __init__(self, users: list[Any]) -> None:

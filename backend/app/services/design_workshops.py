@@ -6094,8 +6094,11 @@ async def save_stage(
             # every new row starts where a re-read will find it; writing the column here would only
             # be a way to get it wrong. The INSERT side of this race is guarded by the unique index
             # on the reserved client key, not by a counter — see `_absorb_key_collisions` below.
-            for data in creates:
-                await tx.dwstageentry.create(data=data)
+            # ONE INSERT FOR EVERY NEW ROW, not one each: a collection of twelve new rows was twelve
+            # statements. A clash on the reserved client key still raises UniqueViolationError and
+            # rolls the whole write back, exactly as the first failing single INSERT did.
+            if creates:
+                await tx.dwstageentry.create_many(data=creates)
             if removed:
                 # NOT VERSION-GUARDED, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT. The sweep
                 # writes one timestamp onto rows the client no longer holds; it is idempotent, it
