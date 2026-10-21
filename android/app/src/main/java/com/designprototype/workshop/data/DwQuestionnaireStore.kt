@@ -205,6 +205,13 @@ data class DwQuestionnaireCache(
     val items: List<DwQuestionnaireItem> = emptyList(),
     val complete: Boolean = false,
     val fetchedAt: String = "",
+    /**
+     * M15 (21 Oct 2026): the account whose session read this copy. It holds respondents' names and
+     * their answers, so another account on a shared handset is never served it — the rule the web's
+     * questionnaire cache and this phone's drafts already keep. A copy an earlier build wrote has
+     * no owner and is refused to everybody; the next online read writes it again.
+     */
+    val ownerUserId: String = "",
 ) {
     /** Attached questionnaires with at least one answered sitting — what the annexure prints. */
     val printedItems: List<DwQuestionnaireItem> get() = items.filter { it.hasAnswers }
@@ -394,6 +401,13 @@ suspend fun WorkshopRepository.designWorkshopQuestionnaires(
 // The store
 // --------------------------------------------------------------------------------------
 
+/**
+ * M15: may [viewerId] be served a device copy written for [ownerUserId]? Only the same, signed-in
+ * account. No viewer, or a copy with no owner, is a refusal. Shared by both report stores.
+ */
+fun dwCacheReadableBy(ownerUserId: String, viewerId: String?): Boolean =
+    !viewerId.isNullOrBlank() && ownerUserId.isNotBlank() && ownerUserId == viewerId
+
 object DwQuestionnaireStore {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -420,7 +434,10 @@ object DwQuestionnaireStore {
      * them differently — see the header. Null is "we have never asked"; complete-and-empty is "the
      * server says nothing is attached", which is the correct and final answer for most workshops.
      */
-    suspend fun load(context: Context, workshopId: String): DwQuestionnaireCache? {
+    suspend fun load(context: Context, workshopId: String, viewerId: String?): DwQuestionnaireCache? =
+        loadAny(context, workshopId)?.takeIf { dwCacheReadableBy(it.ownerUserId, viewerId) }
+
+    private suspend fun loadAny(context: Context, workshopId: String): DwQuestionnaireCache? {
         if (workshopId.isBlank()) return null
         memory[workshopId]?.let { return it }
         return withContext(Dispatchers.IO) {
@@ -449,11 +466,12 @@ object DwQuestionnaireStore {
      * documented way to take it out of the report, and refusing to record that would leave the phone
      * printing a questionnaire the designer removed. Only a successful read reaches here at all.
      */
-    suspend fun store(context: Context, cache: DwQuestionnaireCache): DwQuestionnaireCache {
+    suspend fun store(context: Context, cache: DwQuestionnaireCache, ownerUserId: String?): DwQuestionnaireCache {
         val workshopId = cache.workshopId
-        if (workshopId.isBlank()) return cache
-        val stamped =
-            if (cache.fetchedAt.isNotBlank()) cache else cache.copy(fetchedAt = Instant.now().toString())
+        // M15: a copy nobody owns is never written, so nothing unscoped reaches the disk.
+        if (workshopId.isBlank() || ownerUserId.isNullOrBlank()) return cache
+        val stamped = (if (cache.fetchedAt.isNotBlank()) cache else cache.copy(fetchedAt = Instant.now().toString()))
+            .copy(ownerUserId = ownerUserId)
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val file = fileFor(context, workshopId)
@@ -492,13 +510,15 @@ object DwQuestionnaireStore {
     suspend fun mergeQuestionnaire(
         context: Context,
         dto: CustomQuestionnaireDto,
+        ownerUserId: String?,
     ): DwQuestionnaireCache? {
         val workshopId = dto.designWorkshopId?.takeIf { it.isNotBlank() } ?: return null
         // A deactivated questionnaire is not printed — `report_items` excludes it — so caching one
         // would only teach the annexure to disagree with the office's copy.
         if (!dto.isActive) return null
         val item = dwQuestionnaireItemOf(dto)
-        val existing = load(context, workshopId)
+        // Another account's copy is not merged into: it is replaced by this account's.
+        val existing = load(context, workshopId, ownerUserId)
         val kept = existing?.items.orEmpty().filter { it.questionnaireId != item.questionnaireId }
         // Completeness SURVIVES a refresh of a questionnaire the list already knew about, and is lost
         // the moment this adds one it did not. The second case is a questionnaire attached since the
@@ -518,6 +538,7 @@ object DwQuestionnaireStore {
                 complete = stillComplete,
                 fetchedAt = Instant.now().toString(),
             ),
+            ownerUserId,
         )
     }
 }

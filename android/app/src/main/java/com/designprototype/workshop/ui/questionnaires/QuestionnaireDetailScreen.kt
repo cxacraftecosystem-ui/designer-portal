@@ -272,7 +272,7 @@ fun QuestionnaireDetailScreen(
                 //
                 // Best-effort and silent: a full disk must not turn reading a questionnaire into an
                 // error message about a cache the designer never asked for.
-                runCatching { DwQuestionnaireStore.mergeQuestionnaire(appContext, it) }
+                runCatching { DwQuestionnaireStore.mergeQuestionnaire(appContext, it, repository.cachedUser()?.id) }
             }
             .onFailure { error ->
                 if (error !is CancellationException) {

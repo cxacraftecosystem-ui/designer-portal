@@ -4489,10 +4489,11 @@ class WorkshopRepository(
      *
      * THE TOKEN GOES FIRST and the deletion is best-effort, because those two are not equally
      * important: a designer handing the phone over must end up signed out even if a file will not
-     * delete. `DwQuestionnaireStore` is deliberately NOT cleared here — it holds the report annexure's
-     * evidence, it is unscoped by existing design, and emptying it on sign-out would silently destroy
-     * a courtyard export somebody is relying on. That one is a decision for its owner, stated in
-     * `DwQuestionnaireFormCache`'s header, not a side effect of this change.
+     * delete. `DwQuestionnaireStore` and `DwTranscriptStore` are deliberately NOT cleared here — they
+     * hold the report annexure's evidence, and emptying them on sign-out would silently destroy a
+     * courtyard export somebody is relying on. Since 21 Oct 2026 (audit M15) each copy carries the
+     * account that read it and is refused to every other account, so keeping them hands nothing to
+     * the next person who signs in.
      */
     suspend fun logout(context: Context) {
         val signedOut = tokenStore.getUser()?.id

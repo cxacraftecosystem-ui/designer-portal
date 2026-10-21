@@ -369,10 +369,12 @@ fun ReportScreen(
             // THE TRANSCRIPTS RIDE ON THE SAME READ — `GET /stages` carries them, text included — so
             // keeping them costs no request. Kept under THIS screen's id, which for a workshop made
             // offline is the local one; read back under either id, as the questionnaires are.
+            // M15: both report stores are scoped to the signed-in account.
+            val viewerId = repository.cachedUser()?.id
             val heldTranscripts = remote?.let {
-                DwTranscriptStore.keep(appContext, workshopId, registry, it.stages, it.transcripts)
-            } ?: DwTranscriptStore.load(appContext, workshopId)
-                ?: remoteId?.let { DwTranscriptStore.load(appContext, it) }
+                DwTranscriptStore.keep(appContext, workshopId, registry, it.stages, it.transcripts, viewerId)
+            } ?: DwTranscriptStore.load(appContext, workshopId, viewerId)
+                ?: remoteId?.let { DwTranscriptStore.load(appContext, it, viewerId) }
             val source = reportSourceFor(
                 schema = registry,
                 workshopId = workshopId,
@@ -492,8 +494,8 @@ fun ReportScreen(
             // files when the designer reads their sittings on Monday is under the remote id, and a
             // read on Thursday under the local one alone would miss it. Thursday, in a courtyard with
             // no signal, is the export this whole cache exists for.
-            var held = DwQuestionnaireStore.load(appContext, workshopId)
-                ?: remoteId?.let { DwQuestionnaireStore.load(appContext, it) }
+            var held = DwQuestionnaireStore.load(appContext, workshopId, repository.cachedUser()?.id)
+                ?: remoteId?.let { DwQuestionnaireStore.load(appContext, it, repository.cachedUser()?.id) }
             if (remoteId != null) {
                 runCatching { repository.designWorkshopQuestionnaires(remoteId) }
                     .onSuccess { fetched ->
@@ -504,6 +506,7 @@ fun ReportScreen(
                             // offline keeps its local id here for ever, and filing the answers under
                             // the server's would hide them from the one device that fetched them.
                             fetched.copy(workshopId = workshopId),
+                            repository.cachedUser()?.id,
                         )
                     }
             }
