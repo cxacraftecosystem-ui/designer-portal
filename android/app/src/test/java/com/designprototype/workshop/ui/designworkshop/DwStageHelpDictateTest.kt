@@ -74,7 +74,7 @@ class DwStageHelpDictateTest {
         assertTrue(help.contains("PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true)"))
         assertTrue(help.contains("customActions = listOf(action)"))
         val reference = source("ui/designworkshop/DwReferenceField.kt")
-        assertEquals(2, Regex("FieldCaption\(field\)").findAll(reference).count())
+        assertEquals(2, Regex("FieldCaption\\(field\\)").findAll(reference).count())
         // The microphone keeps its own long press (the language menu).
         assertTrue(source("ui/designworkshop/DwDictation.kt").contains(".dwClaimsHold()"))
     }
