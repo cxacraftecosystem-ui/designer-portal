@@ -2640,7 +2640,8 @@ interface WorkshopRepositoryApi {
     @POST("questionnaires/{id}/entries")
     suspend fun createCustomEntry(
         @Path("id") id: String,
-        @Body body: CustomEntryCreateBody
+        @Body body: CustomEntryCreateBody,
+        @Header("Idempotency-Key") idempotencyKey: String? = null,
     ): CustomEntryDto
 
     @PATCH("questionnaires/{id}/entries/{entryId}")

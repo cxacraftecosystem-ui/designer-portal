@@ -122,6 +122,12 @@ fun QuestionnaireDetailScreen(
     var editingQuestion by remember { mutableStateOf<CustomQuestionDto?>(null) }
     var removingQuestion by remember { mutableStateOf<CustomQuestionDto?>(null) }
     var startingSitting by remember { mutableStateOf(false) }
+    /**
+     * M13 (21 Oct 2026): the last sitting start that did not come back, as (what was sent, its key).
+     * Pressing Start again with the same details reuses the key, so a start whose answer was lost
+     * is answered with that sitting rather than making a second one.
+     */
+    var unansweredStart by remember(questionnaireId) { mutableStateOf<Pair<String, String>?>(null) }
 
     // ── The .xlsx interchange ────────────────────────────────────────────────────────────────────
     // Absent by decision until 2026-08-16; the reversal and its reasoning are in
@@ -729,14 +735,19 @@ fun QuestionnaireDetailScreen(
                 startingSitting = false
                 if (busy) return@StartSittingDialog
                 busy = true
+                val sent = "$respondent|$notes"
+                val key = unansweredStart?.takeIf { it.first == sent }?.second ?: java.util.UUID.randomUUID().toString()
+                unansweredStart = sent to key
                 scope.launch {
                     runCatching {
                         repository.startCustomEntry(
                             id = questionnaireId,
                             respondentName = respondent,
                             notes = notes,
+                            idempotencyKey = key,
                         )
                     }.onSuccess { entry ->
+                        unansweredStart = null
                         // Straight into the answer sheet. A designer who has just named the person in
                         // front of them wants the first question, not a list with one more row on it.
                         onOpenEntry(entry.id)

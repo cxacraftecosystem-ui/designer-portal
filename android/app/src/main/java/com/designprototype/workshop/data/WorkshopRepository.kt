@@ -3575,6 +3575,9 @@ class WorkshopRepository(
                     // one is a decision the designer makes afterwards on the questionnaire's own
                     // screen, where the dropdown lists workshops they actually work on.
                     designWorkshopId = null,
+                    // M13 (21 Oct 2026): one key per received file, so a retried adoption whose first
+                    // answer was lost is answered with the questionnaire it already made.
+                    idempotencyKey = adoptionIdempotencyKey(row.id, "q"),
                 )
                 persist(state.copy(remoteId = created.id))
             }
@@ -3608,6 +3611,7 @@ class WorkshopRepository(
                         // happened. Same discipline as `PendingEntry.createdId`.
                         persist(state.copy(sectionCreateStarted = true))
                         val afterSection = addCustomSection(
+                            idempotencyKey = adoptionIdempotencyKey(row.id, "s$sectionIndex"),
                             id = remoteId,
                             title = section.title.ifBlank { section.code.ifBlank { "Section" } },
                             // The bundle's own code, never a derived one: the code is what the report
@@ -3640,6 +3644,9 @@ class WorkshopRepository(
                         prompt = question.prompt,
                         helpText = question.helpText,
                         isRequired = question.isRequired,
+                        // M13: a question whose answer was lost before `questionsDone` moved is
+                        // answered from the first create on the retry, not made twice.
+                        idempotencyKey = adoptionIdempotencyKey(row.id, "s$sectionIndex", "q$questionIndex"),
                     )
                     questionIndex++
                     // AFTER EACH ONE. A pass that dies at question two hundred must resume at two
@@ -3941,13 +3948,15 @@ class WorkshopRepository(
         description: String? = null,
         designWorkshopId: String? = null,
         kind: String? = null,
+        idempotencyKey: String? = null,
     ): CustomQuestionnaireDto = api.createCustomQuestionnaire(
         CustomQuestionnaireCreateBody(
             title = title.trim(),
             description = description?.trim()?.ifBlank { null },
             designWorkshopId = designWorkshopId?.takeIf { it.isNotBlank() },
             kind = kind?.takeIf { it.isNotBlank() },
-        )
+        ),
+        idempotencyKey,
     )
 
     /**
@@ -3989,12 +3998,14 @@ class WorkshopRepository(
         id: String,
         title: String,
         code: String? = null,
+        idempotencyKey: String? = null,
     ): CustomQuestionnaireDto = api.createCustomSection(
         id,
         CustomSectionCreateBody(
             title = title.trim(),
             code = code?.trim()?.ifBlank { null },
-        )
+        ),
+        idempotencyKey,
     )
 
     /**
@@ -4023,6 +4034,7 @@ class WorkshopRepository(
         prompt: String,
         helpText: String? = null,
         isRequired: Boolean = false,
+        idempotencyKey: String? = null,
     ): CustomQuestionnaireDto = api.createCustomQuestion(
         id,
         sectionId,
@@ -4030,7 +4042,8 @@ class WorkshopRepository(
             prompt = prompt.trim(),
             helpText = helpText?.trim()?.ifBlank { null },
             isRequired = isRequired,
-        )
+        ),
+        idempotencyKey,
     )
 
     /**
@@ -4074,13 +4087,17 @@ class WorkshopRepository(
         title: String? = null,
         respondentName: String? = null,
         notes: String? = null,
+        // M13 (21 Oct 2026): one key per "Start" press, reused by any retry of that press, so a
+        // sitting whose answer was lost is not started twice.
+        idempotencyKey: String = java.util.UUID.randomUUID().toString(),
     ): CustomEntryDto = api.createCustomEntry(
         id,
         CustomEntryCreateBody(
             title = title?.trim()?.ifBlank { null },
             respondentName = respondentName?.trim()?.ifBlank { null },
             notes = notes?.trim()?.ifBlank { null },
-        )
+        ),
+        idempotencyKey,
     )
 
     suspend fun updateCustomEntry(
