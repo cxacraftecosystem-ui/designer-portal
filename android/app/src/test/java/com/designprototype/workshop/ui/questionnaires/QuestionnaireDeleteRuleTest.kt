@@ -51,6 +51,14 @@ class QuestionnaireDeleteRuleTest {
             "app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireCommon.kt"
         ).readText()
         assertTrue(common.contains("mayDeleteQuestionnaire(repository.cachedUser(), ownerId)"))
+        // A workbook re-upload is an edit: drawn for the author or a content admin, nobody else.
+        val reupload = screen.substringBefore("label = \"Upload an edited workbook\"")
+            .substringBeforeLast("WorkbookUploadRow(")
+        assertTrue(reupload.trimEnd().endsWith("HorizontalDivider(color = MaterialTheme.field.hairline)"))
+        assertTrue(
+            reupload.trimEnd().removeSuffix("HorizontalDivider(color = MaterialTheme.field.hairline)")
+                .trimEnd().endsWith("if (mayEdit) {")
+        )
     }
 
     @Test
