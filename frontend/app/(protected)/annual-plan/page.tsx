@@ -122,8 +122,8 @@ export default function AnnualPlanPage() {
   const { user } = useAuth();
   /** The whole national instrument, or a Regional Director's own states' rows (see the header). */
   const manager = canManageAnnualPlan(user);
-  // Deleting a row is a content admin's act, in admin view (owner's ruling, 2026-10-20).
-  const { adminMode } = useAdminView();
+  // Deleting a row is a content admin's act, admin view or not (owner, 2026-10-21).
+  const { canDeleteRecords } = useAdminView();
   const confirm = useConfirm();
   /** The row whose remarks are being corrected, and the draft. */
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -655,7 +655,7 @@ export default function AnnualPlanPage() {
                             Reinstate
                           </button>
                         ) : null}
-                        {manager && adminMode && entry.standing !== "PROMOTED" ? (
+                        {manager && canDeleteRecords && entry.standing !== "PROMOTED" ? (
                           <button
                             type="button"
                             data-danger

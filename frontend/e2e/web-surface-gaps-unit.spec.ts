@@ -250,9 +250,9 @@ test("the readout prints a remaining count and the day it resets, and prints not
 test("the delete route has a client and is offered only where the server would allow it", () => {
   const panel = read("components/CollabPanel.tsx");
   expect(panel).toContain('apiFetch(`/data-access/comments/${comment.id}`, { method: "DELETE" })');
-  // The handler 403s unless the caller is a content admin (2026-10-20), so Delete is drawn only in
-  // admin view, which only a content admin can turn on. The author is offered Edit instead.
-  expect(panel).toContain("user && adminMode ?");
+  // The handler 403s unless the caller is a content admin (2026-10-20), so Delete is drawn for the
+  // content admins alone, admin view or not (2026-10-21). The author is offered Edit instead.
+  expect(panel).toContain("user && canDeleteRecords ?");
   expect(panel).toContain('method: "PATCH"');
   // Confirmed first, in the danger tone: the row is deleted outright rather than tombstoned.
   expect(panel).toContain("deleteConfirm(");

@@ -6,10 +6,11 @@ import { API, apiToken, bearer, CREDENTIALS_MISSING, PASSWORD, signInWithToken }
  * A Ministry Admin sees Delete, and what they delete comes back (owner, 2026-10-20). Signed in, in a
  * browser, against a running stack (`e2e-live.yml` seeds the accounts below).
  *
- * The rule under test is `adminMode = isContentAdmin(user) && adminView`: every Delete reads it, so a
- * Ministry Admin in admin view must see the questionnaire's Delete and each sitting's Delete, and a
- * designer must see neither. Deleting a questionnaire or a sitting is a SOFT delete, so the same
- * Ministry Admin then restores both from the screen.
+ * The rule under test is `canDeleteRecords = isContentAdmin(user)`, WHETHER OR NOT admin view is on
+ * (owner, 2026-10-21): every Delete reads it, so a Ministry Admin must see the questionnaire's Delete,
+ * each sitting's Delete and a record page's "Danger zone" even with admin view off, and a designer
+ * must see none of them. Deleting a questionnaire or a sitting is a SOFT delete, so the same Ministry
+ * Admin then restores both from the screen — restoring stays in admin view.
  *
  *   npx playwright test e2e/ministry-admin-delete.spec.ts
  */
@@ -93,6 +94,47 @@ test("a Ministry Admin in admin view sees Delete, deletes, and restores", async 
   expect(back.status()).toBe(200);
   const body = (await back.json()) as { entries: { respondentName: string | null }[] };
   expect(body.entries.map((entry) => entry.respondentName)).toEqual([respondent]);
+});
+
+/** The first artisan on the stack, or a skip: the Danger zone needs a record page to end. */
+async function firstArtisanId(page: Page, token: string): Promise<string> {
+  const list = await page.request.get(`${API}/api/artisans?pageSize=1`, { headers: bearer(token) });
+  expect(list.ok(), await list.text()).toBeTruthy();
+  const artisan = (((await list.json()) as { items?: { id: string }[] }).items ?? [])[0];
+  test.skip(!artisan, "No artisan in this database to open.");
+  return artisan!.id;
+}
+
+test("a Ministry Admin with admin view OFF still sees Delete and the Danger zone", async ({ page }) => {
+  const stamp = Date.now();
+  const token = await signInAs(page, MINISTRY_ADMIN_EMAIL, false);
+  const form = await questionnaireWithASitting(page, token, stamp);
+
+  await page.goto(`/questionnaires/${form.id}`);
+  await expect(page.getByRole("heading", { name: form.title })).toBeVisible();
+  const sittingRow = page.locator("li").filter({ hasText: `Respondent ${stamp}` }).first();
+  await expect(sittingRow.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+  // Restoring is still admin view's: the trash is not drawn with it off.
+  await expect(page.getByRole("region", { name: "Deleted answers" })).toHaveCount(0);
+
+  await page.goto(`/artisans/${await firstArtisanId(page, token)}`);
+  await expect(page.getByRole("heading", { name: "Danger zone" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete this artisan" })).toBeVisible();
+});
+
+test("a designer sees no Danger zone on a record page", async ({ browser }) => {
+  const adminPage = await browser.newPage();
+  const adminToken = await apiToken(adminPage.request, MINISTRY_ADMIN_EMAIL, PASSWORD);
+  const artisanId = await firstArtisanId(adminPage, adminToken);
+  await adminPage.close();
+
+  const page = await browser.newPage();
+  await signInAs(page, DESIGNER_EMAIL, false);
+  await page.goto(`/artisans/${artisanId}`);
+  await page.waitForLoadState("networkidle").catch(() => {});
+  await expect(page.getByRole("heading", { name: "Danger zone" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Delete/ })).toHaveCount(0);
+  await page.close();
 });
 
 test("a designer sees no Delete on the same questionnaire", async ({ browser }) => {

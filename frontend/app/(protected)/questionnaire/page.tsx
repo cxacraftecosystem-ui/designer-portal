@@ -518,7 +518,7 @@ export default function QuestionnairePage() {
 function QuestionnairePageBody() {
   const confirm = useConfirm();
   const { user } = useAuth();
-  const { adminMode } = useAdminView();
+  const { adminMode, canDeleteRecords } = useAdminView();
   const { addCompleted } = useUploads();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -3301,7 +3301,7 @@ function QuestionnairePageBody() {
                             <Pencil className="h-3.5 w-3.5" aria-hidden />
                             Update
                           </Link>
-                          {adminMode ? (
+                          {canDeleteRecords ? (
                             <button data-danger className={rowAction("danger")} onClick={() => remove(interview.id)}>
                               Delete
                             </button>
@@ -3977,8 +3977,8 @@ function QuestionnaireAdminEditor({
   onToggle: () => void;
 }) {
   const confirm = useConfirm();
-  // Removing a section or a question is a delete: content admins in admin view only (2026-10-20).
-  const { adminMode } = useAdminView();
+  // Removing a section or a question is a delete: content admins only, admin view or not (2026-10-21).
+  const { canDeleteRecords } = useAdminView();
   const [localSections, setLocalSections] = useState<QuestionnaireSection[]>(sections);
   const [newCode, setNewCode] = useState("");
   const [newTitle, setNewTitle] = useState("");
@@ -4338,7 +4338,7 @@ function QuestionnaireAdminEditor({
                     <Save className="h-4 w-4" aria-hidden />
                     Save
                   </button>
-                  {adminMode ? (
+                  {canDeleteRecords ? (
                     <button type="button" className="text-sm font-semibold text-red-700 dark:text-red-400" onClick={() => removeSection(section)}>
                       <Trash2 className="inline h-4 w-4" aria-hidden /> Remove
                     </button>
@@ -4384,7 +4384,7 @@ function QuestionnaireAdminEditor({
                       onMoveDown={() => keyboardMove(section, question, 1)}
                       onMoveToSection={(toSectionId) => moveQuestionToSection(question, section.id, toSectionId)}
                       onSave={(prompt, isActive) => saveQuestion(question, prompt, isActive)}
-                      onRemove={adminMode ? () => removeQuestion(question) : undefined}
+                      onRemove={canDeleteRecords ? () => removeQuestion(question) : undefined}
                     />
                   </div>
                 ))}
@@ -4496,7 +4496,7 @@ function QuestionTile({
   onMoveDown: () => void;
   onMoveToSection: (toSectionId: string) => void;
   onSave: (prompt: string, isActive: boolean) => Promise<boolean>;
-  /** Absent for anybody but a content admin in admin view — the server refuses them the delete. */
+  /** Absent for anybody but a content admin — the server refuses them the delete. */
   onRemove?: () => void;
 }) {
   const [editing, setEditing] = useState(false);

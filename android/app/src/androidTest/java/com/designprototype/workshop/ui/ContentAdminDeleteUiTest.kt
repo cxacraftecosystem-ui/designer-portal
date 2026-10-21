@@ -18,9 +18,8 @@ import org.junit.runner.RunWith
  * A Ministry Admin sees Delete in admin chrome (REQUIREMENTS_2026-10-20 §5.4), drawn on a device.
  *
  * The comment row is the record screen's real delete control: its Remove is offered on
- * [LocalContentAdminChrome], which `MainActivity` provides as [contentAdminChrome] — so a Ministry
- * Admin with admin view on sees it, the same account with admin view off does not, and a designer
- * never does. The author's Edit (the PATCH the web already had) is held here too.
+ * [LocalMayDelete], which `MainActivity` provides as [mayDelete] — so a Ministry Admin sees it with
+ * admin view on AND off (owner, 2026-10-21), and a designer never does. The author's Edit (the PATCH the web already had) is held here too.
  */
 @RunWith(AndroidJUnit4::class)
 class ContentAdminDeleteUiTest {
@@ -41,7 +40,11 @@ class ContentAdminDeleteUiTest {
     private fun show(viewer: UserDto, adminView: Boolean, onEdit: () -> Unit = {}, onRemove: () -> Unit = {}) {
         compose.setContent {
             MaterialTheme {
-                CompositionLocalProvider(LocalContentAdminChrome provides contentAdminChrome(viewer, adminView)) {
+                // As MainActivity provides them: chrome follows admin view, delete does not.
+                CompositionLocalProvider(
+                    LocalContentAdminChrome provides contentAdminChrome(viewer, adminView),
+                    LocalMayDelete provides mayDelete(viewer),
+                ) {
                     EntryCommentRow(comment = comment, viewerId = viewer.id, busy = false, onEdit = onEdit, onRemove = onRemove)
                 }
             }
@@ -63,9 +66,9 @@ class ContentAdminDeleteUiTest {
     }
 
     @Test
-    fun aMinistryAdminWithAdminViewOffSeesNoRemove() {
+    fun aMinistryAdminWithAdminViewOffStillSeesRemove() {
         show(user("ma", "MINISTRY_ADMIN"), adminView = false)
-        compose.onNodeWithText("Remove").assertDoesNotExist()
+        compose.onNodeWithText("Remove").assertIsDisplayed()
     }
 
     @Test
@@ -88,7 +91,8 @@ class ContentAdminDeleteUiTest {
     private fun showDangerZone(viewer: UserDto, adminView: Boolean, delete: () -> Unit = {}, deleted: () -> Unit = {}) {
         compose.setContent {
             MaterialTheme {
-                if (RecordDangerZone.visible(viewer, adminView)) {
+                // `adminView` is what MainActivity would hold; the card does not read it (2026-10-21).
+                if (RecordDangerZone.visible(viewer)) {
                     RecordDangerZoneCard(noun = "artisan", delete = { delete() }, onDeleted = deleted, onError = {})
                 }
             }
@@ -111,9 +115,22 @@ class ContentAdminDeleteUiTest {
     }
 
     @Test
+    fun aMinistryAdminWithAdminViewOffStillSeesTheDangerZone() {
+        var calls = 0
+        showDangerZone(user("ma", "MINISTRY_ADMIN"), adminView = false, delete = { calls++ })
+        compose.onNodeWithText("Danger zone").assertIsDisplayed()
+        compose.onNodeWithText("Delete this artisan").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Delete").performClick()
+        compose.waitForIdle()
+        assertEquals(1, calls)
+    }
+
+    @Test
     fun aDesignerNeverSeesTheDangerZone() {
         showDangerZone(user("d1", "DESIGNER"), adminView = true)
         compose.onNodeWithText("Danger zone").assertDoesNotExist()
         compose.onNodeWithText("Delete this artisan").assertDoesNotExist()
+        showDangerZone(user("d1", "DESIGNER"), adminView = false)
+        compose.onNodeWithText("Danger zone").assertDoesNotExist()
     }
 }
