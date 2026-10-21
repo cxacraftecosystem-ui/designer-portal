@@ -2,6 +2,8 @@ package com.designprototype.workshop.ui.designworkshop
 
 import com.designprototype.workshop.ui.openable
 import com.designprototype.workshop.ui.ActionRow
+import com.designprototype.workshop.ui.RecordDangerZone
+import com.designprototype.workshop.ui.RecordDangerZoneCard
 import com.designprototype.workshop.ui.AppToggle
 import com.designprototype.workshop.data.userMessage
 
@@ -235,6 +237,9 @@ fun StageIndexScreen(
      */
     onOpenProvenance: () -> Unit,
     onError: (String) -> Unit,
+    /** Content admins in admin view: the index ends with the "Danger zone" card. */
+    canDelete: Boolean = false,
+    onDeleted: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
@@ -604,9 +609,24 @@ fun StageIndexScreen(
                 onOpenField = { focus -> onOpenStage(stage.stageKey, focus) }
             )
         }
+        // A soft delete (the server keeps the row and every entry), so the card says where it goes.
+        // Only for a workshop the server holds: a local-only draft has no row to delete.
+        if (canDelete && onServer) {
+            RecordDangerZoneCard(
+                noun = "design workshop",
+                delete = { repository.deleteDesignWorkshop(workshopId) },
+                onDeleted = onDeleted,
+                onError = { onError(it.userMessage(RecordDangerZone.FAILED)) },
+                body = DW_DELETE_BODY,
+                confirmBody = DW_DELETE_CONFIRM_BODY,
+            )
+        }
         Spacer(Modifier.padding(bottom = 8.dp))
     }
 }
+
+internal const val DW_DELETE_BODY = "Moves this design workshop to Deleted workshops. An admin can restore it."
+internal const val DW_DELETE_CONFIRM_BODY = "An admin can restore it from Deleted workshops."
 
 // =================================================================================================
 // May this workshop's recordings leave the device? — plan §6 answer 3

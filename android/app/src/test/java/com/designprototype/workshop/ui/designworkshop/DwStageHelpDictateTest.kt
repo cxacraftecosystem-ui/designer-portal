@@ -12,8 +12,9 @@ import java.io.File
 /**
  * DW-14 (UX audit 2026-10-16), owner ruling 2026-10-17, on the handset.
  *
- *  1. Every field's `help` is one short line; the rest is `details`, behind a collapsed "i".
- *  2. The "i" is announced as a button with its state, named "About <label>" — the web's words.
+ *  1. Every field's `help` is one short line; the rest is `details`, opened by holding the field
+ *     (owner, 2026-10-21 — the "i" row under every box is gone).
+ *  2. The screen reader reaches the details through a "Show help" action on the caption.
  *  3. Dictate is a 48dp microphone in the box's trailing icon, named "Dictate", with the language in
  *     a menu from the caret beside it (or a long press) — no "English (India)" text button.
  *
@@ -56,26 +57,31 @@ class DwStageHelpDictateTest {
     }
 
     @Test
-    fun `the info toggle says what it opens and whether it is open`() {
+    fun `the help card says what it is about and the screen reader action is Show help`() {
         assertEquals("About Aadhaar number", DwFieldDetails.label("Aadhaar number"))
-        assertEquals("Collapsed", DwFieldDetails.state(false))
-        assertEquals("Expanded", DwFieldDetails.state(true))
+        assertEquals("Show help", DwFieldDetails.ACTION_LABEL)
+        assertEquals("Close help", DwFieldDetails.CLOSE_LABEL)
     }
 
     @Test
-    fun `the info toggle is drawn on the caption, collapsed until tapped, and on reference fields too`() {
+    fun `no info toggle row is drawn, the field is held for its details, and reference fields share the caption`() {
         val renderer = source("ui/designworkshop/FieldRenderer.kt")
-        assertTrue(renderer.contains("var open by rememberSaveable(field.key) { mutableStateOf(false) }"))
-        assertTrue(renderer.contains("stateDescription = DwFieldDetails.state(open)"))
-        assertTrue(renderer.contains("contentDescription = DwFieldDetails.label(field.label)"))
-        assertTrue(renderer.contains("if (open) {"))
+        assertFalse("the \"i\" row is gone", renderer.contains("Icons.Outlined.Info"))
+        assertFalse(renderer.contains("stateDescription = DwFieldDetails.state(open)"))
+        assertTrue(renderer.contains("DwFieldHelpHost(field, modifier.fillMaxWidth())"))
+        assertTrue(renderer.contains("DwHelpCaptionText(help, field, openHelp)"))
+        val help = source("ui/designworkshop/DwFieldHelp.kt")
+        assertTrue(help.contains("PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true)"))
+        assertTrue(help.contains("customActions = listOf(action)"))
         val reference = source("ui/designworkshop/DwReferenceField.kt")
         assertEquals(2, Regex("FieldCaption\\(field\\)").findAll(reference).count())
+        // The microphone keeps its own long press (the language menu).
+        assertTrue(source("ui/designworkshop/DwDictation.kt").contains(".dwClaimsHold()"))
     }
 
     /**
      * Every field type that carries `details` in the shipped asset must reach [FieldCaption], or its
-     * "i" is unreachable on the handset while the web shows it. Read off the renderer's `when (type)`:
+     * help is unreachable by screen reader on the handset while the web shows it. Read off the renderer's `when (type)`:
      * a branch either draws the caption itself, hands it to a widget as `helpRow`, or calls a helper
      * whose own body draws it.
      */
@@ -108,7 +114,7 @@ class DwStageHelpDictateTest {
         val withDetails = fields.map { it.second }.filter { DwFieldDetails.has(it) }.map { it.type }.toSet()
         assertTrue(withDetails.containsAll(listOf("RICH_TEXT", "GEO")))
         val missing = withDetails.filter { type -> branches[type]?.let(::reaches) != true }
-        assertEquals("these types drop the \"i\"", emptyList<String>(), missing)
+        assertEquals("these types drop the help caption", emptyList<String>(), missing)
         // The two widgets that draw their own help take the caption in its place.
         assertTrue(source("ui/designworkshop/RichTextEditor.kt").contains("helpRow()"))
         assertTrue(source("ui/designworkshop/DwLocationField.kt").contains("helpRow()"))

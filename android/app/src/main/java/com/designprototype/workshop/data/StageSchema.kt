@@ -212,7 +212,7 @@ data class FieldDto(
     /** ONE short line: only what the designer needs to fill the box (owner ruling, 2026-10-17). */
     val help: String = "",
     /**
-     * Extra guidance, drawn behind the field's collapsed "i" ([DwFieldDetails]). Omitted on the wire
+     * Extra guidance, opened by holding the field ([DwFieldDetails]). Omitted on the wire
      * when the registry declares none, so the default is the honest "nothing more to say".
      */
     val details: String = "",

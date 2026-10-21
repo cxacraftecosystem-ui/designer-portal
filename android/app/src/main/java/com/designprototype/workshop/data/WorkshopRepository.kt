@@ -1374,7 +1374,8 @@ class WorkshopRepository(
                 ?.let { whole ->
                     whole.copy(filteredBy = "", items = whole.narrowedTo(filterValue))
                 }
-        cached?.let { onList(it, false) }
+        // A cached list says whether it was whole, so offline a short list still says "Partly loaded".
+        cached?.let { onList(it, it.partial) }
         if (cacheOnly) return false
 
         // A workshop that has never been sent to the server has no id the references endpoint would
@@ -1382,7 +1383,9 @@ class WorkshopRepository(
         // final answer — which for an ALL-scoped model is a genuinely useful one.
         val target = workshopId?.takeUnless { it.isBlank() || isLocalOnlyWorkshop(it) } ?: return false
 
-        val fetched = runCatching {
+        // EVERY PAGE when the caller did not ask for a size (the pickers): one page held 50 of the
+        // 459 crafts. A caller that names a `limit` (the bulk add) still gets that one page.
+        suspend fun page(offset: Int, size: Int?): DwReferenceResponseDto =
             api.designWorkshopReferences(
                 id = target,
                 model = model,
@@ -1404,9 +1407,18 @@ class WorkshopRepository(
                 scope = scope.takeIf { it.isNotBlank() },
                 filterBy = filterValue.takeIf { it.isNotBlank() },
                 search = null,
-                limit = limit,
+                limit = size,
+                offset = offset.takeIf { it > 0 },
             )
+        val pages = runCatching {
+            if (limit == null) {
+                dwReadAllReferencePages { offset, size -> page(offset, size) }
+            } else {
+                val one = page(0, limit)
+                DwReferencePages(options = one.options, first = one, complete = !one.truncated)
+            }
         }.getOrNull() ?: return false
+        val fetched = pages.first
 
         val stored = DwReferenceStore.store(
             context = context,
@@ -1420,16 +1432,17 @@ class WorkshopRepository(
             list = DwReferenceList(
                 model = model,
                 filteredBy = filterValue,
-                items = fetched.options,
+                items = pages.options,
                 // THE WORD TRAVELS WITH THE OPTIONS IT EXPLAINS. The server ordered `options`
                 // tentative-first and that order is baked into the list the moment it is stored;
                 // the word that accounts for it arrives on the same response and would otherwise be
                 // gone on the first offline open, leaving a reordered picker with nothing on screen
                 // saying why. Blank whenever the server did not order — see `tentativeLabel`.
                 tentativeLabel = if (fetched.tentativeFirst) fetched.tentativeLabel else "",
+                complete = pages.complete,
             ),
         )
-        onList(stored, fetched.truncated)
+        onList(stored, !pages.complete)
         return true
     }
 
@@ -1445,6 +1458,8 @@ class WorkshopRepository(
         scope: String,
         search: String,
         limit: Int,
+        /** The cascade's parent, for a picker narrowed by one; blank for none. */
+        filterValue: String = "",
     ): DwReferenceResponseDto? {
         val target = workshopId?.takeUnless { it.isBlank() || isLocalOnlyWorkshop(it) } ?: return null
         if (model.isBlank() || search.isBlank()) return null
@@ -1453,10 +1468,31 @@ class WorkshopRepository(
                 id = target,
                 model = model,
                 scope = scope.takeIf { it.isNotBlank() },
+                filterBy = filterValue.takeIf { it.isNotBlank() },
                 search = search,
                 limit = limit,
             )
         }.getOrNull()
+    }
+
+    /**
+     * Rows a picker's server search found that this device's list lacks, added to that list and kept
+     * for offline. Returns the list as stored, or null when nothing was found.
+     */
+    suspend fun designWorkshopReferenceMerge(
+        context: Context,
+        workshopId: String?,
+        model: String,
+        scope: String,
+        filterValue: String,
+        found: List<DwReferenceOption>,
+    ): DwReferenceList? {
+        if (model.isBlank() || found.isEmpty()) return null
+        val key = DwReferenceStore.cacheKey(model, scope, dwReferenceCacheOwner(workshopId.orEmpty()), filterValue)
+        val current = DwReferenceStore.load(context, key)
+            ?: DwReferenceList(model = model, filteredBy = filterValue, complete = false)
+        val merged = dwMergeReferenceOptions(current, found)
+        return if (merged === current) current else DwReferenceStore.store(context, key, merged)
     }
 
     /**
@@ -5576,12 +5612,12 @@ class WorkshopRepository(
 
     /**
      * Every craft: the catalogue on hand when there is one (REQUIREMENTS_2026-10-20 §2.4), else the
-     * list route at its 500-row page. `createdBy` (My Activity) always asks the route.
+     * list route read page by page. `createdBy` (My Activity) always asks the route.
      */
     suspend fun crafts(createdBy: String? = null): List<CraftDto> {
         val catalogue = CraftCatalogueCache.catalogue.value
         if (createdBy.isNullOrBlank() && catalogue != null) return catalogue.crafts.map(::catalogueCraftDto)
-        return api.crafts(pageSize = 500, createdBy = createdBy?.blankToNull()).items
+        return readAllListPages { page -> api.crafts(page = page, pageSize = 500, createdBy = createdBy?.blankToNull()) }
     }
 
     /**

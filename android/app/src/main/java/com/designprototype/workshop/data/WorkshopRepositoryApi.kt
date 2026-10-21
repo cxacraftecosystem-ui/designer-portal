@@ -1688,7 +1688,9 @@ interface WorkshopRepositoryApi {
         @Query("filterBy") filterBy: String? = null,
         @Query("search") search: String? = null,
         @Query("recordId") recordId: String? = null,
-        @Query("limit") limit: Int? = null
+        @Query("limit") limit: Int? = null,
+        // Pages a list past the server's 200-row ceiling; the picker reads every page (crafts: 459).
+        @Query("offset") offset: Int? = null
     ): DwReferenceResponseDto
 
     // Read the number off a photographed identity card — THE SERVER HALF OF A LADDER WHOSE FIRST

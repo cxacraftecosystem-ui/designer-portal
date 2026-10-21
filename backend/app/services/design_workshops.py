@@ -680,6 +680,9 @@ def workshop_summary(record: Any) -> dict[str, Any]:
 # it were the whole one.
 REFERENCE_LIMIT_DEFAULT = 50
 REFERENCE_LIMIT_MAX = 200
+# How far ``offset`` may page a reference list. Bounded so a crafted request cannot ask the database
+# to skip an unbounded number of rows; far above any register this deployment holds.
+REFERENCE_OFFSET_MAX = 100_000
 
 
 def _meta(row: Any) -> dict[str, Any]:
@@ -3087,6 +3090,7 @@ async def reference_options(
     filter_by: str | None = None,
     search: str | None = None,
     limit: int = REFERENCE_LIMIT_DEFAULT,
+    offset: int = 0,
     record_id: str | None = None,
     viewer: Any = None,
 ) -> dict[str, Any]:
@@ -3115,6 +3119,7 @@ async def reference_options(
             detail=f"scope must be one of {', '.join(sorted(REF_SCOPES))}",
         )
     take = max(1, min(int(limit or REFERENCE_LIMIT_DEFAULT), REFERENCE_LIMIT_MAX))
+    skip = max(0, min(int(offset or 0), REFERENCE_OFFSET_MAX))
     wanted_id = (record_id or "").strip()
 
     entity = _dw_entity(model)
@@ -3124,7 +3129,12 @@ async def reference_options(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{model} cannot be filtered by another record",
             )
-        return await _in_record_options(record, entity, search, take, record_id=wanted_id)
+        answer = await _in_record_options(record, entity, search, take, record_id=wanted_id)
+        if skip:
+            # An in-workshop list is one page (the tentative ordering is applied to it whole), so a
+            # page past the first is empty and says it is the end, which is what stops a pager.
+            answer = {**answer, "options": [], "truncated": False}
+        return answer
 
     spec = REFERENCE_MODELS.get(model)
     if spec is None:
@@ -3242,7 +3252,12 @@ async def reference_options(
     # Postgres runs as ILIKE '%…%' and no index can answer, so counting the matches costs a
     # second scan of the largest table in the database to learn one boolean.
     rows = await getattr(db, spec.delegate).find_many(
-        where=where, order=spec.order, take=take + 1, include=spec.include or None
+        where=where,
+        order=spec.order,
+        take=take + 1,
+        include=spec.include or None,
+        # Only when paging, so the first page is the same call it always was.
+        **({"skip": skip} if skip else {}),
     )
     truncated = len(rows) > take
     rows = rows[:take]
@@ -3283,7 +3298,7 @@ async def reference_options(
     # attacker holding a stack of printed cards). Widening the probe to skip that predicate, or
     # answering it from a primary-key read, undoes the whole boundary.
     out_of_scope_row = None
-    if wanted_id and not rows and workshop_clause is not None:
+    if wanted_id and not skip and not rows and workshop_clause is not None:
         # `truncated` is already False on this branch — the probe only runs when `rows` is empty —
         # so there is nothing to reset here.
         found = await getattr(db, spec.delegate).find_many(

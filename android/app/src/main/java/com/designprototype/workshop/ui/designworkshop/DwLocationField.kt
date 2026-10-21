@@ -130,7 +130,7 @@ internal fun DwGeoField(
     error: String?,
     onChange: (JsonElement?) -> Unit,
     onMessage: (String) -> Unit,
-    /** Drawn in place of [help] when set — the stage form's `FieldCaption`, with its "i". */
+    /** Drawn in place of [help] when set — the stage form's `FieldCaption`. */
     helpRow: (@Composable () -> Unit)? = null,
 ) {
     val current = remember(value) { dwLocationFromValue(value) }

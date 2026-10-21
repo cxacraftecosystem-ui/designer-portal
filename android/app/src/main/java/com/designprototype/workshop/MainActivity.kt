@@ -161,6 +161,8 @@ import com.designprototype.workshop.ui.openAppMenu
 import com.designprototype.workshop.ui.WorkshopLogo
 import com.designprototype.workshop.ui.requiredMarked
 import com.designprototype.workshop.ui.Text
+import com.designprototype.workshop.ui.RecordDangerZone
+import com.designprototype.workshop.ui.RecordDangerZoneCard
 import com.designprototype.workshop.ui.OfflineOutboxTray
 import com.designprototype.workshop.ui.AppToggle
 import com.designprototype.workshop.ui.CalendarField
@@ -4649,7 +4651,13 @@ private fun HomeScreen(
                 recordId = s.recordId,
                 canUpdate = RecordOpen.mayUpdate(s.mode.name, user),
                 showProvenance = canViewProvenance,
+                canDelete = canDelete,
                 onUpdate = { focus -> message = null; screen = Screen.Edit(s.mode, s.recordId, from = s, focus = focus) },
+                onDeleted = {
+                    message = "${deleteNoun(s.mode).replaceFirstChar { it.uppercase() }} deleted"
+                    refresh()
+                    screen = s.from ?: Screen.Browse(s.mode)
+                },
                 onError = { showError(it) }
             )
 
@@ -5066,7 +5074,9 @@ private fun HomeScreen(
                 // Ungated HERE for the same reason as the row above it, and the index HIDES this one
                 // from a non-admin rather than explaining it — see the comment on that control.
                 onOpenProvenance = { message = null; screen = Screen.DesignWorkshopProvenance(s.workshopId) },
-                onError = { showError(it) }
+                onError = { showError(it) },
+                canDelete = canDelete,
+                onDeleted = { message = "Design workshop deleted"; screen = Screen.DesignWorkshops() },
             )
 
             is Screen.DesignWorkshopStage -> StageScreen(
@@ -10685,8 +10695,11 @@ private fun RecordViewScreen(
     recordId: String,
     canUpdate: Boolean,
     showProvenance: Boolean,
+    /** Content admins in admin view: the page ends with the "Danger zone" card. */
+    canDelete: Boolean = false,
     /** Opens the form; the key is the field to open at (a completeness chip), or null. */
     onUpdate: (String?) -> Unit,
+    onDeleted: () -> Unit = {},
     onError: (String) -> Unit
 ) {
     // The record's completeness block, as the detail read below returns it (and caches it with the
@@ -10722,6 +10735,9 @@ private fun RecordViewScreen(
     DwWorkshopRecordType.entries.firstOrNull { it.name == mode.name }?.let { type ->
         RecordCodeSection(repository, type, recordId)
     }
+    if (canDelete && mode in DELETABLE_MODES) {
+        DeleteRecordSection(repository, mode, recordId, onDeleted = onDeleted, onError = onError)
+    }
 }
 
 /** Maps a record type to its admin delete call. */
@@ -10734,11 +10750,22 @@ private suspend fun deleteByMode(repository: WorkshopRepository, mode: EntryMode
         EntryMode.WORKSHOP -> repository.deleteWorkshop(id)
         EntryMode.CRAFT -> repository.deleteCraft(id)
         EntryMode.QUESTIONNAIRE -> repository.deleteInterview(id)
+        EntryMode.MEDIA -> repository.deleteMedia(id)
         else -> throw IllegalArgumentException("This record type cannot be deleted")
     }
 }
 
-/** Admin-only destructive action with a confirmation dialog, shown below an edit form. */
+/** The record kinds a content admin can delete from the record's own page. */
+private val DELETABLE_MODES = setOf(
+    EntryMode.ARTISAN, EntryMode.PRODUCT, EntryMode.PROCESS, EntryMode.TOOL, EntryMode.WORKSHOP,
+    EntryMode.CRAFT, EntryMode.QUESTIONNAIRE, EntryMode.MEDIA,
+)
+
+/** "media file" for a media record, the kind's own name otherwise. */
+private fun deleteNoun(mode: EntryMode): String =
+    if (mode == EntryMode.MEDIA) "media file" else mode.label.lowercase()
+
+/** The "Danger zone" card (ui/RecordDangerZone.kt) for one record, wired to its delete route. */
 @Composable
 private fun DeleteRecordSection(
     repository: WorkshopRepository,
@@ -10747,44 +10774,12 @@ private fun DeleteRecordSection(
     onDeleted: () -> Unit,
     onError: (String) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
-    var confirm by remember { mutableStateOf(false) }
-    var deleting by remember { mutableStateOf(false) }
-    val noun = mode.label.lowercase()
-    RecordCard(title = "Delete this $noun") {
-        Text("Permanently removes this $noun and its links.", color = Muted, style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(
-            onClick = { confirm = true },
-            enabled = !deleting,
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(if (deleting) "Deleting…" else "Delete")
-        }
-    }
-    if (confirm) {
-        AlertDialog(
-            onDismissRequest = { if (!deleting) confirm = false },
-            title = { Text("Delete $noun?") },
-            text = { Text("This can't be undone.") },
-            confirmButton = {
-                TextButton(
-                    enabled = !deleting,
-                    onClick = {
-                        scope.launch {
-                            deleting = true
-                            runCatching { deleteByMode(repository, mode, recordId) }
-                                .onSuccess { confirm = false; deleting = false; onDeleted() }
-                                .onFailure { deleting = false; onError(it.userMessage("Unable to delete (admin only)")) }
-                        }
-                    }
-                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = { TextButton(enabled = !deleting, onClick = { confirm = false }) { Text("Cancel") } }
-        )
-    }
+    RecordDangerZoneCard(
+        noun = deleteNoun(mode),
+        delete = { deleteByMode(repository, mode, recordId) },
+        onDeleted = onDeleted,
+        onError = { onError(it.userMessage(RecordDangerZone.FAILED)) },
+    )
 }
 
 /** Fetches the chosen record's full detail, then renders the matching form in edit mode. */

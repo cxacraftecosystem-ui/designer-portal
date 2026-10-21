@@ -121,6 +121,9 @@ data class DwReferenceOption(
  * would leave the device unable to say when it arrived, and "when did this phone last see the
  * artisan register" is the one question a designer looking at a short list actually needs answered.
  */
+/** The one page a picker read before it paged: the server's default `limit`. */
+const val DW_LEGACY_REFERENCE_PAGE = 50
+
 @Serializable
 data class DwReferenceList(
     val model: String = "",
@@ -145,7 +148,19 @@ data class DwReferenceList(
      * chip — see `dwTentativeWord`.
      */
     val tentativeLabel: String = "",
+    /**
+     * Whether [items] is the WHOLE list the server holds: true after every page was read, false when
+     * the read stopped short. Null on a list cached before pages were read, which held one page.
+     */
+    val complete: Boolean? = null,
 ) {
+    /**
+     * True when this list is known or likely to be short: a read that stopped early, or a list cached
+     * by an older build that read one page and came back with that page full.
+     */
+    val partial: Boolean
+        get() = complete?.not() ?: (items.size >= DW_LEGACY_REFERENCE_PAGE)
+
     /**
      * The options this list holds for one parent value.
      *
@@ -581,6 +596,8 @@ object DwReferenceStore {
             // component, and a merged list that reports the freshest timestamp is a merged list that
             // lies about how much of it is two weeks old.
             fetchedAt = merged.mapNotNull { it.fetchedAt.takeIf(String::isNotBlank) }.minOrNull().orEmpty(),
+            // Whole only when every part was whole.
+            complete = merged.none { it.partial },
             // `tentativeLabel` IS LEFT BLANK HERE, AND FOR `filteredBy`'S EXACT REASON one line up:
             // this branch cannot claim what it did not do. The word means "the server ordered THIS
             // list tentative-first", and a `flatMap` of several files concatenates several orderings

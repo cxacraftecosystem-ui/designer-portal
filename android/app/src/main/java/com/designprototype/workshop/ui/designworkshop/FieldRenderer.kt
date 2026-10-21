@@ -29,7 +29,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -43,18 +42,15 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -374,8 +370,10 @@ fun FieldRenderer(
      * silently lacks it. Placed at the end of this column it is structurally impossible to miss:
      * whatever the branch drew, the stamp is the last thing in the field's own column.
      */
+    // Holding the field opens its details ([DwFieldHelpHost]); a field without details draws as before.
+    DwFieldHelpHost(field, modifier.fillMaxWidth()) {
     Column(
-        modifier = modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         // ── RICH_TEXT ─────────────────────────────────────────────────────────────────────────
@@ -831,6 +829,7 @@ fun FieldRenderer(
             Text(line, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
     }
+    }
 }
 
 // --------------------------------------------------------------------------------------
@@ -944,72 +943,22 @@ private fun fieldLabel(field: FieldDto): String = buildString {
 }
 
 /**
- * The help line above the input, and the field's "i" when it carries [FieldDto.details].
+ * The help line above the input — one line, or nothing.
  *
- * ONE LINE OF HELP, THE REST BEHIND THE "i" (owner ruling, 2026-10-17, audit DW-14). The label is
- * inside the box on this client, so the toggle sits at the end of the caption row, the nearest
- * place to it; the opened text is drawn under the row, above the box. Collapsed by default, one tap
- * to open, and announced as a button with its state ([DwFieldDetails]). The web draws the same
- * toggle beside its label with the same name.
+ * The field's DETAILS are no longer behind an "i" on this row (owner, 2026-10-21): the toggle cost
+ * a 48dp row under every box, most of them holding nothing else. Holding the field opens them
+ * ([DwFieldHelpHost]); this line carries the screen reader's "Show help" action instead.
  */
 @Composable
 internal fun FieldCaption(field: FieldDto, override: String? = null) {
     val help = override ?: field.help
-    val details = field.details.trim()
-    if (help.isBlank() && details.isEmpty()) return
-    if (details.isEmpty()) {
-        Text(help, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
+    val openHelp = LocalDwFieldHelp.current
+    if (openHelp != null && DwFieldDetails.has(field)) {
+        DwHelpCaptionText(help, field, openHelp)
         return
     }
-    var open by rememberSaveable(field.key) { mutableStateOf(false) }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text(
-            help,
-            color = MaterialTheme.field.muted,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(1f),
-        )
-        IconButton(
-            onClick = { open = !open },
-            modifier = Modifier.semantics {
-                role = Role.Button
-                contentDescription = DwFieldDetails.label(field.label)
-                stateDescription = DwFieldDetails.state(open)
-            },
-        ) {
-            Icon(
-                Icons.Outlined.Info,
-                contentDescription = null,
-                tint = if (open) MaterialTheme.colorScheme.primary else MaterialTheme.field.muted,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-    }
-    if (open) {
-        Text(
-            details,
-            color = MaterialTheme.field.body,
-            style = MaterialTheme.typography.bodySmall,
-            lineHeight = 17.sp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        )
-    }
-}
-
-/**
- * The "i" toggle's words, one table for both clients — the web's `components/ui/infoToggleAria.ts`.
- * Pure, so `DwFieldDetailsTest` holds them without a device.
- */
-internal object DwFieldDetails {
-    fun label(fieldLabel: String): String = "About $fieldLabel"
-
-    fun state(open: Boolean): String = if (open) "Expanded" else "Collapsed"
-
-    /** Whether a field has anything to disclose. Whitespace is nothing. */
-    fun has(field: FieldDto): Boolean = field.details.isNotBlank()
+    if (help.isBlank()) return
+    Text(help, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
