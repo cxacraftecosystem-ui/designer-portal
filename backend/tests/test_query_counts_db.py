@@ -310,20 +310,63 @@ def test_a_hand_in_notice_reads_every_recipients_choice_in_one_statement(monkeyp
 @needs_db
 def test_the_craft_review_report_costs_the_same_for_two_legacy_crafts_or_seven():
     """``GET /crafts/review`` (``map_crafts.plan``) read the spelling table twice and counted seven
-    tables once PER legacy craft. Now: one read of the spellings, one grouped read per table."""
+    tables once PER legacy craft. Now: one read of the spellings, one grouped read per table.
+
+    THE CRAFTS CARRY REFERENCES, AND DIFFERENT NUMBERS OF THEM, so the grouped count is checked as well
+    as its cost: every craft's ``references`` must equal what :func:`craft_master.reference_count`
+    counts for it alone. Each craft is named by its own tool twice over (``craftId`` and a ``ToolCraft``
+    row, which counts once), by a tool shared across its batch through ``ToolCraft``, by ``k % 3``
+    workshops, and by a product when ``k`` is even."""
+    from datetime import UTC, datetime
+
     from app.services import craft_master as cm
 
-    async def work() -> tuple[int, int, int, int]:
+    async def work() -> dict[str, Any]:
         admin = await _person("ADMIN", "crafts")
         made: list[str] = []
+        tools: list[str] = []
+        workshops: list[str] = []
+        products: list[str] = []
+        expected: dict[str, int] = {}
+
+        async def tool(craft: Any, *, links: list[str]) -> None:
+            row = await db.tooldocumentation.create(
+                data={
+                    "craftName": craft.name, "place": "Bagru", "artisanName": "Qc", "toolkitName": "Block",
+                    "createdById": admin.id, "craftId": craft.id,
+                }
+            )
+            tools.append(row.id)
+            for craft_id in links:
+                await db.toolcraft.create(data={"toolId": row.id, "craftId": craft_id})
 
         async def legacy(count: int) -> None:
+            batch: list[Any] = []
             for _ in range(count):
+                k = len(made)
                 tag = uuid.uuid4().hex[:10]
-                row = await db.craft.create(
+                craft = await db.craft.create(
                     data={"name": f"Qzv legacy {tag}", "slug": f"qc-legacy-{tag}", "status": cm.LEGACY}
                 )
-                made.append(row.id)
+                made.append(craft.id)
+                batch.append(craft)
+                await tool(craft, links=[craft.id])
+                for _ in range(k % 3):
+                    shop = await db.workshop.create(
+                        data={"title": f"Qc {tag}", "date": datetime.now(UTC), "place": "Bagru", "createdById": admin.id}
+                    )
+                    workshops.append(shop.id)
+                    await db.workshopcraft.create(data={"workshopId": shop.id, "craftId": craft.id})
+                if k % 2 == 0:
+                    product = await db.productdocumentation.create(
+                        data={
+                            "craftName": craft.name, "place": "Bagru", "artisanName": "Qc", "productName": "Sheet",
+                            "createdById": admin.id, "craftId": craft.id,
+                        }
+                    )
+                    products.append(product.id)
+                expected[craft.id] = 2 + k % 3 + (1 if k % 2 == 0 else 0)
+            await tool(batch[0], links=[c.id for c in batch])
 
         try:
             async with asgi_client() as client:
@@ -335,17 +378,29 @@ def test_the_craft_review_report_costs_the_same_for_two_legacy_crafts_or_seven()
                 async with count_statements() as seven:
                     second = await client.get("/api/crafts/review", headers=_auth(admin))
             assert first.status_code == second.status_code == 200, second.text
-            listed = {row["id"] for row in second.json()["crafts"]}
-            assert set(made) <= listed
-            return two.value, seven.value, len(made), len(listed)
+            reported = {row["id"]: row["references"] for row in second.json()["crafts"]}
+            one_by_one = {craft_id: await cm.reference_count(db, craft_id) for craft_id in made}
+            return {
+                "two": two.value,
+                "seven": seven.value,
+                "reported": {craft_id: reported.get(craft_id) for craft_id in made},
+                "one_by_one": one_by_one,
+                "expected": expected,
+            }
         finally:
             await _quietly(
+                db.tooldocumentation.delete_many(where={"id": {"in": tools}}),
+                db.workshop.delete_many(where={"id": {"in": workshops}}),
+                db.productdocumentation.delete_many(where={"id": {"in": products}}),
                 db.craft.delete_many(where={"id": {"in": made}}),
                 db.user.delete(where={"id": admin.id}),
             )
 
-    small, large, _made, _listed = _private(work)
-    _same(small, large, "GET /crafts/review")
+    seen = _private(work)
+    assert seen["one_by_one"] == seen["expected"], seen
+    assert seen["reported"] == seen["expected"], seen
+    assert len(set(seen["expected"].values())) > 1, seen
+    _same(seen["two"], seen["seven"], "GET /crafts/review")
 
 
 @needs_db
