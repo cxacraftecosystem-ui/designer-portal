@@ -1673,7 +1673,10 @@ class WorkshopRepository(
         workshopId: String,
         clip: File,
         languageTag: String,
+        interviewId: String? = null,
+        artisanIds: Collection<String> = emptyList(),
     ): DwDictateDto {
+        val subjects = dictationSubjects(interviewId, artisanIds)
         val part = okhttp3.MultipartBody.Part.createFormData(
             "file",
             // The name and type the server reads its decoder from. `dictation.m4a` + `audio/mp4`
@@ -1688,6 +1691,8 @@ class WorkshopRepository(
                 workshopId,
                 part,
                 languageTag.toRequestBody("text/plain".toMediaType()),
+                subjects.interviewId?.toRequestBody("text/plain".toMediaType()),
+                subjects.artisanIds?.toRequestBody("text/plain".toMediaType()),
             )
         } catch (e: HttpException) {
             /*

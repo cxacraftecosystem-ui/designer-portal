@@ -20135,7 +20135,14 @@ private fun QuestionnaireForm(
         }
         transcribing = transcribing + key
         scope.launch {
-            runCatching { repository.designWorkshopDictate(workshopId, clip, language) }
+            runCatching {
+                // H3: the interview's own artisans gate the send too, not only the workshop's.
+                repository.designWorkshopDictate(
+                    workshopId, clip, language,
+                    interviewId = editing?.id,
+                    artisanIds = selectedArtisans,
+                )
+            }
                 .onSuccess { answer ->
                     val text = answer.text.trim()
                     if (text.isEmpty()) {

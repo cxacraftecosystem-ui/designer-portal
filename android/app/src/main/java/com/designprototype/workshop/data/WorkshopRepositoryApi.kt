@@ -1825,7 +1825,12 @@ interface WorkshopRepositoryApi {
     suspend fun designWorkshopDictate(
         @Path("id") id: String,
         @Part file: okhttp3.MultipartBody.Part,
-        @Part("languageHint") languageHint: okhttp3.RequestBody
+        @Part("languageHint") languageHint: okhttp3.RequestBody,
+        // THE INTERVIEW'S OWN ARTISANS (H3, 21 Oct 2026). The workshop's consent covers only the
+        // artisans linked to that workshop; an interviewed artisan who refused but is filed elsewhere
+        // must stop the send too. Both parts are optional and Retrofit omits a null part.
+        @Part("interviewId") interviewId: okhttp3.RequestBody? = null,
+        @Part("artisanIds") artisanIds: okhttp3.RequestBody? = null
     ): DwDictateDto
 
     // One workshop's answer to "may its recordings and dictation leave the device for a third-party
