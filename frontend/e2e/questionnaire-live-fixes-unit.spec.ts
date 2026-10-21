@@ -225,7 +225,8 @@ test.describe("M5 — locks and per-answer refusals on the answer page", () => {
   });
   test("the page skips locked answers and keeps refused ones unsaved", () => {
     expect(ANSWER).toContain("dirty.current.has(question.id) && !locked.has(question.id)");
-    expect(ANSWER).toContain("if (!refused[answer.questionId]) dirty.current.delete(answer.questionId);");
+    expect(ANSWER).toContain("if (refused[answer.questionId]) continue;
+          dirty.current.delete(answer.questionId);");
     expect(ANSWER).toContain("readOnly={isLocked}");
   });
 });

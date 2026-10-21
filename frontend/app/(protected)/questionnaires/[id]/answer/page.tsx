@@ -499,7 +499,9 @@ function AnswerPageBody() {
         // (still dirty) with their reason under the question; everything else is recorded.
         const refused = rejectionsByQuestion(result?.saved?.rejected);
         for (const answer of answers) {
-          if (!refused[answer.questionId]) dirty.current.delete(answer.questionId);
+          if (refused[answer.questionId]) continue;
+          dirty.current.delete(answer.questionId);
+          syncDirty();
         }
         // Only what was SENT is cleared, and only after the server took it — a question typed into
         // while the request was in flight is still unsaved, and the prompt must still know about it.
