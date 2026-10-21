@@ -131,6 +131,9 @@ fun QuestionnaireAnswerScreen(
      */
     var locked by remember(questionnaireId, entryId) { mutableStateOf<Set<String>>(emptySet()) }
 
+    /** M5: answers the last save did not write, by question id, with the server's sentence. */
+    var problems by remember(questionnaireId, entryId) { mutableStateOf<Map<String, String>>(emptyMap()) }
+
     val me = remember { signedInUserId(repository) }
     val admin = remember { isAdminAccount(repository) }
 
@@ -177,15 +180,8 @@ fun QuestionnaireAnswerScreen(
                     seeded[answer.questionId] = text to note
                 }
                 baseline = seeded
-                locked = if (admin) {
-                    emptySet()
-                } else {
-                    entry.answers
-                        .filter { !it.answerText.isNullOrBlank() }
-                        .filter { !it.answeredById.isNullOrBlank() && it.answeredById != me }
-                        .map { it.questionId }
-                        .toSet()
-                }
+                locked = if (admin) emptySet() else othersAnswers(entry.answers, me)
+                problems = emptyMap()
             }
         }.onFailure { error ->
             if (error !is CancellationException) {
@@ -277,27 +273,22 @@ fun QuestionnaireAnswerScreen(
         scope.launch {
             runCatching { repository.saveCustomAnswers(questionnaireId, entryId, batch) }
                 .onSuccess { result ->
-                    // Rebuilt from the RESPONSE and not from what was sent. The response carries every
-                    // answer now on the sitting, so a save that landed while somebody else was writing
-                    // to the same sitting leaves this screen holding what is actually stored rather
-                    // than what this phone believes it stored.
-                    val next = mutableMapOf<String, Pair<String, String>>()
-                    result.answers.forEach { answer ->
-                        next[answer.questionId] = answer.answerText.orEmpty() to answer.notes.orEmpty()
-                    }
-                    baseline = next
-                    if (!admin) {
-                        locked = result.answers
-                            .filter { !it.answerText.isNullOrBlank() }
-                            .filter { !it.answeredById.isNullOrBlank() && it.answeredById != me }
-                            .map { it.questionId }
-                            .toSet()
-                    }
-                    val saved = result.saved
-                    onMessage(
-                        "Saved ${plural(saved.created + saved.updated, "answer")}." +
-                            if (saved.unchanged > 0) " ${saved.unchanged} were already recorded." else ""
+                    // Merged from the RESPONSE (M5/M6, 21 Oct 2026): accepted answers are saved even
+                    // when others in the batch are refused, each refusal is shown on its question,
+                    // and rows the reply leaves out are kept rather than read as deleted.
+                    val outcome = answerSaveOutcome(
+                        result = result,
+                        sent = batch.map { it.questionId },
+                        baseline = baseline,
+                        locked = locked,
+                        previousProblems = problems,
+                        me = me,
+                        admin = admin,
                     )
+                    baseline = outcome.baseline
+                    locked = outcome.locked
+                    problems = outcome.problems
+                    if (outcome.problems.isEmpty()) onMessage(outcome.message) else onError(outcome.message)
                     if (thenAdvance && sectionIndex < sections.lastIndex) sectionIndex++
                 }
                 .onFailure { error ->
@@ -412,6 +403,7 @@ fun QuestionnaireAnswerScreen(
                                 note = notes[question.id].orEmpty(),
                                 locked = question.id in locked,
                                 dirty = dirty(question),
+                                problem = problems[question.id],
                                 onAnswer = { answers[question.id] = it },
                                 onNote = { notes[question.id] = it },
                             )
@@ -632,6 +624,7 @@ private fun AnswerField(
     note: String,
     locked: Boolean,
     dirty: Boolean,
+    problem: String? = null,
     onAnswer: (String) -> Unit,
     onNote: (String) -> Unit,
 ) {
@@ -687,6 +680,9 @@ private fun AnswerField(
             dictate = !locked,
             modifier = Modifier.fillMaxWidth()
         )
+        problem?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
         when {
             locked -> Text(
                 "Recorded by someone else. Only they or an admin can change it.",
