@@ -142,6 +142,13 @@ data class QFormChangeReportDto(
     val entriesCreated: Int = 0,
     val answersImported: Int = 0,
     val answersSkipped: Int = 0,
+    /**
+     * Re-upload only (21 Oct 2026). [kept]: questions left out of the file and kept, because only a
+     * content admin may remove questions (M2). [answersNotImported]: answers typed into the file
+     * that a re-upload does not import (M3). Each also arrives as a warning in [problems].
+     */
+    val kept: Int = 0,
+    val answersNotImported: Int = 0,
     val provenance: QFormProvenanceDto? = null,
     val versionBefore: Int = 0,
     val versionAfter: Int = 0,
@@ -249,6 +256,8 @@ fun qFormUploadSummary(report: QFormChangeReportDto): String {
         report.superseded.takeIf { it > 0 }?.let { "$it superseded" },
         report.retired.takeIf { it > 0 }?.let { "$it retired" },
         report.removed.takeIf { it > 0 }?.let { "$it removed" },
+        report.kept.takeIf { it > 0 }?.let { "$it left out of the file and kept" },
+        report.answersNotImported.takeIf { it > 0 }?.let { "${plural(it, "answer")} in the file not imported" },
         report.sections.takeIf { it > 0 }?.let { plural(it, "section") },
         report.entriesCreated.takeIf { it > 0 }?.let { "${plural(it, "sitting")} recorded" },
         report.unchanged.takeIf { it > 0 }?.let { "$it unchanged" },
