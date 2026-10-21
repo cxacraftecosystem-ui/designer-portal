@@ -74,6 +74,7 @@ from app.services.records import (
     media_url_owners,
     merge_field_provenance,
     public_encode,
+    require_live_record,
     require_record,
     resubmit_status,
     take_expected_updated_at,
@@ -1006,11 +1007,18 @@ async def list_interviews(
     createdBy: str | None = None,
     # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete. See ``list_artisans``.
     completeness: str | None = None,
+    # THE TRASH (audit H5, 21 Oct 2026): content admins only, newest deletion first.
+    deletedOnly: bool = False,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     page, page_size, skip = normalize_pagination(page, pageSize)
-    where: dict[str, Any] = {}
+    if deletedOnly and not is_content_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an admin can see deleted interviews.",
+        )
+    where: dict[str, Any] = {"deletedAt": {"not": None} if deletedOnly else None}
 
     # The read predicate, composed the way every other record list composes it: nested under AND so
     # it can never be overwritten by the free-text OR below, which is exactly how a filter like this
@@ -1063,17 +1071,28 @@ async def list_interviews(
             where=where,
             skip=skip,
             take=page_size,
-            order={"createdAt": "desc"},
+            order=[{"deletedAt": "desc"}, {"createdAt": "desc"}] if deletedOnly else {"createdAt": "desc"},
             relations=RELATIONS,
         ),
         media_url_owners(current_user),
     )
-    return page_payload(
-        await attach_completeness("interview", public_encode(items, current_user, media_urls=media_urls)),
-        total,
-        page,
-        page_size,
+    encoded = await attach_completeness(
+        "interview", public_encode(items, current_user, media_urls=media_urls)
     )
+    if deletedOnly:
+        deleters = await _user_names([getattr(row, "deletedById", None) for row in items])
+        for row, item in zip(items, encoded, strict=True):
+            item["deletedByName"] = deleters.get(getattr(row, "deletedById", None) or "")
+    return page_payload(encoded, total, page, page_size)
+
+
+async def _user_names(user_ids: list[str | None]) -> dict[str, str]:
+    """id -> name for these accounts, one statement; unknown ids are simply absent."""
+    ids = sorted({uid for uid in user_ids if uid})
+    if not ids:
+        return {}
+    users = await db.user.find_many(where={"id": {"in": ids}})
+    return {user.id: user.name for user in users}
 
 
 # Scalar fields a "create for an existing set" may back-fill on the canonical interview — but ONLY
@@ -1526,7 +1545,9 @@ async def _derived_completed_sections(
         db.questionnairequestion.find_many(),
         db.questionnairesection.find_many(),
         db.questionnaireinterview.find_many(
-            where=interview_where,
+            # Deleted interviews never count (audit H5); added here and not to ``interview_where``
+            # so the "scoped" test above still means what the caller narrowed.
+            where={**interview_where, "deletedAt": None},
             # The artisan links are needed on BOTH branches — they are what turns "this interview
             # covered section K" into "this artisan has section K" — but the answers and the media
             # rows are only walked on the scoped one. Asking for them unscoped is what made this the
@@ -1754,7 +1775,7 @@ async def set_completion_cell(
 async def get_interview(
     interview_id: str, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    interview = await require_record(db.questionnaireinterview, interview_id)
+    interview = await require_live_record(db.questionnaireinterview, interview_id)
     await hydrate_relations([interview], RELATIONS)
     # The detail read — the one screen that plays the sitting back. See the banner above
     # ``_DUPLICATE_SET_DETAIL``.
@@ -1769,7 +1790,7 @@ async def update_interview(
     payload: QuestionnaireInterviewUpdate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    interview = await require_record(db.questionnaireinterview, interview_id)
+    interview = await require_live_record(db.questionnaireinterview, interview_id)
     if payload.artisanIds is not None:
         payload.artisanIds = await redirect_ids(payload.artisanIds) or []
     data = clean_data(
@@ -2106,8 +2127,8 @@ async def merge_interview_into(
                 "message": "An interview cannot be merged into itself.",
             },
         )
-    source = await require_record(db.questionnaireinterview, interview_id)
-    target = await require_record(db.questionnaireinterview, target_id)
+    source = await require_live_record(db.questionnaireinterview, interview_id)
+    target = await require_live_record(db.questionnaireinterview, target_id)
 
     # NOT BY A HOLDER OF EITHER SIDE'S WORKSHOP (2026-10-09). The merge rewrites the target and
     # deletes the source, so it is a write to both, and a sitting filed under a design workshop is
@@ -2421,12 +2442,76 @@ async def consolidated_questionnaire_csv(
 async def delete_interview(
     interview_id: str, current_user: Any = Depends(get_current_user)
 ) -> None:
+    """Delete an interview. Content admins only (owner, 21 Oct 2026: one rule on every path).
+
+    A SOFT delete (audit H5). This was ``questionnaireinterview.delete``, which cascaded away the
+    answers, the participant links and the AI drafts, and left every recording unlinked
+    (``MediaFile.questionnaireInterviewId`` is SetNull). Now only ``deletedAt``/``deletedById`` are
+    written and ``artisanSetKey`` is freed, so the set can be interviewed again; everything else
+    stays linked, and ``POST /interviews/{id}/restore`` brings it back whole.
+    """
     assert_can_delete(current_user)
-    interview = await require_record(db.questionnaireinterview, interview_id)
+    interview = await require_live_record(db.questionnaireinterview, interview_id)
     # Not by the inspector or a director of the workshop it is filed under, admins included: its
     # records are its content (``services/record_design_workshop``, 2026-10-09).
     await assert_may_write_a_record_filed_under(interview.designWorkshopId, current_user)
-    await db.questionnaireinterview.delete(where={"id": interview_id})
+    await db.questionnaireinterview.update(
+        where={"id": interview_id},
+        data={
+            "deletedAt": datetime.now(UTC),
+            "deletedById": current_user.id,
+            "artisanSetKey": None,
+        },
+    )
+
+
+#: The restore's refusal when a live interview took the artisan set while this one was deleted.
+INTERVIEW_SET_TAKEN = "INTERVIEW_SET_TAKEN"
+
+
+@router.post("/interviews/{interview_id}/restore")
+async def restore_interview(
+    interview_id: str, current_user: Any = Depends(require_content_admin)
+) -> dict[str, Any]:
+    """Undo an interview's soft delete. Content admins only; idempotent on a live interview.
+
+    The artisan-set key is recomputed from the links it kept. When another live interview now holds
+    that set, the restore is refused with a 409 naming it (``INTERVIEW_SET_TAKEN``): merge or delete
+    that one first. Whoever holds a post on the workshop it is filed under is refused, as on delete.
+    """
+    interview = await require_record(db.questionnaireinterview, interview_id)
+    await assert_may_write_a_record_filed_under(interview.designWorkshopId, current_user)
+    if interview.deletedAt is not None:
+        try:
+            async with db.tx() as tx:
+                await tx.questionnaireinterview.update(
+                    where={"id": interview_id}, data={"deletedAt": None, "deletedById": None}
+                )
+                await resync_interview_set_key(
+                    interview_id,
+                    workshop_id=interview.workshopId,
+                    design_workshop_id=interview.designWorkshopId,
+                    client=tx,
+                )
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_409_CONFLICT or not isinstance(exc.detail, dict):
+                raise
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    **exc.detail,
+                    "code": INTERVIEW_SET_TAKEN,
+                    "message": (
+                        "Another interview now covers these artisans. Merge or delete it, "
+                        "then restore this one."
+                    ),
+                },
+            ) from exc
+    restored = await db.questionnaireinterview.find_unique(where={"id": interview_id})
+    await hydrate_relations([restored], RELATIONS)
+    return await attach_completeness(
+        "interview", public_encode(restored, current_user, media_urls=await media_url_owners(current_user))
+    )
 
 
 def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:

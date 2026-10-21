@@ -482,8 +482,10 @@ async def _interview_plan(client: Any, merged_id: str, survivor_id: str) -> tupl
     interview_ids = sorted({link.interviewId for link in links})
     if not interview_ids:
         return [], []
+    # A soft-deleted interview holds no key (audit H5) and must not be given one here; its restore
+    # recomputes the key from the links it then has.
     interviews = await client.questionnaireinterview.find_many(
-        where={"id": {"in": interview_ids}}, include={"artisans": True}
+        where={"id": {"in": interview_ids}, "deletedAt": None}, include={"artisans": True}
     )
     plan: list[dict[str, Any]] = []
     for interview in interviews:
@@ -858,7 +860,8 @@ async def _recompute_set_keys(tx: Any, interview_ids: list[str]) -> list[dict[st
     if not interview_ids:
         return changed
     interviews = await tx.questionnaireinterview.find_many(
-        where={"id": {"in": sorted(set(interview_ids))}}, include={"artisans": True}
+        where={"id": {"in": sorted(set(interview_ids))}, "deletedAt": None},
+        include={"artisans": True},
     )
     # Two passes so a key can move between two interviews of the same merge without a transient clash.
     plans = []
