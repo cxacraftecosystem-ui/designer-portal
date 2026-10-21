@@ -85,6 +85,8 @@
 
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { fetchFile } from "@/lib/fileDownload";
+import { shareInFlight } from "@/lib/inFlight";
+import { forgetMyWorkshopPosts } from "@/lib/myWorkshopPosts";
 import type { DwCustomDefinition } from "@/lib/customSections";
 import { designerCreateFields } from "@/lib/designWorkshops";
 import type {
@@ -399,9 +401,10 @@ export function createOversightWorkshop(body: DwOversightCreateBody) {
 }
 
 export function getWorkshopOversight(workshopId: string) {
-  return apiFetch<DwWorkshopOversight>(
-    `/design-workshop-oversight/${encodeURIComponent(workshopId)}`
-  );
+  // The page, the designer panel and the oversight panel all read this on the same pick; one request
+  // carries them (`lib/inFlight`), and nothing is kept once it answers.
+  const path = `/design-workshop-oversight/${encodeURIComponent(workshopId)}`;
+  return shareInFlight(path, () => apiFetch<DwWorkshopOversight>(path));
 }
 
 /**
@@ -416,7 +419,10 @@ export function putWorkshopOversight(
   return apiFetch<{ oversight: DwOversightAssignment[] }>(
     `/design-workshop-oversight/${encodeURIComponent(workshopId)}`,
     { method: "PUT", body: JSON.stringify(body) }
-  );
+  ).then((answer) => {
+    forgetMyWorkshopPosts(); // a post may have moved; the next held-post question reads it fresh
+    return answer;
+  });
 }
 
 // --- Who holds what on one workshop ---------------------------------------------------------

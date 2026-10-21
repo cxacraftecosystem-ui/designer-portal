@@ -92,8 +92,8 @@ import { ArrowRight, CloudOff } from "lucide-react";
 import type { MeasurablePhoto, MeasureTarget } from "@/components/designworkshop/PhotoMeasureField";
 import { measurableLengthFields } from "@/components/designworkshop/stageFieldRoles";
 import { Dropdown } from "@/components/ui/Dropdown";
-import { apiFetch } from "@/lib/api";
 import { isUnreachable } from "@/lib/failureTriage";
+import { fetchMediaRow } from "@/lib/mediaRows";
 import { appendMediaRef, mediaRefRoom } from "@/lib/photoIntake";
 import {
   ensureDraft,
@@ -323,35 +323,42 @@ function useMeasurablePhotos(refs: string[]): MeasurePhotos {
       let unreadable = 0;
       let offline = false;
 
-      for (const ref of wanted) {
-        if (isLocalMediaRef(ref)) {
-          // `readLocalMedia` swallows its own storage failures and answers null, so there is nothing
-          // to catch here. A confirmed upload clears `blob` (see `confirmLocalMedia`), which is the
-          // ordinary reason a local reference has no bytes left rather than a fault.
-          const media = await readLocalMedia(ref);
-          if (media?.blob && media.mimeType.startsWith("image/")) {
-            const url = URL.createObjectURL(media.blob);
-            created.push(url);
-            photos.push({ key: ref, name: media.name, url });
-          } else {
-            unreadable += 1;
+      // ALL AT ONCE, IN ORDER. Every uploaded reference goes through `fetchMediaRow`, which sends the
+      // ones asked for in the same tick as ONE `GET /media/batch` — a piece with twelve photographs
+      // used to be twelve `GET /media/{id}` one after another. The answers are folded back in the
+      // order of `wanted`, so the list reads exactly as it did.
+      const resolved = await Promise.all(
+        wanted.map(async (ref): Promise<{ photo?: MeasurablePhoto; offline?: boolean }> => {
+          if (isLocalMediaRef(ref)) {
+            // `readLocalMedia` swallows its own storage failures and answers null, so there is nothing
+            // to catch here. A confirmed upload clears `blob` (see `confirmLocalMedia`), which is the
+            // ordinary reason a local reference has no bytes left rather than a fault.
+            const media = await readLocalMedia(ref);
+            if (media?.blob && media.mimeType.startsWith("image/")) {
+              const url = URL.createObjectURL(media.blob);
+              created.push(url);
+              return { photo: { key: ref, name: media.name, url } };
+            }
+            return {};
           }
-          continue;
-        }
-        try {
-          const media = await apiFetch<MediaFile>(`/media/${ref}`);
-          if (media.mediaType === "IMAGE" && media.url) {
-            photos.push({ key: ref, name: media.originalFilename, url: media.url });
-          } else {
-            unreadable += 1;
+          try {
+            const media: MediaFile = await fetchMediaRow(ref);
+            if (media.mediaType === "IMAGE" && media.url) {
+              return { photo: { key: ref, name: media.originalFilename, url: media.url } };
+            }
+            return {};
+          } catch (error) {
+            // ONE REFERENCE AT A TIME. A single unreachable media row must not throw away the
+            // photographs already resolved beside it — half of them may be on this device and
+            // measurable with no connection at all.
+            return { offline: isUnreachable(error) };
           }
-        } catch (error) {
-          // ONE REFERENCE AT A TIME. A single unreachable media row must not throw away the
-          // photographs already resolved beside it — half of them may be on this device and
-          // measurable with no connection at all.
-          unreadable += 1;
-          if (isUnreachable(error)) offline = true;
-        }
+        })
+      );
+      for (const outcome of resolved) {
+        if (outcome.photo) photos.push(outcome.photo);
+        else unreadable += 1;
+        if (outcome.offline) offline = true;
       }
 
       if (cancelled) {

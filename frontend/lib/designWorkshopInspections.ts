@@ -107,6 +107,8 @@ import {
   type DwValue
 } from "@/lib/designWorkshops";
 import type { DwCustomDefinition } from "@/lib/customSections";
+import { shareInFlight } from "@/lib/inFlight";
+import { forgetMyWorkshopPosts } from "@/lib/myWorkshopPosts";
 import { isUnreachable } from "@/lib/offline";
 import { canInspectDesignWorkshops, isInspectorTier } from "@/lib/permissions";
 import { richSummary } from "@/lib/richText";
@@ -214,7 +216,9 @@ export function fetchAwaitingInspectionCount() {
 }
 
 export function listDesignWorkshopInspectors(workshopId: string) {
-  return apiFetch<DwInspectorList>(`/design-workshop-inspections/${workshopId}/inspectors`);
+  // Shared with any sibling panel asking at the same moment (`lib/inFlight`); never cached past the answer.
+  const path = `/design-workshop-inspections/${workshopId}/inspectors`;
+  return shareInFlight(path, () => apiFetch<DwInspectorList>(path));
 }
 
 /**
@@ -233,6 +237,9 @@ export function putDesignWorkshopInspectors(workshopId: string, userIds: string[
   return apiFetch<DwInspectorList>(`/design-workshop-inspections/${workshopId}/inspectors`, {
     method: "PUT",
     body: JSON.stringify({ userIds })
+  }).then((answer) => {
+    forgetMyWorkshopPosts(); // a post may have moved; the next held-post question reads it fresh
+    return answer;
   });
 }
 

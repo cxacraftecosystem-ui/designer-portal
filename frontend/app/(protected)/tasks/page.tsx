@@ -43,24 +43,10 @@ export default function TasksPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await apiFetch<PageResult<FieldTask>>(
-        `/tasks${buildQuery({ view: "assigned", status: statusFilter || undefined, page, pageSize: PAGE_SIZE })}`
-      );
-      setResult(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load your tasks");
-    } finally {
-      setLoading(false);
-    }
-  }, [statusFilter, page]);
-
   /**
-   * Exact per-status totals for the filter chips. Four tiny calls (`pageSize=1`, derivation off) are
-   * cheaper and more honest than counting the current page, which only ever sees twelve rows.
+   * Exact per-status totals for the filter chips, for a server whose `GET /tasks` predates
+   * `statusCounts`: four tiny calls (`pageSize=1`, derivation off) rather than counting the current
+   * page, which only ever sees twelve rows.
    */
   const loadCounts = useCallback(async () => {
     try {
@@ -79,12 +65,34 @@ export default function TasksPage() {
     }
   }, []);
 
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // `withStatusCounts` brings the chips' totals in the same answer (one GROUP BY on the server)
+      // instead of four more list requests; `loadCounts` above is only for a server that predates it.
+      const data = await apiFetch<PageResult<FieldTask> & { statusCounts?: Partial<Record<TaskStatus, number>> }>(
+        `/tasks${buildQuery({
+          view: "assigned",
+          status: statusFilter || undefined,
+          page,
+          pageSize: PAGE_SIZE,
+          withStatusCounts: "true"
+        })}`
+      );
+      setResult(data);
+      if (data.statusCounts) setCounts(data.statusCounts);
+      else void loadCounts();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load your tasks");
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter, page, loadCounts]);
+
   useEffect(() => {
     load();
   }, [load]);
-  useEffect(() => {
-    loadCounts();
-  }, [loadCounts]);
 
   async function patch(task: FieldTask, body: Record<string, unknown>) {
     setBusyId(task.id);
@@ -95,7 +103,7 @@ export default function TasksPage() {
       // it from here rather than waiting for the store's staleness window: the reader is looking at
       // the row they moved and the pill is on the same screen, and a badge that still says 3 after
       // the third card went to In progress is the notification contradicting the page it points at.
-      await Promise.all([load(), loadCounts(), refreshOpenTaskCount()]);
+      await Promise.all([load(), refreshOpenTaskCount()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update the task");
     } finally {

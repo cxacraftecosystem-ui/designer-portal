@@ -23,6 +23,25 @@ let cached = 0;
 let fetchedAt = 0;
 let inFlight: Promise<void> | null = null;
 const subscribers = new Set<Subscriber>();
+/**
+ * ONE POLL FOR THE TAB, NOT ONE PER SUBSCRIBER. The island's bell and the Notifications page both
+ * subscribe, and each used to start its own two-minute timer, so the count was asked twice per period
+ * at two different phases. The timer now starts with the first subscriber and stops with the last.
+ */
+let pollTimer: number | null = null;
+
+function startPolling() {
+  if (pollTimer !== null) return;
+  pollTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void refreshUnreadNotificationCount();
+  }, POLL_MS);
+}
+
+function stopPollingIfUnwatched() {
+  if (subscribers.size > 0 || pollTimer === null) return;
+  window.clearInterval(pollTimer);
+  pollTimer = null;
+}
 
 function publish() {
   subscribers.forEach((notify) => notify(cached));
@@ -62,14 +81,12 @@ export function useUnreadNotificationCount(enabled: boolean): number {
     const onFocus = () => {
       if (stale()) void refreshUnreadNotificationCount();
     };
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refreshUnreadNotificationCount();
-    }, POLL_MS);
+    startPolling();
     window.addEventListener("focus", onFocus);
     return () => {
       subscribers.delete(subscriber);
       window.removeEventListener("focus", onFocus);
-      window.clearInterval(timer);
+      stopPollingIfUnwatched();
     };
   }, [enabled]);
 

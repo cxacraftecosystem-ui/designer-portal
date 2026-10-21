@@ -49,6 +49,7 @@ import { useEffect, useState } from "react";
 import { readHeldWorkshopPosts } from "@/app/(protected)/officers/oversight";
 import { useAuth } from "@/components/AuthProvider";
 import { isLocalWorkshopId, loadDraft } from "@/lib/designWorkshopStore";
+import { myWorkshopPosts } from "@/lib/myWorkshopPosts";
 import { canAssignWorkshopOversight, heldPostEditRefusal, type WorkshopPost } from "@/lib/permissions";
 import type { MediaFile, User } from "@/lib/types";
 
@@ -78,14 +79,22 @@ export function writesHeld(refusal: HeldPostRefusal): boolean {
  * EVERY PATH ENDS IN AN ANSWER: a screen held while this is out must never be held for good. A
  * `dwlocal-…` address that has synced keeps its local id in the address bar, so it is resolved through
  * the draft to the id the repository knows; one that exists only on this device has no posts on it.
+ *
+ * ONE READ FOR EVERY WORKSHOP: the answer comes out of {@link myWorkshopPosts}, which every screen and
+ * every row shares, rather than two staffing reads per workshop asked by each component for itself.
+ * Only a server that predates that route is asked workshop by workshop, as before.
  */
 async function heldPostsOn(workshopId: string, user: User): Promise<WorkshopPost[]> {
   let posts: WorkshopPost[] = [];
+  if (!canAssignWorkshopOversight(user)) return posts;
   try {
     const serverId = isLocalWorkshopId(workshopId)
       ? ((await loadDraft(workshopId).catch(() => null))?.remoteId ?? null)
       : workshopId;
-    if (serverId) posts = await readHeldWorkshopPosts(serverId, user);
+    if (serverId) {
+      const mine = await myWorkshopPosts(user);
+      posts = mine ? (mine.get(serverId) ?? []) : await readHeldWorkshopPosts(serverId, user);
+    }
   } catch {
     posts = [];
   }
