@@ -47,8 +47,7 @@ test("a questionnaire form is deleted by its author or a content admin, and nobo
   expect(mayDeleteQuestionnaire(user("DESIGNER"), null)).toBe(false);
   // Sittings stay a content admin's: their Delete reads canDeleteRecords, not the author rule.
   const form = read("app/(protected)/questionnaires/[id]/page.tsx");
-  expect(form).toContain("{mayDeleteSittings ? (
-                      <button");
+  expect(form).toContain("{mayDeleteSittings ? (\n                      <button");
 });
 
 test("admin view, and with it every Delete, is offered to the content admins", () => {
