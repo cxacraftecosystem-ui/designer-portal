@@ -9,7 +9,7 @@ import { formOptions, sessionCreateBody, startBlocked } from "@/components/quest
 import { canOfferAnswers } from "@/components/questionnaire/TakeSheet";
 import { withRequired } from "@/components/questionnaire/SessionWorkspace";
 import { recordClockOffset, clockOffset } from "@/lib/api";
-import { ownerKey, toGridView, type CoverageGrid, type Recording } from "@/lib/questionnaire/api";
+import { ownerKey, readSectionOverride, toGridView, type CoverageGrid, type Recording } from "@/lib/questionnaire/api";
 import { buildBundle, readBundleFile, validateBundle, bundleBlob, BundleError } from "@/lib/questionnaire/bundle";
 import { Sha256, sha256Hex } from "@/lib/questionnaire/hashFile";
 import { prompts } from "@/lib/questionnaire/prompts";
@@ -151,7 +151,7 @@ test("coverage marks: ● recorded, ✎ typed with Add a recording?, and the thr
   const review = view.cells.find((c) => c.targetKey === "S:s2")!;
   expect(review.state).toBe("NEEDS_REVIEW");
   expect(cellMark(review).label).toBe("Needs review");
-  for (const [state, label] of [["MARKED_COMPLETE", "Marked complete"], ["NEEDS_REDO", "Needs redo"]] as const) {
+  for (const [state, label] of [["COMPLETED", "Marked complete"], ["NEEDS_REDO", "Needs redo"]] as const) {
     expect(cellMark({ state, count: 0, partial: null }).label).toBe(label);
   }
 });
@@ -311,7 +311,7 @@ test("@qf:B15 a take cut short reassembles header first and is offered back by P
 });
 
 test("@qf:A16 a cached form is read only by the account that downloaded it", () => {
-  const record = { key: "f1::all", schemaVersion: 1, fetchedAt: "2026-10-22T05:00:00Z", includeRetired: true, version: 3, ownerUserId: "u-lead", form: {} } as unknown as CachedQuestionnaireForm;
+  const record = { key: "f1::all", schemaVersion: 1, fetchedAt: "2026-10-22T05:00:00Z", includeRetired: true, version: 3, ownerUserId: "u-lead", form: { sections: [] } } as unknown as CachedQuestionnaireForm;
   expect(cacheRecordIsReadable(record, "u-lead")).toBe(true);
   expect(cacheRecordIsReadable(record, "u-other")).toBe(false);
   expect(cacheRecordIsReadable(record, null)).toBe(false);
@@ -424,4 +424,14 @@ test("the handoff bundle's name is the golden table's", () => {
   const row = golden.fileNames.find((r) => r.input.what === "Handoff" && r.input.ext === "dpwq");
   expect(row?.name).toBe("DesignWorkshop_Questionnaire_2026-10-22_2nd-Craft-Toolkit_Handoff.dpwq");
   expect(bundleFileName({ form: { title: "2nd Craft Toolkit" } as never, createdAt: "2026-10-22T04:30:00Z" }, ".dpwq")).toBe(row!.name);
+});
+
+test("the section override is the servers' COMPLETED, and an old MARKED_COMPLETE reads as it", () => {
+  expect(readSectionOverride("COMPLETED")).toBe("COMPLETED");
+  expect(readSectionOverride("MARKED_COMPLETE")).toBe("COMPLETED");
+  expect(readSectionOverride("NEEDS_REDO")).toBe("NEEDS_REDO");
+  expect(readSectionOverride("DONE")).toBeNull();
+  expect(readSectionOverride(null)).toBeNull();
+  const grid = { questionnaireId: "f", artisans: [], sections: [{ sectionId: "s", code: "A", title: "A", cells: [{ artisanId: "a", state: "NOT_RECORDED", takes: 0, covered: null, total: null, needsDecision: false, override: "COMPLETED" }] }] } as unknown as CoverageGrid;
+  expect(toGridView(grid).cells[0]).toMatchObject({ state: "COMPLETED", override: "COMPLETED" });
 });

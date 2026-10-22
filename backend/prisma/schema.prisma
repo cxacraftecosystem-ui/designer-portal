@@ -2357,6 +2357,9 @@ model Questionnaire {
   /// and the library order, the two columns documentation-portal's instruments already carry.
   isDefault   Boolean @default(false)
   sortOrder   Int     @default(0)
+  /// A10: the handoff bundle this form was imported from; a second import of one file by one
+  /// person returns the first copy (unique with ownerId; the same column as documentation-portal).
+  importedBundleId String?
   /// WHAT KIND OF QUESTIONNAIRE THIS IS — `WORKSHOP_INTERVIEW` or `MARKET_SURVEY`, and NULL for
   /// "not stated". It is what decides which stage of the report this instrument's answers are filed
   /// under; see `app/services/questionnaire_kinds.py`, which owns the vocabulary and the mapping.
@@ -2426,6 +2429,7 @@ model Questionnaire {
   @@index([isShared, isActive])
   /// The admin's trash listing (`deletedOnly`).
   @@index([deletedAt])
+  @@unique([importedBundleId, ownerId])
 }
 
 /// A section of a custom questionnaire. `code` is unique WITHIN its questionnaire and nowhere else —

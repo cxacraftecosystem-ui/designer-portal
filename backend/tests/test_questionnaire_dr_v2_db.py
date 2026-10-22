@@ -243,3 +243,46 @@ def test_a_session_keeps_the_start_sheet_fix_and_an_admin_sets_the_global_defaul
             await client.disconnect()
 
     asyncio.run(go())
+
+
+def test_a_researcher_may_use_a_bound_shared_default_or_own_form_on_a_workshop(monkeypatch: pytest.MonkeyPatch, v2_on) -> None:
+    """Decision 4 and owner amendment 2: under a workshop a researcher who does not manage
+    questionnaires may start a session on any form bound to it, the type default, the global
+    default, or their own or a shared form; anyone else's unbound form is refused."""
+    from fastapi import HTTPException
+
+    from app.core import db as core_db
+    from app.questionnaire import schemas as S, sessions
+
+    async def go() -> None:
+        client = await _client()
+        monkeypatch.setattr(core_db, "db", client)
+        tag = uuid.uuid4().hex[:10]
+        try:
+            ids = await _seed(client, tag)
+            lead = _user(ids["lead"])
+            foreign, own = f"x{tag}", f"o{tag}"
+            for fid, owner in ((foreign, ids["admin"]), (own, ids["lead"])):
+                await client.execute_raw(
+                    'INSERT INTO "Questionnaire" ("id", "title", "ownerId", "updatedAt") VALUES ($1, $2, $3, now())',
+                    fid, f"Form {fid}", owner,
+                )
+
+            def create(form: str, n: int) -> S.SessionCreate:
+                return S.SessionCreate(clientKey=f"ia{n}{tag}", questionnaireId=form, designWorkshopId=ids["dw"],
+                                       sessionDate=date(2026, 10, 22), respondents=[S.RespondentInput(name="V", kind="GUEST")])
+
+            await sessions.assert_instrument_allowed(client, ids["form"], None, lead, design_workshop_id=ids["dw"])
+            await sessions.assert_instrument_allowed(client, own, None, lead, design_workshop_id=ids["dw"])
+            with pytest.raises(HTTPException):
+                await sessions.create_session(create(foreign, 1), lead)
+            await client.execute_raw('UPDATE "Questionnaire" SET "isShared" = true WHERE "id" = $1', foreign)
+            session, created = await sessions.create_session(create(foreign, 2), lead)
+            assert created and session["questionnaire"]["id"] == foreign
+            await client.execute_raw('UPDATE "Questionnaire" SET "deletedAt" = now() WHERE "id" = $1', foreign)
+            with pytest.raises(HTTPException):
+                await sessions.assert_instrument_allowed(client, foreign, None, lead, design_workshop_id=ids["dw"])
+        finally:
+            await client.disconnect()
+
+    asyncio.run(go())

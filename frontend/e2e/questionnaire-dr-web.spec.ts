@@ -75,7 +75,7 @@ test("@qf:B11 @qf:D4 @qf:B13 @qf:D1 @qf:C5 the grid marks recorded, typed and ov
   const override = page.locator("[data-section-override]");
   await override.getByRole("button", { name: "Marked complete" }).click();
   await expect.poll(() => fake.calledWith("PUT", "/questionnaire/completion").length).toBe(1);
-  expect(fake.calledWith("PUT", "/questionnaire/completion")[0].body).toEqual({ artisanId: "a1", sectionId: "s2", status: "MARKED_COMPLETE" });
+  expect(fake.calledWith("PUT", "/questionnaire/completion")[0].body).toEqual({ artisanId: "a1", sectionId: "s2", status: "COMPLETED" });
 });
 
 test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked with who answered; a group answer and its note save", async ({ page }) => {

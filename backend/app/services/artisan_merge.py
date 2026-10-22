@@ -504,7 +504,7 @@ async def _interview_plan(client: Any, merged_id: str, survivor_id: str) -> tupl
             collisions.append({"sourceId": entry["id"], "targetId": seen[key]["id"], "title": entry["title"], "targetTitle": seen[key]["title"]})
             continue
         seen[key] = entry
-        holder = await client.questionnaireinterview.find_unique(where={"artisanSetKey": key})
+        holder = await client.questionnaireinterview.find_first(where={"artisanSetKey": key})
         if holder is not None and holder.id not in moving:
             collisions.append({"sourceId": entry["id"], "targetId": holder.id, "title": entry["title"], "targetTitle": holder.title})
     return plan, collisions

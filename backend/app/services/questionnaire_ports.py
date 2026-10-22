@@ -31,6 +31,7 @@ _MODULES = {
     "consent_gate": "app.services.questionnaire_consent",
     "transcription": "app.services.questionnaire_transcription",
     "workshop_access": "app.services.workshop_access",
+    "codes": "app.services.cross_portal_codes",
 }
 
 
