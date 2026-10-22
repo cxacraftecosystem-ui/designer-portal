@@ -144,7 +144,7 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 355 | 6359 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Backend unit (`backend/tests/`) | 356 | 6365 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 297 | 3384 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 342 | 3958 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 13 | 40 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |

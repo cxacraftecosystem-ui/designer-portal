@@ -36,6 +36,8 @@ SHARED_FILES_EXTRA = (
     "backend/tests/test_questionnaire_schema_parity.py",
     "backend/tests/test_questionnaire_feature_parity.py",
     "backend/tests/test_questionnaire_core.py",
+    # The safety rails every questionnaire data script shares (dry run, host allow-list, approval).
+    "backend/scripts/qv2_guard.py",
 )
 
 
