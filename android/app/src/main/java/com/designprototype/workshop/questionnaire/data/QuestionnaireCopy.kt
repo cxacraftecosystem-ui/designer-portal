@@ -228,7 +228,12 @@ object QuestionnaireCopy {
         "removedTakes" to "Removed takes",
         "formsTitle" to "Forms",
         "newForm" to "New form",
-        "needsConnection" to "Needs a connection"
+        "needsConnection" to "Needs a connection",
+        // Joined the table with the web's fix tray and start sheet (U1, 22 Oct 2026).
+        "outboxSendAgain" to "Send again",
+        "outboxDiscardTitle" to "Discard this?",
+        "outboxSendWithout" to "Send without the conflicting answers",
+        "useMyLocation" to "Use my location"
     )
 
     /** The keys the screens use, each pointing at its shared key. */
@@ -401,7 +406,11 @@ object QuestionnaireCopy {
         "session.removedTakes" to "removedTakes",
         "home.forms" to "formsTitle",
         "home.newForm" to "newForm",
-        "form.needsSignal" to "needsConnection"
+        "form.needsSignal" to "needsConnection",
+        "tray.sendAgain" to "outboxSendAgain",
+        "tray.discardTitle" to "outboxDiscardTitle",
+        "tray.sendWithout" to "outboxSendWithout",
+        "place.useLocation" to "useMyLocation"
     )
 
     /**
@@ -437,7 +446,6 @@ object QuestionnaireCopy {
         "error.changedElsewhere" to "This session changed on another device. It has been reloaded.",
         // The outbox fix tray (audit H20).
         "tray.title" to "Not sent",
-        "tray.sendAgain" to "Send again",
         "tray.notAllowed" to "The server won't take this answer from you.",
         "tray.theirs" to "On the server",
         "tray.mine" to "On this phone",
@@ -446,8 +454,6 @@ object QuestionnaireCopy {
         "tray.participant" to "A change to who was there",
         "tray.answers" to "Typed answers",
         "tray.finish" to "Finishing the session",
-        "tray.discardTitle" to "Discard this?",
-        "tray.sendWithout" to "Send without the conflicting answers",
         // Session actions.
         "session.more" to "More",
         "session.edit" to "Edit session",
@@ -526,7 +532,6 @@ object QuestionnaireCopy {
         "take.noHistory" to "Nothing has changed on this take.",
         // The questionnaire home (UNIFY §4.2 Android).
         "home.back" to "Back",
-        "place.useLocation" to "Use my location",
         "place.notFound" to "Could not find where you are. Type the place.",
         "place.permission" to "Allow location to fill the place, or type it.",
         "form.pick" to "Pick a form",

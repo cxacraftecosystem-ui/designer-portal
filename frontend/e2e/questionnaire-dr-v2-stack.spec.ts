@@ -252,3 +252,27 @@ test("@qf:B14 @qf:B16 @qf:B17 @qf:B10 @qf:C1 @qf:B34 a take goes up through the 
   const cell = grid.sections.find((x) => x.sectionId === sectionOf(s, "A"))!.cells.find((c) => c.artisanId === s.artisans[0])!;
   expect(cell.state).toBe("RECORDED");
 });
+
+test("@qf:C10 the record readers count a session's answers: completeness reads the shared answers", async () => {
+  const s = seed();
+  const session = await guestSession("Reader check");
+  const read = () => stackFetch(seed().tokens.lead)<{ completeness: { missing: { key: string }[] } }>(`/questionnaire/interviews/${session.id}`);
+  expect((await read()).completeness.missing.map((m) => m.key)).toContain("answers");
+  await as("lead").putAnswers([
+    { artisanId: s.artisans[0], questionLineageId: lineage(s, "C"), text: "Sold at the haat", origin: "TYPED", attribution: "INDIVIDUAL", sessionId: session.id, sourceRecordingId: null }
+  ]);
+  expect((await read()).completeness.missing.map((m) => m.key)).not.toContain("answers");
+});
+
+test("@qf:B32 an admin makes a form the global default; a session with nothing bound is offered it", async () => {
+  const s = seed();
+  const put = (who: keyof Seed["tokens"], isDefault: boolean) =>
+    stackFetch(seed().tokens[who])<{ isDefault: boolean }>(`/questionnaires/${s.questionnaireId}/default`, { method: "PUT", body: JSON.stringify({ isDefault }) });
+  await expect(put("lead", true)).rejects.toThrow();
+  expect((await put("admin", true)).isDefault).toBe(true);
+  try {
+    expect(await as("lead").formFor({})).toMatchObject({ questionnaireId: s.questionnaireId, reason: "GLOBAL_DEFAULT" });
+  } finally {
+    expect((await put("admin", false)).isDefault).toBe(false);
+  }
+});

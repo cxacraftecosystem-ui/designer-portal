@@ -290,6 +290,9 @@ async def load_form(
         # is where an admin turns it on and off. A screen that could set a flag it cannot see would
         # be a toggle with no state.
         "isShared": questionnaire.isShared,
+        # THE GLOBAL DEFAULT (UNIFY B32): the form a session is offered when nothing is bound to its
+        # workshop or the workshop's kind. An admin sets it on this page, so the page must read it.
+        "isDefault": bool(getattr(questionnaire, "isDefault", False)),
         # THE KIND, AND ITS LABEL. On the single read as well as on the list, because this payload is
         # what the DETAIL page renders and the detail page is where the kind is set — a screen that
         # could write a value it cannot read back would be a picker with no state, exactly as
