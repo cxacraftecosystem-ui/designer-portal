@@ -1049,7 +1049,8 @@ internal fun QuestionBlock(
                 // P15: read-only to this researcher; the author, a lead or an admin changes it.
                 Text(lockedLine, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.muted)
             } else {
-                OutlinedTextField(value = answer, onValueChange = { answer = it }, modifier = Modifier.fillMaxWidth())
+                // C8: the portal's rich answer box, stored in its text format.
+                QuestionnairePortal.AnswerField(label = null, value = answer, onValueChange = { answer = it }, modifier = Modifier.fillMaxWidth())
                 if (noting) OutlinedTextField(
                     value = note, onValueChange = { note = it.take(2000) },
                     label = { Text(QuestionnaireCopy.s("answer.note")) }, modifier = Modifier.fillMaxWidth()

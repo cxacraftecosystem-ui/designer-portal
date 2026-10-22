@@ -3264,6 +3264,9 @@ class WorkshopRepository(
 
     suspend fun deleteCustomQuestionnaire(id: String) = api.deleteCustomQuestionnaire(id)
 
+    /** A9: a form's bindings, or null when the server has none to say (an older server, no signal). */
+    suspend fun formBindings(id: String): FormBindingsDto? = runCatching { api.formBindings(id) }.getOrNull()
+
     suspend fun restoreCustomQuestionnaire(id: String) {
         api.restoreCustomQuestionnaire(id)
     }
@@ -3339,7 +3342,7 @@ class WorkshopRepository(
     ): QuestionnaireFormRead {
         val live = runCatching { api.customQuestionnaire(id, includeRetired) }
         live.getOrNull()?.let { form ->
-            DwQuestionnaireFormCache.put(context, form, includeRetired)
+            DwQuestionnaireFormCache.put(context, form, includeRetired, cachedUser()?.id)
             return QuestionnaireFormRead(form = form, fromCache = false)
         }
         val error = live.exceptionOrNull() ?: IllegalStateException("This questionnaire could not be opened.")
@@ -3347,9 +3350,9 @@ class WorkshopRepository(
         // consulted: see the paragraph above.
         if (error is HttpException && error.code() !in setOf(408, 429) && error.code() < 500) throw error
         val cached = if (acceptEitherCachedView) {
-            DwQuestionnaireFormCache.getEither(context, id, preferred = includeRetired)
+            DwQuestionnaireFormCache.getEither(context, id, preferred = includeRetired, viewerId = cachedUser()?.id)
         } else {
-            DwQuestionnaireFormCache.get(context, id, includeRetired)
+            DwQuestionnaireFormCache.get(context, id, includeRetired, cachedUser()?.id)
         } ?: throw error
         return QuestionnaireFormRead(
             form = cached.form,
@@ -3427,17 +3430,13 @@ class WorkshopRepository(
                 "No questions yet — nothing to send."
             )
         }
-        val bytes = encodeQuestionnaireBundle(bundle)
+        // A10 (22 Oct 2026): the shared v2 envelope, which both portals' phones and webs read, named by
+        // the one naming helper (`DesignWorkshop_Questionnaire_<day>_<Title>_Handoff.dpwq`). The check
+        // code is still taken over the questions, so the receiver can tell two editions apart.
+        val now = java.time.OffsetDateTime.now(Naming.IST)
+        val bytes = encodeQuestionnaireBundleV2(bundle, newQuestionnaireBundleId(), now.toString())
         val handoffCode = questionnaireHandoffCode(bundle)
-        // The digest goes in the NAME as well as in the code. The version alone cannot separate two
-        // editions — the server does not bump it when questions are added — so without this, two
-        // exports of the same questionnaire either side of an edit are two indistinguishable files in
-        // the designer's Downloads folder, and nearby share is a file picker.
-        val name = questionnaireBundleFilename(
-            title = bundle.title,
-            version = bundle.sourceVersion,
-            digest = handoffCode.split(":").getOrNull(2).orEmpty(),
-        )
+        val name = questionnaireHandoffFilename(bundle.title, now.toLocalDate().toString())
         // cacheDir is right for this one: the bytes live here only until the copy into Downloads (or
         // the filesDir fallback) has been made, which happens on the next line.
         val staging = File(context.cacheDir, name)
@@ -3512,6 +3511,7 @@ class WorkshopRepository(
                     filename = displayNameForUri(context, uri) ?: "questionnaire.$QUESTIONNAIRE_BUNDLE_EXTENSION",
                     bytes = bytes,
                     bundle = read.bundle,
+                    bundleId = read.bundleId,
                 )
             )
         }
@@ -3607,6 +3607,8 @@ class WorkshopRepository(
                     // one is a decision the designer makes afterwards on the questionnaire's own
                     // screen, where the dropdown lists workshops they actually work on.
                     designWorkshopId = null,
+                    // A8: the sender's kind travels with the form.
+                    kind = bundle.kind ?: row.kind,
                     // M13 (21 Oct 2026): one key per received file, so a retried adoption whose first
                     // answer was lost is answered with the questionnaire it already made.
                     idempotencyKey = adoptionIdempotencyKey(row.id, "q"),

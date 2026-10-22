@@ -2551,6 +2551,11 @@ interface WorkshopRepositoryApi {
     // `includeRetired` is what the READ/EDIT screen passes and the ANSWER screen does not. See the
     // KDoc on [CustomQuestionnaireDto] for why that is a difference between two screens and not a
     // detail one caller can decide for both.
+    // A9 (UNIFY U5): the design workshops a form is bound to and which binding is primary. Read-only
+    // on this handset; binding is an admin act, web only on the designer portal.
+    @GET("questionnaire/forms/{id}/bindings")
+    suspend fun formBindings(@Path("id") id: String): FormBindingsDto
+
     @GET("questionnaires/{id}")
     suspend fun customQuestionnaire(
         @Path("id") id: String,

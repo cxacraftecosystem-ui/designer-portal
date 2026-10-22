@@ -4,6 +4,10 @@ import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.ui.AppToggle
 import com.designprototype.workshop.ui.ActionRow
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -88,6 +92,7 @@ import kotlinx.coroutines.launch
  * afterwards, because a designer whose six corrections came back as six NEW questions needs to be
  * told that happened and that their answers are safe.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QuestionnaireDetailScreen(
     repository: WorkshopRepository,
@@ -103,6 +108,14 @@ fun QuestionnaireDetailScreen(
     onResolvedId: (serverId: String) -> Unit = {},
     /** L9: called after a content admin deletes this questionnaire. */
     onDeleted: () -> Unit = {},
+    /**
+     * Questionnaire v2 (UNIFY §4.2): when set, the form answers through SESSIONS. "Start session" opens
+     * the session start sheet on this form and the legacy sittings card is not drawn. Null keeps the
+     * sittings flow exactly as it was (questionnaire v2 switched off on the server).
+     */
+    onStartSession: ((questionnaireId: String) -> Unit)? = null,
+    /** v2: the sessions list filtered to this form. Null hides the button. */
+    onOpenSessions: ((questionnaireId: String) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     // The application context, so the cache write below cannot outlive an Activity it holds.
@@ -114,6 +127,12 @@ fun QuestionnaireDetailScreen(
     var busy by remember { mutableStateOf(false) }
     var reload by remember(questionnaireId) { mutableIntStateOf(0) }
     var workshops by remember { mutableStateOf(AttachableWorkshops()) }
+    /** A9: the server's bindings for this form; null until read, or when it has none to say. */
+    var bindings by remember(questionnaireId) { mutableStateOf<com.designprototype.workshop.data.FormBindingsDto?>(null) }
+    var choosingKind by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
+    val handoffAnchor = remember { BringIntoViewRequester() }
+    val bindingsAnchor = remember { BringIntoViewRequester() }
 
     var renaming by remember { mutableStateOf(false) }
     var addingSection by remember { mutableStateOf(false) }
@@ -284,6 +303,9 @@ fun QuestionnaireDetailScreen(
     }
 
     LaunchedEffect(questionnaireId) { workshops = attachableDesignWorkshops(repository) }
+    LaunchedEffect(questionnaireId, reload) {
+        if (!isTempId(questionnaireId)) bindings = repository.formBindings(questionnaireId)
+    }
 
     // M12: watch for the queued create to land, then hand the server id to the router.
     LaunchedEffect(questionnaireId) {
@@ -351,6 +373,38 @@ fun QuestionnaireDetailScreen(
             else -> {
                 cachedNotice?.let { notice ->
                     Text(notice, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
+                }
+                val deleted = loaded.deletedAt != null
+                val menu = formMenuItems(mayEdit = mayEdit, mayDelete = mayDelete, deleted = deleted, onPhoneOnly = isTempId(questionnaireId))
+                if (menu.isNotEmpty()) Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.weight(1f))
+                    FormOverflowMenu(menu) { item ->
+                        when (item) {
+                            FormMenuItem.WORKBOOK_EXPORT -> if (uploadedOrSay()) download(DwQuestionnaireArtefact.FULL_WORKBOOK)
+                            FormMenuItem.QUESTION_SET -> if (uploadedOrSay()) download(DwQuestionnaireArtefact.QUESTION_SET)
+                            FormMenuItem.PRO_FORMA -> download(DwQuestionnaireArtefact.PRO_FORMA)
+                            FormMenuItem.REUPLOAD -> if (uploadedOrSay()) {
+                                if (repository.isOnline(appContext)) pickWorkbook() else onError(WORKBOOK_UPLOAD_OFFLINE)
+                            }
+                            FormMenuItem.REUSE -> if (uploadedOrSay()) reusing = true
+                            FormMenuItem.SEND_TO_PHONE -> scope.launch { runCatching { handoffAnchor.bringIntoView() } }
+                            FormMenuItem.BINDINGS -> scope.launch { runCatching { bindingsAnchor.bringIntoView() } }
+                            FormMenuItem.KIND -> choosingKind = true
+                            FormMenuItem.DELETE -> confirmingDelete = true
+                            FormMenuItem.RESTORE -> mutate("The questionnaire could not be restored.") {
+                                repository.restoreCustomQuestionnaire(questionnaireId)
+                                "Restored."
+                            }
+                        }
+                    }
+                }
+                if (deleted) {
+                    DeletedFormBanner(mayRestore = mayDelete, busy = busy) {
+                        mutate("The questionnaire could not be restored.") {
+                            repository.restoreCustomQuestionnaire(questionnaireId)
+                            "Restored."
+                        }
+                    }
                 }
                 HeaderCard(
                     form = loaded,
@@ -427,13 +481,23 @@ fun QuestionnaireDetailScreen(
                 // error anywhere. The neighbouring card is the SERVER interchange — it needs a
                 // connection at both ends; this one is built on the handset and needs none, which is
                 // the whole distinction a designer standing in a courtyard is choosing between.
-                QuestionnaireHandoffCard(
-                    repository = repository,
-                    questionnaireId = questionnaireId,
-                    busy = interchangeBusy,
-                    onBusyChange = { interchangeBusy = it },
-                    onError = onError,
-                )
+                Box(modifier = Modifier.fillMaxWidth().bringIntoViewRequester(bindingsAnchor)) {
+                    FormBindingsCard(
+                        bindingLines(bindings?.bindings, loaded.designWorkshopId) { id ->
+                            workshops.rows.firstOrNull { it.id == id }?.let { designWorkshopLabel(it) }
+                        }
+                    )
+                }
+
+                Box(modifier = Modifier.fillMaxWidth().bringIntoViewRequester(handoffAnchor)) {
+                    QuestionnaireHandoffCard(
+                        repository = repository,
+                        questionnaireId = questionnaireId,
+                        busy = interchangeBusy,
+                        onBusyChange = { interchangeBusy = it },
+                        onError = onError,
+                    )
+                }
 
                 /*
                  * USE THIS QUESTIONNAIRE AGAIN — the client half of `POST /questionnaires/{id}/reuse`,
@@ -465,7 +529,14 @@ fun QuestionnaireDetailScreen(
                     )
                 }
 
-                SittingsCard(
+                if (onStartSession != null) {
+                    FormSessionsCard(
+                        canStart = !busy && formSessionBlock(loaded.isActive, deleted, activeQuestionCount(loaded), isTempId(questionnaireId)) == null,
+                        reason = formSessionBlock(loaded.isActive, deleted, activeQuestionCount(loaded), isTempId(questionnaireId)),
+                        onStart = { onStartSession(questionnaireId) },
+                        onOpenSessions = onOpenSessions?.let { open -> { open(questionnaireId) } },
+                    )
+                } else SittingsCard(
                     form = loaded,
                     busy = busy,
                     onDeleteEntry = if (mayDeleteSittings && !isTempId(questionnaireId)) ({ deletingEntry = it }) else null,
@@ -489,7 +560,7 @@ fun QuestionnaireDetailScreen(
                 )
 
                 // L9 (21 Oct 2026): a sitting's trash, content admins only.
-                if (mayDeleteSittings && !isTempId(questionnaireId)) {
+                if (onStartSession == null && mayDeleteSittings && !isTempId(questionnaireId)) {
                     DeletedSittingsCard(
                         repository = repository,
                         questionnaireId = questionnaireId,
@@ -500,7 +571,7 @@ fun QuestionnaireDetailScreen(
                     )
                 }
                 // The form's own soft delete: its author or a content admin (owner, 22 Oct 2026).
-                if (mayDelete && !isTempId(questionnaireId)) {
+                if (mayDelete && !deleted && !isTempId(questionnaireId)) {
                     com.designprototype.workshop.ui.RecordDangerZoneCard(
                         noun = "questionnaire",
                         delete = { repository.deleteCustomQuestionnaire(questionnaireId) },
@@ -516,6 +587,36 @@ fun QuestionnaireDetailScreen(
             }
         }
         Spacer(Modifier.padding(bottom = 8.dp))
+    }
+
+    if (choosingKind && loaded != null) {
+        FormKindDialog(current = loaded.kind, onDismiss = { choosingKind = false }) { kind ->
+            choosingKind = false
+            if (uploadedOrSay()) mutate("The kind could not be changed.") {
+                repository.updateCustomQuestionnaire(id = questionnaireId, kind = kind.takeIf { it.isNotBlank() }, changeKind = true)
+                if (kind.isBlank()) "Kind cleared. Answers stay unfiled in the report." else "Filed as ${labelForQuestionnaireKind(kind)}."
+            }
+        }
+    }
+
+    if (confirmingDelete) {
+        FormDeleteDialog(busy = busy, onDismiss = { confirmingDelete = false }) {
+            confirmingDelete = false
+            if (!busy) {
+                busy = true
+                scope.launch {
+                    runCatching { repository.deleteCustomQuestionnaire(questionnaireId) }
+                        .onSuccess {
+                            onMessage("Questionnaire deleted. Its author or an admin can restore it.")
+                            onDeleted()
+                        }
+                        .onFailure { error ->
+                            if (error !is CancellationException) onError(error.apiErrorMessage("The questionnaire could not be deleted."))
+                        }
+                    busy = false
+                }
+            }
+        }
     }
 
     if (reusing && loaded != null) {

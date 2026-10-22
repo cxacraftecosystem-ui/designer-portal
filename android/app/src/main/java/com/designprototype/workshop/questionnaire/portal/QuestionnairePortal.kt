@@ -120,6 +120,18 @@ object QuestionnairePortal {
         if (!com.designprototype.workshop.data.isTempId(id)) id
         else com.designprototype.workshop.data.TempIdMap.all(context.applicationContext)[id]
 
+    /**
+     * The answer box (C8): this app's rich prose field, with its formatting toolbar and its on-device
+     * microphone. The answer is stored in the app's text format (`ui/RecordProseText.kt`): prose,
+     * with list markers, flattened the way every record column is.
+     */
+    @Composable
+    fun AnswerField(label: String?, value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier) {
+        com.designprototype.workshop.ui.RecordProseField(
+            label = label, value = value, onValueChange = onValueChange, modifier = modifier, minLines = 2, rich = true
+        )
+    }
+
     /** The live QR reader of the join screen: one tap opens the camera, a read code comes back once. */
     @Composable
     fun LiveQrScan(

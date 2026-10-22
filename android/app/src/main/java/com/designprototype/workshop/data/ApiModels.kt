@@ -4538,10 +4538,28 @@ data class CustomQuestionnaireDto(
     val updatedAt: String? = null,
     val sections: List<CustomSectionDto> = emptyList(),
     val questionCount: Int = 0,
+    /** Set while the form is soft-deleted (A13); a deleted form opens read-only with Restore. */
+    val deletedAt: String? = null,
+    val ownerName: String? = null,
     val entries: List<CustomEntryDto> = emptyList(),
 )
 
 /** `GET /questionnaires/options` — the attach-to-a-workshop dropdown, id and label and nothing else. */
+/** One binding of a form to a workshop (UNIFY U5): exactly one of the two ids is set. */
+@Serializable
+data class FormBindingDto(
+    val workshopId: String? = null,
+    val designWorkshopId: String? = null,
+    val isPrimary: Boolean = false,
+)
+
+/** `GET /questionnaire/forms/{id}/bindings`. */
+@Serializable
+data class FormBindingsDto(
+    val questionnaireId: String = "",
+    val bindings: List<FormBindingDto> = emptyList(),
+)
+
 @Serializable
 data class CustomQuestionnaireOptionDto(
     val id: String,

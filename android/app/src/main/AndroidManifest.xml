@@ -238,6 +238,8 @@
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/vnd.designprototype.questionnaire+gzip" />
+                <!-- Field Repository's bundle (.frwq): both readers accept both (UNIFY A10). -->
+                <data android:mimeType="application/vnd.fieldrepository.questionnaire+gzip" />
             </intent-filter>
             <!--
               NO `BROWSABLE` ON EITHER VIEW FILTER, and it was on both until lint said so. BROWSABLE
@@ -261,6 +263,8 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/vnd.designprototype.questionnaire+gzip" />
+                <!-- Field Repository's bundle (.frwq): both readers accept both (UNIFY A10). -->
+                <data android:mimeType="application/vnd.fieldrepository.questionnaire+gzip" />
             </intent-filter>
             <!--
               The same VIEW door for a provider that did not recognise our bytes. `pathPattern` needs
@@ -282,6 +286,8 @@
                 <data android:mimeType="application/x-gzip" />
                 <data android:pathPattern=".*\\.dpwq" />
                 <data android:pathPattern=".*\\..*\\.dpwq" />
+                <data android:pathPattern=".*\\.frwq" />
+                <data android:pathPattern=".*\\..*\\.frwq" />
             </intent-filter>
         </activity>
         <!-- MICROSOFT AND YAHOO SIGN-IN: where the browser tab hands the authorization code back.

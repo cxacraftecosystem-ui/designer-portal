@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -94,6 +95,25 @@ class QuestionnaireSessionUiTest {
         assertEquals(2, compose.onAllNodesWithText(p15).fetchSemanticsNodes().size)
         assertEquals("no answer box to type over it", 0, compose.onAllNodesWithText("Add a note").fetchSemanticsNodes().size)
         compose.onNodeWithText("History").assertIsDisplayed()
+    }
+
+    @QFeature("C8")
+    @Test fun anAnswerIsWrittenInTheRichAnswerBox() {
+        val question = InstrumentQuestion("lin2", "D4", "How is the dye fixed?", "secD")
+        var saved: String? = null
+        compose.setContent {
+            MaterialTheme {
+                QuestionBlock(
+                    question = question, roster = listOf(HeaderParticipant("a1", "Giriraj", true)), known = emptyList(), overlay = emptyList(),
+                    typed = emptySet(), locked = false, typeAnswers = true, answerLines = emptyList(),
+                    currentText = { "" }, lockedFor = { null }, nameOf = { "Giriraj" },
+                    onRecord = {}, onOpenTakes = {}, onSaveAnswer = { text, _, _ -> saved = text }, onHistory = {}
+                )
+            }
+        }
+        // The formatting toolbar is the rich box's; a plain text field has none.
+        compose.onNodeWithContentDescription("Bold").assertIsDisplayed()
+        assertEquals(null, saved)
     }
 
     @QFeature("B39")
