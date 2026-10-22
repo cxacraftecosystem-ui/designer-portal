@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 
@@ -126,6 +126,9 @@ export default function LoginPage() {
 const AGREE_BOX_ID = "usage-consent-agree";
 const AGREE_HINT_ID = "usage-consent-agree-hint";
 
+/** `useSyncExternalStore` with nothing to subscribe to: false in the server render, true after. */
+const noSubscription = () => () => {};
+
 /**
  * THE TURNSTILE: one checkbox, one line, and the phrase that carries the detail is a link.
  *
@@ -185,6 +188,15 @@ function ConsentGateField({
 }) {
   const boxId = AGREE_BOX_ID;
   const hintId = AGREE_HINT_ID;
+  /*
+    NOT TICKABLE UNTIL THE PAGE IS LIVE (2026-10-22). The box is in the server's HTML, so on a slow
+    device it can be ticked before React has hydrated — and hydration then puts the controlled box
+    back to `agreed` (false), silently. The tick was gone, the Google button stayed inert, and a tap
+    on it only lit the row: reproduced on a Galaxy Tab profile against the live site. Disabled in the
+    server render and enabled by the first client render, a too-early tap does visibly nothing
+    instead of something that is quietly undone.
+  */
+  const live = useSyncExternalStore(noSubscription, () => true, () => false);
 
   return (
     <div className="grid gap-1">
@@ -194,6 +206,7 @@ function ConsentGateField({
           type="checkbox"
           required
           checked={agreed}
+          disabled={!live}
           onChange={(event) => onChange(event.target.checked)}
           aria-describedby={hintId}
           // `accent-color` is the one honest way to tint a native checkbox without replacing it, and
