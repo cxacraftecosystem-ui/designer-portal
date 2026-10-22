@@ -36,6 +36,7 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("questionnaire_unify", BACKEND / "scripts" / "questionnaire_unify.py")
 unify = importlib.util.module_from_spec(SPEC)
+sys.modules["questionnaire_unify"] = unify
 SPEC.loader.exec_module(unify)
 
 URL = os.environ.get("QUESTIONNAIRE_UNIFY_DATABASE_URL", "").strip()
