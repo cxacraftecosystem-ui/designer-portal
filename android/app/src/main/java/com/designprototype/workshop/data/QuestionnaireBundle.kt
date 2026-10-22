@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.designprototype.workshop.data
 
 import kotlinx.serialization.Serializable
@@ -192,6 +194,12 @@ data class QuestionnaireBundle(
     /** The sending questionnaire's version, for a human to compare editions. Never stored anywhere. */
     val sourceVersion: Int = 0,
     val sections: List<QuestionnaireBundleSection> = emptyList(),
+    /**
+     * The form's kind (A8), carried so a handed-off market survey stays one. Left out of the JSON while
+     * it is null, so a kindless bundle's canonical bytes, and its handoff code, are what they were.
+     */
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val kind: String? = null,
 ) {
     val questionCount: Int get() = sections.sumOf { it.questions.size }
 }
@@ -220,6 +228,7 @@ fun questionnaireBundleOf(form: CustomQuestionnaireDto): QuestionnaireBundle = Q
     title = form.title.trim(),
     description = form.description?.trim()?.takeIf { it.isNotEmpty() },
     sourceVersion = form.version,
+    kind = form.kind?.trim()?.takeIf { it.isNotEmpty() },
     sections = form.sections
         .filter { it.isActive }
         .sortedBy { it.sortOrder }
@@ -303,11 +312,12 @@ enum class QuestionnaireBundleRefusal {
  * happily fill the heap and take the app down on the phone with the least of it. Two megabytes is
  * 235 times the measured 8,501-byte questionnaire, so nothing real is anywhere near it.
  */
-const val QUESTIONNAIRE_BUNDLE_MAX_INFLATED = 2 * 1024 * 1024
+const val QUESTIONNAIRE_BUNDLE_MAX_INFLATED = 5 * 1024 * 1024
 
 /** What [readQuestionnaireBundle] made of some bytes. */
 sealed interface QuestionnaireBundleRead {
-    data class Ok(val bundle: QuestionnaireBundle) : QuestionnaireBundleRead
+    /** [bundleId] is the v2 envelope's, for an idempotent adoption; null for a v1 file. */
+    data class Ok(val bundle: QuestionnaireBundle, val bundleId: String? = null) : QuestionnaireBundleRead
     data class Refused(val reason: QuestionnaireBundleRefusal, val message: String) : QuestionnaireBundleRead
 }
 
@@ -354,6 +364,9 @@ fun readQuestionnaireBundle(bytes: ByteArray?): QuestionnaireBundleRead {
             )
         }
     }
+    // The shared v2 envelope (both portals) first: it is the only shape with a top-level `v`.
+    val element = runCatching { bundleJson.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+    if (element != null && element.containsKey("v") && !element.containsKey("format")) return readV2(text, element)
     val bundle = runCatching { bundleJson.decodeFromString<QuestionnaireBundle>(text) }.getOrNull()
         ?: return QuestionnaireBundleRead.Refused(
             QuestionnaireBundleRefusal.NOT_A_QUESTIONNAIRE,
@@ -644,11 +657,9 @@ fun questionnaireHandoffVerdict(expected: String, fileDigest: String): String =
  */
 fun isQuestionnaireBundleDelivery(action: String?, mimeType: String?, filename: String?): Boolean {
     val normalisedType = mimeType?.substringBefore(';')?.trim()?.lowercase()
-    val looksNamedRight = filename
-        ?.substringBefore('?')
-        ?.trim()
-        ?.lowercase()
-        ?.endsWith(".$QUESTIONNAIRE_BUNDLE_EXTENSION") == true
+    // `.dpwq` or Field Repository's `.frwq`: both readers accept both (A10).
+    val looksNamedRight = hasQuestionnaireBundleExtension(filename)
+    val ourType = normalisedType == QUESTIONNAIRE_BUNDLE_MIME || normalisedType == QUESTIONNAIRE_BUNDLE_MIME_FR
     return when (action) {
         // OUR SUBTYPE AND NOTHING ELSE, because that is the whole of the manifest's SEND filter.
         // This used to also accept any type at all with a `.dpwq` name, which was strictly wider than
@@ -657,10 +668,9 @@ fun isQuestionnaireBundleDelivery(action: String?, mimeType: String?, filename: 
         // exactly so that what the OS offers and what the app accepts cannot drift apart") false, and
         // a mirror nobody can trust is worse than no mirror. Narrowing rather than widening the
         // manifest, because widening SEND is the cost paid by everybody who ever shares a file.
-        "android.intent.action.SEND" -> normalisedType == QUESTIONNAIRE_BUNDLE_MIME
+        "android.intent.action.SEND" -> ourType
         "android.intent.action.VIEW" ->
-            normalisedType == QUESTIONNAIRE_BUNDLE_MIME ||
-                (looksNamedRight && normalisedType in BROAD_BUNDLE_TYPES)
+            ourType || (looksNamedRight && normalisedType in BROAD_BUNDLE_TYPES)
         else -> false
     }
 }
@@ -781,3 +791,145 @@ const val QUESTIONNAIRE_BUNDLE_CONTENTS_NOTICE: String =
  */
 const val QUESTIONNAIRE_BUNDLE_ADOPT_NOTICE: String =
     "Creates a NEW questionnaire on your account with the questions only — no answers. It is recorded as uploaded by you; the sender's copy is unchanged."
+
+
+// --------------------------------------------------------------------------------------
+// The shared format, v2 (`shared/questionnaire-bundle.json`; UNIFY A10, 22 Oct 2026)
+// --------------------------------------------------------------------------------------
+
+/** The extension the other portal writes. Both readers accept both (`shared/questionnaire-bundle.json`). */
+const val QUESTIONNAIRE_BUNDLE_EXTENSION_FR = "frwq"
+
+/** Every extension this app opens as a questionnaire bundle. */
+val QUESTIONNAIRE_BUNDLE_EXTENSIONS: Set<String> = setOf(QUESTIONNAIRE_BUNDLE_EXTENSION, QUESTIONNAIRE_BUNDLE_EXTENSION_FR)
+
+/** The MIME type Field Repository shares its bundles under; accepted on the way in. */
+const val QUESTIONNAIRE_BUNDLE_MIME_FR = "application/vnd.fieldrepository.questionnaire+gzip"
+
+/** The shared format's major version. A file from a higher one is refused (BUNDLE_VERSION). */
+const val QUESTIONNAIRE_BUNDLE_V2 = 2
+
+/** Whether [filename] ends in one of [QUESTIONNAIRE_BUNDLE_EXTENSIONS] (case and a query tolerated). */
+fun hasQuestionnaireBundleExtension(filename: String?): Boolean {
+    val name = filename?.substringBefore('?')?.trim()?.lowercase() ?: return false
+    return QUESTIONNAIRE_BUNDLE_EXTENSIONS.any { name.endsWith(".$it") }
+}
+
+@Serializable
+data class QuestionnaireBundleV2Form(val title: String = "", val description: String? = null, val kind: String? = null)
+
+@Serializable
+data class QuestionnaireBundleV2Section(val code: String = "", val title: String = "", val sortOrder: Int = 0)
+
+@Serializable
+data class QuestionnaireBundleV2Question(
+    val sectionCode: String = "",
+    val prompt: String = "",
+    val helpText: String? = null,
+    val isRequired: Boolean = false,
+    val artisanField: String? = null,
+    val questionCode: String? = null,
+    val sortOrder: Int = 0,
+)
+
+/** The v2 envelope, field for field the shared contract. No ids, no owner, no author. */
+@Serializable
+data class QuestionnaireBundleV2(
+    val v: Int = QUESTIONNAIRE_BUNDLE_V2,
+    val bundleId: String = "",
+    val createdAt: String = "",
+    val portal: String = "designer-portal",
+    val form: QuestionnaireBundleV2Form = QuestionnaireBundleV2Form(),
+    val sections: List<QuestionnaireBundleV2Section> = emptyList(),
+    val questions: List<QuestionnaireBundleV2Question> = emptyList(),
+)
+
+/** The shared contract's limits, checked on the way in. */
+const val QUESTIONNAIRE_BUNDLE_MAX_SECTIONS = 200
+const val QUESTIONNAIRE_BUNDLE_MAX_QUESTIONS_PER_SECTION = 500
+const val QUESTIONNAIRE_BUNDLE_MAX_TEXT = 4000
+
+/** [bundle] in the shared v2 envelope. Pure: the id and the moment are the caller's. */
+fun questionnaireBundleV2Of(bundle: QuestionnaireBundle, bundleId: String, createdAt: String): QuestionnaireBundleV2 =
+    QuestionnaireBundleV2(
+        bundleId = bundleId,
+        createdAt = createdAt,
+        form = QuestionnaireBundleV2Form(bundle.title, bundle.description, bundle.kind),
+        sections = bundle.sections.map { QuestionnaireBundleV2Section(it.code, it.title, it.sortOrder) },
+        questions = bundle.sections.flatMap { s ->
+            s.questions.map { q -> QuestionnaireBundleV2Question(s.code, q.prompt, q.helpText, q.isRequired, sortOrder = q.sortOrder) }
+        },
+    )
+
+/**
+ * The v2 envelope read back into this app's model. Questions group under their section's code in the
+ * envelope's order; a question naming no known section is dropped (it has nowhere to go).
+ */
+fun questionnaireBundleFromV2(envelope: QuestionnaireBundleV2): QuestionnaireBundle = QuestionnaireBundle(
+    title = envelope.form.title.trim(),
+    description = envelope.form.description?.trim()?.takeIf { it.isNotEmpty() },
+    kind = envelope.form.kind?.trim()?.takeIf { it.isNotEmpty() },
+    sections = envelope.sections.map { s ->
+        QuestionnaireBundleSection(
+            code = s.code.trim(),
+            title = s.title.trim(),
+            sortOrder = s.sortOrder,
+            questions = envelope.questions.filter { it.sectionCode.trim() == s.code.trim() }.map { q ->
+                QuestionnaireBundleQuestion(
+                    prompt = q.prompt.trim(),
+                    helpText = q.helpText?.trim()?.takeIf { it.isNotEmpty() },
+                    isRequired = q.isRequired,
+                    sortOrder = q.sortOrder,
+                )
+            },
+        )
+    },
+)
+
+/** The file a handoff writes: gzipped v2 JSON, readable by both portals' phones and webs. */
+fun encodeQuestionnaireBundleV2(bundle: QuestionnaireBundle, bundleId: String, createdAt: String): ByteArray {
+    val json = bundleJson.encodeToString(questionnaireBundleV2Of(bundle, bundleId, createdAt)).toByteArray(Charsets.UTF_8)
+    val out = ByteArrayOutputStream(json.size / 3)
+    GZIPOutputStream(out).use { it.write(json) }
+    return out.toByteArray()
+}
+
+/** A fresh 128-bit hex bundle id. */
+fun newQuestionnaireBundleId(): String = java.util.UUID.randomUUID().toString().replace("-", "")
+
+/**
+ * The handoff's file name (NAMING, UNIFY §4.1): `DesignWorkshop_Questionnaire_<day>_<Form-Title>_Handoff.dpwq`,
+ * through the one naming helper, dated the day it is made (IST).
+ */
+fun questionnaireHandoffFilename(title: String, day: String): String =
+    Naming.exportFilename(entity = "Questionnaire", what = "Handoff", ext = QUESTIONNAIRE_BUNDLE_EXTENSION, subject = title.trim().ifBlank { null }, day = day)
+
+private fun readV2(text: String, element: kotlinx.serialization.json.JsonObject): QuestionnaireBundleRead {
+    val major = (element["v"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()?.toInt() ?: 0
+    if (major > QUESTIONNAIRE_BUNDLE_V2) {
+        return QuestionnaireBundleRead.Refused(
+            QuestionnaireBundleRefusal.NEWER_VERSION,
+            "Update the app to open this, or ask for it as a spreadsheet."
+        )
+    }
+    val envelope = runCatching { bundleJson.decodeFromString<QuestionnaireBundleV2>(text) }.getOrNull()
+        ?: return QuestionnaireBundleRead.Refused(
+            QuestionnaireBundleRefusal.NOT_A_QUESTIONNAIRE,
+            "Not a questionnaire file. Ask for the .$QUESTIONNAIRE_BUNDLE_EXTENSION file."
+        )
+    val tooBig = envelope.sections.size > QUESTIONNAIRE_BUNDLE_MAX_SECTIONS ||
+        envelope.questions.groupBy { it.sectionCode }.values.any { it.size > QUESTIONNAIRE_BUNDLE_MAX_QUESTIONS_PER_SECTION } ||
+        envelope.questions.any { it.prompt.length > QUESTIONNAIRE_BUNDLE_MAX_TEXT || (it.helpText?.length ?: 0) > QUESTIONNAIRE_BUNDLE_MAX_TEXT } ||
+        envelope.form.title.length > QUESTIONNAIRE_BUNDLE_MAX_TEXT
+    if (tooBig) {
+        return QuestionnaireBundleRead.Refused(QuestionnaireBundleRefusal.TOO_LARGE, "That file is too big to be a questionnaire.")
+    }
+    val bundle = questionnaireBundleFromV2(envelope)
+    if (bundle.sections.none { it.questions.isNotEmpty() }) {
+        return QuestionnaireBundleRead.Refused(
+            QuestionnaireBundleRefusal.NOTHING_IN_IT,
+            "This questionnaire has no questions. Check it's the right file."
+        )
+    }
+    return QuestionnaireBundleRead.Ok(bundle, bundleId = envelope.bundleId.ifBlank { null })
+}

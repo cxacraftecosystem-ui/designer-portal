@@ -544,6 +544,7 @@ class ReportQuestionnaireAnnexureTest {
 
     // ── M16 (audit 21 Oct 2026): the kind, as the server groups and prints it ─────────────────────
 
+    @com.designprototype.workshop.QFeature("A12")
     @Test
     fun `stated kinds group under their stage, in stage order, and unstated ones keep their shape`() {
         val stages = listOf(

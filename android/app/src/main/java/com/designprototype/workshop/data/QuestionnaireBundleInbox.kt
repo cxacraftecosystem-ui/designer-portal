@@ -111,6 +111,10 @@ data class ReceivedQuestionnaire(
     val adoptedAt: String? = null,
     /** Why the last attempt stopped, when it stopped for a reason retrying will not change. */
     val failure: String? = null,
+    /** The v2 envelope's id (A10): a second copy of the same file is the same row, never a new one. */
+    val bundleId: String? = null,
+    /** The form's kind as the sender filed it (A8), applied when the form is added. */
+    val kind: String? = null,
 ) {
     val adopted: Boolean get() = adoptedAt != null
     /** Questions written so far, across finished sections and the one in progress. Display only. */
@@ -176,8 +180,11 @@ object QuestionnaireBundleInbox {
         filename: String,
         bytes: ByteArray,
         bundle: QuestionnaireBundle,
+        bundleId: String? = null,
     ): ReceivedQuestionnaire = withContext(Dispatchers.IO) {
         mutex.withLock {
+            // Idempotent on the bundle id (A10): the same file received twice is one row.
+            if (!bundleId.isNullOrBlank()) read(context).firstOrNull { it.bundleId == bundleId }?.let { return@withLock it }
             val id = UUID.randomUUID().toString()
             val target = File(dir(context), "$id.$QUESTIONNAIRE_BUNDLE_EXTENSION")
             FileOutputStream(target).use { out ->
@@ -195,6 +202,8 @@ object QuestionnaireBundleInbox {
                 sourceVersion = bundle.sourceVersion,
                 handoffDigest = questionnaireHandoffDigest(bundle),
                 localPath = target.absolutePath,
+                bundleId = bundleId?.ifBlank { null },
+                kind = bundle.kind,
             )
             write(context, read(context) + row)
             row
