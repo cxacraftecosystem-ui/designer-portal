@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -111,7 +112,10 @@ class QuestionnaireSessionUiTest {
                 )
             }
         }
-        // The formatting toolbar is the rich box's; a plain text field has none.
+        // The formatting toolbar is the rich box's (drawn while one of its blocks holds focus); a plain
+        // text field has none.
+        compose.onAllNodes(androidx.compose.ui.test.hasSetTextAction()).onFirst().performClick()
+        compose.waitForIdle()
         compose.onNodeWithContentDescription("Bold").assertIsDisplayed()
         assertEquals(null, saved)
     }

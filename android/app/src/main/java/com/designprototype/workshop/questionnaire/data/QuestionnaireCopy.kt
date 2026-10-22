@@ -211,7 +211,24 @@ object QuestionnaireCopy {
         "approveBlockedDecide" to "Decide on {count} take first.",
         "approveBlockedNoParticipants" to "Add who was there first.",
         "approveBlockedEmpty" to "Nothing recorded or answered yet.",
-        "changesOnApproved" to "{count} changes on an approved session"
+        "changesOnApproved" to "{count} changes on an approved session",
+        "continueAnotherDay" to "Continue another day",
+        "deleteSessionTitle" to "Delete this session?",
+        "restore" to "Restore",
+        "modeSomeoneElse" to "Someone else",
+        "fieldGuestName" to "Their name",
+        "guestBadge" to "Guest",
+        "addNote" to "Add a note",
+        "currentAnswer" to "Current",
+        "stateTyped" to "Typed",
+        "addRecordingPrompt" to "Add a recording?",
+        "stateNeedsReview" to "Needs review",
+        "formsDeleted" to "Deleted",
+        "deleteSessionBody" to "Admins can restore it from Deleted.",
+        "removedTakes" to "Removed takes",
+        "formsTitle" to "Forms",
+        "newForm" to "New form",
+        "needsConnection" to "Needs a connection"
     )
 
     /** The keys the screens use, each pointing at its shared key. */
@@ -366,7 +383,25 @@ object QuestionnaireCopy {
         "read.blockedEmpty" to "approveBlockedEmpty",
         "answer.note" to "fieldNote",
         "take.history" to "history",
-        "home.sessions" to "sessionsTitle"
+        "home.sessions" to "sessionsTitle",
+        "session.continue" to "continueAnotherDay",
+        "session.deleteTitle" to "deleteSessionTitle",
+        "take.restore" to "restore",
+        "guest.someoneElse" to "modeSomeoneElse",
+        "guest.name" to "fieldGuestName",
+        "guest.label" to "guestBadge",
+        "answer.noteAdd" to "addNote",
+        "answer.current" to "currentAnswer",
+        "mark.typed" to "stateTyped",
+        "mark.addRecording" to "addRecordingPrompt",
+        "override.NEEDS_REVIEW" to "stateNeedsReview",
+        "sessions.deleted" to "formsDeleted",
+        "session.restore" to "restore",
+        "session.softDeleteBody" to "deleteSessionBody",
+        "session.removedTakes" to "removedTakes",
+        "home.forms" to "formsTitle",
+        "home.newForm" to "newForm",
+        "form.needsSignal" to "needsConnection"
     )
 
     /**
@@ -416,15 +451,12 @@ object QuestionnaireCopy {
         // Session actions.
         "session.more" to "More",
         "session.edit" to "Edit session",
-        "session.continue" to "Continue another day",
         "session.merge" to "Merge into another session",
         "session.removeArtisan" to "Remove an artisan",
-        "session.deleteTitle" to "Delete this session?",
         "session.deleteBody" to "This can't be undone.",
         "session.mergeBody" to "Its takes and answers move into the session you pick. This can't be undone.",
         "session.noOtherSessions" to "No other session on this questionnaire.",
         // Takes.
-        "take.restore" to "Restore",
         "take.removed" to "Removed",
         "take.makePrimary" to "Make main take",
         "take.madePrimary" to "This is now the main take.",
@@ -460,41 +492,29 @@ object QuestionnaireCopy {
         // ── Designer portal additions (UNIFY §1, 22 Oct 2026). They join the shared table with the
         // web's copy (U1); until then they are pinned here, word for word as the spec writes them.
         // Guests (U6, A17, A18).
-        "guest.someoneElse" to "Someone else",
         "guest.myself" to "Myself",
-        "guest.name" to "Their name",
         "guest.notes" to "Notes",
         "guest.add" to "+ Add someone else",
         "guest.edit" to "Edit name and notes",
-        "guest.label" to "Guest",
         "guest.register" to "Register as an artisan",
         "guest.registerPick" to "Which artisan is this?",
         "guest.registered" to "Their answers and takes moved to the artisan.",
         "guest.needsName" to "Give their name.",
         // Answers: locks, notes, history (U9, A11, A20, B21).
-        "answer.noteAdd" to "Add a note",
         "answer.prefill" to "Fill from profile",
         "answer.noHistory" to "No earlier versions.",
-        "answer.current" to "Current",
         "answer.locked" to "Only its author, a lead or an admin can change it.",
         // Coverage (D1, D4).
-        "mark.typed" to "Typed",
-        "mark.addRecording" to "Add a recording?",
         "override.COMPLETED" to "Marked complete",
-        "override.NEEDS_REVIEW" to "Needs review",
         "override.NEEDS_REDO" to "Needs redo",
         "coverage.title" to "Workshop coverage",
         "coverage.legend" to "● recorded  ✎ typed  ◐ partial  ◎ uploading  ⚠ needs decision  ○ none",
         "coverage.pickForm" to "Form",
         "coverage.empty" to "No artisans recorded on this form yet.",
         // Sessions: deleted, restored, researchers, read view (A14, B6, B27).
-        "sessions.deleted" to "Deleted",
         "sessions.deletedEmpty" to "No deleted sessions.",
-        "session.restore" to "Restore",
         "session.restored" to "Session restored.",
-        "session.softDeleteBody" to "Admins can restore it from Deleted.",
         "session.read" to "Read view",
-        "session.removedTakes" to "Removed takes",
         "researcher.pick" to "Researcher",
         "researcher.role" to "Role",
         "researcher.roleContributor" to "Researcher",
@@ -505,15 +525,12 @@ object QuestionnaireCopy {
         "read.returnNote" to "What should change?",
         "take.noHistory" to "Nothing has changed on this take.",
         // The questionnaire home (UNIFY §4.2 Android).
-        "home.forms" to "Forms",
-        "home.newForm" to "New form",
         "home.back" to "Back",
         "place.useLocation" to "Use my location",
         "place.notFound" to "Could not find where you are. Type the place.",
         "place.permission" to "Allow location to fill the place, or type it.",
         "form.pick" to "Pick a form",
         "form.bound" to "Bound to this workshop",
-        "form.needsSignal" to "Needs a connection",
         "sessions.filters" to "Filters",
         "filter.from" to "From",
         "filter.to" to "To"
