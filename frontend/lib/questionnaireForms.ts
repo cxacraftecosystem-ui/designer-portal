@@ -183,6 +183,8 @@ export type QForm = {
   isActive: boolean;
   /** See {@link QFormSummary.isShared} — the published default, offered to every designer. */
   isShared: boolean;
+  /** UNIFY B32: the global default form, offered when nothing is bound to a session's workshop. */
+  isDefault?: boolean;
   /** See {@link QFormKind}. `null` is "not stated" and is not an error. */
   kind: string | null;
   /** The server's own label for {@link kind}, so the two clients cannot word one value differently. */
@@ -608,6 +610,11 @@ export function getQuestionnaire(id: string, options?: { includeRetired?: boolea
 
 export function createQuestionnaire(body: QFormCreateBody) {
   return apiFetch<QForm>("/questionnaires", { method: "POST", body: JSON.stringify(body) });
+}
+
+/** UNIFY B32, admin only: this form is (or stops being) the global default. */
+export function setDefaultQuestionnaire(id: string, isDefault: boolean) {
+  return apiFetch<QForm>(`/questionnaires/${encodeURIComponent(id)}/default`, { method: "PUT", body: JSON.stringify({ isDefault }) });
 }
 
 export function patchQuestionnaire(id: string, body: QFormUpdateBody) {

@@ -651,6 +651,27 @@ QUESTIONNAIRE_INTERVIEW_CARRIED = {
     "workshopId": "artisanBaseline.interviewDocumentedAtWorkshop (Workshop.title, via the relation)",
 }
 QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
+    # ── UNIFY U0 (22 Oct 2026): the shared questionnaire's columns; none crosses into a report ──
+    "clientKey": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "closedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "endedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "joinCode": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "languageCode": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "languageOther": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "legacyTitle": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "mergedIntoId": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "note": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "origin": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "pendingChangesAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "purpose": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "questionnaireId": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "sessionDate": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "sessionDateEstimated": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "source": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "startedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "state": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "submittedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "version": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     # THE ONE JUDGEMENT CALL IN THE MODEL, AND IT GOES TO EXCLUSION. Unlike `Artisan.notes` (carried
     # as the roster row's record notes), whose subject is the one person named on the row it lands
     # on, an interview's notes are unbounded free prose about a GROUP of which the report may name
@@ -739,6 +760,10 @@ QUESTIONNAIRE_RESPONSE_NOT_CARRIED = {
 # hand. Every entry is a refusal.
 QUESTIONNAIRE_INTERVIEW_ARTISAN_CARRIED: dict[str, str] = {}
 QUESTIONNAIRE_INTERVIEW_ARTISAN_NOT_CARRIED = {
+    # ── UNIFY U0 (22 Oct 2026): the shared questionnaire's columns; none crosses into a report ──
+    "joinedAt": "the shared questionnaire's participant column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "leftAt": "the shared questionnaire's participant column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "sortOrder": "the shared questionnaire's participant column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "interviewId": "join key",
     "artisanId": (
         "the roster of the sitting. Only the COUNT crosses — a sitting may cover artisans who are "
@@ -752,6 +777,13 @@ QUESTIONNAIRE_QUESTION_CARRIED = {
     "sectionCode": "artisanBaseline.interviewSectionsCovered (distinct codes, counted)",
 }
 QUESTIONNAIRE_QUESTION_NOT_CARRIED = {
+    # ── UNIFY U0 (22 Oct 2026): the shared questionnaire's columns; none crosses into a report ──
+    "artisanField": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "displayCode": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "helpText": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "isRequired": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "lineageId": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
+    "questionnaireId": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "questionCode": "cross-portal identifier (C26) — matching key; only counts of questions cross",
     # NOT A DISCLOSURE ON ITS OWN, and refused all the same: prompts WITHOUT answers answer nothing,
     # and prompts WITH answers are the thing forbidden above. Only the counts cross. `supersededById`
@@ -1023,6 +1055,7 @@ RELATION_LEDGER = {
             "the back-reference of the filing column above; see _FILING_SCOPE. Nothing includes it and nothing may: the picker reads a record to seed a stage entry, and the workshop that record was FILED under is not the workshop the entry is being written into."
         ),
         "answerDrafts": "NOT INCLUDED — transcript drafts awaiting a researcher; the answers do not cross",
+        "researchers": "NOT INCLUDED — the shared questionnaire's session researchers (UNIFY U0); bookkeeping, dark until U1",
     },
     "QuestionnaireResponse": {
         "interview": "join key — the rows are reached through the interview's responses relation",

@@ -43,6 +43,9 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+
+import { useQuestionnaireConfig } from "@/components/questionnaire/useQuestionnaireConfig";
+import { answerFormTarget } from "@/lib/questionnaireLinks";
 import { Archive, ChevronLeft, ChevronRight, ClipboardList, Plus, Save } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -55,7 +58,7 @@ import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 // false about this box.
 import { appendDictatedPhrase, clampToColumn } from "@/components/richtext/dictatedValue";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
-import { InstrumentPicker, SHARED_INSTRUMENT } from "@/components/questionnaire/InstrumentPicker";
+import { InstrumentPicker, SHARED_INSTRUMENT } from "@/components/questionnaires/InstrumentPicker";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
@@ -142,9 +145,26 @@ export default function AnswerQuestionnairePage() {
   return (
     // Next 16: `useSearchParams` must sit inside a Suspense boundary.
     <Suspense fallback={<div className="panel p-4 text-sm text-ink-500">Loading…</div>}>
-      <AnswerPageBody />
+      <AnswerOrSession />
     </Suspense>
   );
+}
+
+/**
+ * With the shared questionnaire on (QUESTIONNAIRE_V2), answering a form is a session on it (UNIFY
+ * 4.2): this old route opens the start sheet with the form picked. With it off, the sitting screen
+ * below answers as before.
+ */
+function AnswerOrSession() {
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const config = useQuestionnaireConfig();
+  const v2 = Boolean(config?.v2Enabled);
+  useEffect(() => {
+    if (v2) router.replace(answerFormTarget(params.id));
+  }, [v2, params.id, router]);
+  if (config === null || v2) return <div className="panel p-4 text-sm text-ink-500">Loading…</div>;
+  return <AnswerPageBody />;
 }
 
 function AnswerPageBody() {

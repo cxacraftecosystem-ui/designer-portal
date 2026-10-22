@@ -89,10 +89,8 @@ test("an attached file's remove control is drawn for content admins, admin view 
   expect(media).toContain("onRemove={!mayRemove || removingId === media.id ? undefined");
 });
 
-test("the global form's deletes are content-admin only; a form's are its author's or an admin's", () => {
-  const instrument = read("app/(protected)/questionnaire/page.tsx");
-  expect(instrument).toContain("onRemove={canDeleteRecords ? () => removeQuestion(question) : undefined}");
-  expect(instrument).toContain("{canDeleteRecords ? (\n                    <button type=\"button\" className=\"text-sm font-semibold text-red-700 dark:text-red-400\" onClick={() => removeSection(section)}>");
+test("a form's deletes are its author's or an admin's", () => {
+  // The global form, whose deletes were content-admin only, is retired on the web (UNIFY 4.4).
   const form = read("app/(protected)/questionnaires/[id]/page.tsx");
   expect(form).toContain("const mayDelete = mayEdit && mayDeleteQuestionnaire(user, form?.ownerId);");
   expect(form).toContain("const mayDeleteSittings = mayEdit && canDeleteRecords;");
@@ -107,7 +105,8 @@ test("a deleted sitting is restored by a content admin in admin view; a form by 
   expect(form).not.toContain("This cannot be undone.");
   expect(form).toContain("{mayDeleteSittings && adminMode ? (\n        <DeletedSittings");
   const list = read("app/(protected)/questionnaires/page.tsx");
-  expect(list).toContain("{adminMode || !canDeleteRecords ? (\n        <DeletedQuestionnairesCard ownOnly={!canDeleteRecords}");
+  // The library's Deleted tab opens it too, for anyone who may delete.
+  expect(list).toContain('{tab === "deleted" || adminMode || !canDeleteRecords ? (\n        <DeletedQuestionnairesCard ownOnly={!canDeleteRecords}');
   const lib = read("lib/questionnaireForms.ts");
   expect(lib).toContain('deletedOnly: params.deletedOnly ? "true" : undefined');
   expect(lib).toContain("/restore`, { method: \"POST\" }");

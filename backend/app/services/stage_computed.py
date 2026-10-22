@@ -248,11 +248,18 @@ async def market_survey_sittings(workshop_id: str) -> int:
             "deletedAt": None,
         }
     )
-    if not forms:
+    from app.services import questionnaire_readers
+
+    # Forms bound to the workshop (several per workshop; UNIFY U5) and their sessions (C10).
+    bound = await questionnaire_readers.forms_for_design_workshop(workshop_id, kind="MARKET_SURVEY")
+    form_ids = sorted({f.id for f in forms} | {str(b["id"]) for b in bound})
+    if not form_ids:
         return 0
-    return await db.questionnaireformentry.count(
-        where={"questionnaireId": {"in": [f.id for f in forms]}, "deletedAt": None}
-    )
+    sittings = await db.questionnaireformentry.count(
+        where={"questionnaireId": {"in": form_ids}, "deletedAt": None}
+    ) if forms else 0
+    sessions = await questionnaire_readers.session_counts(form_ids)
+    return sittings + sum(s["count"] for s in sessions.values())
 
 
 async def apply_on_save(

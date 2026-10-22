@@ -47,7 +47,8 @@ export const RECORD_VIEW_HREF: Record<ViewableRecord, (id: string) => string> = 
   process: (id) => `/processes/${encodeURIComponent(id)}`,
   craft: (id) => `/crafts/${encodeURIComponent(id)}`,
   workshop: (id) => `/workshops/${encodeURIComponent(id)}`,
-  interview: (id) => `/questionnaire/interviews/${encodeURIComponent(id)}`,
+  // An interview is a session of the shared questionnaire (UNIFY 4.4): its read view and review.
+  interview: (id) => `/questionnaire/sessions/${encodeURIComponent(id)}/view`,
   media: (id) => `/media/${encodeURIComponent(id)}`
 };
 
@@ -77,7 +78,7 @@ export const RECORD_UPDATE_HREF: Record<Exclude<ViewableRecord, "media">, (id: s
   process: (id) => `/processes?edit=${encodeURIComponent(id)}`,
   craft: (id) => `/crafts?edit=${encodeURIComponent(id)}`,
   workshop: (id) => `/workshops?edit=${encodeURIComponent(id)}`,
-  interview: (id) => `/questionnaire?edit=${encodeURIComponent(id)}`
+  interview: (id) => `/questionnaire/sessions/${encodeURIComponent(id)}`
 };
 
 /** The Update destination for a kind, or null where the kind has none. */
@@ -159,4 +160,17 @@ export function rowClickIntent(input: {
   if (input.button !== 0) return "ignore";
   if (input.ctrlKey || input.metaKey || input.shiftKey) return "open-new-tab";
   return "open";
+}
+
+/**
+ * The controls inside a clickable row that keep their own click (a link, a button, a field): a click
+ * on one of them must not also open the row's record. `components/records/OpenableRow.tsx` (the
+ * shared questionnaire lists) asks this; documentation-portal's file carries the same two lines.
+ */
+export const ROW_INNER_CONTROLS = "a, button, input, select, textarea, label, summary, [role='button'], [role='link'], [data-row-ignore]";
+
+export function rowClickOpensRecord(target: { closest?: (selector: string) => unknown } | null, row: unknown): boolean {
+  if (!target || typeof target.closest !== "function") return true;
+  const inner = target.closest(ROW_INNER_CONTROLS);
+  return !inner || inner === row;
 }

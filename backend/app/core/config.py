@@ -728,6 +728,24 @@ class Settings(BaseSettings):
     # is labelled machine-suggested. Runs on the researcher's own AI key or the deployment's.
     ai_answer_drafts_enabled: bool = Field(default=False, alias="AI_ANSWER_DRAFTS_ENABLED")
 
+    # ── THE SHARED QUESTIONNAIRE (C:/dev/IIT/docs/questionnaire/UNIFY_2026-10-21.md) ─────────────
+    # OFF BY DEFAULT, AND NOTHING READS THEM YET: the shared package (app/questionnaire) and its
+    # tables ship dark here (U0); U1 mounts its routes behind QUESTIONNAIRE_V2, exactly as
+    # documentation-portal does, and the forms keep working as they are until then. Turning it on in
+    # code makes tests/test_questionnaire_feature_parity.py demand every client's marker.
+    questionnaire_v2: bool = Field(default=False, alias="QUESTIONNAIRE_V2")
+    # Old builds stop CREATING sessions once every active device runs the new build (GET
+    # /api/admin/app-versions says when). Unset = old builds keep creating. Set = a create from a
+    # lower BUILD NUMBER (X-App-Version-Code; the version name is never compared) gets 503 +
+    # Retry-After and the P14 banner; queued clips are always accepted. One per platform: an Android
+    # build that sends no code is below any minimum; a web page that sends none is not.
+    questionnaire_min_android_version_code_for_create: int | None = Field(
+        default=None, ge=1, alias="QUESTIONNAIRE_MIN_ANDROID_VERSION_CODE_FOR_CREATE"
+    )
+    questionnaire_min_web_version_code_for_create: int | None = Field(
+        default=None, ge=1, alias="QUESTIONNAIRE_MIN_WEB_VERSION_CODE_FOR_CREATE"
+    )
+
     # ── CROSS-PORTAL ARTISAN IDENTITY (C27; docs/ENVIRONMENT.md) ────────────────────────────────
     #
     # OFF BY DEFAULT, AND OFF UNTIL BOTH PORTALS HAVE IT. The lookup works only when the flag is on

@@ -89,6 +89,8 @@ import json
 import pathlib
 import re
 
+import pytest
+
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 CONTRACT_PATH = _ROOT / "shared" / "questionnaire-form-contract.json"
@@ -122,7 +124,27 @@ ANDROID_MAIN = (
 # any wrapping is accepted, and `onSubmit={submit}` still required — that handler is what makes
 # this the CAPTURE form rather than the builder's own `<form onSubmit={addSection}>` lower down.
 WEB_FORM_ANCHOR = re.compile(r"<form\b[^>]*onSubmit=\{submit\}")
+
+
+def _web_form_text() -> str:
+    """The web capture form's source, or a skip once it is retired.
+
+    THE GLOBAL INTERVIEW FORM IS RETIRED ON THE WEB (owner decision 2, 21 Oct 2026; UNIFY 4.4): its
+    page is gone and an interview is a session of the shared questionnaire, whose screens are
+    `components/questionnaire/**`. The handset's form is retired by its own stream; until then its
+    half of this contract still holds it.
+    """
+    import pytest
+
+    # The route survives as the sessions list (`<SessionsList />`), so "the file exists" is not the
+    # test: the page that mounts the shared list instead of the capture form is the retired one.
+    text = WEB_FORM.read_text(encoding="utf-8") if WEB_FORM.is_file() else ""
+    if not text or ("<SessionsList" in text and not WEB_FORM_ANCHOR.search(text)):
+        pytest.skip("the web's global interview form is retired (UNIFY 4.4); the shared questionnaire replaces it")
+    return text
 ANDROID_FORM_ANCHOR = "private fun QuestionnaireForm("
+#: The questionnaire v2 start sheet that replaced the handset's global capture form (UNIFY 4.4).
+ANDROID_START_SHEET = ANDROID_MAIN.parent / "questionnaire" / "ui" / "SessionStartSheet.kt"
 
 
 def contract() -> dict:
@@ -342,7 +364,7 @@ def _web_form_region() -> tuple[str, int]:
     whole, this parser would report those as fields of the capture form: not a crash, not an empty
     list, just a confident wrong answer about a screen nobody looked at.
     """
-    source = _strip_ts_comments(WEB_FORM.read_text(encoding="utf-8"))
+    source = _strip_ts_comments(_web_form_text())
     match = WEB_FORM_ANCHOR.search(source)
     assert match is not None, (
         f"{WEB_FORM_ANCHOR.pattern!r} matches nothing in {WEB_FORM.name}. That pattern is how this "
@@ -421,7 +443,7 @@ def web_form_labels() -> list[tuple[str, int]]:
     the contract's `alsoDrawn`, and either way somebody will have read this paragraph.
     """
     region, base = _web_form_region()
-    stripped = _strip_ts_comments(WEB_FORM.read_text(encoding="utf-8"))
+    stripped = _strip_ts_comments(_web_form_text())
 
     # (offset, sub-index, label). The sub-index keeps a two-box component's own order stable without
     # inventing a fake offset for its second label.
@@ -471,7 +493,7 @@ def web_control_for(field: dict) -> tuple[str, int] | None:
       two do, returns nothing here and reports the reference client as missing a field it draws.
     """
     region, base = _web_form_region()
-    stripped = _strip_ts_comments(WEB_FORM.read_text(encoding="utf-8"))
+    stripped = _strip_ts_comments(_web_form_text())
 
     # The componentDefault arm searches by COMPONENT and then checks the label, which is the reverse
     # of the other two — and it searches every registered self-labelling component rather than only
@@ -524,6 +546,11 @@ def _android_form_region() -> tuple[str, int]:
     """
     source = _strip_kotlin_comments(ANDROID_MAIN.read_text(encoding="utf-8"))
     at = source.find(ANDROID_FORM_ANCHOR)
+    if at < 0 and ANDROID_START_SHEET.is_file():
+        # The global form is retired on the handset (UNIFY 4.4, owner decision 2): a session starts on
+        # the shared start sheet, held by `test_the_handset_retired_the_global_form_for_the_start_sheet`
+        # below and by the questionnaire tree's own tests.
+        pytest.skip("the global interview form is retired on Android (UNIFY 4.4); sessions start on the shared start sheet")
     assert at >= 0, (
         f"{ANDROID_FORM_ANCHOR!r} is no longer in {ANDROID_MAIN.name}. That is how this file finds "
         "the handset's capture form; if it has been renamed or moved out of MainActivity.kt, this "
@@ -952,8 +979,8 @@ def test_the_artisan_control_is_one_searchable_multiselect_and_never_two():
     spec = contract()
     fields = {field["key"]: field for field in spec["fields"]}
     region, base = _web_form_region()
-    stripped = _strip_ts_comments(WEB_FORM.read_text(encoding="utf-8"))
-    raw = WEB_FORM.read_text(encoding="utf-8")
+    stripped = _strip_ts_comments(_web_form_text())
+    raw = _web_form_text()
 
     for pin in spec["controlPins"]:
         field = fields[pin["field"]]
@@ -1121,7 +1148,7 @@ def test_the_artisan_roster_is_fetched_with_a_workshop_scope():
             "the spelling the handset does not send."
         )
 
-    page = _strip_ts_comments(WEB_FORM.read_text(encoding="utf-8"))
+    page = _strip_ts_comments(_web_form_text())
     hit = re.search(r'["\']/artisans["\']', page)
     assert hit is None, (
         f"{WEB_FORM.name}:{_line_of(page, hit.start())} fetches `/artisans` directly.\n"
@@ -1362,6 +1389,8 @@ def test_the_interview_list_is_fetched_with_the_workshop_on_it():
     able to say what "scoped by the same workshop" means without sending a reader to a spec file.
     """
     spec = contract()["interviewListScope"]
+    if (_ROOT / spec["file"]) == WEB_FORM:
+        _web_form_text()
     source = _strip_ts_comments((_ROOT / spec["file"]).read_text(encoding="utf-8"))
     at = source.find(spec["request"])
     assert at >= 0, (
@@ -1876,3 +1905,21 @@ def test_the_contract_is_internally_consistent():
             "`edit`. A known-open problem with no measurement behind it cannot be asserted, and one "
             "with no edit beside it is a complaint rather than a handoff."
         )
+
+
+def test_the_handset_retired_the_global_form_for_the_start_sheet():
+    """UNIFY 4.4 (owner decision 2): the handset's global interview form and its builder are gone, and
+    a sitting starts on the questionnaire v2 start sheet, whose fields are the design's (DESIGN 4.2):
+    workshop, form, date, mode, artisans (or someone else), purpose, place, language and note, in that
+    order, with no title box (the server generates the title)."""
+    source = _strip_kotlin_comments(ANDROID_MAIN.read_text(encoding="utf-8"))
+    if ANDROID_FORM_ANCHOR in source:
+        pytest.skip("the global interview form is still on this handset")
+    assert "fun QuestionnaireBuilder(" not in source, "the global form's builder outlived the form"
+    sheet = ANDROID_START_SHEET.read_text(encoding="utf-8")
+    keys = ["start.workshop", "start.instrument", "start.date", "start.mode", "start.artisans",
+            "start.purpose", "start.place", "start.language", "start.note"]
+    at = [sheet.find(f'QuestionnaireCopy.s("{key}")') for key in keys]
+    assert all(i >= 0 for i in at), dict(zip(keys, at))
+    assert at == sorted(at), f"the start sheet draws its fields out of the design's order: {dict(zip(keys, at))}"
+    assert "title =" not in sheet.split("fun SessionStartSheet(", 1)[1].split("ModalBottomSheet", 1)[0]

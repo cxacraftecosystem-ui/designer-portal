@@ -400,13 +400,13 @@ export const NAV_ITEMS: NavItem[] = [
   // numbers on it. Built and reachable only by typing the URL until this line existed.
   { href: "/map", label: "Map", icon: MapPinned, group: "Browse", can: everyone, gate: "get_current_user" },
   { href: "/data", label: "View Data", icon: FolderTree, group: "Browse", can: canDownloadDataset, gate: "require_dataset_downloader" },
-  // Browse rather than Record: an interview is STORED once per exact set of artisans, so one
-  // artisan's answers are scattered over several entries and this is the only surface that reads
-  // them back as one document. "Take interview" above writes; this one only reads, and
-  // GET /questionnaire/artisans/{id}/consolidated asks for nothing but a login.
+  // Browse rather than Record: which sections each artisan of a workshop has been recorded or typed
+  // for, across every session (UNIFY B12). It replaced the consolidated view of the retired global
+  // form, whose per-artisan half is now the artisan's own Questionnaire tab. "Take interview" above
+  // writes; this one only reads.
   {
-    href: "/questionnaire/consolidated",
-    label: "Consolidated questionnaire",
+    href: "/questionnaire/coverage",
+    label: "Questionnaire coverage",
     icon: Layers,
     group: "Browse",
     can: everyone,

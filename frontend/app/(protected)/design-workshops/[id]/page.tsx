@@ -51,6 +51,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { DictationConsentCard } from "@/components/designworkshop/DictationConsentCard";
 import { HeldPostNotice, heldPostReason, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { WorkshopSearchPanel } from "@/components/designworkshop/WorkshopSearchPanel";
+import { WorkshopQuestionnairesCard } from "@/components/questionnaires/WorkshopQuestionnairesCard";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { RecordDangerZone } from "@/components/records/RecordDangerZone";
@@ -1922,6 +1923,10 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           }}
         />
       ) : null}
+
+      {/* The workshop's forms, grouped by kind, Start session and the annexure as it will print
+          (UNIFY 4.2). A workshop still only on this device has no server id to bind forms to. */}
+      {draft?.remoteId ? <WorkshopQuestionnairesCard designWorkshopId={draft.remoteId} /> : null}
 
       {/* Above the stage index and below the header, because the question it answers ("where did I
           write that?") is asked INSTEAD of reading the list below, not after it. */}

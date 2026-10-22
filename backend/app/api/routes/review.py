@@ -439,6 +439,15 @@ async def set_review_status(
     # appears to have made itself. The delegate is re-resolved against ``tx`` because ``db.tx()``
     # hands back a DIFFERENT client and the ``delegate`` above is bound to the module singleton —
     # writing through it here would leave the update outside the transaction it is written inside.
+    # A SHARED-QUESTIONNAIRE SESSION (UNIFY B27): 0 participants, no content, or a take waiting for a
+    # decision refuses the approval with its reason (409); approving clears the "changes since"
+    # marker and approves the answer revisions with the session, in the same transaction.
+    from app.questionnaire import review as v2_review, shims_dr
+
+    v2_session = record_type.lower() == "questionnaire" and shims_dr.enabled() and bool(get_value(record, "clientKey"))
+    if v2_session and new_status == "APPROVED":
+        await v2_review.assert_may_approve(db, record_id)
+        data["pendingChangesAt"] = None
     async with db.tx() as tx:
         updated = await delegate_on(tx, record_type).update(where={"id": record_id}, data=data)
         await tx.reviewlog.create(
@@ -450,6 +459,8 @@ async def set_review_status(
                 "reviewerId": reviewer.id,
             }
         )
+        if v2_session and new_status == "APPROVED":
+            await v2_review.approve_revisions(tx, record_id)
     return public_encode(updated)
 
 

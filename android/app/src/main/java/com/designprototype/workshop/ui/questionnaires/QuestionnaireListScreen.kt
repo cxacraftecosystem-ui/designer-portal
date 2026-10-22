@@ -95,6 +95,12 @@ fun QuestionnaireListScreen(
      */
     incoming: Uri? = null,
     onIncomingConsumed: () -> Unit = {},
+    /** Each increase opens New form, as the New form pill does (the questionnaire home's FAB). */
+    newFormRequest: Int = 0,
+    /** Questionnaire v2: Start session on a form, from its row. Null leaves the rows as they were. */
+    onStartSession: ((questionnaireId: String) -> Unit)? = null,
+    /** Questionnaire v2: the sessions on one form. Carried for the detail screen's router. */
+    onOpenSessions: ((questionnaireId: String) -> Unit)? = null,
 ) {
     var rows by remember { mutableStateOf<List<CustomQuestionnaireSummaryDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -104,6 +110,12 @@ fun QuestionnaireListScreen(
     var search by remember { mutableStateOf("") }
     var showDeactivated by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
+    /** The library tab (UNIFY §4.2): Mine · Shared · Workshop, and Deleted for whoever may restore. */
+    var tab by remember { mutableStateOf(FormsTab.MINE) }
+    /** A bundle picked from the Open bundle pill; handed to the received card like a shared file. */
+    var pickedBundle by remember { mutableStateOf<Uri?>(null) }
+    val pickBundle = rememberQuestionnaireBundlePicker { pickedBundle = it }
+    LaunchedEffect(newFormRequest) { if (newFormRequest > 0) showCreate = true }
     var reload by remember { mutableIntStateOf(0) }
     /** Rows shown, of the total the server reports — set only when the walk stopped short. */
     var partial by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -245,94 +257,52 @@ fun QuestionnaireListScreen(
             style = MaterialTheme.typography.bodySmall
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = search,
-                onValueChange = { search = it },
-                label = { Text("Search") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            Button(onClick = { showCreate = true }) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("New")
-            }
-        }
-
-        // ── Building a questionnaire from a spreadsheet, on the handset ─────────────────────────
-        //
-        // These two controls were absent by decision until 2026-08-16 and the decision was reversed
-        // by the person the app is for; the argument, including the part of it that was wrong, is in
-        // `data/WorkshopRepositoryApi.kt` where the endpoints are bound.
-        //
-        // WHAT IS STILL TRUE IS SAID RATHER THAN ENFORCED BY AN ABSENCE. A phone is a poor place to
-        // author forty questions, so the pro-forma's line says what to do with the file — send it to
-        // a computer — instead of implying the typing happens here.
-        ElevatedCard(
-            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
-            shape = RoundedCornerShape(14.dp),
+        OutlinedTextField(
+            value = search,
+            onValueChange = { search = it },
+            label = { Text("Search") },
+            singleLine = true,
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    "The spreadsheet",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                ArtefactDownloadRow(
-                    label = "Download the pro-forma",
-                    artefact = DwQuestionnaireArtefact.PRO_FORMA,
-                    busy = interchangeBusy,
-                    working = downloadingProForma,
-                    savedTo = proFormaSavedTo,
-                    onDownload = {
-                        if (interchangeBusy) return@ArtefactDownloadRow
-                        interchangeBusy = true
-                        downloadingProForma = true
-                        proFormaSavedTo = null
-                        scope.launch {
-                            runCatching {
-                                repository.downloadQuestionnaireArtefact(
-                                    context = appContext,
-                                    artefact = DwQuestionnaireArtefact.PRO_FORMA,
-                                )
-                            }
-                                .onSuccess { proFormaSavedTo = it }
-                                .onFailure { error ->
-                                    if (error !is CancellationException) {
-                                        onError(error.apiErrorMessage("The pro-forma could not be downloaded."))
-                                    }
-                                }
-                            downloadingProForma = false
-                            interchangeBusy = false
+        )
+
+        // THE LIBRARY'S FOUR ACTIONS, as pills (UNIFY §4.2; the design bar puts three or more on pills).
+        // The spreadsheet two need a connection; the bundle opens with none.
+        fun downloadProForma() {
+            if (interchangeBusy) return
+            interchangeBusy = true
+            downloadingProForma = true
+            proFormaSavedTo = null
+            scope.launch {
+                runCatching {
+                    repository.downloadQuestionnaireArtefact(
+                        context = appContext,
+                        artefact = DwQuestionnaireArtefact.PRO_FORMA,
+                    )
+                }
+                    .onSuccess { proFormaSavedTo = it }
+                    .onFailure { error ->
+                        if (error !is CancellationException) {
+                            onError(error.apiErrorMessage("The pro-forma could not be downloaded."))
                         }
                     }
-                )
-                Text(
-                    "Prefer a spreadsheet? Download the pro-forma, fill it in, and upload it.",
-                    color = MaterialTheme.field.muted,
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                HorizontalDivider(color = MaterialTheme.field.hairline)
-
-                WorkbookUploadRow(
-                    label = "Upload a workbook",
-                    // NAMED BEFORE A FILE IS CHOSEN, which is the point. Three different files end up
-                    // in a designer's Downloads folder with .xlsx on the end, one of them behaves
-                    // differently from the other two, and a designer finds that out AFTER the upload
-                    // unless the door says so first.
-                    blurb = "Creates a new questionnaire from a pro-forma or a shared question set. Files from this platform import questions only, not answers.",
-                    busy = interchangeBusy,
-                    working = uploading,
-                    onPick = pickWorkbook,
-                )
+                downloadingProForma = false
+                interchangeBusy = false
             }
+        }
+        LibraryActionPills(
+            listOf(
+                LibraryAction("New form", LibraryIcons.NEW) { showCreate = true },
+                LibraryAction("Upload workbook", LibraryIcons.UPLOAD, enabled = !interchangeBusy) {
+                    if (repository.isOnline(appContext)) pickWorkbook() else onError(WORKBOOK_UPLOAD_OFFLINE)
+                },
+                LibraryAction("Download pro-forma", LibraryIcons.DOWNLOAD, enabled = !interchangeBusy) { downloadProForma() },
+                LibraryAction("Open bundle", LibraryIcons.OPEN) { pickBundle() },
+            )
+        )
+        when {
+            uploading -> Text("Uploading the workbook…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
+            downloadingProForma -> Text("Downloading the pro-forma…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
+            proFormaSavedTo != null -> Text("Pro-forma saved to ${proFormaSavedTo.orEmpty()}.", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
 
         uploadReport?.let { report ->
@@ -350,8 +320,8 @@ fun QuestionnaireListScreen(
         // order.
         ReceivedQuestionnairesCard(
             repository = repository,
-            incoming = incoming,
-            onIncomingConsumed = onIncomingConsumed,
+            incoming = incoming ?: pickedBundle,
+            onIncomingConsumed = { if (incoming != null) onIncomingConsumed() else { pickedBundle = null } },
             // A newly adopted questionnaire is a row this list does not have yet, and the adoption
             // happened on this device rather than through the search that populates it.
             onAdopted = { reload++ },
@@ -359,10 +329,22 @@ fun QuestionnaireListScreen(
             onError = onError,
         )
 
-        // L9 (21 Oct 2026): the trash. A content admin sees every deleted form; a designer sees the
-        // forms they authored, which they may restore (owner, 22 Oct 2026). The server scopes it.
+        // The tabs (UNIFY §4.2). L9: a content admin sees every deleted form under Deleted; a designer
+        // sees the forms they authored, which they may restore (owner, 22 Oct 2026). The server scopes it.
         val trashUser = repository.cachedUser()
-        if (trashUser != null && (mayDeleteQuestionnaireItems(trashUser) || com.designprototype.workshop.ui.FieldPermissions.canRunDesignWorkshops(trashUser))) {
+        val mayListDeleted = trashUser != null &&
+            (mayDeleteQuestionnaireItems(trashUser) || com.designprototype.workshop.ui.FieldPermissions.canRunDesignWorkshops(trashUser))
+        val meId = trashUser?.id
+        val tabs = formsTabs(mayListDeleted)
+        if (tab !in tabs) tab = FormsTab.MINE
+        FormsTabRow(
+            tabs = tabs,
+            selected = tab,
+            counts = tabs.filter { it != FormsTab.DELETED }.associateWith { formsInTab(rows, it, meId).size },
+            onSelect = { tab = it },
+        )
+        val shown = formsInTab(rows, tab, meId)
+        if (tab == FormsTab.DELETED) {
             DeletedQuestionnairesCard(
                 repository = repository,
                 ownOnly = !mayDeleteQuestionnaireItems(trashUser),
@@ -372,7 +354,7 @@ fun QuestionnaireListScreen(
             )
         }
 
-        AppToggle(
+        if (tab != FormsTab.DELETED) AppToggle(
             label = "Show deactivated",
             checked = showDeactivated,
             onCheckedChange = { showDeactivated = it },
@@ -380,6 +362,8 @@ fun QuestionnaireListScreen(
         )
 
         when {
+            tab == FormsTab.DELETED -> Unit
+
             loading -> Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -393,7 +377,7 @@ fun QuestionnaireListScreen(
             // of them sends a designer off to build a form they have already built.
             cachedNote != null && rows.isNotEmpty() -> {
                 com.designprototype.workshop.ui.CachedCopyNote(cachedNote.orEmpty())
-                rows.forEach { row -> QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }) }
+                shown.forEach { row -> QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }, onStartSession = onStartSession) }
             }
 
             offline -> Text(
@@ -402,16 +386,16 @@ fun QuestionnaireListScreen(
                 style = MaterialTheme.typography.bodySmall
             )
 
-            rows.isEmpty() -> EmptyNote(
+            shown.isEmpty() -> EmptyNote(
                 if (search.isNotBlank()) {
                     "Nothing matches “$search”."
                 } else {
-                    "No questionnaires yet. Upload a filled-in pro-forma, or tap New."
+                    formsTabEmpty(tab)
                 }
             )
 
-            else -> rows.forEach { row ->
-                QuestionnaireRow(row = row, onOpen = { onOpen(row.id) })
+            else -> shown.forEach { row ->
+                QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }, onStartSession = onStartSession)
             }
         }
 
@@ -443,7 +427,11 @@ fun QuestionnaireListScreen(
 }
 
 @Composable
-private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> Unit) {
+private fun QuestionnaireRow(
+    row: CustomQuestionnaireSummaryDto,
+    onOpen: () -> Unit,
+    onStartSession: ((questionnaireId: String) -> Unit)? = null,
+) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
         shape = RoundedCornerShape(14.dp),
@@ -539,6 +527,10 @@ private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> U
                         MaterialTheme.field.muted
                     )
                 }
+            }
+            // v2: a live form on the server starts a session straight from its row.
+            if (onStartSession != null && row.isActive && row.deletedAt == null && !com.designprototype.workshop.data.isTempId(row.id)) {
+                TextButton(onClick = { onStartSession(row.id) }) { Text("Start session") }
             }
         }
     }

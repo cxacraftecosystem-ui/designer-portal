@@ -810,7 +810,8 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
       together: this href without that hook is a link that appears to work and goes nowhere, which is
       worse than the bug it replaced.
     */
-    editHref: (id) => `/questionnaire?edit=${id}`,
+    // An interview is a session of the shared questionnaire (UNIFY 4.4): it is corrected in its workspace.
+    editHref: (id) => `/questionnaire/sessions/${encodeURIComponent(id)}`,
     viewHref: RECORD_VIEW_HREF.interview,
     load: async (page) =>
       browsePage(
