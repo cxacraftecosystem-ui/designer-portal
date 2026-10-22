@@ -331,6 +331,12 @@ async def load(client: Any, state: dict[str, Any]) -> dict[str, Any]:
         "WHERE m.\"questionnaireInterviewId\" = ANY($1::text[]) AND m.\"mediaType\" IN ('AUDIO', 'VIDEO') "
         f'{removed}ORDER BY m."createdAt", m."id"', iids,
     )
+    for m in data["media"]:  # the resolver reads the metadata as a mapping
+        if isinstance(m.get("extraMetadata"), str):
+            try:
+                m["extraMetadata"] = json.loads(m["extraMetadata"])
+            except ValueError:
+                m["extraMetadata"] = None
     data["linked_media"] = int((await q('SELECT count(*) AS n FROM "MediaFile" WHERE "questionnaireInterviewId" IS NOT NULL'))[0]["n"])
     global_section_ids = [str(s["id"]) for s in data["global_sections"]]
     data["assigned_tasks"] = int((await q(
