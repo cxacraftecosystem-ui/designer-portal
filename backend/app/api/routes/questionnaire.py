@@ -222,7 +222,7 @@ async def duplicate_set_detail(set_key: str) -> dict[str, Any]:
     request) yields ``None`` ids rather than a second failure: the keys stay present and stable so a
     client parses one shape, and the sentence still reads correctly on its own.
     """
-    holder = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
+    holder = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
     return {
         "code": _DUPLICATE_SET_CODE,
         "message": _DUPLICATE_SET_DETAIL,
@@ -1302,6 +1302,16 @@ async def create_interview(
         return await attach_completeness(
             "interview", public_encode(shimmed, current_user, media_urls=await media_url_owners(current_user))
         )
+    # RETIRED ONCE THE FORMS ARE UNIFIED (UNIFY U5): the old global form no longer exists, so a create
+    # that resolves to no form is refused in this route's own words rather than writing a row keyed
+    # by the old one-interview-per-artisan-set (which the switch-on drops).
+    from app.questionnaire import forms as unified_forms
+
+    if await unified_forms.authoring_unified():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This design workshop has no questionnaire yet. Ask an admin to bind one, then try again.",
+        )
     # One interview per exact artisan set PER WORKSHOP: if one already exists for this set under the
     # workshop being filed under, fold into it instead of creating a duplicate. This holds for EVERY
     # client (web + old/new app) regardless of UI.
@@ -1319,7 +1329,7 @@ async def create_interview(
         # Bare row: the merge only reads scalar columns off it, and hydrates the relations once at
         # the end — so the common "fold into the existing entry" path stops paying for six relation
         # statements it was about to discard.
-        existing = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
+        existing = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
         if existing is not None:
             return await merge_into_interview(existing, payload, current_user, check)
 
@@ -1359,7 +1369,7 @@ async def create_interview(
         created = await db.questionnaireinterview.create(data=data)
     except UniqueViolationError:
         # Race: a concurrent request won the create for this set. Fold into the canonical row.
-        existing = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
+        existing = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
         if existing is not None:
             return await merge_into_interview(existing, payload, current_user, check)
         raise
@@ -1416,7 +1426,7 @@ async def interview_for_artisan_set(
     )
     if not set_key:
         return None
-    interview = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
+    interview = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
     if not interview:
         return None
     await hydrate_relations([interview], RELATIONS)
@@ -1753,9 +1763,17 @@ async def set_completion_cell(
     current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
     """Content admins only: set or clear the manual status for one (artisan, section) cell."""
+    from app.questionnaire import kinds
+
     await require_record(db.artisan, payload.artisanId)
     await require_record(db.questionnairesection, payload.sectionId)
     key = {"artisanId_sectionId": {"artisanId": payload.artisanId, "sectionId": payload.sectionId}}
+    # One vocabulary end to end (COMPLETED, NEEDS_REVIEW, NEEDS_REDO); an older client's
+    # MARKED_COMPLETE is accepted and stored as COMPLETED.
+    try:
+        payload.status = kinds.normalise_section_status(payload.status)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     if payload.status is None:
         await db.questionnairesectionstatus.delete_many(
             where={"artisanId": payload.artisanId, "sectionId": payload.sectionId}

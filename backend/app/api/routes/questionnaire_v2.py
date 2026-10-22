@@ -342,50 +342,33 @@ async def sessions_insights(session_id: str, user: Any = Depends(get_current_use
 
 # ── the report annexure (A12): the forms bound to a design workshop, grouped by kind ────────────
 @router.get("/annexure", dependencies=V2)
-async def annexure(designWorkshopId: str | None = None, workshopId: str | None = None,
-                   user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """The annexure a design workshop's report prints, as data: every bound form grouped by kind,
-    each with its live sessions' answers (one sitting per respondent). Anyone who may read the
+async def annexure(designWorkshopId: str | None = None, workshopId: str | None = None, format: str | None = None,
+                   user: Any = Depends(get_current_user)) -> Any:
+    """The annexure a design workshop's report prints, as data (one shape in both portals,
+    ``app/questionnaire/library.annexure``): every form bound to it or answered in its sessions,
+    grouped by kind, each with its questions and their current answers and one sitting per
+    respondent, live sessions only. ``format=txt`` downloads it as text. Anyone who may read the
     workshop; a Field Repository ``workshopId`` has no annexure on this portal."""
-    from app.questionnaire import kinds
+    from fastapi.responses import PlainTextResponse
+
+    from app.questionnaire import library
     from app.services.design_workshops import load_workshop_or_404
-    from app.services.questionnaire_forms import report_items
+    from app.services.naming import content_disposition
 
     if workshopId and not designWorkshopId:
-        return {"designWorkshopId": None, "groups": []}
+        return {"workshopId": workshopId, "designWorkshopId": None, "workshopTitle": None, "groups": []}
     if not designWorkshopId:
         fail("VALIDATION_FAILED", "Name a designWorkshopId.")
     await load_workshop_or_404(designWorkshopId, user)
-    items = await report_items(designWorkshopId)
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for item in items:
-        groups.setdefault(item.kind or "", []).append({
-            "questionnaireId": item.questionnaire_id, "title": item.title, "kind": item.kind or None,
-            "version": item.version, "questionCount": item.question_count, "answeredTotal": item.answered_total,
-            "sittings": [
-                {
-                    "id": s.entry_id, "label": s.label, "source": s.source, "recordedAt": s.recorded_at or None,
-                    "recordedBy": s.recorded_by or None, "notes": s.notes or None,
-                    "answers": [
-                        {"prompt": a.prompt, "answer": a.plain_answer, "notes": a.notes or None,
-                         "sectionCode": a.section_code or None, "retired": a.is_retired}
-                        for a in s.printed_answers
-                    ],
-                }
-                for s in item.printed_sittings
-            ],
-            "emptySittings": len(item.sittings) - len(item.printed_sittings),
-        })
-    return {
-        "designWorkshopId": designWorkshopId,
-        "groups": [
-            {"kind": kind or None, "label": kinds.label_for(kind or None), "forms": forms}
-            for kind, forms in groups.items()
-        ],
-    }
+    doc = await library.annexure(design_workshop_id=designWorkshopId)
+    if format == "txt":
+        return PlainTextResponse(
+            library.annexure_text(doc), media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": content_disposition(library.annexure_filename(doc.get("workshopTitle")))},
+        )
+    return doc
 
 
-# ── coverage ───────────────────────────────────────────────────────────────────────────────────
 @router.post("/coverage/check", dependencies=V2)
 async def coverage_check(request: Request, user: Any = Depends(get_current_user)) -> dict[str, Any]:
     payload = await parse(request, S.CoverageCheckRequest)

@@ -1378,6 +1378,9 @@ jobs:
       PYTHONUTF8: "1"
       DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/design_workshop"
       QUESTIONNAIRE_UNIFY_DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/dr_unify"
+      # tests/test_questionnaire_unified_authoring.py: authoring once the forms are unified, on a
+      # database of its own with the per-form section keys (U1).
+      QUESTIONNAIRE_UNIFIED_DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/dr_unified"
       JWT_SECRET: "ci-unify-not-a-secret-0123456789abcdef"
       AWS_ACCESS_KEY_ID: "ci-placeholder"
       AWS_SECRET_ACCESS_KEY: "ci-placeholder"
@@ -1411,13 +1414,15 @@ jobs:
           python scripts/generate_prisma_client.py --schema prisma/schema.prisma
 
       - name: Create the empty migration database
-        run: docker exec "${{ job.services.postgres.id }}" psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE dr_unify'
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE dr_unify'
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE dr_unified'
 
       - name: Dry run, apply, repeat, undo, deferred migrations
         run: |
           set -uo pipefail
           status=0
-          python -m pytest -rs --durations=10 tests/test_questionnaire_unify.py | tee unify.log || status=1
+          python -m pytest -rs --durations=10 tests/test_questionnaire_unify.py tests/test_questionnaire_unified_authoring.py | tee unify.log || status=1
           if grep -q '^SKIPPED' unify.log; then
             echo "::error::the migration test skipped; QUESTIONNAIRE_UNIFY_DATABASE_URL must reach the empty database."
             exit 1
