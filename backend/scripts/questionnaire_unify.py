@@ -839,8 +839,8 @@ async def _schema_exists(client: Any, name: str) -> bool:
 
 
 async def _meta(client: Any, snap: str) -> dict[str, Any]:
-    rows = await client.query_raw(f'SELECT "key", "value" FROM "{snap}"."_meta"')
-    return {str(r["key"]): (json.loads(r["value"]) if isinstance(r["value"], str) else r["value"]) for r in rows}
+    rows = await client.query_raw(f'SELECT "key", "value"::text AS "value" FROM "{snap}"."_meta"')
+    return {str(r["key"]): json.loads(r["value"]) for r in rows}
 
 
 async def _set_meta(client: Any, snap: str, key: str, value: Any) -> None:
