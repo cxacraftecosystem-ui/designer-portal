@@ -40,10 +40,11 @@ import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { GoogleSignInButton } from "@/components/GoogleSignInButton";
 import { TwoStepCodeEntry, type TwoStepCodeKind } from "@/components/TwoStepCodeEntry";
 import { isCompleteCode } from "@/components/ui/otpCode";
 import { isUnreachable } from "@/lib/failureTriage";
-import { googleClientId, loadGoogleIdentity } from "@/lib/googleIdentity";
+import { googleClientId } from "@/lib/googleIdentity";
 import {
   CONFIRM_STATE_PREFIX,
   beginSignIn,
@@ -370,7 +371,7 @@ export function ChangePasswordCard() {
 /**
  * "Confirm it's you" before a first password: the provider's own sign-in, run again just now.
  *
- * GOOGLE draws Google's button (the same script `/login` uses, `lib/googleIdentity.ts`) and hands the
+ * GOOGLE draws Google's button (`GoogleSignInButton`, the one `/login` uses) and hands the
  * ID token straight back. MICROSOFT and YAHOO leave for the provider and come back to `/settings`
  * (`beginSignIn(…, "confirm")`), where the card picks the code up. A provider this build has not
  * configured cannot be confirmed with here, so the sentence names the way that still works.
@@ -384,7 +385,6 @@ function ConfirmItsYou({
   onProof: (proof: ProviderProof) => void;
   onError: (message: string) => void;
 }) {
-  const host = useRef<HTMLDivElement | null>(null);
   const [leaving, setLeaving] = useState(false);
   const onProofRef = useRef(onProof);
   const onErrorRef = useRef(onError);
@@ -394,32 +394,6 @@ function ConfirmItsYou({
   });
   const clientId = provider === "GOOGLE" ? googleClientId() : null;
   const oidc = provider === "GOOGLE" ? null : (configuredOidcProviders().find((item) => item.id === provider) ?? null);
-
-  useEffect(() => {
-    if (!clientId) return;
-    let cancelled = false;
-    loadGoogleIdentity()
-      .then(() => {
-        if (cancelled || !host.current || !window.google) return;
-        window.google.accounts.id.initialize({
-          client_id: clientId,
-          callback: (response) => onProofRef.current({ googleIdToken: response.credential })
-        });
-        window.google.accounts.id.renderButton(host.current, {
-          type: "standard",
-          theme: "outline",
-          size: "large",
-          text: "continue_with",
-          shape: "rectangular"
-        });
-      })
-      .catch(() => {
-        if (!cancelled) onErrorRef.current("Couldn't reach Google. Check your connection and try again.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [clientId]);
 
   async function leaveForProvider() {
     if (!oidc) return;
@@ -435,10 +409,16 @@ function ConfirmItsYou({
   return (
     <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
       <p className="text-sm text-ink-700">{confirmPrompt(provider)}</p>
-      {clientId ? <div ref={host} className="min-h-10" /> : null}
+      {clientId ? (
+        <GoogleSignInButton
+          clientId={clientId}
+          onCredential={(credential) => onProofRef.current({ googleIdToken: credential })}
+          onLoadError={() => onErrorRef.current("Couldn't reach Google. Check your connection and try again.")}
+        />
+      ) : null}
       {oidc ? (
         <div>
-          <button type="button" className="field-button-secondary" disabled={leaving} onClick={() => void leaveForProvider()}>
+          <button type="button" className="field-button-secondary w-full" disabled={leaving} onClick={() => void leaveForProvider()}>
             {leaving ? "Opening…" : `Continue with ${oidc.label}`}
           </button>
         </div>

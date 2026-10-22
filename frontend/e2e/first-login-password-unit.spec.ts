@@ -99,10 +99,10 @@ const SUBMIT = (() => {
   const from = LOGIN.indexOf("async function submit(");
   return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("async function startOidc(", from));
 })();
-/** The Google Identity Services callback, from its opening line to the GIS button render. */
+/** The Google Identity Services callback (`onGoogleCredential`), from its opening line to its end. */
 const GIS_CALLBACK = (() => {
-  const from = LOGIN.indexOf("callback: async (response) => {");
-  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("renderGoogleButton();", from));
+  const from = LOGIN.indexOf("async (credential: string) => {");
+  return from < 0 ? "" : LOGIN.slice(from, LOGIN.indexOf("const onGoogleLoadError", from));
 })();
 /** The gate's own submit handler. */
 const GATE_SUBMIT = (() => {
@@ -209,7 +209,7 @@ test("the sign-in card offers only the ways in that exist", () => {
   expect(LOGIN).not.toContain("Coming soon");
   expect(LOGIN).not.toMatch(/sign-in is coming soon/);
   expect(LOGIN).not.toContain("to enable Google sign-in");
-  expect(LOGIN).toMatch(/\{googleClientId \|\| oidcProviders\.length > 0 \? \([\s\S]{0,400}?>OR<[\s\S]*?Continue with Google[\s\S]*?\) : null\}/);
+  expect(LOGIN).toMatch(/\{googleClientId \|\| oidcProviders\.length > 0 \? \([\s\S]{0,400}?>OR<[\s\S]*?<GoogleSignInButton[\s\S]*?\) : null\}/);
   expect(SUBMIT, "the submit slice ends before the JSX").not.toContain("<form");
 });
 

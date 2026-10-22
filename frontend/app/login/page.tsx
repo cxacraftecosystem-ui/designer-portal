@@ -10,8 +10,9 @@ import { useAuth } from "@/components/AuthProvider";
 // The form itself, which `AppShell` renders too — the same component, so the two hosts cannot
 // come to enforce different password rules. See its header.
 import { FirstPasswordGate } from "@/components/FirstPasswordGate";
+import { GoogleSignInButton } from "@/components/GoogleSignInButton";
 import { TwoStepChallengeForm } from "@/components/TwoStepChallengeForm";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { GLASS_PANEL, GlassSurface } from "@/components/ui/GlassSurface";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
@@ -54,33 +55,8 @@ import { isTwoFactorChallenge } from "@/lib/twoFactor";
 import type { User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// `window.google` is declared once, in `lib/googleIdentity.ts`, which the Settings card shares.
-import "@/lib/googleIdentity";
 
 /** Official provider marks (inline SVG — no external requests). */
-function GoogleMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 48 48" className={className} aria-hidden>
-      <path
-        fill="#EA4335"
-        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-      />
-      <path
-        fill="#4285F4"
-        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-      />
-      <path
-        fill="#FBBC05"
-        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-      />
-      <path
-        fill="#34A853"
-        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-      />
-    </svg>
-  );
-}
-
 function MicrosoftMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 21 21" className={className} aria-hidden>
@@ -131,9 +107,6 @@ const BRAND_POINTS = [
   // page nothing and ends the genre.
   "Eleven-tier access control; every edit audited."
 ];
-
-/** Shared chrome for the Google sign-in action, so it matches the password form's height and radius. */
-const PROVIDER_BUTTON = buttonVariants({ variant: "provider", size: "auth" });
 
 export default function LoginPage() {
   // ToastProvider lives in app/layout.tsx, so this page needs no provider of its own.
@@ -300,8 +273,8 @@ function StandingRefusal({ gate, onContinue }: { gate: UsageConsentGate; onConti
  * ── THE FOUR THINGS THAT MADE THIS HARDER THAN A CHECKBOX ───────────────────────────────────────
  *
  * 1. **GOOGLE IS THE PATH RESEARCHERS ACTUALLY USE, AND `disabled` CANNOT REACH IT.** The real
- *    Google button is rendered by Google's own script INSIDE `googleHost`, under a transparent
- *    overlay, and nothing in this bundle owns that element. So the gate is enforced in THREE places
+ *    Google button is rendered by Google's own script INSIDE `GoogleSignInButton`, and nothing in
+ *    this bundle owns that element. So the gate is enforced in THREE places
  *    and not one: an early return inside the GIS callback (the only one that is actually load-
  *    bearing — it runs after Google has already signed the person in), `pointer-events-none` so the
  *    click never lands, and `inert` so the keyboard cannot reach it either. Disabling only the
@@ -376,8 +349,6 @@ function LoginView() {
    */
   const [hint, setHint] = useState<SignInHint>(null);
   const [loading, setLoading] = useState(false);
-  const googleHost = useRef<HTMLDivElement | null>(null);
-  const renderedWidth = useRef(0);
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
   /**
    * Microsoft and Yahoo, each present only when this build carries its client ID — no badge and no
@@ -546,9 +517,9 @@ function LoginView() {
   /**
    * THE GATE, REACHABLE FROM INSIDE GOOGLE'S CALLBACK WITHOUT BEING IN ITS DEPENDENCY ARRAY.
    *
-   * The GIS effect below calls `window.google.accounts.id.initialize`, which replaces Google's
-   * whole client configuration and forces `renderGoogleButton` to redraw its iframe. Putting
-   * `blocked` in that effect's deps would re-run all of it on every keystroke of the checkbox —
+   * `GoogleSignInButton` calls `window.google.accounts.id.initialize` with the callback it is handed,
+   * which replaces Google's whole client configuration and redraws its iframe. Putting `blocked` in
+   * that callback's deps would re-run all of it on every keystroke of the checkbox —
    * and, worse, would make the tick that unblocks the button the same thing that tears the button
    * down. So the callback reads the current values through a ref, which is the treatment
    * `useEditDeepLink` gives its own late-settling inputs for the same reason.
@@ -567,7 +538,7 @@ function LoginView() {
    * administrator's approval, names the wrong culprit entirely and sends them to try the password
    * boxes that will refuse them identically.
    *
-   * DECLARED ABOVE THE GOOGLE EFFECT THAT DEPENDS ON IT. A `const` referenced in an earlier hook's
+   * DECLARED ABOVE THE GOOGLE CALLBACK THAT DEPENDS ON IT. A `const` referenced in an earlier hook's
    * dependency array is read during render, before the initialiser has run — a temporal-dead-zone
    * crash on the app's front door, and one that only fires when Google sign-in is configured.
    */
@@ -588,140 +559,96 @@ function LoginView() {
   }, []);
 
   /**
-   * Google Identity Services will only render *its* button, at its own size — which is why
-   * it never matched the rest of the card. So we draw our own chrome and lay the real GSI
-   * button over it, transparent: it stays the only focusable, clickable thing (the flow is
-   * untouched, no dead request), while the size and radius become ours. GSI takes a pixel
-   * width, so the hit area is re-rendered whenever the card resizes.
+   * GOOGLE'S ANSWER. `GoogleSignInButton` draws Google's own button, visibly, and hands the ID token
+   * here once Google has signed the person in. Until 2026-10-22 this page drew a button of its own
+   * and laid Google's over it at `opacity: 0`; from a tablet that read as a button that highlights
+   * and never opens Google. The component says why; this is the half the gate lives in.
    */
-  const renderGoogleButton = useCallback(() => {
-    const host = googleHost.current;
-    if (!host || !window.google) return;
-    const width = Math.round(Math.min(400, Math.max(200, host.offsetWidth)));
-    if (width === renderedWidth.current) return;
-    renderedWidth.current = width;
-    host.replaceChildren();
-    window.google.accounts.id.renderButton(host, {
-      theme: "outline",
-      size: "large",
-      shape: "rectangular",
-      text: "continue_with",
-      width
-    });
-  }, []);
+  const onGoogleCredential = useCallback(
+    async (credential: string) => {
+      // FIRST, before anything can return: whatever an earlier password attempt left behind is
+      // not this sign-in's password, and the gate must ask for the current one instead of
+      // silently sending a leftover. See `doorPassword`.
+      setDoorPassword("");
+      /*
+        THE LOAD-BEARING HALF OF THE CONSENT GATE ON THE GOOGLE PATH.
 
-  useEffect(() => {
-    if (!googleClientId) return;
+        By the time this runs, Google has already authenticated the person; what has NOT happened
+        is `POST /auth/login`, so refusing here refuses the thing that actually matters — no
+        session, no token, no account created. The `pointer-events-none` and `inert` that
+        `GoogleSignInButton` puts on its row are belt and braces for a control this bundle does
+        not own; THIS is the brace that holds if Google ever changes how that element is rendered.
 
-    const initialize = () => {
-      window.google?.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: async (response) => {
-          // FIRST, before anything can return: whatever an earlier password attempt left behind is
-          // not this sign-in's password, and the gate must ask for the current one instead of
-          // silently sending a leftover. See `doorPassword`.
-          setDoorPassword("");
-          /*
-            THE LOAD-BEARING HALF OF THE CONSENT GATE ON THE GOOGLE PATH.
-
-            By the time this runs, Google has already authenticated the person; what has NOT happened
-            is `POST /auth/login`, so refusing here refuses the thing that actually matters — no
-            session, no token, no account created. The `pointer-events-none` and `inert` on the host
-            below are belt and braces for a control this bundle does not own; THIS is the brace that
-            holds if Google ever changes how that element is rendered.
-
-            Into the card and not a toast, for the same reason every other refusal on this screen is:
-            the person is looking at the form, and a message that disappears on a timer is a message
-            somebody reads as "the button did nothing".
-          */
-          if (gateNow.current.blocked) {
-            setRefusal(null);
-            setError("Please agree to the terms and conditions above the sign-in buttons.");
-            // SAYING IT IS NOT ENOUGH: the person clicked a button and, from where they are looking,
-            // nothing happened. Focus moves to the control that clears the block, so a keyboard or
-            // screen-reader user is put on it rather than being told to go and find it. `focus` is
-            // safe on a missing element only because it is guarded — and since 2026-08-30 the box is
-            // rendered unconditionally (there is no longer a notice-failed branch that omits it), so
-            // the guard is the only thing standing between this and a control that is always there.
-            document.getElementById(AGREE_BOX_ID)?.focus();
-            return;
-          }
-          setError(null);
-          setRefusal(null);
-          signingIn.current = true;
-          try {
-            const outcome = await loginWithGoogle(response.credential);
-            if (isTwoFactorChallenge(outcome)) {
-              signingIn.current = false;
-              setChallenge(outcome.challenge_token);
-              return;
-            }
-            const account = outcome;
-            const standing = await gateNow.current.settleConsent(account);
-            signingIn.current = false;
-            if (standing) {
-              setHeld(standing);
-              return;
-            }
-            // THE PASSWORD GATE IS READ OFF THE ACCOUNT HERE AND NOT LEFT TO THE REDIRECT EFFECT,
-            // for the reason `signingIn` exists at all: `loginWithGoogle` has already called
-            // `setUser`, so navigating now would put somebody on the dashboard a frame before the
-            // gate could render. The effect's guard is the belt; this is the brace, and it is the
-            // one that holds on the path a person actually walks.
-            if (mustChangePassword(account)) return;
-            router.replace("/dashboard");
-          } catch (err) {
-            signingIn.current = false;
-            /*
-              INTO THE CARD, NOT INTO A TOAST — and this is the biggest behavioural change on this
-              screen.
-
-              A verified Google address that is not on the allow-list no longer self-provisions an
-              account: it becomes a pending request and is refused with a sentence saying so. That
-              sentence is the ONLY thing standing between the person and the belief that Google is
-              broken, and a toast is the wrong carrier for it — it disappears on a timer, it is
-              announced away from the form, and its old title ("Google sign-in failed") blamed the
-              identity provider for an administrator's decision. The panel below stays on screen,
-              says what happened, and says what to do next.
-            */
-            describeFailure(err);
-          }
+        Into the card and not a toast, for the same reason every other refusal on this screen is:
+        the person is looking at the form, and a message that disappears on a timer is a message
+        somebody reads as "the button did nothing".
+      */
+      if (gateNow.current.blocked) {
+        setRefusal(null);
+        setError("Please agree to the terms and conditions above the sign-in buttons.");
+        // SAYING IT IS NOT ENOUGH: the person clicked a button and, from where they are looking,
+        // nothing happened. Focus moves to the control that clears the block, so a keyboard or
+        // screen-reader user is put on it rather than being told to go and find it. `focus` is
+        // safe on a missing element only because it is guarded — and since 2026-08-30 the box is
+        // rendered unconditionally (there is no longer a notice-failed branch that omits it), so
+        // the guard is the only thing standing between this and a control that is always there.
+        document.getElementById(AGREE_BOX_ID)?.focus();
+        return;
+      }
+      setError(null);
+      setRefusal(null);
+      signingIn.current = true;
+      try {
+        const outcome = await loginWithGoogle(credential);
+        if (isTwoFactorChallenge(outcome)) {
+          signingIn.current = false;
+          setChallenge(outcome.challenge_token);
+          return;
         }
-      });
-      renderGoogleButton();
-    };
+        const account = outcome;
+        const standing = await gateNow.current.settleConsent(account);
+        signingIn.current = false;
+        if (standing) {
+          setHeld(standing);
+          return;
+        }
+        // THE PASSWORD GATE IS READ OFF THE ACCOUNT HERE AND NOT LEFT TO THE REDIRECT EFFECT,
+        // for the reason `signingIn` exists at all: `loginWithGoogle` has already called
+        // `setUser`, so navigating now would put somebody on the dashboard a frame before the
+        // gate could render. The effect's guard is the belt; this is the brace, and it is the
+        // one that holds on the path a person actually walks.
+        if (mustChangePassword(account)) return;
+        router.replace("/dashboard");
+      } catch (err) {
+        signingIn.current = false;
+        /*
+          INTO THE CARD, NOT INTO A TOAST — and this is the biggest behavioural change on this
+          screen.
 
-    if (window.google) {
-      initialize();
-      return;
-    }
-    const existing = document.querySelector<HTMLScriptElement>('script[src="https://accounts.google.com/gsi/client"]');
-    if (existing) {
-      existing.addEventListener("load", initialize, { once: true });
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    script.onload = initialize;
-    script.onerror = () =>
+          A verified Google address that is not on the allow-list no longer self-provisions an
+          account: it becomes a pending request and is refused with a sentence saying so. That
+          sentence is the ONLY thing standing between the person and the belief that Google is
+          broken, and a toast is the wrong carrier for it — it disappears on a timer, it is
+          announced away from the form, and its old title ("Google sign-in failed") blamed the
+          identity provider for an administrator's decision. The panel below stays on screen,
+          says what happened, and says what to do next.
+        */
+        describeFailure(err);
+      }
+    },
+    [describeFailure, loginWithGoogle, router]
+  );
+
+  const onGoogleLoadError = useCallback(
+    () =>
       toast({
         title: "Could not load Google sign-in",
         description: "Check your connection and reload the page.",
         tone: "error",
         duration: 0
-      });
-    document.body.appendChild(script);
-  }, [describeFailure, googleClientId, loginWithGoogle, renderGoogleButton, router, toast]);
-
-  useEffect(() => {
-    const host = googleHost.current;
-    if (!host) return;
-    const observer = new ResizeObserver(() => renderGoogleButton());
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, [renderGoogleButton]);
+      }),
+    [toast]
+  );
 
   /**
    * THE REST OF A SIGN-IN, once the second step has been proved — exactly what the three first-factor
@@ -1127,49 +1054,14 @@ function LoginView() {
 
               <div className="grid gap-2.5">
               {googleClientId ? (
-              <div className="grid">
-                <div
-                  className={cn(
-                    PROVIDER_BUTTON,
-                    // The GSI button underneath carries the focus, so the ring has to be drawn
-                    // by the wrapper — an outline on a transparent element is invisible.
-                    "relative w-full min-w-0 overflow-hidden focus-within:outline-solid focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-purple-700",
-                    // Matches `.field-button`'s own disabled treatment, because the control it is
-                    // standing in for is disabled and must not look live.
-                    blocked && "cursor-not-allowed opacity-60"
-                  )}
-                  // `aria-disabled` and NOT `disabled`: this is a `div`, and the element that actually
-                  // takes the click is Google's, inside it. The attribute is what a screen reader
-                  // reads; `inert` below is what actually removes it from the tab order.
-                  aria-disabled={blocked || undefined}
-                >
-                  <span aria-hidden className="pointer-events-none flex min-w-0 items-center gap-2.5">
-                    <GoogleMark className="h-5 w-5 shrink-0" />
-                    <span className="min-w-0 truncate">Continue with Google</span>
-                  </span>
-                  {/* GSI renders a 40px-tall button; stretching this layer vertically makes the
-                      invisible hit area cover the full 52px of chrome behind it. */}
-                  {/*
-                    THE TWO GUARDS ON A CONTROL THIS BUNDLE DOES NOT OWN.
-
-                    `pointer-events-none` stops the click and `inert` stops the keyboard — Google
-                    renders a focusable button (in older builds, an iframe) into this host, and a
-                    `disabled` attribute reaches none of it. Neither is the load-bearing guard: the
-                    early return inside the GIS callback is, because it is the only one that still
-                    holds if Google changes what it renders here. These two exist so the button never
-                    LOOKS live while the box is unticked, which is what stops somebody clicking it,
-                    completing Google's own account chooser, and only then being refused.
-                  */}
-                  <div
-                    ref={googleHost}
-                    inert={blocked || undefined}
-                    className={cn(
-                      "absolute inset-0 flex items-center justify-center opacity-0 transform-[scaleY(1.35)]",
-                      blocked && "pointer-events-none"
-                    )}
-                  />
-                </div>
-              </div>
+                // Greyed and out of reach while the box is unticked, as the password submit is. The
+                // load-bearing refusal is the early return in `onGoogleCredential`.
+                <GoogleSignInButton
+                  clientId={googleClientId}
+                  disabled={blocked}
+                  onCredential={(credential) => void onGoogleCredential(credential)}
+                  onLoadError={onGoogleLoadError}
+                />
               ) : null}
               {/* Microsoft and Yahoo, ONLY those this build is configured for — see `oidcProviders`.
                   `min-w-0` on the grid item is load-bearing: the labels are nowrap, so without it the
