@@ -34,6 +34,7 @@ import com.designprototype.workshop.questionnaire.ui.QuestionnaireV2Nav
 import com.designprototype.workshop.questionnaire.ui.openAppDownloadPage
 import com.designprototype.workshop.ui.FieldPermissions
 import com.designprototype.workshop.ui.LocalMayDelete
+import com.designprototype.workshop.questionnaire.ui.LocalSessionReaders
 import com.designprototype.workshop.ui.field
 
 /**
@@ -96,7 +97,10 @@ fun DesignerQuestionnaireHome(
     val pending by QuestionnaireV2Nav.pending.collectAsState()
     val prefill = remember(pending, prefillArtisanIds) { prefillArtisanIds.ifEmpty { listOfNotNull(pending) } }
     LaunchedEffect(pending) { if (pending != null) QuestionnaireV2Nav.pending.value = null }
-    CompositionLocalProvider(LocalMayDelete provides contentAdmin) {
+    CompositionLocalProvider(
+        LocalMayDelete provides contentAdmin,
+        LocalSessionReaders provides { id, refresh -> DesignerSessionReaders(id, refresh) }
+    ) {
         QuestionnaireHome(
             artisans = remember(artisans) { artisans.map { it.asQuestionnaireArtisan() } },
             meId = user?.id,
