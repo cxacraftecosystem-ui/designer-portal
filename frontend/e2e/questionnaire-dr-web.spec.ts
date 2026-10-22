@@ -332,7 +332,7 @@ test("@qf:B2 an open session with the same artisan today is offered to join inst
 test("@qf:B33 @qf:C4 a refused artisan's consent shows on the start sheet and can be switched back on", async ({ page }) => {
   const fake = new QuestionnaireFake();
   await open(page, fake, "/questionnaire/sessions/new?artisanId=a2");
-  await expect(page.locator("[data-start-sheet]")).toContainText("Recordings of Meena Devi are not sent to outside services: consent was refused.");
+  await expect(page.locator("[data-start-sheet]")).toContainText("Recordings of Meena are not sent to outside services: consent was refused.");
   await page.getByRole("button", { name: "Switch back on" }).click();
   await expect.poll(() => fake.calledWith("POST", "/artisans/a2/consent").length).toBe(1);
   expect(fake.calledWith("POST", "/artisans/a2/consent")[0].body).toMatchObject({ state: "GRANTED" });

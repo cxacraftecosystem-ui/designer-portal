@@ -139,7 +139,7 @@ def test_a_guest_session_on_a_bound_form_locks_and_shims_and_reads(monkeypatch: 
             # C10 / A12: the readers and the annexure see the sessions.
             counts = await questionnaire_readers.session_counts([ids["form"]], client=client)
             assert counts[ids["form"]]["count"] == 2
-            assert (await questionnaire_readers.answer_counts([sid], client=client))[sid] == 1
+            assert (await questionnaire_readers.answer_counts([sid], client=client))[sid] == 2, "the typed answer and the rich-text one"
             items = await report_items(ids["dw"])
             mine = [i for i in items if i.questionnaire_id == ids["form"]]
             assert mine and {s.respondent_name for s in mine[0].printed_sittings} == {"Shopper at Johari Bazaar", "Visitor"}

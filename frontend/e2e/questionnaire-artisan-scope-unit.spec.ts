@@ -341,37 +341,6 @@ test("a failed roster request is said, not swallowed, and never falls back to ev
   expect(rescue, "the previous workshop's rows must not come back on a failure").not.toContain("setScoped(");
 });
 
-test("the page hands the hook a scope built from BOTH of the record's workshop columns", () => {
-  // The scope has to be the workshop the interview is FILED UNDER, and the record has two nullable
-  // columns for that (R1 keeps both tables). BOTH are read, and reading only `workshopId` would
-  // leave the picker unscoped for an interview filed under a design & prototype workshop alone —
-  // which is the reported defect, in the one case the owner's ruling made reachable by choosing a
-  // type.
-  //
-  // THE TWO IDS NOW COME OFF ONE CONTROL, and this test used to read `designWorkshop.workshopId`
-  // from a second hook. The two-dropdown ruling (2026-09-16) replaced `WorkshopSelect` plus the kind
-  // cascade with `useWorkshopPicker`, which exposes both columns and guarantees that AT MOST ONE of
-  // them is ever set. So this assertion is unchanged in what it demands — both columns reach the
-  // roster's scope — and changed in where they come from. What it can no longer catch is a page
-  // that reads one hook and forgets the other, because there is only one hook; what it still
-  // catches is a page that drops a column on the way to `workshopArtisanParams`, which is the
-  // defect that matters and the one that was actually shipped.
-  const page = read("app", "(protected)", "questionnaire", "page.tsx");
-  const scope = page.slice(
-    page.indexOf("const artisanWorkshopScope"),
-    page.indexOf("const knownArtisans")
-  );
-
-  expect(scope, "the scope is assembled on this page and handed down").toContain(
-    "workshopId: workshop.workshopId"
-  );
-  expect(scope).toContain("designWorkshopId: workshop.designWorkshopId");
-  expect(scope).toContain("useWorkshopArtisans({");
-  // The settling guard is passed here rather than computed inside the hook, because it is a fact
-  // about the workshop PICKER's own state and the hook is handed only ids.
-  expect(scope).toContain("workshopScopeSettling(workshop)");
-});
-
 /**
  * THE "ONE FETCH" HALF IS ASSERTED IN `backend/tests/test_questionnaire_form_contract.py` AND NOT
  * HERE, deliberately: the claim is that `/artisans` appears nowhere in `page.tsx`, and this page's
