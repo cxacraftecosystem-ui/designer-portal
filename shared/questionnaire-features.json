@@ -43,7 +43,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -84,7 +84,7 @@
       "status": {
         "dr-web": "planned",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -127,7 +127,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -168,7 +168,7 @@
       "status": {
         "dr-web": "planned",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -192,11 +192,13 @@
         "designer-portal": [
           "POST /questionnaires/{id}/reuse"
         ],
-        "documentation-portal": []
+        "documentation-portal": [
+          "POST /questionnaires/{id}/reuse"
+        ]
       },
       "server": {
         "designer-portal": "built",
-        "documentation-portal": "planned"
+        "documentation-portal": "built"
       },
       "clients": {
         "dr-web": "required",
@@ -207,7 +209,7 @@
       "status": {
         "dr-web": "planned",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -252,7 +254,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -276,11 +278,14 @@
         "designer-portal": [
           "PATCH /questionnaires/{id}"
         ],
-        "documentation-portal": []
+        "documentation-portal": [
+          "PATCH /questionnaires/{id}",
+          "GET /questionnaires"
+        ]
       },
       "server": {
         "designer-portal": "built",
-        "documentation-portal": "planned"
+        "documentation-portal": "built"
       },
       "clients": {
         "dr-web": "required",
@@ -293,7 +298,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "na",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -315,11 +320,14 @@
       "source": "matrix",
       "api": {
         "designer-portal": [],
-        "documentation-portal": []
+        "documentation-portal": [
+          "PATCH /questionnaires/{id}",
+          "GET /questionnaire/annexure"
+        ]
       },
       "server": {
         "designer-portal": "built",
-        "documentation-portal": "planned"
+        "documentation-portal": "built"
       },
       "clients": {
         "dr-web": "required",
@@ -330,7 +338,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -374,7 +382,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -396,11 +404,14 @@
       "source": "matrix",
       "api": {
         "designer-portal": [],
-        "documentation-portal": []
+        "documentation-portal": [
+          "GET /questionnaires/{id}/bundle",
+          "POST /questionnaires/bundles/import"
+        ]
       },
       "server": {
         "designer-portal": "planned",
-        "documentation-portal": "planned"
+        "documentation-portal": "built"
       },
       "clients": {
         "dr-web": "required",
@@ -411,7 +422,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -453,7 +464,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -478,11 +489,13 @@
         "designer-portal": [
           "GET /questionnaire/annexure"
         ],
-        "documentation-portal": []
+        "documentation-portal": [
+          "GET /questionnaire/annexure"
+        ]
       },
       "server": {
         "designer-portal": "built",
-        "documentation-portal": "planned"
+        "documentation-portal": "built"
       },
       "clients": {
         "dr-web": "required",
@@ -493,7 +506,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -519,7 +532,8 @@
           "POST /questionnaires/{id}/restore"
         ],
         "documentation-portal": [
-          "DELETE /questionnaires/{id}"
+          "DELETE /questionnaires/{id}",
+          "POST /questionnaires/{id}/restore"
         ]
       },
       "server": {
@@ -535,7 +549,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -580,7 +594,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -695,7 +709,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -739,7 +753,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -780,7 +794,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -821,7 +835,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -862,7 +876,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -901,7 +915,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -940,7 +954,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -981,7 +995,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1064,7 +1078,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1103,7 +1117,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1142,7 +1156,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1185,7 +1199,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1269,7 +1283,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1308,7 +1322,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1388,7 +1402,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1423,7 +1437,7 @@
       "status": {
         "dr-web": "planned",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1466,7 +1480,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1503,7 +1517,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1549,7 +1563,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1588,7 +1602,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1627,7 +1641,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1666,7 +1680,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1705,7 +1719,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1744,7 +1758,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1822,7 +1836,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1863,7 +1877,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1902,7 +1916,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1941,7 +1955,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1984,7 +1998,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "na",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2019,7 +2033,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2059,7 +2073,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2103,7 +2117,7 @@
       "status": {
         "dr-web": "planned",
         "dr-android": "na",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2144,7 +2158,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2185,7 +2199,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2265,7 +2279,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2300,7 +2314,7 @@
       "status": {
         "dr-web": "planned",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2335,7 +2349,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2413,7 +2427,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2488,7 +2502,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2526,7 +2540,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2603,7 +2617,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2874,7 +2888,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "na",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2911,7 +2925,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2949,7 +2963,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
