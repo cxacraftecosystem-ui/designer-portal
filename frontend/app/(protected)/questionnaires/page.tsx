@@ -68,6 +68,7 @@ import {
   type QFormUploadReport
 } from "@/lib/questionnaireForms";
 import { saveOrQueue } from "@/lib/offline";
+import { queueForm } from "@/lib/questionnaireAuthoringOutbox";
 import type { PageResult } from "@/lib/types";
 import {
   designWorkshopOptions,
@@ -373,6 +374,19 @@ export default function QuestionnairesPage() {
     if (!title || writesHeld(createHold)) return;
     setCreating(true);
     setError(null);
+    // A15: with no connection the form is made on this device with a temporary id, and its sections
+    // and questions can be added straight away; the outbox sends all three, in order, once online.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      const tempId = queueForm(me?.id ?? null, {
+        title,
+        description: String(form.get("description") ?? "").trim() || undefined,
+        designWorkshopId: newWorkshopId || undefined,
+        kind: newKind || undefined
+      });
+      setCreating(false);
+      router.push(`/questionnaires/${tempId}`);
+      return;
+    }
     try {
       /*
         SENT OR BANKED — `saveOrQueue`, not a bare `createQuestionnaire`, since 2026-08-28.

@@ -16,6 +16,26 @@ import { prompts } from "@/lib/questionnaire/prompts";
 import { rosterArtisans, takeSubjects } from "@/lib/questionnaire/view";
 import { consolidatedTarget, inTab, interviewTarget, legacyQuestionnaireTarget } from "@/lib/questionnaireLinks";
 import { mostRecentWorkshop, titleWorkshop, workshopScope } from "@/lib/questionnairePortal";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { answerParts, answerEditorValue } from "@/components/questionnaires/AnswerTextEditor";
+import { questionnaireStrings } from "@/lib/questionnaire/strings";
+import { qs, WEB_ONLY_STRINGS } from "@/lib/questionnaire/qs";
+import { assembleTake, recoverable, recoveredMinutes, TIMESLICE_MS, type TakeDraft } from "@/lib/questionnaire/recorderStore";
+import { prefillItems, prefillText } from "@/lib/questionnaire/prefill";
+import { discardStep, memoryQueueStore, sendStepAgain, sendWithoutConflicts, trayItems, type SessionUnit } from "@/lib/questionnaire/queue";
+import { bundleFileName } from "@/lib/questionnaire/bundle";
+import { cacheRecordIsReadable, type CachedQuestionnaireForm } from "@/lib/questionnaireFormCache";
+import {
+  authoringState,
+  drainAuthoring,
+  queueForm,
+  queueQuestion,
+  queueSection,
+  resetAuthoringCache,
+  stepsForForm
+} from "@/lib/questionnaireAuthoringOutbox";
+import { ApiError } from "@/lib/api";
 
 /**
  * Designer-portal's shared questionnaire client, the pure rules (stream U1). No server and no
@@ -257,4 +277,151 @@ test("the design workshop default and title half", () => {
 test("the clock offset is read off the Date header", () => {
   recordClockOffset("Wed, 22 Oct 2026 06:00:10 GMT", Date.parse("2026-10-22T06:00:00Z"), Date.parse("2026-10-22T06:00:00Z"));
   expect(clockOffset()?.offsetMs).toBe(10_000);
+});
+
+
+const ROOT = join(__dirname, "..", "..");
+
+test("@qf:B37 the generated strings module holds every shared key with the shared words, and the screens use only known keys", () => {
+  const shared = (JSON.parse(readFileSync(join(ROOT, "shared", "strings", "questionnaire.json"), "utf8")) as { strings: Record<string, string> }).strings;
+  expect(Object.keys(questionnaireStrings).sort()).toEqual(Object.keys(shared).sort());
+  for (const [key, text] of Object.entries(shared)) {
+    const names = [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+    const vars = Object.fromEntries(names.map((n) => [n, `<${n}>`]));
+    expect(qs(key as keyof typeof questionnaireStrings, vars), key).toBe(text.replace(/\{(\w+)\}/g, (_w, n: string) => `<${n}>`));
+  }
+  expect(Object.keys(WEB_ONLY_STRINGS).filter((k) => k in questionnaireStrings)).toEqual([]);
+});
+
+test("@qf:B15 a take cut short reassembles header first and is offered back by P13, with its length", async () => {
+  const draft: TakeDraft = {
+    takeKey: "t1", sessionKey: "ck-s-1", clientClipKey: "k1", deviceCapturedAt: "2026-10-22T05:00:00Z", mimeType: "audio/webm",
+    targetLabel: "Section A", targets: [{ sectionId: "s1" }], roster: ["a1"], startedAt: 1_000_000, finishedAt: null
+  };
+  const chunks = [
+    { takeKey: "t1", index: 1, blob: new Blob(["B"]), at: draft.startedAt + 12 * 60_000 },
+    { takeKey: "t1", index: 0, blob: new Blob(["HEAD"]), at: draft.startedAt }
+  ];
+  expect(await assembleTake(chunks, "audio/webm").text()).toBe("HEADB");
+  expect(recoverable([draft, { ...draft, takeKey: "t2", finishedAt: 5 }], chunks).map((r) => r.draft.takeKey)).toEqual(["t1"]);
+  expect(recoveredMinutes(draft, chunks)).toBe(12);
+  expect(TIMESLICE_MS).toBe(10_000);
+  const recorder = readFileSync(join(__dirname, "..", "components", "questionnaire", "Recorder.tsx"), "utf8");
+  expect(recorder.indexOf("await recorderStore.saveDraft(draft)")).toBeLessThan(recorder.indexOf("recorder.start(TIMESLICE_MS)"));
+});
+
+test("@qf:A16 a cached form is read only by the account that downloaded it", () => {
+  const record = { key: "f1::all", schemaVersion: 1, fetchedAt: "2026-10-22T05:00:00Z", includeRetired: true, version: 3, ownerUserId: "u-lead", form: {} } as unknown as CachedQuestionnaireForm;
+  expect(cacheRecordIsReadable(record, "u-lead")).toBe(true);
+  expect(cacheRecordIsReadable(record, "u-other")).toBe(false);
+  expect(cacheRecordIsReadable(record, null)).toBe(false);
+  expect(cacheRecordIsReadable({ ...record, ownerUserId: null }, "u-lead")).toBe(false);
+});
+
+test("@qf:C8 a formatted answer is sent as plain text with the document beside it; prose as text alone", () => {
+  const doc = JSON.stringify({ blocks: [{ kind: "BULLET_ITEM", level: 0, align: "LEFT", spans: [{ text: "Indigo", marks: ["BOLD"] }], rows: [] }] });
+  const parts = answerParts(doc);
+  expect(parts.richText).toBe(doc);
+  expect(parts.text).toContain("Indigo");
+  expect(parts.text).not.toContain("{");
+  expect(answerParts("Wooden blocks")).toEqual({ text: "Wooden blocks", richText: null });
+  expect(answerEditorValue({ text: "Indigo", richText: doc })).toBe(doc);
+  expect(answerEditorValue({ text: "Wooden blocks", richText: null })).toBe("Wooden blocks");
+  expect(answerEditorValue(null)).toBe("");
+});
+
+test("@qf:B24 prefill reads the artisan's column as the server does, and never over an answer", () => {
+  const artisan = { id: "a1", name: "Giriraj", phone: "9829000000", phoneCountryCode: "+91", craft: { name: "Hand Block Printing" }, dateOfBirth: "1970-05-01T00:00:00Z" };
+  expect(prefillText(artisan, "phone")).toBe("+91 98290 00000");
+  expect(prefillText({ ...artisan, phone: "" }, "phone")).toBeNull();
+  expect(prefillText(artisan, "craft")).toBe("Hand Block Printing");
+  expect(prefillText(artisan, "dateOfBirth")).toBe("1970-05-01");
+  expect(prefillText(artisan, "sessionDate", { sessionDate: "2026-10-22" })).toBe("2026-10-22");
+  expect(prefillText(artisan, "interviewer", { interviewer: "Nandini Rao" })).toBe("Nandini Rao");
+  const items = prefillItems({
+    sessionId: "s-1",
+    questions: [{ lineageId: "l1", artisanField: "craft" }, { lineageId: "l2", artisanField: "phone" }, { lineageId: "l3", artisanField: null }],
+    artisans: [artisan],
+    answered: new Set(["a1|l2"])
+  });
+  expect(items).toEqual([
+    { sessionId: "s-1", artisanId: "a1", questionLineageId: "l1", text: "Hand Block Printing", origin: "PREFILL", attribution: "INDIVIDUAL", sourceRecordingId: null }
+  ]);
+});
+
+test("@qf:B39 the fix tray: Send again, Discard and send without the conflicting answers", async () => {
+  const store = memoryQueueStore();
+  const conflictItem = { artisanId: "a1", questionLineageId: "l1", text: "Mine", origin: "TYPED" as const, attribution: "INDIVIDUAL" as const, sourceRecordingId: null };
+  const cleanItem = { ...conflictItem, questionLineageId: "l2", text: "Fine" };
+  const unit: SessionUnit = {
+    id: "ck-s-1",
+    sessionId: "s-1",
+    createdAt: "2026-10-22T05:00:00Z",
+    steps: [
+      { kind: "participant", status: "FAILED", op: "join", artisanId: "a2", at: "2026-10-22T05:00:00Z", idempotencyKey: "p1", error: "Refused" },
+      {
+        kind: "answers", status: "FAILED", error: "CONFLICT", key: "ans1", items: [conflictItem, cleanItem],
+        conflicts: [{ artisanId: "a1", questionLineageId: "l1", status: "CONFLICT", answer: null, current: null }]
+      }
+    ]
+  };
+  await store.save(unit);
+  const tray = trayItems([unit]);
+  expect(tray.map((t) => t.state)).toEqual(["failed", "conflict"]);
+  await sendStepAgain(store, unit.id, "participant:p1");
+  expect((await store.get(unit.id))!.steps[0]).toMatchObject({ status: "PENDING", error: undefined });
+  await sendWithoutConflicts(store, unit.id, "answers:ans1");
+  const answers = (await store.get(unit.id))!.steps[1];
+  expect(answers).toMatchObject({ status: "PENDING", error: undefined, items: [cleanItem] });
+  await discardStep(store, unit.id, "answers:ans1");
+  await discardStep(store, unit.id, "participant:p1");
+  expect(await store.get(unit.id)).toBeNull();
+});
+
+test("@qf:A15 a form, its section and its question made offline land in order, each under the real id", async () => {
+  const memory = new Map<string, string>();
+  (globalThis as unknown as { localStorage: Storage }).localStorage = {
+    getItem: (k: string) => memory.get(k) ?? null,
+    setItem: (k: string, v: string) => void memory.set(k, v),
+    removeItem: (k: string) => void memory.delete(k),
+    clear: () => memory.clear(),
+    key: () => null,
+    length: 0
+  } as Storage;
+  resetAuthoringCache();
+  const owner = "u-lead";
+  const form = queueForm(owner, { title: "Dyers of Bagru" });
+  const section = queueSection(owner, form, { title: "Dyes" });
+  queueQuestion(owner, form, section, { prompt: "Which dyes?" });
+  expect(stepsForForm(owner, form).map((s) => s.kind)).toEqual(["form", "section", "question"]);
+  expect(authoringState("u-other").steps).toEqual([]);
+
+  const sent: [string, unknown, string][] = [];
+  let refuseQuestion = true;
+  const send = async <T,>(path: string, body: unknown, key: string): Promise<T> => {
+    sent.push([path, body, key]);
+    if (path === "/questionnaires") return { id: "fnew1", sections: [] } as T;
+    if (path.endsWith("/sections")) return { id: "fnew1", sections: [{ id: "sec-real", title: "Dyes", code: "B", questions: [] }] } as T;
+    if (refuseQuestion) throw new ApiError(422, "That question is too long.", { detail: "That question is too long." });
+    return { id: "fnew1", sections: [{ id: "sec-real", title: "Dyes", code: "B", questions: [{ id: "q-real", prompt: "Which dyes?" }] }] } as T;
+  };
+  expect(await drainAuthoring(owner, send)).toBe(2);
+  expect(sent.map((x) => x[0])).toEqual(["/questionnaires", "/questionnaires/fnew1/sections", "/questionnaires/fnew1/sections/sec-real/questions"]);
+  expect(new Set(sent.map((x) => x[2])).size).toBe(3);
+  const left = authoringState(owner).steps;
+  expect(left).toHaveLength(1);
+  expect(left[0]).toMatchObject({ kind: "question", status: "FAILED", error: "That question is too long." });
+  expect(authoringState(owner).remap).toMatchObject({ [form]: "fnew1", [section]: "sec-real" });
+  refuseQuestion = false;
+  const { retryAuthoringStep } = await import("@/lib/questionnaireAuthoringOutbox");
+  retryAuthoringStep(owner, left[0].id);
+  expect(await drainAuthoring(owner, send)).toBe(1);
+  expect(authoringState(owner).steps).toEqual([]);
+});
+
+test("the handoff bundle's name is the golden table's", () => {
+  const golden = JSON.parse(readFileSync(join(ROOT, "shared", "naming-golden.json"), "utf8")) as { fileNames: { input: { what: string; ext: string }; name: string }[] };
+  const row = golden.fileNames.find((r) => r.input.what === "Handoff" && r.input.ext === "dpwq");
+  expect(row?.name).toBe("DesignWorkshop_Questionnaire_2026-10-22_2nd-Craft-Toolkit_Handoff.dpwq");
+  expect(bundleFileName({ form: { title: "2nd Craft Toolkit" } as never, createdAt: "2026-10-22T04:30:00Z" }, ".dpwq")).toBe(row!.name);
 });

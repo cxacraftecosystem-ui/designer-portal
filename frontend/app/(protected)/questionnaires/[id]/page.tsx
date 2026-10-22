@@ -49,6 +49,8 @@ import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
 import { DownloadBundleButton } from "@/components/questionnaires/BundleControls";
 import { FormAdminPanel, FormSessions } from "@/components/questionnaires/FormAdminPanel";
+import { OfflineFormDraft, PendingAuthoring } from "@/components/questionnaires/PendingAuthoring";
+import { isTempId, queueQuestion, queueSection } from "@/lib/questionnaireAuthoringOutbox";
 import { useQuestionnaireConfig } from "@/components/questionnaire/useQuestionnaireConfig";
 import { answerFormTarget } from "@/lib/questionnaireLinks";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
@@ -99,7 +101,17 @@ import { ActionGroup } from "@/components/ui/ActionGroup";
  */
 const NO_WORKSHOP_ROWS: readonly DwSummary[] = [];
 
-export default function QuestionnaireDetailPage() {
+/**
+ * A form made offline has a temporary id until its create lands (UNIFY A15); that page is the
+ * offline draft, drawn from the authoring outbox. Every other id is a form on the server.
+ */
+export default function QuestionnairePage() {
+  const params = useParams<{ id: string }>();
+  if (isTempId(params.id)) return <OfflineFormDraft id={params.id} />;
+  return <QuestionnaireDetailPage />;
+}
+
+function QuestionnaireDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const router = useRouter();
@@ -342,6 +354,14 @@ export default function QuestionnaireDetailPage() {
     const data = new FormData(element);
     const title = String(data.get("title") ?? "").trim();
     if (!title) return;
+    // A15: with no connection the section is queued with a temporary id; its questions can follow.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      queueSection(user?.id ?? null, id, { title, code: String(data.get("code") ?? "").trim() || undefined });
+      element.reset();
+      setSectionTitle("");
+      setSectionFormOpen(false);
+      return;
+    }
     const next = await run(
       () =>
         createSection(id, {
@@ -366,6 +386,18 @@ export default function QuestionnaireDetailPage() {
     const data = new FormData(element);
     const prompt = String(data.get("prompt") ?? "").trim();
     if (!prompt) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      queueQuestion(user?.id ?? null, id, sectionId, {
+        prompt,
+        helpText: String(data.get("helpText") ?? "").trim() || undefined,
+        isRequired: data.get("isRequired") === "on"
+      });
+      element.reset();
+      setQuestionPrompt("");
+      setQuestionHelp("");
+      setAddingTo(null);
+      return;
+    }
     const next = await run(
       () =>
         createQuestion(id, sectionId, {
@@ -1090,7 +1122,8 @@ export default function QuestionnaireDetailPage() {
         )}
       </section>
 
-      <FormAdminPanel questionnaireId={id} />
+      <PendingAuthoring formId={id} sections={form.sections.map((s) => ({ id: s.id, title: s.title }))} onLanded={() => void load()} />
+      <FormAdminPanel questionnaireId={id} isDefault={Boolean(form.isDefault)} />
       <FormSessions questionnaireId={id} />
 
       {/* Restoring a sitting is a content admin's act, in admin view (2026-10-20). */}

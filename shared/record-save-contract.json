@@ -221,6 +221,7 @@
       ],
       "web": null,
       "android": {
+        "retired": "UNIFY 4.4 (owner decision 2): the global interview form is retired on Android. A session is created by the questionnaire start sheet into the session outbox (questionnaire/ui/SessionStartSheet.kt, questionnaire/data/SessionOutbox.kt); entries an older build queued still drain through the server's shims.",
         "form": "QuestionnaireForm",
         "create": "repository.createQuestionnaireInterview",
         "update": "repository.updateQuestionnaireInterview",
@@ -506,8 +507,7 @@
         "ArtisanForm",
         "ProductForm",
         "ToolForm",
-        "ProcessForm",
-        "QuestionnaireForm"
+        "ProcessForm"
       ]
     },
     "deletedComponents": [

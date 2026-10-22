@@ -20,6 +20,9 @@ import shutil
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import questionnaire_android  # noqa: E402  (the shared Android trees; see its docstring)
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("shared/questionnaire.sha256")
 PACKAGE = "backend/app/questionnaire"
@@ -86,9 +89,17 @@ def main() -> int:
         if expected != manifest_text(ROOT):
             print("shared/questionnaire.sha256 is out of date; run with --to to resync", file=sys.stderr)
             return 1
+        android = questionnaire_android.check(ROOT)
+        if android:
+            print("\n".join(android), file=sys.stderr)
+            return 1
         print("questionnaire manifest OK")
         return 0
 
+    # The Android trees first: the generated enums are a shared file of their own.
+    copied = questionnaire_android.sync(ROOT, args.to.resolve() if args.to else None)
+    if args.to:
+        print(f"synced {copied} Android files to {args.to.resolve()}")
     text = manifest_text(ROOT)
     (ROOT / MANIFEST).write_text(text, encoding="utf-8", newline="\n")
     if args.to:

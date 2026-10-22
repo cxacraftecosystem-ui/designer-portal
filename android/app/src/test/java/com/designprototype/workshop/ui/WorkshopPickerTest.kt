@@ -86,7 +86,9 @@ class WorkshopPickerTest {
     @Test
     fun `the pair is on exactly the five forms whose records carry both columns`() {
         val expected = listOf(
-            "ArtisanForm", "ProcessForm", "ProductForm", "QuestionnaireForm", "ToolForm",
+            // The global interview form is retired (UNIFY §4.4); a session files under its design
+            // workshop through the questionnaire start sheet instead.
+            "ArtisanForm", "ProcessForm", "ProductForm", "ToolForm",
         )
         assertEquals(
             "the forms mounting RecordWorkshopField are no longer the five whose tables carry both " +
