@@ -311,7 +311,7 @@ test("@qf:B15 a take cut short reassembles header first and is offered back by P
 });
 
 test("@qf:A16 a cached form is read only by the account that downloaded it", () => {
-  const record = { key: "f1::all", schemaVersion: 1, fetchedAt: "2026-10-22T05:00:00Z", includeRetired: true, version: 3, ownerUserId: "u-lead", form: {} } as unknown as CachedQuestionnaireForm;
+  const record = { key: "f1::all", schemaVersion: 1, fetchedAt: "2026-10-22T05:00:00Z", includeRetired: true, version: 3, ownerUserId: "u-lead", form: { sections: [] } } as unknown as CachedQuestionnaireForm;
   expect(cacheRecordIsReadable(record, "u-lead")).toBe(true);
   expect(cacheRecordIsReadable(record, "u-other")).toBe(false);
   expect(cacheRecordIsReadable(record, null)).toBe(false);
