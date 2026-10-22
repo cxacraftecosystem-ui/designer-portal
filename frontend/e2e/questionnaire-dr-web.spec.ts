@@ -273,3 +273,74 @@ test("@qf:B12 workshop coverage reads the design workshop's artisans", async ({ 
   await expect(page.locator("[data-coverage-grid]")).toBeVisible();
   await expect.poll(() => fake.calledWith("GET", "/questionnaire/coverage").some((c) => (c.query.get("artisanIds") ?? "").includes("a1"))).toBe(true);
 });
+
+test("@qf:A1 @qf:A6 the pro-forma downloads under its generated name, and a designer starts their own form", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaires");
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download pro-forma" }).click();
+  expect((await download).suggestedFilename()).toBe("DesignWorkshop_Questionnaire_Pro-Forma.xlsx");
+  await page.locator("[data-new-form]").click();
+  await page.locator("input[name='title']").fill("Dyers of Bagru");
+  await page.getByRole("button", { name: "Create questionnaire" }).click();
+  await expect.poll(() => fake.calledWith("POST", "/questionnaires").length).toBe(1);
+  expect(fake.calledWith("POST", "/questionnaires")[0].body).toMatchObject({ title: "Dyers of Bagru" });
+  await expect(page).toHaveURL(/\/questionnaires\/fnew1$/);
+});
+
+test("@qf:A3 @qf:A7 @qf:B29 a form's workbook and question set download, an admin publishes it to everyone, and the corpus is linked", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaires/f1");
+  let download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download .xlsx" }).click();
+  expect((await download).suggestedFilename()).toBe("DesignWorkshop_Questionnaire_2026-10-22_2nd-Craft-Toolkit_Export.xlsx");
+  download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download question set" }).click();
+  expect((await download).suggestedFilename()).toBe("DesignWorkshop_Questionnaire_2026-10-22_2nd-Craft-Toolkit_Questions.xlsx");
+  await page.getByRole("button", { name: "Publish as the standard form" }).click();
+  await expect.poll(() => fake.calledWith("PATCH", "/questionnaires/f1").length).toBe(1);
+  expect(fake.calledWith("PATCH", "/questionnaires/f1")[0].body).toEqual({ isShared: true });
+  await expect(page.locator("[data-corpus='answers']")).toHaveAttribute("href", "/api/questionnaire/corpus.csv?questionnaireId=f1&kind=answers");
+  await expect(page.locator("[data-corpus='recordings']")).toHaveAttribute("href", "/api/questionnaire/corpus.csv?questionnaireId=f1&kind=recordings");
+});
+
+test("@qf:C7 a content admin merges one sitting into another session", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire/sessions/s-1");
+  await page.locator("[data-session-actions]").getByRole("button", { name: "Merge into…" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("[data-searchable-select]").first().click();
+  await page.getByRole("option", { name: "Interview_2026-10-21_Bagru_Second-Sitting" }).click();
+  await dialog.getByRole("button", { name: "Merge", exact: true }).click();
+  await expect.poll(() => fake.calledWith("POST", "/questionnaire/sessions/s-1/merge-into/s-2").length).toBe(1);
+  await expect(page).toHaveURL(/\/questionnaire\/sessions\/s-2$/);
+});
+
+test("@qf:B2 an open session with the same artisan today is offered to join instead (P1)", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  fake.openMatch = { id: "s-1", title: "Interview_2026-10-22_Bagru", startedAt: "2026-10-22T05:00:00Z", researcher: { id: OTHER.id, name: OTHER.name }, artisanNames: ["Giriraj"] };
+  await open(page, fake, "/questionnaire/sessions/new?artisanId=a1");
+  await page.locator("[data-start-sheet]").getByRole("button", { name: "Start session" }).click();
+  await expect(page.locator("[data-prompt='P1']")).toBeVisible();
+  await expect(page.getByRole("dialog")).toContainText("Priya Shah started one with Giriraj");
+  await page.locator("[data-prompt='P1']").getByRole("button", { name: "Join" }).click();
+  await expect.poll(() => fake.calledWith("POST", "/questionnaire/sessions/s-1/researchers").length).toBe(1);
+  await expect(page).toHaveURL(/\/questionnaire\/sessions\/s-1$/);
+  expect(fake.calledWith("POST", "/questionnaire/sessions").length).toBe(0);
+});
+
+test("@qf:B33 @qf:C4 a refused artisan's consent shows on the start sheet and can be switched back on", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire/sessions/new?artisanId=a2");
+  await expect(page.locator("[data-start-sheet]")).toContainText("Recordings of Meena Devi are not sent to outside services: consent was refused.");
+  await page.getByRole("button", { name: "Switch back on" }).click();
+  await expect.poll(() => fake.calledWith("POST", "/artisans/a2/consent").length).toBe(1);
+  expect(fake.calledWith("POST", "/artisans/a2/consent")[0].body).toMatchObject({ state: "GRANTED" });
+});
+
+test("@qf:B27 a reviewer approves a session from its read view", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire/sessions/s-1/view");
+  await page.getByRole("button", { name: "Approve" }).click();
+  await expect.poll(() => fake.calledWith("POST", "/review/questionnaire/s-1/approve").length).toBe(1);
+});

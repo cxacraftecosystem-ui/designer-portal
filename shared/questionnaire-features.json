@@ -41,7 +41,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "planned",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -125,7 +125,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "planned",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -250,7 +250,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "planned",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -291,7 +291,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "na",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -899,7 +899,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "planned",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -1882,7 +1882,9 @@
       "name": "Read view and review: approve blockers and the cascade",
       "source": "matrix",
       "api": {
-        "designer-portal": [],
+        "designer-portal": [
+          "POST /review/{type}/{id}/approve"
+        ],
         "documentation-portal": [
           "POST /review/{type}/{id}/approve"
         ]
@@ -1898,7 +1900,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "planned",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -1980,7 +1982,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "na",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -2140,7 +2142,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "planned",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -2560,7 +2562,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "planned",
         "fr-web": "planned",
         "fr-android": "planned"
@@ -2676,7 +2678,7 @@
         "fr-android": "required"
       },
       "status": {
-        "dr-web": "planned",
+        "dr-web": "tagged",
         "dr-android": "planned",
         "fr-web": "planned",
         "fr-android": "planned"
