@@ -402,7 +402,7 @@ test("@qf:A15 a form, its section and its question made offline land in order, e
     sent.push([path, body, key]);
     if (path === "/questionnaires") return { id: "fnew1", sections: [] } as T;
     if (path.endsWith("/sections")) return { id: "fnew1", sections: [{ id: "sec-real", title: "Dyes", code: "B", questions: [] }] } as T;
-    if (refuseQuestion) throw new ApiError(422, "That question is too long.");
+    if (refuseQuestion) throw new ApiError(422, "That question is too long.", { detail: "That question is too long." });
     return { id: "fnew1", sections: [{ id: "sec-real", title: "Dyes", code: "B", questions: [{ id: "q-real", prompt: "Which dyes?" }] }] } as T;
   };
   expect(await drainAuthoring(owner, send)).toBe(2);
