@@ -27,11 +27,11 @@ test.skip(!EMAIL || !PASSWORD, "Set E2E_EMAIL and E2E_PASSWORD to run the signed
 const DESTINATIONS = [
   { href: "/map", tile: "Map", nav: "Map", group: "Miscellaneous", heading: /Where the work comes from/i },
   {
-    href: "/questionnaire/consolidated",
-    tile: "Consolidated questionnaire",
-    nav: "Consolidated questionnaire",
+    href: "/questionnaire/coverage",
+    tile: "Questionnaire coverage",
+    nav: "Questionnaire coverage",
     group: "Miscellaneous",
-    heading: /Consolidated questionnaire/i
+    heading: /Coverage/i
   }
 ] as const;
 
@@ -118,16 +118,16 @@ test.describe("Entry points", () => {
     });
   }
 
-  test("the consolidated view does not also light up 'Take interview' as the current page", async ({ page }) => {
-    // Nesting a destination under an existing one (/questionnaire/consolidated inside
+  test("the coverage view does not also light up 'Take interview' as the current page", async ({ page }) => {
+    // Nesting a destination under an existing one (/questionnaire/coverage inside
     // /questionnaire) makes a prefix test mark both entries current, which tells a screen reader
     // the reader is in two places at once. The most specific match wins.
     await signIn(page);
-    await page.goto("/questionnaire/consolidated");
+    await page.goto("/questionnaire/coverage");
 
     await page.getByRole("button", { name: /toggle navigation menu/i }).click();
     const sheet = page.getByRole("dialog", { name: "Navigation" });
-    await expect(sheet.getByRole("link", { name: "Consolidated questionnaire", exact: true })).toHaveAttribute(
+    await expect(sheet.getByRole("link", { name: "Questionnaire coverage", exact: true })).toHaveAttribute(
       "aria-current",
       "page"
     );

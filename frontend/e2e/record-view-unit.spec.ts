@@ -64,12 +64,17 @@ test.describe("where a record opens, and where Update goes", () => {
       process: "app/(protected)/processes/[id]/page.tsx",
       craft: "app/(protected)/crafts/[id]/page.tsx",
       workshop: "app/(protected)/workshops/[id]/page.tsx",
-      interview: "app/(protected)/questionnaire/interviews/[id]/page.tsx",
+      // An interview is a session now: its read view is the shared questionnaire's (UNIFY 4.4).
+      interview: "app/(protected)/questionnaire/sessions/[id]/view/page.tsx",
       media: "app/(protected)/media/[id]/page.tsx"
     };
     for (const kind of KINDS) {
       expect(existsSync(join(ROOT, routes[kind])), `${routes[kind]} is missing`).toBe(true);
       const source = read(routes[kind]);
+      if (kind === "interview") {
+        expect(source, "a session's read view is the shared questionnaire's").toContain("<SessionReadView");
+        continue;
+      }
       expect(source, `${kind}'s page is not the shared read-only shell`).toContain("<RecordViewPage");
       expect(source).toContain(`kind="${kind}"`);
     }
@@ -236,7 +241,6 @@ test.describe("Back lands where the reader left the list", () => {
   test("every list that opens a record page remembers its place, not only the six field-record lists", () => {
     for (const path of [
       "app/(protected)/media/page.tsx",
-      "app/(protected)/questionnaire/page.tsx",
       "app/(protected)/design-workshops/page.tsx",
       "app/(protected)/questionnaires/page.tsx"
     ]) {
@@ -253,8 +257,7 @@ test.describe("every record list opens its rows read-only", () => {
     ["app/(protected)/processes/page.tsx", "process"],
     ["app/(protected)/crafts/page.tsx", "craft"],
     ["app/(protected)/workshops/page.tsx", "workshop"],
-    ["app/(protected)/media/page.tsx", "media"],
-    ["app/(protected)/questionnaire/page.tsx", "interview"]
+    ["app/(protected)/media/page.tsx", "media"]
   ];
 
   for (const [path, kind] of LISTS) {
@@ -286,7 +289,7 @@ test.describe("every record list opens its rows read-only", () => {
     expect(review).toContain("<OpenableRow");
     expect(review).toContain("reviewRecordViewHref(item.recordType, item.id)");
     expect(review).toContain("<OpenableRowLink");
-    expect(reviewRecordViewHref("questionnaire", "q1")).toBe("/questionnaire/interviews/q1");
+    expect(reviewRecordViewHref("questionnaire", "q1")).toBe("/questionnaire/sessions/q1/view");
     expect(reviewRecordViewHref("artisan", "a1")).toBe("/artisans/a1");
     expect(reviewRecordViewHref("somethingElse", "x")).toBeNull();
   });
