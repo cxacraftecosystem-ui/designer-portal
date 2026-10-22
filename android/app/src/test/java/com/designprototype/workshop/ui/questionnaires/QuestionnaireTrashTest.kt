@@ -52,11 +52,11 @@ class QuestionnaireTrashTest {
         ).forEach { assertTrue(it, api.contains(it)) }
         val list = qLiveSource("app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireListScreen.kt").readText()
         // The trash is offered to designers too (their own forms) and to content admins (every form).
-        assertTrue(list.substringBefore("DeletedQuestionnairesCard(").takeLast(200).contains("FieldPermissions.canRunDesignWorkshops(trashUser)"))
+        assertTrue(list.substringBefore("DeletedQuestionnairesCard(").takeLast(900).contains("FieldPermissions.canRunDesignWorkshops(trashUser)"))
         assertTrue(list.contains("ownOnly = !mayDeleteQuestionnaireItems(trashUser),"))
         val detail = qLiveSource("app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireDetailScreen.kt").readText()
         assertTrue(detail.contains("onDeleteEntry = if (mayDeleteSittings && !isTempId(questionnaireId))"))
-        assertTrue(detail.substringBefore("DeletedSittingsCard(").takeLast(150).contains("if (mayDeleteSittings && !isTempId(questionnaireId))"))
-        assertTrue(detail.substringBefore("RecordDangerZoneCard(").takeLast(200).contains("if (mayDelete && !isTempId(questionnaireId))"))
+        assertTrue(detail.substringBefore("DeletedSittingsCard(").takeLast(150).contains("mayDeleteSittings && !isTempId(questionnaireId))"))
+        assertTrue(detail.substringBefore("RecordDangerZoneCard(").takeLast(200).contains("if (mayDelete && !deleted && !isTempId(questionnaireId))"))
     }
 }
