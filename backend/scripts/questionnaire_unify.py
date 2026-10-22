@@ -86,6 +86,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 RETIRED_ID = "questionnaire-retired-global-form"
 RETIRED_TITLE = "Interview form (retired)"
 DEFERRED = BACKEND / "prisma" / "deferred"
+MIGRATIONS = BACKEND / "prisma" / "migrations"
 #: Applied by --apply before it writes (each idempotent); the rest wait for the switch-on commit.
 PREREQUISITES = (
     "20261108090000_questionnaire_unify_workbook_origin",
@@ -829,7 +830,9 @@ def statements(sql: str) -> list[str]:
 async def apply_prerequisites(client: Any) -> list[str]:
     done = []
     for name in PREREQUISITES:
-        for stmt in statements((DEFERRED / name / "migration.sql").read_text(encoding="utf-8")):
+        # deferred until the switch-on commit moves it into migrations; idempotent either way
+        folder = DEFERRED / name if (DEFERRED / name).is_dir() else MIGRATIONS / name
+        for stmt in statements((folder / "migration.sql").read_text(encoding="utf-8")):
             await client.execute_raw(stmt)
         done.append(name)
     return done

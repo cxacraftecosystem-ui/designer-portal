@@ -70,12 +70,13 @@ def test_the_deferred_migrations_split_into_statements() -> None:
     sql = "-- c\nDROP INDEX IF EXISTS \"a\";\nDO $$\nBEGIN\n  IF true THEN\n    SELECT 1;\n  END IF;\nEND $$;\nCREATE INDEX \"b\" ON \"t\"(\"c\");\n"
     out = unify.statements(sql)
     assert len(out) == 3 and out[1].startswith("DO $$") and out[1].endswith("END $$")
+    folders = {p.name for p in unify.DEFERRED.iterdir() if p.is_dir()}
+    migrations = {p.name for p in unify.MIGRATIONS.iterdir() if p.is_dir()}
+    assert not folders & migrations, "a migration is both deferred and in prisma/migrations"
     for name in unify.PREREQUISITES:
-        assert unify.statements((unify.DEFERRED / name / "migration.sql").read_text(encoding="utf-8"))
-    folders = sorted(p.name for p in unify.DEFERRED.iterdir() if p.is_dir())
-    assert folders[: len(unify.PREREQUISITES)] == list(unify.PREREQUISITES)
-    migrations = {p.name for p in (BACKEND / "prisma" / "migrations").iterdir()}
-    assert not set(folders) & migrations, "a deferred migration is already in prisma/migrations"
+        assert (name in folders) != (name in migrations), name
+        folder = unify.DEFERRED if name in folders else unify.MIGRATIONS
+        assert unify.statements((folder / name / "migration.sql").read_text(encoding="utf-8"))
 
 
 def _empty() -> dict:
@@ -381,7 +382,9 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
 
     before = _db(fingerprint)
     idx_before = _db(indexes)
-    assert {"QuestionnaireSection_code_key", "QuestionnaireSection_sortOrder_key"} <= idx_before
+    deferred_keys = (BACKEND / "prisma" / "deferred" / unify.PREREQUISITES[1]).is_dir()
+    if deferred_keys:  # until the switch-on commit, the global keys are still there before the apply
+        assert {"QuestionnaireSection_code_key", "QuestionnaireSection_sortOrder_key"} <= idx_before
 
     # 4. apply
     code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(approved), *CHOICES], capfd)
