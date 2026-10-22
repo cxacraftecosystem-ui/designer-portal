@@ -562,6 +562,10 @@ async def check_mirrored(client) -> None:
     assert (qs["f1q4"]["supersededById"], qs["f1q4b"]["lineageId"], qs["f1q4b"]["displayCode"]) == ("f1q4b", "f1q4", "B1")
     assert qs["f1q1"]["sectionTitle"] == "The craft today" and "f2q2" not in qs
     assert (qs["f4q1"]["questionnaireId"], qs["f4q1"]["displayCode"]) == ("f4", "A1")
+    # a form deleted outright (old cleanup paths, account removal) takes its mirrored copy with it
+    await client.execute_raw("DELETE FROM \"Questionnaire\" WHERE \"id\" = 'f4'")
+    left = await q('SELECT count(*) AS n FROM "QuestionnaireSection" WHERE "questionnaireId" = \'f4\'')
+    assert int(left[0]["n"]) == 0
 
 
 async def sit_in_the_old_screens(client) -> None:
