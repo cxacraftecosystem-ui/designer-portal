@@ -313,7 +313,8 @@ fun SessionStartSheet(
             }
             OutlinedTextField(
                 value = form.place, onValueChange = { form = form.copy(place = it) },
-                label = { Text(QuestionnaireCopy.s("start.place")) }, singleLine = true, modifier = Modifier.fillMaxWidth()
+                label = { Text(QuestionnaireCopy.s("start.place")) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                trailingIcon = { PlaceFromDevice(onPlace = { form = form.copy(place = it) }, onError = onError) }
             )
             SearchableSelectField(
                 label = QuestionnaireCopy.s("start.language"),
