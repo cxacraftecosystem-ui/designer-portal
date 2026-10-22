@@ -8106,6 +8106,7 @@ enum AnswerOrigin {
   MACHINE_SUGGESTED
   MACHINE_SUGGESTED_EDITED
   PREFILL
+  WORKBOOK
 }
 
 enum AnswerAttribution {
