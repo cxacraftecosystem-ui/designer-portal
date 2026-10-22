@@ -8491,6 +8491,14 @@ class WorkshopRepository(
         // `syncMutex` across a fortnight of photograph uploads would block every later drain behind
         // it. [WorkshopSyncEngine.syncAll] has its own single-pass lock, so overlapping calls
         // coalesce rather than duplicating work, and it never throws.
+        // QUESTIONNAIRE V2: the session outbox (questionnaire/data/SessionOutbox.kt), AFTER the old
+        // questionnaire entries above have drained through the server's shims (UNIFY §4.5), which is
+        // what `QuestionnaireSync.run` checks before it starts. Its own lock; never throws here.
+        runCatching {
+            com.designprototype.workshop.questionnaire.data.QuestionnaireSync.run(
+                context, legacyDrain = {}, serverAnswering = { !ServerReachability.unreachable.value }
+            )
+        }
         runCatching { WorkshopSyncEngine.syncAll(context, this) }
         return synced
     }

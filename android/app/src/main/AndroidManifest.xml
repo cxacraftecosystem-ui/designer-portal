@@ -37,6 +37,10 @@
         android:name="android.hardware.camera"
         android:required="false" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Questionnaire takes record in a foreground service of type microphone (recording/RecordingService.kt,
+         DESIGN §6.1.1), so a locked screen or an app switch never ends an interview. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
@@ -103,6 +107,10 @@
             android:name="com.designprototype.workshop.data.OutboxSyncJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+        <service
+            android:name="com.designprototype.workshop.recording.RecordingService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
         <provider
             android:name="com.designprototype.workshop.ui.DwInductionFlushProvider"
             android:authorities="${applicationId}.inductionflush"

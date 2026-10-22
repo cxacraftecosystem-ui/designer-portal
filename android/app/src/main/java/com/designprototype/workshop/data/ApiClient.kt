@@ -266,6 +266,10 @@ object ApiClient {
                 )
             }
             .addInterceptor(sessionInterceptor(tokenStore, BuildConfig.DEFAULT_API_BASE_URL.toHttpUrlOrNull()))
+            // X-Client-Time, X-App-Version, X-App-Version-Code and X-App-Platform on every request,
+            // and the clock offset off every answer (questionnaire v2, DESIGN §3.9; UNIFY §4.5). The
+            // old-build cutoff and the P14 banner compare the version CODE. Headers only.
+            .addInterceptor(com.designprototype.workshop.questionnaire.data.ClientClock.interceptor())
             .addInterceptor(logging)
             .build()
     }
