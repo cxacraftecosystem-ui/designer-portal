@@ -27,14 +27,14 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**563 operations** in the working tree — 262 GET, 196 POST, 45 DELETE,
+**564 operations** in the working tree — 263 GET, 196 POST, 45 DELETE,
 32 PATCH, 28 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
 |---|---|
 | `design_workshops.py` | 50 |
-| `questionnaire_v2.py` | 48 |
+| `questionnaire_v2.py` | 49 |
 | `questionnaire_forms.py` | 24 |
 | `media.py` | 22 |
 | `questionnaire.py` | 22 |
@@ -174,10 +174,10 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 361 | 209,501 | 361 | 209,501 |
+| `backend/app` | 362 | 209,588 | 362 | 209,588 |
 | `frontend/app` | 123 | 61,609 | 123 | 61,609 |
-| `frontend/components` | 403 | 149,437 | 403 | 149,437 |
-| `frontend/lib` | 199 | 84,589 | 199 | 84,589 |
+| `frontend/components` | 401 | 148,991 | 426 | 153,928 |
+| `frontend/lib` | 199 | 84,644 | 214 | 88,012 |
 | `android/app/src/main/java` | 376 | 260,768 | 376 | 260,768 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is

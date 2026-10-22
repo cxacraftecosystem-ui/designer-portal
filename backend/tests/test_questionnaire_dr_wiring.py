@@ -26,10 +26,17 @@ DESIGNER = SimpleNamespace(id="u_designer", role="DESIGNER", name="Nandini")
 
 
 def _routes() -> set[tuple[str, str]]:
+    """Every (method, path) the API serves, through included routers (FastAPI no longer flattens)."""
     from app.api.router import api_router
 
+    try:
+        from fastapi.routing import iter_route_contexts
+
+        routes = list(iter_route_contexts(api_router.routes))
+    except ImportError:  # an older FastAPI keeps them on .routes
+        routes = list(api_router.routes)
     have = set()
-    for route in api_router.routes:
+    for route in routes:
         path = re.sub(r"\{[^}]+\}", "{}", getattr(route, "path", ""))
         for method in getattr(route, "methods", None) or ():
             have.add((method, path))
@@ -70,6 +77,7 @@ def test_every_port_is_served_on_designer_portal() -> None:
     ("POST", "/api/questionnaire/sessions/{}/merge-into/{}"),
     ("GET", "/api/questionnaire/form-for"),
     ("GET", "/api/questionnaire/forms/{}/bindings"),
+    ("GET", "/api/questionnaire/forms/{}/structure"),
     ("PUT", "/api/questionnaire/forms/{}/bindings"),
     ("PUT", "/api/questionnaire/type-defaults"),
     ("POST", "/api/questionnaire/coverage/check"),

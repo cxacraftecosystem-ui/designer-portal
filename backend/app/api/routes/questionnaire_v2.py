@@ -42,6 +42,7 @@ from app.questionnaire import (
     respondents,
     schemas as S,
     sessions,
+    structure,
 )
 from app.questionnaire.common import fail
 from app.questionnaire.recordings import MULTIPART_THRESHOLD, PART_SIZE
@@ -58,7 +59,9 @@ def v2_enabled() -> bool:
     return bool(get_settings().questionnaire_v2)
 
 
-async def require_v2() -> None:
+async def require_v2(_: Any = Depends(get_current_user)) -> None:
+    """404 while QUESTIONNAIRE_V2 is off, asked AFTER the caller is signed in, so a stranger is
+    refused (401) before being told whether the route exists (tests/test_anonymous_route_sweep.py)."""
     if not v2_enabled():
         fail("NOT_FOUND")
 
@@ -240,6 +243,12 @@ async def form_for(
     _: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     return await bindings.resolve_for_workshop(workshop_id=workshopId, design_workshop_id=designWorkshopId, explicit=questionnaireId)
+
+
+@router.get("/forms/{questionnaire_id}/structure", dependencies=V2)
+async def form_structure(questionnaire_id: str, includeRetired: bool = False, _: Any = Depends(get_current_user)) -> dict[str, Any]:
+    """The form's sections and questions with their lineages, codes, required marks and help text."""
+    return await structure.form_structure(questionnaire_id, include_retired=includeRetired)
 
 
 @router.get("/forms/{questionnaire_id}/bindings", dependencies=V2)
