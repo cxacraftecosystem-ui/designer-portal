@@ -987,7 +987,7 @@ internal fun OutboxTray(
 }
 
 @Composable
-private fun QuestionBlock(
+internal fun QuestionBlock(
     question: InstrumentQuestion,
     roster: List<HeaderParticipant>,
     known: List<QSnapshotTake>,

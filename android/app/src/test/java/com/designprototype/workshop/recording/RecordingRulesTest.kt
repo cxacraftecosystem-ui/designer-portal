@@ -55,7 +55,7 @@ class RecordingRulesTest {
     }
 
     @QFeature("B18")
-    @Test fun `a replace removes the earlier take only for a content admin; for anyone else both stay`() {
+    @Test fun `a replace removes the earlier take only for a content admin, for anyone else both stay`() {
         assertTrue(replaceRemovesEarlier(isContentAdmin = true))
         assertFalse(replaceRemovesEarlier(isContentAdmin = false))
         assertEquals("r0", QuestionnaireV2.clipFrom(draft.copy(replacesRecordingId = "r0")).recording.replacesRecordingId)
