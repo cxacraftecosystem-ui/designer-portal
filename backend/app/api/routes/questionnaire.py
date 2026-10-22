@@ -391,6 +391,23 @@ async def write_interview_set_key(interview_id: str, set_key: str | None, *, wri
     Postgres transaction, so asking THAT connection for the holder would raise ``current transaction
     is aborted`` and turn this 409 into a 500 on exactly the path it exists to serve.
     """
+    # THE UNIQUE INDEX IS GONE SINCE THE SWITCH-ON (migration 20261108093000: a v2 session is a dated
+    # event and the same people may sit twice), so the old form's one-interview-per-set rule is
+    # checked here, in the same words, before the write. The violation branch stays for a database
+    # that still carries the index.
+    finder = getattr(writer.questionnaireinterview, "find_first", None)
+    if set_key and finder is not None:
+        holder = await finder(where={"artisanSetKey": set_key, "id": {"not": interview_id}, "deletedAt": None})
+        if holder is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": _DUPLICATE_SET_CODE,
+                    "message": _DUPLICATE_SET_DETAIL,
+                    "existingInterviewId": get_value(holder, "id"),
+                    "existingInterviewTitle": get_value(holder, "title"),
+                },
+            )
     try:
         await writer.questionnaireinterview.update(
             where={"id": interview_id}, data={"artisanSetKey": set_key}

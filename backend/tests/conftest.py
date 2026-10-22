@@ -30,6 +30,11 @@ from urllib.parse import urlsplit
 
 import pytest
 
+# QUESTIONNAIRE_V2 defaults ON since the unified switch-on (U5), and the suite was written while it
+# defaulted off; every Settings this run builds starts from off (a test of a v2 path turns it on
+# itself; see the fixture at the foot of this file). Set before anything here builds Settings.
+os.environ.setdefault("QUESTIONNAIRE_V2", "false")
+
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
