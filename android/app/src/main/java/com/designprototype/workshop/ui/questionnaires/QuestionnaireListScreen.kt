@@ -95,6 +95,12 @@ fun QuestionnaireListScreen(
      */
     incoming: Uri? = null,
     onIncomingConsumed: () -> Unit = {},
+    /** Each increase opens New form, as the New form pill does (the questionnaire home's FAB). */
+    newFormRequest: Int = 0,
+    /** Questionnaire v2: Start session on a form, from its row. Null leaves the rows as they were. */
+    onStartSession: ((questionnaireId: String) -> Unit)? = null,
+    /** Questionnaire v2: the sessions on one form. Carried for the detail screen's router. */
+    onOpenSessions: ((questionnaireId: String) -> Unit)? = null,
 ) {
     var rows by remember { mutableStateOf<List<CustomQuestionnaireSummaryDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -109,6 +115,7 @@ fun QuestionnaireListScreen(
     /** A bundle picked from the Open bundle pill; handed to the received card like a shared file. */
     var pickedBundle by remember { mutableStateOf<Uri?>(null) }
     val pickBundle = rememberQuestionnaireBundlePicker { pickedBundle = it }
+    LaunchedEffect(newFormRequest) { if (newFormRequest > 0) showCreate = true }
     var reload by remember { mutableIntStateOf(0) }
     /** Rows shown, of the total the server reports — set only when the walk stopped short. */
     var partial by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -370,7 +377,7 @@ fun QuestionnaireListScreen(
             // of them sends a designer off to build a form they have already built.
             cachedNote != null && rows.isNotEmpty() -> {
                 com.designprototype.workshop.ui.CachedCopyNote(cachedNote.orEmpty())
-                shown.forEach { row -> QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }) }
+                shown.forEach { row -> QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }, onStartSession = onStartSession) }
             }
 
             offline -> Text(
@@ -388,7 +395,7 @@ fun QuestionnaireListScreen(
             )
 
             else -> shown.forEach { row ->
-                QuestionnaireRow(row = row, onOpen = { onOpen(row.id) })
+                QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }, onStartSession = onStartSession)
             }
         }
 
@@ -420,7 +427,11 @@ fun QuestionnaireListScreen(
 }
 
 @Composable
-private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> Unit) {
+private fun QuestionnaireRow(
+    row: CustomQuestionnaireSummaryDto,
+    onOpen: () -> Unit,
+    onStartSession: ((questionnaireId: String) -> Unit)? = null,
+) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
         shape = RoundedCornerShape(14.dp),
@@ -516,6 +527,10 @@ private fun QuestionnaireRow(row: CustomQuestionnaireSummaryDto, onOpen: () -> U
                         MaterialTheme.field.muted
                     )
                 }
+            }
+            // v2: a live form on the server starts a session straight from its row.
+            if (onStartSession != null && row.isActive && row.deletedAt == null && !com.designprototype.workshop.data.isTempId(row.id)) {
+                TextButton(onClick = { onStartSession(row.id) }) { Text("Start session") }
             }
         }
     }
