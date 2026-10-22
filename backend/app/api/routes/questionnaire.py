@@ -222,7 +222,7 @@ async def duplicate_set_detail(set_key: str) -> dict[str, Any]:
     request) yields ``None`` ids rather than a second failure: the keys stay present and stable so a
     client parses one shape, and the sentence still reads correctly on its own.
     """
-    holder = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
+    holder = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
     return {
         "code": _DUPLICATE_SET_CODE,
         "message": _DUPLICATE_SET_DETAIL,
@@ -1329,7 +1329,7 @@ async def create_interview(
         # Bare row: the merge only reads scalar columns off it, and hydrates the relations once at
         # the end — so the common "fold into the existing entry" path stops paying for six relation
         # statements it was about to discard.
-        existing = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
+        existing = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
         if existing is not None:
             return await merge_into_interview(existing, payload, current_user, check)
 
@@ -1369,7 +1369,7 @@ async def create_interview(
         created = await db.questionnaireinterview.create(data=data)
     except UniqueViolationError:
         # Race: a concurrent request won the create for this set. Fold into the canonical row.
-        existing = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
+        existing = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
         if existing is not None:
             return await merge_into_interview(existing, payload, current_user, check)
         raise
@@ -1426,7 +1426,7 @@ async def interview_for_artisan_set(
     )
     if not set_key:
         return None
-    interview = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
+    interview = await db.questionnaireinterview.find_unique(where={"artisanSetKey": set_key})
     if not interview:
         return None
     await hydrate_relations([interview], RELATIONS)

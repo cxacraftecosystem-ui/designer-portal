@@ -359,10 +359,11 @@ def test_a_workbook_upload_and_a_new_section_are_each_one_transaction():
 
     create = inspect.getsource(questionnaire_forms.create_from_parsed).split('"""')[-1]
     assert "async with db.tx(" in create
-    assert "questionnaireformsection.create_many(" in create
-    assert "questionnaireformquestion.create_many(" in create
+    # On the form's tables (UNIFY U5: the instrument tables once unified), batched, in the transaction.
+    assert "Tx.sections.create_many(" in create
+    assert "Tx.questions.create_many(" in create
     assert "await db.questionnaireformquestion.create(" not in create
     assert "client=tx" in create
     section = inspect.getsource(routes.create_section)
     assert "async with db.tx(" in section
-    assert "questionnaireformquestion.create_many(" in section
+    assert "Tx.questions.create_many(" in section
