@@ -593,4 +593,4 @@ async def check_deferred(client) -> None:
     gone = await q("SELECT count(*) AS n FROM information_schema.tables WHERE table_schema = current_schema() AND table_name LIKE 'QuestionnaireForm%'")
     assert int(gone[0]["n"]) == 0
     kept = await q('SELECT count(*) AS n FROM "QuestionnaireQuestion" WHERE "questionnaireId" IN (\'f1\', \'f2\', \'f3\')')
-    assert int(kept[0]["n"]) == 8
+    assert int(kept[0]["n"]) == 9  # 8 copied, f2q3 and f1q4b mirrored in, f2q2 mirrored out
