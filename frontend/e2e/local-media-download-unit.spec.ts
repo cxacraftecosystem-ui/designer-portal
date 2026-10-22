@@ -141,7 +141,9 @@ test.describe("every upload surface offers Download", () => {
 
   const SURFACES: Array<[string[], string]> = [
     [["components", "forms", "MediaCaptureField.tsx"], "downloadLocalMedia(file)"],
-    [["app", "(protected)", "questionnaire", "page.tsx"], "downloadLocalMedia(file)"],
+    // A questionnaire take (UNIFY 4.4 retired the global interview form that held its clips locally):
+    // the take is uploaded as it is recorded, and every take downloads under its server-given name.
+    [["components", "questionnaire", "TakeSheet.tsx"], "href={questionnaireApi.downloadHref(r.id)} download={r.downloadName}"],
     [["components", "media", "UploadProgress.tsx"], "downloadLocalMedia(current)"],
     [["components", "media", "UploadProgress.tsx"], "downloadMediaUrl(item.file.url!"],
     [["components", "designworkshop", "FieldInput.tsx"], "downloadLocalMedia(local.blob"],

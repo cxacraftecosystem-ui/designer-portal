@@ -134,6 +134,17 @@ export function FormAdminPanel({ questionnaireId, isDefault }: { questionnaireId
         </button>
       </div>
       {isDefault ? <p className="text-xs text-ink-500">{qs("setDefault")}</p> : null}
+
+      {/* B29: the corpus of this form's approved answers and recordings, for an admin's dataset work. */}
+      <h3 className="mt-2 text-sm font-semibold text-ink-900">{qs("corpusTitle")}</h3>
+      <ButtonRow size="sm" align="start">
+        <a className="field-button-secondary" href={corpusHref(questionnaireId, "answers")} download data-corpus="answers">
+          {qs("corpusAnswers")}
+        </a>
+        <a className="field-button-secondary" href={corpusHref(questionnaireId, "recordings")} download data-corpus="recordings">
+          {qs("corpusRecordings")}
+        </a>
+      </ButtonRow>
       {message ? <p className="text-sm text-ink-700">{message}</p> : null}
     </section>
   );
@@ -199,4 +210,9 @@ export function FormSessions({ questionnaireId }: { questionnaireId: string }) {
       ) : null}
     </section>
   );
+}
+
+/** `GET /questionnaire/corpus.csv`: one file of answers or of recordings, approved by default. */
+export function corpusHref(questionnaireId: string, kind: "answers" | "recordings"): string {
+  return `/api/questionnaire/corpus.csv?${new URLSearchParams({ questionnaireId, kind }).toString()}`;
 }

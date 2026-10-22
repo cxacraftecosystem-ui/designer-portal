@@ -138,7 +138,7 @@ export class QuestionnaireFake {
   calls: Call[] = [];
   v2 = true;
   role = ME.role;
-  sessions: Json[] = [session("s-1")];
+  sessions: Json[] = [session("s-1"), session("s-2", { title: "Interview_2026-10-21_Bagru_Second-Sitting", respondents: [] })];
   deleted: Json[] = [session("s-gone", { title: "Interview_2026-10-20_Bagru_Deleted", deletedAt: "2026-10-21T10:00:00Z" })];
   answers: Json[] = [
     // Priya's typed answer for Giriraj: locked to the lead? No: the lead may change it. Locked to others.
@@ -199,7 +199,17 @@ export class QuestionnaireFake {
     return this.calls.filter((c) => c.method === method && (typeof path === "string" ? c.path === path : path.test(c.path)));
   }
 
-  private answer(method: string, path: string, query: URLSearchParams, body: Json | null): { status: number; json?: unknown } | null {
+  /** Artisan consent answers the fake gives (`GET /artisans/{id}/consent`). */
+  consent: Record<string, string> = { a2: "REFUSED" };
+  /** The open session `GET /questionnaire/sessions/open-match` reports, when set. */
+  openMatch: Json | null = null;
+
+  private answer(
+    method: string,
+    path: string,
+    query: URLSearchParams,
+    body: Json | null
+  ): { status: number; json?: unknown; raw?: Buffer; contentType?: string; headers?: Record<string, string> } | null {
     const one = (re: RegExp) => re.exec(path);
     let m0: RegExpExecArray | null = null;
     if (path === "/me") return { status: 200, json: { ...ME, role: this.role, isActive: true, mustChangePassword: false, twoFactorEnabled: false, usageConsentAt: "2026-01-01T00:00:00Z" } };
@@ -261,7 +271,34 @@ export class QuestionnaireFake {
       };
     if (path === "/artisans" && method === "GET") return { status: 200, json: { items: ARTISANS, total: ARTISANS.length, page: 1, pageSize: 80, pages: 1 } };
     m = one(/^\/artisans\/([^/]+)\/consent$/);
-    if (m) return { status: 200, json: { artisanId: m[1], purpose: "EXTERNAL_PROCESSING", state: "NOT_RECORDED", basis: null, source: null, recordedAt: null } };
+    if (m && method === "POST") this.consent[m[1]] = String((body as Json).state);
+    if (m) return { status: method === "POST" ? 201 : 200, json: { artisanId: m[1], purpose: "EXTERNAL_PROCESSING", state: this.consent[m[1]] ?? "NOT_RECORDED", basis: null, source: null, recordedAt: null } };
+    for (const [re, name] of [
+      [/^\/questionnaires\/pro-forma$/, "DesignWorkshop_Questionnaire_Pro-Forma.xlsx"],
+      [/^\/questionnaires\/[^/]+\/xlsx$/, "DesignWorkshop_Questionnaire_2026-10-22_2nd-Craft-Toolkit_Export.xlsx"],
+      [/^\/questionnaires\/[^/]+\/question-set\.xlsx$/, "DesignWorkshop_Questionnaire_2026-10-22_2nd-Craft-Toolkit_Questions.xlsx"]
+    ] as const) {
+      if (re.test(path))
+        return {
+          status: 200,
+          raw: Buffer.from("PK workbook"),
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          headers: { "content-disposition": `attachment; filename="${name}"` }
+        };
+    }
+    m = one(/^\/questionnaires\/([^/]+)$/);
+    if (m && method === "PATCH") {
+      const form = this.forms.find((f) => f.id === m![1]);
+      if (form) Object.assign(form, body);
+      return { status: 200, json: { ...form, sections: [], entries: [], questionCount: 0 } };
+    }
+    if (m && method === "GET" && this.createdForms.some((f) => f.id === m![1])) return { status: 200, json: this.createdForms.find((f) => f.id === m![1]) };
+    m = one(/^\/review\/questionnaire\/([^/]+)\/(approve|revise)$/);
+    if (m) {
+      const s = this.sessions.find((x) => x.id === m![1]);
+      if (s) s.status = m[2] === "approve" ? "APPROVED" : "PENDING";
+      return { status: 200, json: s };
+    }
     if (path === "/users/directory") return { status: 200, json: [{ id: "u-third", name: "Ravi Kumar", email: "ravi@example.org", role: "DESIGNER" }] };
 
     // ── sessions ───────────────────────────────────────────────────────────────────────────────
@@ -284,6 +321,7 @@ export class QuestionnaireFake {
       this.sessions.unshift(created);
       return { status: 201, json: created };
     }
+    if (path === "/questionnaire/sessions/open-match") return { status: 200, json: { items: this.openMatch ? [this.openMatch] : [] } };
     if (path === "/questionnaire/form-for") {
       return {
         status: 200,
@@ -463,6 +501,7 @@ export class QuestionnaireFake {
         const out = this.answer(request.method(), path, url.searchParams, body);
         if (!out) return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "Not Found" }) });
         if (out.status === 204) return route.fulfill({ status: 204, body: "" });
+        if (out.raw) return route.fulfill({ status: out.status, contentType: out.contentType, headers: out.headers, body: out.raw });
         return route.fulfill({ status: out.status, contentType: "application/json", headers: { date: new Date().toUTCString() }, body: JSON.stringify(out.json ?? null) });
       }
     );

@@ -111,6 +111,17 @@ def test_a_guest_session_on_a_bound_form_locks_and_shims_and_reads(monkeypatch: 
             assert locked["results"][0]["status"] == "FORBIDDEN" and locked["results"][0]["code"] == "ANSWER_LOCKED"
             assert (await answers.put_answers(S.AnswersPut(items=[S.AnswerItem(**{**item, "text": "Dyes", "baseVersion": 1})]), admin)
                     )["results"][0]["status"] == "SAVED", "an admin may change it"
+            # The lock is shown before an edit is refused: the current answer says who wrote it (P15).
+            locked_current = locked["results"][0]["current"]
+            assert locked_current["actorId"] == ids["lead"] and locked_current["actorName"] == "Lead"
+            # Decision C8: a document sent alone is flattened into the canonical text; both are kept.
+            lineage2 = (await client.query_raw('SELECT "lineageId" FROM "QuestionnaireQuestion" WHERE "id" = $1', ids["q2"]))[0]["lineageId"]
+            doc = {"blocks": [{"kind": "BULLET_ITEM", "spans": ["Indigo"]}, {"kind": "BULLET_ITEM", "spans": ["Madder"]}]}
+            rich = await answers.put_answers(S.AnswersPut(items=[S.AnswerItem(
+                respondentId=rid, questionLineageId=lineage2, sessionId=sid, text="", richText=doc)]), lead)
+            stored = rich["results"][0]["answer"]
+            assert stored["text"] == "• Indigo\n• Madder"
+            assert stored["richText"] and "Madder" in stored["richText"]
 
             # The old sitting routes, through the shim: same shapes, the lock reported per question.
             entry = await shims_dr.create_entry(ids["form"], SimpleNamespace(title="Typed title", respondentName="Visitor", notes="Met at the stall"), lead)
@@ -128,7 +139,7 @@ def test_a_guest_session_on_a_bound_form_locks_and_shims_and_reads(monkeypatch: 
             # C10 / A12: the readers and the annexure see the sessions.
             counts = await questionnaire_readers.session_counts([ids["form"]], client=client)
             assert counts[ids["form"]]["count"] == 2
-            assert (await questionnaire_readers.answer_counts([sid], client=client))[sid] == 1
+            assert (await questionnaire_readers.answer_counts([sid], client=client))[sid] == 2, "the typed answer and the rich-text one"
             items = await report_items(ids["dw"])
             mine = [i for i in items if i.questionnaire_id == ids["form"]]
             assert mine and {s.respondent_name for s in mine[0].printed_sittings} == {"Shopper at Johari Bazaar", "Visitor"}

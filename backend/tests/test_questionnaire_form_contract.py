@@ -134,9 +134,12 @@ def _web_form_text() -> str:
     """
     import pytest
 
-    if not WEB_FORM.is_file():
+    # The route survives as the sessions list (`<SessionsList />`), so "the file exists" is not the
+    # test: the page that mounts the shared list instead of the capture form is the retired one.
+    text = WEB_FORM.read_text(encoding="utf-8") if WEB_FORM.is_file() else ""
+    if not text or ("<SessionsList" in text and not WEB_FORM_ANCHOR.search(text)):
         pytest.skip("the web's global interview form is retired (UNIFY 4.4); the shared questionnaire replaces it")
-    return WEB_FORM.read_text(encoding="utf-8")
+    return text
 ANDROID_FORM_ANCHOR = "private fun QuestionnaireForm("
 
 

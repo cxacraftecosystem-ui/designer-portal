@@ -88,7 +88,8 @@ test.describe("where a record opens, and where Update goes", () => {
     expect(RECORD_UPDATE_HREF.process("x1")).toBe("/processes?edit=x1");
     expect(RECORD_UPDATE_HREF.craft("c1")).toBe("/crafts?edit=c1");
     expect(RECORD_UPDATE_HREF.workshop("w1")).toBe("/workshops?edit=w1");
-    expect(RECORD_UPDATE_HREF.interview("i1")).toBe("/questionnaire?edit=i1");
+    // An interview is a questionnaire session (UNIFY 4.4): Update opens its workspace.
+    expect(RECORD_UPDATE_HREF.interview("i1")).toBe("/questionnaire/sessions/i1");
     // A stored file has no form, so it has no Update at all.
     expect(recordUpdateHref("media", "m1")).toBeNull();
   });
