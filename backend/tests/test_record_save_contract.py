@@ -139,6 +139,12 @@ def calls(body: str, name: str) -> list[int]:
     return [m.start() for m in re.finditer(rf"(?<![A-Za-z0-9_]){name}\s*\(", body)]
 
 
+
+def android_records(spec: dict) -> list[dict]:
+    """The records the handset still draws a form for. A record whose Android half says ``retired``
+    (the global interview form, UNIFY 4.4) has no Android form to read."""
+    return [record for record in spec["records"] if not record["android"].get("retired")]
+
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 # 0. The guard that stops every assertion below from being vacuously green
 # ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -160,7 +166,7 @@ def test_the_contract_and_every_file_it_names_still_parse_to_something():
         assert len(web) > 2000, f"{record['web']['form']} stripped to {len(web)} characters"
 
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
-    for record in spec["records"]:
+    for record in android_records(spec):
         body, _ = kotlin_fun_body(android, record["android"]["form"])
         assert len(body) > 2000, (
             f"the handset's `{record['android']['form']}` parsed to {len(body)} characters, which "
@@ -228,7 +234,7 @@ def test_each_android_record_form_saves_through_the_repository_and_the_one_queue
     spec = contract()
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
     spellings = spec["savePath"]["android"]["queueFunctions"]
-    for record in spec["records"]:
+    for record in android_records(spec):
         name = record["android"]["form"]
         body, at = kotlin_fun_body(android, name)
 
@@ -368,7 +374,7 @@ def test_the_android_integrated_dialog_mounts_the_same_composables_as_the_create
     assert len(dialogs) == 1, "there is more than one DwInlineRecordDialog"
     dialog = dialogs[0]
 
-    every = [record["android"]["form"] for record in spec["records"]]
+    every = [record["android"]["form"] for record in android_records(spec)]
     screens = [
         block
         for block in kotlin_blocks(
@@ -384,7 +390,7 @@ def test_the_android_integrated_dialog_mounts_the_same_composables_as_the_create
     )
     create = screens[0]
 
-    for record in spec["records"]:
+    for record in android_records(spec):
         name = record["android"]["form"]
         assert calls(create, name), f"Screen.Create no longer mounts `{name}`."
         if record["key"] == "interview":
@@ -421,7 +427,7 @@ def test_every_record_body_carries_both_workshop_keys_and_reads_them_off_one_con
             )
 
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
-    for record in spec["records"]:
+    for record in android_records(spec):
         body, _ = kotlin_fun_body(android, record["android"]["form"])
         for shape in keys["android"]["shape"]:
             assert shape in body, (
@@ -455,7 +461,7 @@ def test_no_record_body_carries_the_type_of_workshop():
             )
 
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
-    for record in spec["records"]:
+    for record in android_records(spec):
         body, _ = kotlin_fun_body(android, record["android"]["form"])
         for forbidden in spec["payloadKeys"]["mustNotAppear"]:
             assert not re.search(rf"\b{forbidden}\s*=", body), (
@@ -719,7 +725,7 @@ def test_every_record_form_runs_the_submission_pre_flight_before_it_writes():
         )
 
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
-    for record in spec["records"]:
+    for record in android_records(spec):
         body, at = kotlin_fun_body(android, record["android"]["form"])
         gate = body.find(spec["validation"]["android"]["call"])
         assert gate >= 0, (

@@ -89,6 +89,8 @@ import json
 import pathlib
 import re
 
+import pytest
+
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 CONTRACT_PATH = _ROOT / "shared" / "questionnaire-form-contract.json"
@@ -123,6 +125,8 @@ ANDROID_MAIN = (
 # this the CAPTURE form rather than the builder's own `<form onSubmit={addSection}>` lower down.
 WEB_FORM_ANCHOR = re.compile(r"<form\b[^>]*onSubmit=\{submit\}")
 ANDROID_FORM_ANCHOR = "private fun QuestionnaireForm("
+#: The questionnaire v2 start sheet that replaced the handset's global capture form (UNIFY 4.4).
+ANDROID_START_SHEET = ANDROID_MAIN.parent / "questionnaire" / "ui" / "SessionStartSheet.kt"
 
 
 def contract() -> dict:
@@ -524,6 +528,11 @@ def _android_form_region() -> tuple[str, int]:
     """
     source = _strip_kotlin_comments(ANDROID_MAIN.read_text(encoding="utf-8"))
     at = source.find(ANDROID_FORM_ANCHOR)
+    if at < 0 and ANDROID_START_SHEET.is_file():
+        # The global form is retired on the handset (UNIFY 4.4, owner decision 2): a session starts on
+        # the shared start sheet, held by `test_the_handset_retired_the_global_form_for_the_start_sheet`
+        # below and by the questionnaire tree's own tests.
+        pytest.skip("the global interview form is retired on Android (UNIFY 4.4); sessions start on the shared start sheet")
     assert at >= 0, (
         f"{ANDROID_FORM_ANCHOR!r} is no longer in {ANDROID_MAIN.name}. That is how this file finds "
         "the handset's capture form; if it has been renamed or moved out of MainActivity.kt, this "
@@ -1876,3 +1885,21 @@ def test_the_contract_is_internally_consistent():
             "`edit`. A known-open problem with no measurement behind it cannot be asserted, and one "
             "with no edit beside it is a complaint rather than a handoff."
         )
+
+
+def test_the_handset_retired_the_global_form_for_the_start_sheet():
+    """UNIFY 4.4 (owner decision 2): the handset's global interview form and its builder are gone, and
+    a sitting starts on the questionnaire v2 start sheet, whose fields are the design's (DESIGN 4.2):
+    workshop, form, date, mode, artisans (or someone else), purpose, place, language and note, in that
+    order, with no title box (the server generates the title)."""
+    source = _strip_kotlin_comments(ANDROID_MAIN.read_text(encoding="utf-8"))
+    if ANDROID_FORM_ANCHOR in source:
+        pytest.skip("the global interview form is still on this handset")
+    assert "fun QuestionnaireBuilder(" not in source, "the global form's builder outlived the form"
+    sheet = ANDROID_START_SHEET.read_text(encoding="utf-8")
+    keys = ["start.workshop", "start.instrument", "start.date", "start.mode", "start.artisans",
+            "start.purpose", "start.place", "start.language", "start.note"]
+    at = [sheet.find(f'QuestionnaireCopy.s("{key}")') for key in keys]
+    assert all(i >= 0 for i in at), dict(zip(keys, at))
+    assert at == sorted(at), f"the start sheet draws its fields out of the design's order: {dict(zip(keys, at))}"
+    assert "title =" not in sheet.split("fun SessionStartSheet(", 1)[1].split("ModalBottomSheet", 1)[0]

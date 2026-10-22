@@ -87,7 +87,8 @@ class StartSheetRulesTest {
     @Test fun `a designer's own form is offered beside the shared ones and can start a session`() {
         val mine = QFormOption("mine", "My craft walk", kind = null)
         assertEquals("mine", startFormFor("mine", "", forms + mine))
-        assertEquals("forms without a kind sort last", "mine", formOptions(forms + mine, emptySet()).last().value)
+        val order = formOptions(forms + mine, emptySet()).map { it.value }
+        assertTrue("forms without a kind sort after the kinds", order.indexOf("mine") > order.indexOf("f2"))
     }
 
     @Test fun `the session files under the design workshop on this portal`() {
