@@ -567,6 +567,9 @@ Secrets go to the GitHub Actions secrets **and** the box `.env`.
 | Variable | Required | Default | Secret | Notes |
 |---|---|---|---|---|
 | `AI_ANSWER_DRAFTS_ENABLED` | No | **`false`** | No | Lets a researcher draft a section's unanswered questions from the interview's transcript. Drafts are inert until a person accepts or edits the section; accepted answers carry `answerOrigin` `MACHINE_SUGGESTED` / `MACHINE_SUGGESTED_EDITED`, are labelled "Machine-suggested" on screen and in every export. Runs on the researcher's own AI key or the deployment's (the keys above). Off: every `/api/questionnaire/*/drafts` route answers 404. |
+| `QUESTIONNAIRE_V2` | No | **`false`** | No | The shared questionnaire (UNIFY_2026-10-21.md): sessions, takes, coverage, answers and the inbox under `/api/questionnaire`. While false every v2 route answers 404 (except `GET /api/questionnaire/config`, which says so) and the forms and old routes behave as before. Leave it off until the owner switches designer-portal on. |
+| `QUESTIONNAIRE_MIN_ANDROID_VERSION_CODE_FOR_CREATE` | No | unset | No | Once every active Android device runs the new build (`GET /api/admin/app-versions` shows `accountsBelow`), set this to that build's **versionCode**. A session create from a lower `X-App-Version-Code`, or an Android build that sends none, then gets `503` + `Retry-After: 86400` and the update banner; its queued clips are always accepted. The version name is never compared. |
+| `QUESTIONNAIRE_MIN_WEB_VERSION_CODE_FOR_CREATE` | No | unset | No | The same for the web, compared with the web's build number. A web request that sends no code is never refused (the page ships with the server). |
 
 ### Not read by `config.py`
 

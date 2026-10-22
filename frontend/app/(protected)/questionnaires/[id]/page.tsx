@@ -47,6 +47,12 @@ import { DeletedSittings } from "@/components/questionnaires/DeletedSittings";
 import { cappedListNotice, cutOf } from "@/components/data/cappedList";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
+import { DownloadBundleButton } from "@/components/questionnaires/BundleControls";
+import { FormAdminPanel, FormSessions } from "@/components/questionnaires/FormAdminPanel";
+import { OfflineFormDraft, PendingAuthoring } from "@/components/questionnaires/PendingAuthoring";
+import { isTempId, queueQuestion, queueSection } from "@/lib/questionnaireAuthoringOutbox";
+import { useQuestionnaireConfig } from "@/components/questionnaire/useQuestionnaireConfig";
+import { answerFormTarget } from "@/lib/questionnaireLinks";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
 import { QuestionRow } from "@/components/questionnaires/QuestionRow";
@@ -95,7 +101,17 @@ import { ActionGroup } from "@/components/ui/ActionGroup";
  */
 const NO_WORKSHOP_ROWS: readonly DwSummary[] = [];
 
-export default function QuestionnaireDetailPage() {
+/**
+ * A form made offline has a temporary id until its create lands (UNIFY A15); that page is the
+ * offline draft, drawn from the authoring outbox. Every other id is a form on the server.
+ */
+export default function QuestionnairePage() {
+  const params = useParams<{ id: string }>();
+  if (isTempId(params.id)) return <OfflineFormDraft id={params.id} />;
+  return <QuestionnaireDetailPage />;
+}
+
+function QuestionnaireDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const router = useRouter();
@@ -293,6 +309,7 @@ export default function QuestionnaireDetailPage() {
   const attachedHold = useHeldPostRefusal(form?.designWorkshopId ?? null);
   const mayEdit = owns && attachedHold === null;
   const mayDelete = mayEdit && mayDeleteQuestionnaire(user, form?.ownerId);
+  const v2 = Boolean(useQuestionnaireConfig()?.v2Enabled);
   const mayDeleteSittings = mayEdit && canDeleteRecords;
 
   async function deleteForm() {
@@ -337,6 +354,14 @@ export default function QuestionnaireDetailPage() {
     const data = new FormData(element);
     const title = String(data.get("title") ?? "").trim();
     if (!title) return;
+    // A15: with no connection the section is queued with a temporary id; its questions can follow.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      queueSection(user?.id ?? null, id, { title, code: String(data.get("code") ?? "").trim() || undefined });
+      element.reset();
+      setSectionTitle("");
+      setSectionFormOpen(false);
+      return;
+    }
     const next = await run(
       () =>
         createSection(id, {
@@ -361,6 +386,18 @@ export default function QuestionnaireDetailPage() {
     const data = new FormData(element);
     const prompt = String(data.get("prompt") ?? "").trim();
     if (!prompt) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      queueQuestion(user?.id ?? null, id, sectionId, {
+        prompt,
+        helpText: String(data.get("helpText") ?? "").trim() || undefined,
+        isRequired: data.get("isRequired") === "on"
+      });
+      element.reset();
+      setQuestionPrompt("");
+      setQuestionHelp("");
+      setAddingTo(null);
+      return;
+    }
     const next = await run(
       () =>
         createQuestion(id, sectionId, {
@@ -588,8 +625,11 @@ export default function QuestionnaireDetailPage() {
                 Re-upload
               </button>
             ) : null}
-            <Link className="field-button" href={`/questionnaires/${id}/answer`}>
-              Record answers
+            {/* The handoff file (A10): questions only, like the question set, so as open as it. */}
+            <DownloadBundleButton form={form} />
+            {/* With the shared questionnaire on, answering a form is a session on it (UNIFY 4.2). */}
+            <Link className="field-button" href={v2 ? answerFormTarget(id) : `/questionnaires/${id}/answer`}>
+              {v2 ? "Start session" : "Record answers"}
             </Link>
             {mayDelete ? (
               <button type="button" data-danger className="field-danger" onClick={deleteForm} disabled={busy}>
@@ -1081,6 +1121,10 @@ export default function QuestionnaireDetailPage() {
           </ul>
         )}
       </section>
+
+      <PendingAuthoring formId={id} sections={form.sections.map((s) => ({ id: s.id, title: s.title }))} onLanded={() => void load()} />
+      <FormAdminPanel questionnaireId={id} isDefault={Boolean(form.isDefault)} />
+      <FormSessions questionnaireId={id} />
 
       {/* Restoring a sitting is a content admin's act, in admin view (2026-10-20). */}
       {mayDeleteSittings && adminMode ? (

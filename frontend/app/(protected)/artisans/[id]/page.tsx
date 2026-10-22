@@ -6,6 +6,8 @@ import { Boxes, ClipboardList, Hammer, Users } from "lucide-react";
 
 import { ArtisanCardPanel } from "@/components/artisans/ArtisanCardPanel";
 import { ArtisanQuestionnairePanel } from "@/components/ArtisanQuestionnairePanel";
+import { ArtisanQuestionnaireRecord } from "@/components/questionnaire/ArtisanQuestionnaireRecord";
+import { useQuestionnaireConfig } from "@/components/questionnaire/useQuestionnaireConfig";
 import { useAuth } from "@/components/AuthProvider";
 import { MERGED_FROM_FLAG, MergedIntoToast, PossibleDuplicateBanner } from "@/components/duplicates/ArtisanDuplicateNotices";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
@@ -36,6 +38,9 @@ export default function ArtisanViewPage() {
   const { user } = useAuth();
   const router = useRouter();
   const creator = canCreateRecords(user);
+  // The shared questionnaire's record of this artisan (UNIFY B26): timeline, by question and CSV,
+  // across every session and researcher. The older answers panel stays until the switch is on.
+  const v2 = Boolean(useQuestionnaireConfig()?.v2Enabled);
   return (
     <RecordViewPage<Artisan>
       kind="artisan"
@@ -70,7 +75,12 @@ export default function ArtisanViewPage() {
                     { href: entryHref("/products/new", artisan), title: "Make a product entry", body: "Record an object, product or sample.", icon: Boxes }
                   ]
                 : []),
-              { href: entryHref("/questionnaire", artisan), title: "Start questionnaire", body: "Open the interview with this artisan filled in.", icon: ClipboardList }
+              {
+                href: v2 ? `/questionnaire/sessions/new?artisanId=${encodeURIComponent(artisan.id)}` : entryHref("/questionnaire", artisan),
+                title: "Start questionnaire",
+                body: "Open a session with this artisan filled in.",
+                icon: ClipboardList
+              }
             ].map((item) => (
               <Link key={item.href} href={item.href} className="panel group flex min-h-28 items-start gap-3 p-4 transition hover:-translate-y-0.5 hover:shadow-panel">
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-field-200 text-field-700 dark:text-purple-300">
@@ -86,7 +96,13 @@ export default function ArtisanViewPage() {
           {/* `readOnly`: preview, play and download only. `recordHold={null}` because nothing here
               writes — the hold only ever gated the ✕ and the re-run this page does not draw. */}
           <ExistingMedia linkedRecordType="artisan" linkedRecordId={artisan.id} recordHold={null} title="Media" readOnly />
-          <ArtisanQuestionnairePanel artisanId={artisan.id} />
+          {v2 ? (
+            <section id="questionnaire" aria-label="Questionnaire" className="scroll-mt-24">
+              <ArtisanQuestionnaireRecord artisanId={artisan.id} artisanName={artisan.name} />
+            </section>
+          ) : (
+            <ArtisanQuestionnairePanel artisanId={artisan.id} />
+          )}
         </>
       )}
     </RecordViewPage>

@@ -75,7 +75,6 @@ function code(source: string): string {
   return out;
 }
 
-const PAGE = code(read("app/(protected)/questionnaire/page.tsx"));
 const ANSWER = code(read("app/(protected)/questionnaires/[id]/answer/page.tsx"));
 const OFFLINE = code(read("lib/offline.ts"));
 const DICTATE = code(read("lib/designWorkshops.ts"));
@@ -90,19 +89,8 @@ test.describe("C1 — an edit never wipes the interview's notes", () => {
     expect(notesPatch("New note", "Old note")).toEqual({ notes: "New note" });
     expect(notesPatch("", "Old note")).toEqual({ notes: null });
   });
-  test("the notes box is seeded from the record and the edit body goes through notesPatch", () => {
-    expect(PAGE).toContain('<MultiNoteField name="notes" label="Interview notes" defaultValue={editingInterview?.notes} />');
-    expect(PAGE).toContain('...notesPatch(textValue(form, "notes"), editingInterview?.notes)');
-    expect(PAGE).not.toMatch(/commonPayload = \{[^}]*notes:/);
-  });
 });
 
-test.describe("H1 — an edit keeps the record's location", () => {
-  test("LocationFields gets the record's location as `initial` on an edit", () => {
-    expect(PAGE).toMatch(/<LocationFields\s*\{\.\.\.\(editingInterview\s*\?\s*\{\s*initial:/);
-    expect(PAGE).not.toContain("<LocationFields />");
-  });
-});
 
 test.describe("H2 — nobody approves an interview by accident", () => {
   test("status is sent only on an edit, only when picked and different", () => {
@@ -111,21 +99,12 @@ test.describe("H2 — nobody approves an interview by accident", () => {
     expect(statusPatch({ canPick: true, editing: true, picked: "PENDING", stored: "PENDING" })).toEqual({});
     expect(statusPatch({ canPick: true, editing: true, picked: "APPROVED", stored: "PENDING" })).toEqual({ status: "APPROVED" });
   });
-  test("the Status select is seeded from the record and has no APPROVED default", () => {
-    expect(PAGE).not.toContain('defaultValue="APPROVED"');
-    expect(PAGE).not.toContain('|| "APPROVED"');
-    expect(PAGE).toContain('<Select name="status" defaultValue={editingInterview?.status ?? ""}>');
-  });
 });
 
 test.describe("H3 — instant transcription asks the interview's own artisans", () => {
   test("the interview id and the selected artisans travel as form fields", () => {
     expect(interviewDictationFields("int-1", ["a1", "a2"])).toEqual({ interviewId: "int-1", artisanIds: "a1,a2" });
     expect(interviewDictationFields(null, [])).toEqual({});
-  });
-  test("dictateAudio appends them and the interview form passes them", () => {
-    expect(DICTATE).toContain("for (const [key, value] of Object.entries(extraFields)) form.append(key, value);");
-    expect(PAGE).toContain("interviewDictationFields(liveRef.current.interviewId, liveRef.current.artisanIds)");
   });
 });
 
@@ -160,21 +139,9 @@ test.describe("H4 — only changed answers are sent, and the prefill never overw
     expect(ownedAnswerRefusal({ detail: "Forbidden" })).toBeNull();
     expect(ownedAnswerSentence(["Craft"])).toBe("Someone else answered “Craft”. Only they or an admin can change it.");
   });
-  test("the page sends responsesToSend against the record or the shared entry", () => {
-    expect(PAGE).toContain("const responses = responsesToSend(answers, answerBaseline);");
-    expect(PAGE).toContain("if (!mayPrefill(questionId, existing, previous[questionId], shared)) return;");
-    expect(PAGE).toContain("ownedAnswerRefusal(err.payload)");
-  });
 });
 
 test.describe("H5 — a deleted interview can be restored", () => {
-  test("the confirm copy no longer says recordings are deleted permanently", () => {
-    expect(PAGE).not.toContain("deleted permanently");
-    expect(PAGE).toContain("Its answers and recordings are kept, and an admin can restore it.");
-  });
-  test("the trash is drawn for content admins in admin view", () => {
-    expect(PAGE).toContain("{adminMode && canDeleteRecords ? <DeletedInterviewsCard");
-  });
   test("a set another interview now holds is said in the server's words", () => {
     expect(interviewRestoreRefusal({ detail: { code: "INTERVIEW_SET_TAKEN", message: "Held by X." } })).toBe("Held by X.");
     expect(interviewRestoreRefusal({ detail: "nope" })).toBeNull();
@@ -195,10 +162,6 @@ test.describe("H7 — the interview form opens offline", () => {
     expect(instrumentRecordIsReadable(record, "u2")).toBe(false);
     expect(instrumentRecordIsReadable(record, null)).toBe(false);
     expect(instrumentRecordIsReadable({ ...record, schemaVersion: INSTRUMENT_CACHE_VERSION + 1 }, "u1")).toBe(false);
-  });
-  test("the page loads the instrument through the cache", () => {
-    expect(PAGE).toContain("await loadInstrumentWithCache(user?.id ?? null)");
-    expect(PAGE).not.toContain('apiFetch<QuestionnaireSection[]>("/questionnaire/sections")');
   });
 });
 

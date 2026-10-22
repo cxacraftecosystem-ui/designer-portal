@@ -497,7 +497,14 @@ const HAND_ROLLED_NETWORK_TESTS = [
   // watches a progress bar. The argument is written out above that function. Listed rather than
   // fixed because the set IS the difference, and deleting it would put a rate-limited upload into a
   // tight retry loop on a metered rural connection.
-  "lib/media.ts"
+  "lib/media.ts",
+
+  // THE SHARED QUESTIONNAIRE QUEUE is byte-identical in both portals (shared/questionnaire.sha256) and
+  // may import only what `shared/questionnaire-web-imports.json` allows, so it cannot reach this
+  // portal's `lib/failureTriage.ts`. Its one rule is the outbox's, not a verdict on the network: a
+  // 4xx other than 408/429 parks the step for the researcher instead of replaying a frozen body that
+  // will be refused again; everything else is retried with backoff.
+  "lib/questionnaire/queue.ts"
 ];
 
 test("no NEW surface invents another answer to 'is this the network'", () => {

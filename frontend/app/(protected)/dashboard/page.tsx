@@ -574,9 +574,11 @@ function DashboardView() {
     // built. Both are open to any signed-in user; the map filters its pins per viewer on the server.
     { label: "Map", icon: MapPinned, newHref: "/map", newLabel: "Open", group: "misc" },
     {
+      // The label is the Android tile's, held by dashboard-tile-parity-unit.spec.ts; the consolidated
+      // view of the retired global form became workshop coverage (UNIFY B12), so that is where it opens.
       label: "Consolidated questionnaire",
       icon: Layers,
-      newHref: "/questionnaire/consolidated",
+      newHref: "/questionnaire/coverage",
       newLabel: "Open",
       group: "misc"
     },

@@ -74,7 +74,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from types import SimpleNamespace
+
 from app.core.db import db
+from app.questionnaire import forms as unified_forms
 from app.services.concurrency import gather_reads
 from app.services.cross_portal_codes import question_code
 from app.services.questionnaire_kinds import label_for
@@ -198,34 +201,42 @@ async def load_form(
     if questionnaire is None or questionnaire.deletedAt is not None:
         return None
 
-    sections, entries = await gather_reads(
-        db.questionnaireformsection.find_many(
-            where={"questionnaireId": questionnaire_id},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
-        ),
-        db.questionnaireformentry.find_many(
-            where={"questionnaireId": questionnaire_id},
-            order={"createdAt": "asc"},
-            include={"createdBy": True},
-        ),
+    # UNIFIED (UNIFY U5): the form's structure lives in the instrument tables and its sittings are
+    # sessions; the old form tables are read-only legacy. See ``app/questionnaire/forms.py``.
+    unified = await unified_forms.form_unified(questionnaire_id)
+    T = unified_forms.tables(db, unified)
+    sections = await T.sections.find_many(
+        where={"questionnaireId": questionnaire_id},
+        order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     section_ids = [s.id for s in sections]
     questions = (
-        await db.questionnaireformquestion.find_many(
+        await T.questions.find_many(
             where={"sectionId": {"in": section_ids}},
             order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
         else []
     )
-    entry_ids = [e.id for e in entries]
-    answers = (
-        await db.questionnaireformanswer.find_many(where={"entryId": {"in": entry_ids}})
-        if entry_ids
-        else []
-    )
+    if unified:
+        from app.questionnaire import shims_dr
 
-    answered_ids = {a.questionId for a in answers if (a.answerText or "").strip()}
+        entries = [SimpleNamespace(**{**e, "deletedAt": None, "createdBy": None}) for e in await shims_dr.entries_for_form(questionnaire_id)]
+        answers = [SimpleNamespace(**a) for e in entries for a in (e.answers or [])]
+        answered_ids = await unified_forms.answered_question_ids(db, [q.id for q in questions])
+    else:
+        entries = await db.questionnaireformentry.find_many(
+            where={"questionnaireId": questionnaire_id},
+            order={"createdAt": "asc"},
+            include={"createdBy": True},
+        )
+        entry_ids = [e.id for e in entries]
+        answers = (
+            await db.questionnaireformanswer.find_many(where={"entryId": {"in": entry_ids}})
+            if entry_ids
+            else []
+        )
+        answered_ids = {a.questionId for a in answers if (a.answerText or "").strip()}
     by_section: dict[str, list[Any]] = {}
     for question in questions:
         if not include_retired and not question.isActive:
@@ -290,6 +301,9 @@ async def load_form(
         # is where an admin turns it on and off. A screen that could set a flag it cannot see would
         # be a toggle with no state.
         "isShared": questionnaire.isShared,
+        # THE GLOBAL DEFAULT (UNIFY B32): the form a session is offered when nothing is bound to its
+        # workshop or the workshop's kind. An admin sets it on this page, so the page must read it.
+        "isDefault": bool(getattr(questionnaire, "isDefault", False)),
         # THE KIND, AND ITS LABEL. On the single read as well as on the list, because this payload is
         # what the DETAIL page renders and the detail page is where the kind is set — a screen that
         # could write a value it cannot read back would be a picker with no state, exactly as
@@ -366,29 +380,50 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
         where={"designWorkshopId": design_workshop_id, "isActive": True, "deletedAt": None},
         order={"createdAt": "asc"},
     )
+    # With QUESTIONNAIRE_V2 on, every form BOUND to the workshop (several per workshop, UNIFY U5)
+    # prints, and each live session on it is a sitting (C10). Nothing changes while it is off.
+    from app.services import questionnaire_readers
+
+    bound = await questionnaire_readers.forms_for_design_workshop(design_workshop_id)
+    attached = {q.id for q in questionnaires}
+    extra_ids = [str(b["id"]) for b in bound if str(b["id"]) not in attached]
+    if extra_ids:
+        questionnaires = [*questionnaires, *await db.questionnaire.find_many(
+            where={"id": {"in": extra_ids}}, order={"createdAt": "asc"}
+        )]
     if not questionnaires:
         return []
+    v2_sittings = await questionnaire_readers.annexure_sittings(
+        [q.id for q in questionnaires], design_workshop_id=design_workshop_id
+    )
 
     ids = [q.id for q in questionnaires]
-    sections, entries = await gather_reads(
-        db.questionnaireformsection.find_many(
-            where={"questionnaireId": {"in": ids}},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
-        ),
+    # A UNIFIED form (UNIFY U5) reads its structure from the instrument tables and its sittings are
+    # its sessions only (``v2_sittings`` below): its old-table copy is legacy and is not printed.
+    unified_ids = await unified_forms.unified_form_ids(ids)
+    legacy_ids = [i for i in ids if i not in unified_ids]
+    order = [{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}]
+    legacy_sections, unified_sections, entries = await gather_reads(
+        db.questionnaireformsection.find_many(where={"questionnaireId": {"in": legacy_ids}}, order=order) if legacy_ids else _none(),
+        db.questionnairesection.find_many(where={"questionnaireId": {"in": sorted(unified_ids)}}, order=order) if unified_ids else _none(),
         db.questionnaireformentry.find_many(
-            where={"questionnaireId": {"in": ids}, "deletedAt": None},
+            where={"questionnaireId": {"in": legacy_ids}, "deletedAt": None},
             order={"createdAt": "asc"},
             include={"createdBy": True},
-        ),
-    )
-    section_ids = [s.id for s in sections]
-    entry_ids = [e.id for e in entries]
-    questions, answers = await gather_reads(
-        db.questionnaireformquestion.find_many(
-            where={"sectionId": {"in": section_ids}},
-            order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
-        if section_ids
+        if legacy_ids
+        else _none(),
+    )
+    sections = [*(legacy_sections or []), *(unified_sections or [])]
+    legacy_section_ids = [s.id for s in legacy_sections or []]
+    unified_section_ids = [s.id for s in unified_sections or []]
+    entry_ids = [e.id for e in entries or []]
+    legacy_questions, unified_questions, answers = await gather_reads(
+        db.questionnaireformquestion.find_many(where={"sectionId": {"in": legacy_section_ids}}, order=order)
+        if legacy_section_ids
+        else _none(),
+        db.questionnairequestion.find_many(where={"sectionId": {"in": unified_section_ids}}, order=order)
+        if unified_section_ids
         else _none(),
         db.questionnaireformanswer.find_many(
             where={"entryId": {"in": entry_ids}},
@@ -396,6 +431,8 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
         if entry_ids
         else _none(),
     )
+    questions = [*(legacy_questions or []), *(unified_questions or [])]
+    entries = entries or []
 
     # THE ORDER OF THIS LIST IS THE ORDER THE ANNEXURE PRINTS, and it is built once here rather than
     # sorted per sitting: section position first, then question position, which is the order the
@@ -475,8 +512,10 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
                 # The questions the form ASKS today. Retired ones are printed where they carry an
                 # answer but are not counted here, because this number is what a reader compares
                 # against the instrument, and the instrument no longer contains them.
-                question_count=sum(1 for _s, q in pairs if q.isActive),
-                sittings=tuple(sittings),
+                question_count=sum(1 for _s, q in pairs if q.isActive) or v2_sittings.get(
+                    questionnaire.id, {}
+                ).get("questionCount", 0),
+                sittings=(*sittings, *v2_sittings.get(questionnaire.id, {}).get("sittings", ())),
             )
         )
     return items
@@ -571,14 +610,16 @@ async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
     if questionnaire is None or questionnaire.deletedAt is not None:
         return None
 
-    sections = await db.questionnaireformsection.find_many(
+    T = unified_forms.tables(db, await unified_forms.form_unified(questionnaire_id))
+    sections = await T.sections.find_many(
         where={"questionnaireId": questionnaire_id, "isActive": True},
         order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     section_ids = [s.id for s in sections]
     questions = (
-        await db.questionnaireformquestion.find_many(
-            where={"sectionId": {"in": section_ids}, "isActive": True},
+        await T.questions.find_many(
+            where={"sectionId": {"in": section_ids}, "isActive": True, "supersededById": None} if T.unified
+            else {"sectionId": {"in": section_ids}, "isActive": True},
             order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
@@ -737,8 +778,14 @@ async def create_from_parsed(
     design_workshop_id: str | None = None,
     kind: str | None = None,
     source_filename: str | None = None,
+    user: Any = None,
 ) -> tuple[str, dict[str, Any]]:
     """Store a freshly parsed workbook as a new questionnaire. Returns ``(id, change report)``.
+
+    UNIFIED (UNIFY U5, once the migration's apply ran): the sections and questions go to the
+    instrument tables, and a hand-filled workbook's answers become WORKBOOK sessions (one per answer
+    column, its heading the guest respondent; ``app/questionnaire/library.import_workbook_answers``),
+    exactly as Field Repository stores them. ``user`` is the uploader, who leads those sessions.
 
     Answers the workbook already carried are stored as ordinary sittings with ``source="UPLOAD"``,
     which is what stops there being two different kinds of answer in the system: a designer who
@@ -803,8 +850,10 @@ async def create_from_parsed(
     answers_imported = 0
     provenance: dict[str, Any] | None = None
     created_questions: dict[int, str] = {}  # row number -> question id, to attach uploaded answers
+    unified = await unified_forms.authoring_unified()
 
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
+        Tx = unified_forms.tables(tx, unified)
         questionnaire = await tx.questionnaire.create(
             data={
                 "title": (title or parsed.title or "Untitled questionnaire").strip(),
@@ -822,7 +871,7 @@ async def create_from_parsed(
             }
         )
         if planned_sections:
-            await tx.questionnaireformsection.create_many(
+            await Tx.sections.create_many(
                 data=[
                     {
                         "questionnaireId": questionnaire.id,
@@ -833,7 +882,7 @@ async def create_from_parsed(
                     for index, code, section in planned_sections
                 ]
             )
-            written = await tx.questionnaireformsection.find_many(
+            written = await Tx.sections.find_many(
                 where={"questionnaireId": questionnaire.id}
             )
             id_by_code = {row.code: row.id for row in written}
@@ -852,8 +901,8 @@ async def create_from_parsed(
                 for position, question in enumerate(section.questions, start=1)
             ]
             if question_data:
-                await tx.questionnaireformquestion.create_many(data=question_data)
-                stored = await tx.questionnaireformquestion.find_many(
+                await Tx.questions.create_many(data=question_data)
+                stored = await Tx.questions.find_many(
                     where={"sectionId": {"in": sorted(id_by_code.values())}}
                 )
                 # (section, position) is unique among the rows just written, so it names each one.
@@ -861,7 +910,7 @@ async def create_from_parsed(
                 for _index, code, section in planned_sections:
                     for position, question in enumerate(section.questions, start=1):
                         created_questions[question.row] = id_by_place[(id_by_code[code], position)]
-        if answer_rows and not evidence:
+        if answer_rows and not evidence and not unified:
             entries_created, answers_imported = await _store_uploaded_answers(
                 questionnaire.id,
                 parsed,
@@ -870,6 +919,14 @@ async def create_from_parsed(
                 source_filename=source_filename,
                 client=tx,
             )
+
+    if unified and answer_rows and not evidence:
+        from app.questionnaire import library
+
+        made = await library.import_workbook_answers(
+            questionnaire.id, parsed, user, design_workshop_id=design_workshop_id
+        )
+        entries_created, answers_imported = made["sessions"], made["answers"]
 
     if answer_rows and evidence:
         provenance = {
@@ -1235,7 +1292,10 @@ async def reuse_questionnaire(
         budget -= len(kept)
         kept_by_code[section["code"]] = kept
 
+    # A copy goes where the forms live (UNIFY U5): the instrument tables once unified.
+    unified = await unified_forms.authoring_unified()
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
+        Tx = unified_forms.tables(tx, unified)
         made = await tx.questionnaire.create(
             data={
                 "title": chosen,
@@ -1259,10 +1319,10 @@ async def reuse_questionnaire(
         )
         question_data: list[dict[str, Any]] = []
         if section_data:
-            await tx.questionnaireformsection.create_many(
+            await Tx.sections.create_many(
                 data=[row | {"questionnaireId": made.id} for row in section_data]
             )
-            written = await tx.questionnaireformsection.find_many(
+            written = await Tx.sections.find_many(
                 where={"questionnaireId": made.id}
             )
             id_by_code = {row.code: row.id for row in written}
@@ -1281,7 +1341,7 @@ async def reuse_questionnaire(
                 for position, question in enumerate(questions, start=1)
             ]
             if question_data:
-                await tx.questionnaireformquestion.create_many(data=question_data)
+                await Tx.questions.create_many(data=question_data)
 
     sections_made = len(section_data)
     questions_made = len(question_data)
@@ -1397,13 +1457,14 @@ async def apply_parsed_edit(
     if existing is None:
         raise QuestionnaireEditError("That questionnaire no longer exists.")
 
-    sections = await db.questionnaireformsection.find_many(
+    T = unified_forms.tables(db, await unified_forms.form_unified(questionnaire_id))
+    sections = await T.sections.find_many(
         where={"questionnaireId": questionnaire_id},
         order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
     )
     section_ids = [s.id for s in sections]
     questions = (
-        await db.questionnaireformquestion.find_many(
+        await T.questions.find_many(
             where={"sectionId": {"in": section_ids}},
             # ORDERED, and not for tidiness. `by_prompt` below keeps the FIRST question it sees for
             # a given wording, so an unordered read would resolve a duplicate prompt differently on
@@ -1471,12 +1532,13 @@ async def apply_parsed_edit(
     # foreign-key refusal ``_remove_absent`` used to hit was one — left the questionnaire half
     # edited, with no way to tell which half from the outside.
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=120)) as tx:
+        Tx = unified_forms.tables(tx, T.unified)
         for index, parsed_section in enumerate(parsed.sections[:MAX_SECTIONS], start=1):
             code = (parsed_section.code or "").strip()
             section = section_by_code.get(code.lower()) if code else None
             if section is None:
                 new_code = _unique_code(code, parsed_section.title, codes_taken)
-                section = await tx.questionnaireformsection.create(
+                section = await Tx.sections.create(
                     data={
                         "questionnaireId": questionnaire_id,
                         "code": new_code,
@@ -1493,7 +1555,7 @@ async def apply_parsed_edit(
                 # it back rather than leaving a retired duplicate.
                 wanted_title = parsed_section.title or section.title
                 if section.title != wanted_title or section.sortOrder != index or not section.isActive:
-                    section = await tx.questionnaireformsection.update(
+                    section = await Tx.sections.update(
                         where={"id": section.id},
                         data={"title": wanted_title, "sortOrder": index, "isActive": True},
                     )
@@ -1502,7 +1564,7 @@ async def apply_parsed_edit(
             for position, parsed_question in enumerate(parsed_section.questions, start=1):
                 match = _match_question(parsed_question, section, by_id, by_prompt, problems, parsed)
                 if match is None:
-                    await tx.questionnaireformquestion.create(
+                    await Tx.questions.create(
                         data={
                             "sectionId": section.id,
                             "prompt": parsed_question.prompt,
@@ -1551,7 +1613,7 @@ async def apply_parsed_edit(
                 if reworded and match.id in answered:
                     # RULE 3. The recorded answers keep the wording they were given under; the new
                     # wording becomes a new question in the same place.
-                    replacement = await tx.questionnaireformquestion.create(
+                    replacement = await Tx.questions.create(
                         data={
                             "sectionId": section.id,
                             "prompt": parsed_question.prompt,
@@ -1560,7 +1622,7 @@ async def apply_parsed_edit(
                             "sortOrder": position,
                         }
                     )
-                    await tx.questionnaireformquestion.update(
+                    await Tx.questions.update(
                         where={"id": match.id},
                         data={
                             "isActive": False,
@@ -1602,7 +1664,7 @@ async def apply_parsed_edit(
                 # back is a deliberate act through PATCH, never a side effect of re-uploading a file that
                 # always contained it.
                 if data:
-                    await tx.questionnaireformquestion.update(where={"id": match.id}, data=data)
+                    await Tx.questions.update(where={"id": match.id}, data=data)
                     report["updated"] += 1
                 else:
                     report["unchanged"] += 1
@@ -1615,6 +1677,7 @@ async def apply_parsed_edit(
             touched_sections,
             report,
             client=tx,
+            tables=Tx,
             may_remove=may_remove,
             parsed=parsed,
         )
@@ -1679,6 +1742,7 @@ async def _remove_absent(
     report: dict[str, Any],
     *,
     client: Any = None,
+    tables: Any = None,
     may_remove: bool = False,
     parsed: ParsedQuestionnaire | None = None,
 ) -> int:
@@ -1698,6 +1762,7 @@ async def _remove_absent(
     as well as text (audit M17), so a blank row here asserts nothing at all.
     """
     writer = db if client is None else client
+    W = tables if tables is not None else unified_forms.tables(writer, False)
     if not may_remove:
         for question in questions:
             if question.id in touched_questions or not question.isActive:
@@ -1722,7 +1787,7 @@ async def _remove_absent(
             continue
         if question.id in answered:
             if question.isActive:
-                await writer.questionnaireformquestion.update(
+                await W.questions.update(
                     where={"id": question.id},
                     data={"isActive": False, "retiredAt": _now()},
                 )
@@ -1741,8 +1806,9 @@ async def _remove_absent(
                     }
                 )
             continue
-        await writer.questionnaireformanswer.delete_many(where={"questionId": question.id})
-        await writer.questionnaireformquestion.delete(where={"id": question.id})
+        if not W.unified:
+            await writer.questionnaireformanswer.delete_many(where={"questionId": question.id})
+        await W.questions.delete(where={"id": question.id})
         report["removed"] += 1
 
     answered_sections = {q.sectionId for q in questions if q.id in answered}
@@ -1751,14 +1817,14 @@ async def _remove_absent(
             continue
         if section.id in answered_sections:
             if section.isActive:
-                await writer.questionnaireformsection.update(
+                await W.sections.update(
                     where={"id": section.id}, data={"isActive": False}
                 )
             continue
         # Safe to delete outright: nothing under it was ever answered, and the loop above has
         # already removed its questions with their blank answer rows, so the cascade cannot hit the
         # ON DELETE RESTRICT that guards an answer.
-        await writer.questionnaireformsection.delete(where={"id": section.id})
+        await W.sections.delete(where={"id": section.id})
     return bumps
 
 
@@ -1777,11 +1843,16 @@ async def _answered_question_ids(question_ids: list[str]) -> set[str]:
     rows = await db.questionnaireformanswer.find_many(where={"questionId": {"in": question_ids}})
     # Filtered here rather than in the where clause: "not null" is not the test — an answer saved as
     # a single space is null-ish to a person and non-null to Postgres, and only Python knows that.
-    return {
+    legacy = {
         row.questionId
         for row in rows
         if (row.answerText or "").strip() or (row.notes or "").strip()
     }
+    # A UNIFIED form's evidence is in the shared tables (UNIFY U5): an answer given under this wording,
+    # or a take aimed at its lineage (``app/questionnaire/forms.answered_question_ids``).
+    if unified_forms.enabled():
+        legacy |= await unified_forms.answered_question_ids(db, question_ids)
+    return legacy
 
 
 # --- Writing: single-question edits from the editor UI -------------------------------------------
@@ -1806,9 +1877,12 @@ async def guard_question_edit(
     return None
 
 
-async def supersede_question(question: Any, *, prompt: str, **fields: Any) -> Any:
-    """Retire ``question`` and create its replacement in the same place. RULE 3, single-question form."""
-    replacement = await db.questionnaireformquestion.create(
+async def supersede_question(question: Any, *, prompt: str, tables: Any = None, **fields: Any) -> Any:
+    """Retire ``question`` and create its replacement in the same place. RULE 3, single-question form.
+    ``tables`` is the form's (``app/questionnaire/forms.tables``): the instrument tables once unified,
+    where the U0 trigger hands the old wording's lineage and display code to the replacement."""
+    T = tables if tables is not None else unified_forms.tables(db, False)
+    replacement = await T.questions.create(
         data={
             "sectionId": question.sectionId,
             "prompt": prompt,
@@ -1817,7 +1891,7 @@ async def supersede_question(question: Any, *, prompt: str, **fields: Any) -> An
             "sortOrder": fields.get("sortOrder", question.sortOrder),
         }
     )
-    await db.questionnaireformquestion.update(
+    await T.questions.update(
         where={"id": question.id},
         data={"isActive": False, "retiredAt": _now(), "supersededById": replacement.id},
     )

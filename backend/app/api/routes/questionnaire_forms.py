@@ -72,8 +72,10 @@ from app.core.deps import (
     can_run_design_workshops,
     get_current_user,
     is_content_admin,
+    require_admin,
     require_content_admin,
 )
+from app.questionnaire import authoring as questionnaire_authoring, forms as unified_forms, shims_dr
 from app.schemas.questionnaire import (
     CustomAnswerBatch,
     CustomQuestionCreate,
@@ -81,6 +83,7 @@ from app.schemas.questionnaire import (
     CustomSectionCreate,
     CustomSectionUpdate,
     QuestionnaireCreate,
+    QuestionnaireDefaultUpdate,
     QuestionnaireEntryCreate,
     QuestionnaireEntryUpdate,
     QuestionnaireReuse,
@@ -101,6 +104,7 @@ from app.services.questionnaire_forms import (
     export_question_set_payload,
     guard_question_edit,
     load_form,
+    load_question_set,
     reuse_questionnaire,
     save_answers,
     supersede_question,
@@ -348,7 +352,8 @@ _visible_questionnaire_where = visible_questionnaire_where
 
 
 def _require_owner(record: Any, user: Any) -> None:
-    if record.ownerId != user.id and not is_content_admin(user):
+    # The one author rule of both portals (owner, 22 Oct 2026): app/questionnaire/authoring.py.
+    if not questionnaire_authoring.may_change_form(user, record):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the designer who created this questionnaire, or an admin, can change it.",
@@ -663,6 +668,81 @@ async def download_question_set(
 # --- Upload -------------------------------------------------------------------------------------
 
 
+@router.post("/bundles/import", status_code=status.HTTP_201_CREATED)
+async def import_questionnaire_bundle(
+    request: Request,
+    response: Response,
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Open a handoff bundle (``.dpwq`` or ``.frwq``, or designer-portal Android's v1 file; UNIFY
+    A10): a new form of your own, sections and questions only, written where the forms live. The
+    body is the bundle file (multipart ``file``) or its JSON. Importing the same bundle again returns
+    the first copy with 200 rather than 201; a bundle from a newer build is ``BUNDLE_VERSION``. The
+    same rules as Field Repository (``app/questionnaire/library``)."""
+    from app.questionnaire import library
+
+    _require_designer(current_user)
+    limit = library.BUNDLE_LIMITS["maxUncompressedBytes"]
+    if request.headers.get("content-type", "").startswith("multipart/"):
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Choose a bundle file.")
+        raw = await upload.read(limit + 1)
+    else:
+        raw = await request.body()
+    if len(raw) > limit:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="This bundle is too large.")
+    document = library.read_bundle_bytes(raw)
+    tables = unified_forms.tables(db, await unified_forms.authoring_unified())
+    created_row, created = await library.import_bundle(document, current_user, tables=tables)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return public_encode({"questionnaire": await load_form(created_row.id, include_retired=True), "created": created})
+
+
+@router.get("/{questionnaire_id}/bundle")
+async def download_questionnaire_bundle(
+    questionnaire_id: str,
+    current_user: Any = Depends(get_current_user),
+) -> Response:
+    """This form as a handoff bundle (``.dpwq``; UNIFY A10): gzipped JSON in
+    ``shared/questionnaire-bundle.json``'s shape with no ids, owner or answers in it, for another
+    researcher to open on any client of either portal. Its live sections and questions only."""
+    import secrets as _secrets
+
+    from app.questionnaire import library
+    from app.services.naming import content_disposition
+
+    record = await _require_questionnaire(questionnaire_id, current_user)
+    form = await load_question_set(questionnaire_id)
+    if form is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    sections = form.get("sections") or []
+    document = {
+        "v": library.BUNDLE_VERSION,
+        "bundleId": _secrets.token_hex(16),
+        "createdAt": datetime.now(UTC).isoformat(),
+        "portal": "designer-portal",
+        "form": {"title": form.get("title"), "description": form.get("description"), "kind": form.get("kind")},
+        "sections": [{"code": sec["code"], "title": sec["title"], "sortOrder": i} for i, sec in enumerate(sections, start=1)],
+        "questions": [
+            {
+                "sectionCode": sec["code"], "prompt": q.get("prompt"), "helpText": q.get("helpText"),
+                "isRequired": bool(q.get("isRequired")), "artisanField": q.get("artisanField"),
+                "questionCode": q.get("questionCode"), "sortOrder": position,
+            }
+            for sec in sections
+            for position, q in enumerate(sec.get("questions") or [], start=1)
+        ],
+    }
+    return Response(
+        content=library.bundle_bytes(document),
+        media_type="application/gzip",
+        headers={"Content-Disposition": content_disposition(library.bundle_filename(record.title))},
+    )
+
+
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_questionnaire(
     request: Request,
@@ -717,8 +797,9 @@ async def upload_questionnaire(
         # does not exist. An empty field — the picker untouched — is "not stated", not an error.
         kind=_kind_or_422(kind),
         source_filename=file.filename,
+        user=current_user,
     )
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+    await _reconcile_codes(questionnaire_id)
     form = await load_form(questionnaire_id)
     return public_encode({"questionnaire": form, "report": report})
 
@@ -790,7 +871,7 @@ async def reupload_questionnaire(
     # whose report can say "superseded 1, retired 1" — and a form that then omitted both of them
     # would leave a client unable to show the designer the questions it just told them about, or to
     # find the answers still hanging off them.
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+    await _reconcile_codes(questionnaire_id)
     form = await load_form(questionnaire_id, include_retired=True)
     return public_encode({"questionnaire": form, "report": report})
 
@@ -1006,6 +1087,11 @@ async def read_questionnaire(
     )
     if form is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    if await shims_dr.form_is_unified(questionnaire_id):
+        # QUESTIONNAIRE_V2 on and the form in the shared tables: its sittings are sessions now
+        # (UNIFY 4.5), read back in the old shape so an old build's screen still fills in.
+        entries = await shims_dr.entries_for_form(questionnaire_id)
+        form["entries"] = [e for e in entries if mine_only is None or e.get("createdById") == mine_only]
     return public_encode(form)
 
 
@@ -1119,7 +1205,7 @@ async def reuse_questionnaire_route(
     # ``include_retired`` is left at its default because a copy HAS no retired question — nothing was
     # copied that could be retired. Passing True would be a claim about the payload that is not
     # false, only meaningless, and the next reader would go looking for the retirement it implies.
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=new_id)
+    await _reconcile_codes(new_id)
     form = await load_form(new_id)
     return public_encode(
         {"questionnaire": form, "report": report, "sourceQuestionnaireId": record.id}
@@ -1192,7 +1278,9 @@ async def create_questionnaire(
         )
         questions_by_code[code] = list(section.questions)
 
+    unified = await unified_forms.authoring_unified()
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
+        Tx = unified_forms.tables(tx, unified)
         record = await tx.questionnaire.create(
             data={
                 "title": payload.title.strip(),
@@ -1205,10 +1293,10 @@ async def create_questionnaire(
             }
         )
         if section_data:
-            await tx.questionnaireformsection.create_many(
+            await Tx.sections.create_many(
                 data=[row | {"questionnaireId": record.id} for row in section_data]
             )
-            written = await tx.questionnaireformsection.find_many(
+            written = await Tx.sections.find_many(
                 where={"questionnaireId": record.id}
             )
             id_by_code = {row.code: row.id for row in written}
@@ -1224,8 +1312,8 @@ async def create_questionnaire(
                 for position, question in enumerate(questions, start=1)
             ]
             if question_data:
-                await tx.questionnaireformquestion.create_many(data=question_data)
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=record.id)
+                await Tx.questions.create_many(data=question_data)
+    await _reconcile_codes(record.id)
     return public_encode(await load_form(record.id))
 
 
@@ -1294,7 +1382,7 @@ async def update_questionnaire(
         data["title"] = data["title"].strip()
     if data:
         await db.questionnaire.update(where={"id": questionnaire_id}, data=data)
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+    await _reconcile_codes(questionnaire_id)
     return public_encode(await load_form(questionnaire_id, include_retired=True))
 
 
@@ -1310,7 +1398,8 @@ async def create_section(
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
-    existing = await db.questionnaireformsection.find_many(
+    T = await _tables(questionnaire_id)
+    existing = await T.sections.find_many(
         where={"questionnaireId": questionnaire_id}
     )
     codes = {s.code.strip().lower() for s in existing}
@@ -1321,7 +1410,8 @@ async def create_section(
     # land together or not at all, as ``POST /questionnaires`` has since D2. A failure part way used
     # to leave a section holding the first few of its questions.
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
-        made = await tx.questionnaireformsection.create(
+        Tx = unified_forms.tables(tx, T.unified)
+        made = await Tx.sections.create(
             data={
                 "questionnaireId": questionnaire_id,
                 "code": code,
@@ -1331,7 +1421,7 @@ async def create_section(
             }
         )
         if payload.questions:
-            await tx.questionnaireformquestion.create_many(
+            await Tx.questions.create_many(
                 data=[
                     {
                         "sectionId": made.id,
@@ -1343,7 +1433,7 @@ async def create_section(
                     for position, question in enumerate(payload.questions, start=1)
                 ]
             )
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+    await _reconcile_codes(questionnaire_id)
     return public_encode(await load_form(questionnaire_id))
 
 
@@ -1362,7 +1452,8 @@ async def update_section(
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
-    section = await require_record(db.questionnaireformsection, section_id)
+    T = await _tables(questionnaire_id)
+    section = await require_record(T.sections, section_id)
     if section.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     # AN EMPTY ``clearable``, AND THAT IS THE MEASURED ANSWER RATHER THAN AN OVERSIGHT.
@@ -1384,8 +1475,8 @@ async def update_section(
     # TAKING A SECTION OUT IS A REMOVAL, and removals belong to whoever may edit the form: its author
     # or a content admin (owner, 22 Oct 2026), which `_require_owner` above already checked.
     if data:
-        await db.questionnaireformsection.update(where={"id": section_id}, data=data)
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+        await T.sections.update(where={"id": section_id}, data=data)
+    await _reconcile_codes(questionnaire_id)
     return public_encode(await load_form(questionnaire_id, include_retired=True))
 
 
@@ -1401,11 +1492,12 @@ async def create_question(
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
-    section = await require_record(db.questionnaireformsection, section_id)
+    T = await _tables(questionnaire_id)
+    section = await require_record(T.sections, section_id)
     if section.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-    siblings = await db.questionnaireformquestion.find_many(where={"sectionId": section_id})
-    await db.questionnaireformquestion.create(
+    siblings = await T.questions.find_many(where={"sectionId": section_id})
+    await T.questions.create(
         data={
             "sectionId": section_id,
             "prompt": payload.prompt.strip(),
@@ -1414,7 +1506,7 @@ async def create_question(
             "sortOrder": payload.sortOrder or (max((q.sortOrder for q in siblings), default=0) + 1),
         }
     )
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+    await _reconcile_codes(questionnaire_id)
     return public_encode(await load_form(questionnaire_id))
 
 
@@ -1442,6 +1534,7 @@ async def update_question(
     if action == "supersede":
         replacement = await supersede_question(
             question,
+            tables=await _tables(questionnaire_id),
             prompt=payload.prompt.strip(),
             helpText=payload.helpText
             if "helpText" in payload.model_fields_set
@@ -1452,7 +1545,7 @@ async def update_question(
             sortOrder=payload.sortOrder or question.sortOrder,
         )
         await bump_version(questionnaire_id)
-        await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+        await _reconcile_codes(questionnaire_id)
         return public_encode(
             {
                 "action": "superseded",
@@ -1479,14 +1572,15 @@ async def update_question(
     if "prompt" in data:
         data["prompt"] = data["prompt"].strip()
     section_id = data.pop("sectionId", None)
+    T = await _tables(questionnaire_id)
     if section_id:
-        section = await require_record(db.questionnaireformsection, section_id)
+        section = await require_record(T.sections, section_id)
         if section.questionnaireId != questionnaire_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
         data["sectionId"] = section_id
     if data:
-        await db.questionnaireformquestion.update(where={"id": question_id}, data=data)
-    await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+        await T.questions.update(where={"id": question_id}, data=data)
+    await _reconcile_codes(questionnaire_id)
     return public_encode(
         {
             "action": "updated",
@@ -1517,8 +1611,9 @@ async def remove_question(
     question = await _question_in(questionnaire_id, question_id)
 
     action = await guard_question_edit(question, new_prompt=None, deleting=True)
+    T = await _tables(questionnaire_id)
     if action == "retire":
-        await db.questionnaireformquestion.update(
+        await T.questions.update(
             where={"id": question_id},
             data={"isActive": False, "retiredAt": datetime.now(UTC)},
         )
@@ -1551,9 +1646,12 @@ async def remove_question(
     # guard does not count them. Anything with text took the retire branch above and never reaches
     # here, so this cannot remove a recorded answer.
     # Together or not at all: the blank rows and the question are one removal.
-    async with db.tx() as tx:
-        await tx.questionnaireformanswer.delete_many(where={"questionId": question_id})
-        await tx.questionnaireformquestion.delete(where={"id": question_id})
+    if T.unified:
+        await T.questions.delete(where={"id": question_id})
+    else:
+        async with db.tx() as tx:
+            await tx.questionnaireformanswer.delete_many(where={"questionId": question_id})
+            await tx.questionnaireformquestion.delete(where={"id": question_id})
     return public_encode(
         {
             "action": "deleted",
@@ -1563,6 +1661,20 @@ async def remove_question(
     )
 
 
+async def _reconcile_codes(questionnaire_id: str) -> None:
+    """The cross-portal question codes, on whichever tables hold this form (UNIFY U5: the instrument
+    tables once it is unified; the old form tables are then read-only legacy)."""
+    if await unified_forms.form_unified(questionnaire_id):
+        await cross_portal_codes.reconcile_question_codes(db, questionnaire_id=questionnaire_id)
+    else:
+        await cross_portal_codes.reconcile_form_question_codes(db, questionnaire_id=questionnaire_id)
+
+
+async def _tables(questionnaire_id: str, client: Any = None) -> Any:
+    """``sections`` and ``questions`` for this form: the instrument tables once it is unified."""
+    return unified_forms.tables(client if client is not None else db, await unified_forms.form_unified(questionnaire_id))
+
+
 async def _question_in(questionnaire_id: str, question_id: str) -> Any:
     """A question, checked to belong to THIS questionnaire.
 
@@ -1570,8 +1682,9 @@ async def _question_in(questionnaire_id: str, question_id: str) -> Any:
     questionnaire's ownership guard — the id is in the path and the ownership was checked on the
     questionnaire, not on the question.
     """
-    question = await require_record(db.questionnaireformquestion, question_id)
-    section = await require_record(db.questionnaireformsection, question.sectionId)
+    T = await _tables(questionnaire_id)
+    question = await require_record(T.questions, question_id)
+    section = await require_record(T.sections, question.sectionId)
     if section.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     return question
@@ -1604,6 +1717,10 @@ async def create_entry(
             status_code=status.HTTP_409_CONFLICT,
             detail="This questionnaire has been deactivated, so no new answers can be recorded against it.",
         )
+    if await shims_dr.form_is_unified(questionnaire_id):
+        # A sitting is a session on this form now (UNIFY 4.5): the respondent is a guest, the typed
+        # title is kept as legacyTitle. The same response shape, never a new error code.
+        return await shims_dr.create_entry(questionnaire_id, payload, current_user)
     entry = await db.questionnaireformentry.create(
         data={
             "questionnaireId": questionnaire_id,
@@ -1634,6 +1751,9 @@ async def update_entry(
     nothing in the document would show it had happened.
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        await _refuse_its_workshops_holder(record, current_user)
+        return await shims_dr.update_entry(entry_id, payload, current_user)
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=True
     )
@@ -1691,6 +1811,10 @@ async def record_answers(
     # two are different questions — the permissive answer to the first was being read as an answer
     # to the second, which is how a stranger's answers reached another workshop's annexure.
     await _require_recordable_questionnaire(record, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        # Per-item answers on the sitting's session, create-only; a locked item is reported in the
+        # old ``rejected`` list, never as a 403 for the batch (UNIFY 4.5).
+        return public_encode(await shims_dr.record_answers(questionnaire_id, entry_id, payload, current_user))
     # ``rewriting=False``: recording answers against somebody else's sitting is DELIBERATE — two
     # people filling in different sections of one interview is the ordinary case, and a sitting
     # only its starter may answer is a sitting nobody finishes. The authorship rule that belongs
@@ -1738,6 +1862,10 @@ async def delete_entry(
     """
     assert_can_delete(current_user)
     record = await _require_questionnaire(questionnaire_id, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        await _refuse_its_workshops_holder(record, current_user)
+        await shims_dr.delete_entry(entry_id, current_user)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=False
     )
@@ -1756,6 +1884,8 @@ async def list_deleted_entries(
 ) -> list[dict[str, Any]]:
     """The sittings deleted from one live questionnaire, newest deletion first. Content admins only."""
     await _require_questionnaire(questionnaire_id, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        return public_encode(await shims_dr.entries_for_form(questionnaire_id, deleted=True))
     rows = await db.questionnaireformentry.find_many(
         where={"questionnaireId": questionnaire_id, "deletedAt": {"not": None}},
         order=[{"deletedAt": "desc"}, {"id": "asc"}],
@@ -1791,6 +1921,9 @@ async def restore_entry(
     holds a post on its workshop is refused, as on the delete.
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        await _refuse_its_workshops_holder(record, current_user)
+        return public_encode(await shims_dr.restore_entry(entry_id, current_user))
     entry = await db.questionnaireformentry.find_unique(where={"id": entry_id})
     if entry is None or entry.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
@@ -1841,6 +1974,35 @@ async def restore_questionnaire(
         where={"id": questionnaire_id}, data={"deletedAt": None, "deletedById": None}
     )
     return public_encode({"id": restored.id, "title": restored.title, "deletedAt": None})
+
+
+@router.put("/{questionnaire_id}/default")
+async def set_default_questionnaire(
+    questionnaire_id: str,
+    payload: QuestionnaireDefaultUpdate,
+    current_user: Any = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin only (UNIFY B32; set on the web alone, ministry/admin authoring): the global default.
+
+    NOT AN EDIT TO THE FORM, so not its author's: it decides where every session lands that has no
+    form bound to its workshop or the workshop's kind (``questionnaire.bindings.resolve``). One
+    default at a time, held by the partial unique index ``Questionnaire_isDefault_key``: the old one
+    is cleared first, in the same transaction. Clearing touches this form only, never another's
+    default. A deleted or retired form cannot become the default.
+    """
+    record = await require_record(db.questionnaire, questionnaire_id)
+    if payload.isDefault and (record.deletedAt is not None or not record.isActive):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A deleted or retired questionnaire cannot be the default. Restore or reactivate it first.",
+        )
+    async with db.tx() as tx:
+        if payload.isDefault:
+            await tx.questionnaire.update_many(
+                where={"isDefault": True, "NOT": {"id": questionnaire_id}}, data={"isDefault": False}
+            )
+        await tx.questionnaire.update(where={"id": questionnaire_id}, data={"isDefault": payload.isDefault})
+    return public_encode(await load_form(questionnaire_id, include_retired=True))
 
 
 async def _entry_in(

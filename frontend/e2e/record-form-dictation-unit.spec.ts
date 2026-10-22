@@ -82,7 +82,6 @@ const PROCESS_FORM = read("components", "forms", "ProcessForm.tsx");
  * to the other unless somebody applies it twice. That is exactly the drift a register catches and a
  * review does not.
  */
-const Q_SINGULAR = read("app", "(protected)", "questionnaire", "page.tsx");
 const Q_LIST = read("app", "(protected)", "questionnaires", "page.tsx");
 const Q_DETAIL = read("app", "(protected)", "questionnaires", "[id]", "page.tsx");
 const Q_ANSWER = read("app", "(protected)", "questionnaires", "[id]", "answer", "page.tsx");
@@ -504,22 +503,8 @@ test("the questionnaire family dictates its prose and leaves its identifiers alo
     );
   }
 
-  // /questionnaire — the ministry instrument.
-  for (const name of ["title", "place"]) {
-    expect(Q_SINGULAR, `the interview ${name} was named in the requirement`).toMatch(
-      new RegExp(`<DictatedTextInput[\\s\\S]{0,300}?name="${name}"`)
-    );
-  }
-  expect(Q_SINGULAR, "a new question prompt is prose").toMatch(/<DictatedTextArea[\s\S]{0,300}?name="prompt"/);
-  expect(Q_SINGULAR, "the admin editor's section title is seeded, then dictated").toContain(
-    "<SeededSectionTitle"
-  );
-  /*
-    THE SECTION CODE ON THIS PAGE IS CONTROLLED AND STILL BARE, so the assertion names the CONTROL
-    around `newCode` rather than a `name=` this box does not carry. Reading the whole file for "no
-    DictatedTextInput near code" would pass for the wrong reason the day somebody renames the state.
-  */
-  expect(Q_SINGULAR, "the section code stays a plain box").toMatch(/<TextInput value=\{newCode\}/);
+  // /questionnaire — the ministry instrument — was retired on the web (UNIFY 4.4): an interview is a
+  // questionnaire session now, and the shared client's answer box is held in questionnaire-dr-web.spec.ts.
 });
 
 /**

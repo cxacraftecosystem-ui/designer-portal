@@ -77,7 +77,7 @@ def test_merge_moves_every_row_and_undo_puts_the_world_back():
         assert await db.toolartisan.count(where={"artisanId": keep.id}) == 2
         assert await db.questionnairesectionstatus.count(where={"artisanId": keep.id}) == 2
         s1 = await db.questionnairesectionstatus.find_first(where={"artisanId": keep.id, "sectionId": w["s1"].id})
-        assert s1.status == "DONE"  # the survivor's row wins
+        assert s1.status == "COMPLETED"  # the survivor's row wins (one of the three states, owner amendment 2)
         assert await db.dataaccessscopeitem.count(where={"recordId": keep.id}) == 2
         assert await db.recordaccesstoken.count(where={"recordId": keep.id}) == 1
         assert await db.entrycomment.count(where={"recordId": keep.id}) == 1

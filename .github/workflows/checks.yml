@@ -735,6 +735,195 @@ jobs:
           if-no-files-found: ignore
 
   # ═══════════════════════════════════════════════════════════════════════════════════════
+  # The shared questionnaire's screens in a browser (UNIFY 5.4, Web; stream U1)
+  # ═══════════════════════════════════════════════════════════════════════════════════════
+  questionnaire-web:
+    name: Questionnaire screens in a browser
+    # `e2e/questionnaire-dr-web.spec.ts` drives the real pages over a production build and answers
+    # every API call from the in-memory fake in `e2e/support/qv2Fake.ts`, which keeps what each
+    # screen sent. Like the map's job above: no API, no database, no account. Its tests carry the
+    # feature registry's `@qf:<id>` tags (shared/questionnaire-features.json).
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/package.json
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install npm 12
+        run: npm install --global npm@12 && npm --version
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
+      - name: Run the specs against the built site
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          E2E_SHOT_DIR: test-results/questionnaire-dr-web
+        run: |
+          set -euo pipefail
+          mkdir -p "$E2E_SHOT_DIR"
+          npx next start --port 3000 > next.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://localhost:3000/login; then break; fi
+            sleep 2
+          done
+          curl -fsS -o /dev/null http://localhost:3000/login || { cat next.log; exit 1; }
+          npx playwright test e2e/questionnaire-dr-web.spec.ts
+
+      - name: Keep the screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: questionnaire-dr-web
+          path: frontend/test-results
+          if-no-files-found: ignore
+
+  # The shared web client against designer-portal's real backend and a real bucket, with
+  # QUESTIONNAIRE_V2 on (stream U1; documentation-portal's job of the same name is the model).
+  web-v2-stack:
+    name: Questionnaire client against a real stack
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: design_workshop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PYTHONUTF8: "1"
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/design_workshop"
+      JWT_SECRET: "ci-web-stack-not-a-secret-0123456789abcdef"
+      MASTER_ADMIN_EMAIL: "ci@example.invalid"
+      # MinIO's documented local defaults, for a bucket that lives and dies with this runner.
+      AWS_ACCESS_KEY_ID: "minioadmin"
+      AWS_SECRET_ACCESS_KEY: "minioadmin"
+      AWS_S3_BUCKET: "design-workshop"
+      AWS_S3_ENDPOINT: "http://127.0.0.1:9000"
+      AWS_S3_PUBLIC_BASE_URL: "http://127.0.0.1:9000/design-workshop"
+      AWS_REGION: "us-east-1"
+      # MinIO speaks S3 but not KMS and refuses the SSE header; empty is the documented local value.
+      AWS_S3_SSE_ALGORITHM: ""
+      QUESTIONNAIRE_V2: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          check-latest: true
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.lock
+            backend/pyproject.toml
+
+      - name: Install the backend from the lock
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Prisma client and migrations
+        run: |
+          set -euo pipefail
+          python -m prisma py fetch
+          python scripts/generate_prisma_client.py --schema prisma/schema.prisma
+          python -m prisma migrate deploy
+
+      - name: Start a throwaway bucket
+        run: |
+          set -euo pipefail
+          docker run -d --name qv2-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z server /data
+          for i in $(seq 1 30); do
+            if docker exec qv2-minio mcli alias set local http://127.0.0.1:9000 minioadmin minioadmin >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker exec qv2-minio mcli mb --ignore-existing local/design-workshop
+
+      - name: Seed the database
+        run: python ../scripts/ci/seed_qv2_stack.py "$RUNNER_TEMP/qv2-seed.json"
+
+      - name: Start the API
+        run: |
+          set -euo pipefail
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 > "$RUNNER_TEMP/api.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then echo "API is up."; exit 0; fi
+            sleep 2
+          done
+          echo "::error::the API did not answer /health within two minutes"
+          tail -n 200 "$RUNNER_TEMP/api.log"
+          exit 1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/package.json
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install npm 12 and the web dependencies
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          npm install --global npm@12
+          npm ci
+
+      - name: The web client against the stack
+        working-directory: frontend
+        env:
+          QV2_STACK_API: "http://127.0.0.1:8000"
+        run: |
+          set -uo pipefail
+          export QV2_STACK_SEED="$RUNNER_TEMP/qv2-seed.json"
+          status=0
+          npx playwright test e2e/questionnaire-dr-v2-stack.spec.ts || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "--- API log (last 200 lines) ---"
+            tail -n 200 "$RUNNER_TEMP/api.log"
+          fi
+          exit "$status"
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════
   # 3 · The documentation checks
   # ═══════════════════════════════════════════════════════════════════════════════════════
   docs:
@@ -1029,6 +1218,25 @@ jobs:
         # forever and fails exactly here, which is where it should fail.
         run: python -m prisma migrate deploy
 
+      - name: The other portal, for the shared-file parity tests
+        # The same clone as the "Backend tests" job (see the note there): without it every
+        # sibling-parity test in this suite skips.
+        working-directory: .
+        env:
+          PEER: cxacraftecosystem-ui/documentation-portal
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ref=main
+          if [ "$BRANCH" != "main" ] && git ls-remote --exit-code --heads "https://github.com/$PEER.git" "$BRANCH" >/dev/null; then
+            ref="$BRANCH"
+          fi
+          dest="$(dirname "$GITHUB_WORKSPACE")/${PEER#*/}"
+          rm -rf "$dest"
+          git clone --quiet --depth 1 --branch "$ref" "https://github.com/$PEER.git" "$dest"
+          { echo "CROSS_PORTAL_PEER_REPO=$dest"; echo "SIBLING_REPO=$dest"; } >> "$GITHUB_ENV"
+          echo "Shared files are compared with $PEER@$ref ($(git -C "$dest" rev-parse --short HEAD))."
+
       - name: Run the full suite against the database
         # THE WHOLE SUITE. Same reasoning as job 1's run step: what executes is decided by the tests
         # rather than by a selection in this file. The difference is that here the gate lets the
@@ -1066,6 +1274,161 @@ jobs:
   # is what deploy-backend.yml pipes over ssh to release the API with no downtime; the test runs it
   # against stubbed systemctl, nginx and curl and fails if nginx is ever left pointing at a port
   # nothing serves. shellcheck is on the runner image. Not a branch-protection gate; seconds to run.
+  questionnaire-parity:
+    # UNIFY_2026-10-21.md section 5.3: the questionnaire is one package, one schema fragment and one
+    # feature registry in both portals. This job runs only those guards, against a checkout of the
+    # other portal (the branch of the same name when a cross-repo stream pushed one, else main), and
+    # FAILS when one of them skips, so "the peer was not there" can never read as parity. The same
+    # job, file for file, runs in documentation-portal.
+    name: Questionnaire parity (both portals)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PYTHONUTF8: "1"
+      DATABASE_URL: "postgresql://ci:ci@ci.invalid:5432/no_such_database"
+      JWT_SECRET: "ci-placeholder-not-a-secret-0123456789abcdef"
+      AWS_ACCESS_KEY_ID: "ci-placeholder"
+      AWS_SECRET_ACCESS_KEY: "ci-placeholder"
+      AWS_S3_BUCKET: "ci-placeholder"
+      MASTER_ADMIN_EMAIL: "ci@example.invalid"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          check-latest: true
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.lock
+            backend/pyproject.toml
+
+      - name: Install from the lock
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Generate the Prisma client
+        run: python scripts/generate_prisma_client.py --schema prisma/schema.prisma
+
+      - name: The other portal, for the shared-file parity tests
+        # The same clone as the "Backend tests" job (see the note there): without it every
+        # sibling-parity test in this suite skips.
+        working-directory: .
+        env:
+          PEER: cxacraftecosystem-ui/documentation-portal
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ref=main
+          if [ "$BRANCH" != "main" ] && git ls-remote --exit-code --heads "https://github.com/$PEER.git" "$BRANCH" >/dev/null; then
+            ref="$BRANCH"
+          fi
+          dest="$(dirname "$GITHUB_WORKSPACE")/${PEER#*/}"
+          rm -rf "$dest"
+          git clone --quiet --depth 1 --branch "$ref" "https://github.com/$PEER.git" "$dest"
+          { echo "CROSS_PORTAL_PEER_REPO=$dest"; echo "SIBLING_REPO=$dest"; } >> "$GITHUB_ENV"
+          echo "Shared files are compared with $PEER@$ref ($(git -C "$dest" rev-parse --short HEAD))."
+
+      - name: The manifest, the schema fragment and the feature registry, in both portals
+        run: |
+          set -uo pipefail
+          status=0
+          python -m pytest -rs tests/test_questionnaire_parity.py tests/test_questionnaire_schema_parity.py             tests/test_questionnaire_feature_parity.py | tee parity.log || status=1
+          if grep -q '^SKIPPED' parity.log; then
+            echo "::error::a questionnaire parity check skipped; every one must run against the other portal here."
+            exit 1
+          fi
+          exit "$status"
+
+  questionnaire-unify:
+    # The designer-portal form migration (backend/scripts/questionnaire_unify.py, UNIFY section 3.2)
+    # on a database of its own: tests/test_questionnaire_unify.py migrates it to today's production
+    # schema, seeds it, dry-runs, applies, repeats and undoes, then applies the deferred migrations
+    # (backend/prisma/deferred). It needs an EMPTY database, so it cannot share the integration
+    # job's, which that job migrates and the whole suite writes to.
+    name: Questionnaire unify migration
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: design_workshop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PYTHONUTF8: "1"
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/design_workshop"
+      QUESTIONNAIRE_UNIFY_DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/dr_unify"
+      # tests/test_questionnaire_unified_authoring.py: authoring once the forms are unified, on a
+      # database of its own with the per-form section keys (U1).
+      QUESTIONNAIRE_UNIFIED_DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/dr_unified"
+      JWT_SECRET: "ci-unify-not-a-secret-0123456789abcdef"
+      AWS_ACCESS_KEY_ID: "ci-placeholder"
+      AWS_SECRET_ACCESS_KEY: "ci-placeholder"
+      AWS_S3_BUCKET: "ci-placeholder"
+      MASTER_ADMIN_EMAIL: "ci@example.invalid"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+          check-latest: true
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.lock
+            backend/pyproject.toml
+
+      - name: Install from the lock
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Fetch the Prisma engines and generate the client
+        run: |
+          set -euo pipefail
+          python -m prisma py fetch
+          python scripts/generate_prisma_client.py --schema prisma/schema.prisma
+
+      - name: Create the empty migration database
+        run: |
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE dr_unify'
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE dr_unified'
+
+      - name: Dry run, apply, repeat, undo, deferred migrations
+        run: |
+          set -uo pipefail
+          status=0
+          python -m pytest -rs --durations=10 tests/test_questionnaire_unify.py tests/test_questionnaire_unified_authoring.py | tee unify.log || status=1
+          if grep -q '^SKIPPED' unify.log; then
+            echo "::error::the migration test skipped; QUESTIONNAIRE_UNIFY_DATABASE_URL must reach the empty database."
+            exit 1
+          fi
+          exit "$status"
+
   deploy-scripts:
     name: Deploy scripts
     runs-on: ubuntu-26.04

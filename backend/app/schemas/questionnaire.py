@@ -196,6 +196,13 @@ class QuestionnaireUpdate(APIModel):
     _kind_is_a_token = field_validator("kind")(_validate_kind)
 
 
+class QuestionnaireDefaultUpdate(APIModel):
+    """``PUT /questionnaires/{id}/default`` (UNIFY B32): this form is, or stops being, the global
+    default — the form a session is offered when nothing is bound to its workshop or kind."""
+
+    isDefault: bool
+
+
 class QuestionnaireReuse(APIModel):
     """Reuse an existing questionnaire as a template at another design workshop.
 

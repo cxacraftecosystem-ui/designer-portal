@@ -1679,6 +1679,10 @@ async def get_current_user(
     # that is not a ``UsageConsent`` rather than coercing it, so a wrong type here fails towards
     # "nobody was asked" rather than towards a claimed consent.
     setattr(connection.state, USAGE_CONSENT_KEY, resolve_consent(user))
+    # Which build this account is on (FR audit H22): the middleware records it after the response.
+    from app.services.app_versions import note_user
+
+    note_user(connection, getattr(user, "id", None))
     return user
 
 

@@ -300,6 +300,11 @@ async def counts_for(kind: str, ids: list[str], client: Any = None) -> dict[str,
         rec = _group_counts(recordings, "questionnaireInterviewId")
         art = _group_counts(artisans, "interviewId")
         ans = _group_counts(answers, "interviewId")
+        # A shared-questionnaire session's answers (UNIFY C10; nothing, and no query, while v2 is off).
+        from app.services import questionnaire_readers
+
+        for session_id, n in (await questionnaire_readers.answer_counts(ids, client=client)).items():
+            ans[session_id] = ans.get(session_id, 0) + n
         for i in ids:
             result[i] = {"recordings": rec.get(i, 0), "artisans": art.get(i, 0), "answers": ans.get(i, 0)}
         return result

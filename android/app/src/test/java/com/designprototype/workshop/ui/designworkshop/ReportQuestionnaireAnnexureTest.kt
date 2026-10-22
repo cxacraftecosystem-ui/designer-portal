@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.QFeature
 import com.designprototype.workshop.data.CustomAnswerDto
 import com.designprototype.workshop.data.CustomEntryDto
 import com.designprototype.workshop.data.CustomQuestionDto
@@ -544,6 +545,7 @@ class ReportQuestionnaireAnnexureTest {
 
     // ── M16 (audit 21 Oct 2026): the kind, as the server groups and prints it ─────────────────────
 
+    @QFeature("A12")
     @Test
     fun `stated kinds group under their stage, in stage order, and unstated ones keep their shape`() {
         val stages = listOf(

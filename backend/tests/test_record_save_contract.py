@@ -139,9 +139,21 @@ def calls(body: str, name: str) -> list[int]:
     return [m.start() for m in re.finditer(rf"(?<![A-Za-z0-9_]){name}\s*\(", body)]
 
 
+
+def android_records(spec: dict) -> list[dict]:
+    """The records the handset still draws a form for. A record whose Android half says ``retired``
+    (the global interview form, UNIFY 4.4) has no Android form to read."""
+    return [record for record in spec["records"] if not record["android"].get("retired")]
+
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 # 0. The guard that stops every assertion below from being vacuously green
 # ══════════════════════════════════════════════════════════════════════════════════════════════
+
+
+def web_records(spec: dict) -> list[dict]:
+    """The records with a web form. The interview's was retired with the global interview form
+    (UNIFY 4.4; see its `webRetired`): the shared questionnaire client writes sessions instead."""
+    return [record for record in spec["records"] if record.get("web")]
 
 
 def test_the_contract_and_every_file_it_names_still_parse_to_something():
@@ -155,12 +167,12 @@ def test_the_contract_and_every_file_it_names_still_parse_to_something():
     assert spec["contract"] == "record-save"
     assert spec["records"], "the contract declares no records at all"
 
-    for record in spec["records"]:
+    for record in web_records(spec):
         web = read(record["web"]["form"])
         assert len(web) > 2000, f"{record['web']['form']} stripped to {len(web)} characters"
 
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
-    for record in spec["records"]:
+    for record in android_records(spec):
         body, _ = kotlin_fun_body(android, record["android"]["form"])
         assert len(body) > 2000, (
             f"the handset's `{record['android']['form']}` parsed to {len(body)} characters, which "
@@ -184,7 +196,7 @@ def test_each_web_record_form_has_exactly_one_write_and_it_is_the_declared_endpo
     """
     spec = contract()
     call = spec["savePath"]["web"]["call"]
-    for record in spec["records"]:
+    for record in web_records(spec):
         rel = record["web"]["form"]
         source = read(rel)
         sites = [m.start() for m in re.finditer(re.escape(call), source)]
@@ -207,7 +219,7 @@ def test_each_web_record_form_has_exactly_one_write_and_it_is_the_declared_endpo
 def test_no_web_record_form_reaches_the_api_any_other_way():
     """The negative half. A form that queues AND posts has two behaviours offline and one online."""
     spec = contract()
-    for record in spec["records"]:
+    for record in web_records(spec):
         rel = record["web"]["form"]
         source = read(rel)
         for forbidden in spec["savePath"]["web"]["forbiddenInForms"]:
@@ -228,7 +240,7 @@ def test_each_android_record_form_saves_through_the_repository_and_the_one_queue
     spec = contract()
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
     spellings = spec["savePath"]["android"]["queueFunctions"]
-    for record in spec["records"]:
+    for record in android_records(spec):
         name = record["android"]["form"]
         body, at = kotlin_fun_body(android, name)
 
@@ -328,7 +340,7 @@ def test_the_web_integrated_hosts_mount_the_real_record_forms():
     spec = contract()
     integrated = spec["theTwoDoors"]["web"]["integrated"]
     dialog = read(integrated["files"][0])
-    for record in spec["records"]:
+    for record in web_records(spec):
         if record["key"] == "interview":
             continue  # no stage field points at one — see the record's own note
         component = pathlib.PurePath(record["web"]["form"]).stem
@@ -368,7 +380,7 @@ def test_the_android_integrated_dialog_mounts_the_same_composables_as_the_create
     assert len(dialogs) == 1, "there is more than one DwInlineRecordDialog"
     dialog = dialogs[0]
 
-    every = [record["android"]["form"] for record in spec["records"]]
+    every = [record["android"]["form"] for record in android_records(spec)]
     screens = [
         block
         for block in kotlin_blocks(
@@ -384,7 +396,7 @@ def test_the_android_integrated_dialog_mounts_the_same_composables_as_the_create
     )
     create = screens[0]
 
-    for record in spec["records"]:
+    for record in android_records(spec):
         name = record["android"]["form"]
         assert calls(create, name), f"Screen.Create no longer mounts `{name}`."
         if record["key"] == "interview":
@@ -410,7 +422,7 @@ def test_every_record_body_carries_both_workshop_keys_and_reads_them_off_one_con
     """
     spec = contract()
     keys = spec["payloadKeys"]
-    for record in spec["records"]:
+    for record in web_records(spec):
         rel = record["web"]["form"]
         source = read(rel)
         for shape in keys["web"]["shape"]:
@@ -421,7 +433,7 @@ def test_every_record_body_carries_both_workshop_keys_and_reads_them_off_one_con
             )
 
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
-    for record in spec["records"]:
+    for record in android_records(spec):
         body, _ = kotlin_fun_body(android, record["android"]["form"])
         for shape in keys["android"]["shape"]:
             assert shape in body, (
@@ -442,7 +454,7 @@ def test_no_record_body_carries_the_type_of_workshop():
     """
     spec = contract()
     call = spec["savePath"]["web"]["call"]
-    for record in spec["records"]:
+    for record in web_records(spec):
         rel = record["web"]["form"]
         source = read(rel)
         at = source.index(call)
@@ -455,7 +467,7 @@ def test_no_record_body_carries_the_type_of_workshop():
             )
 
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
-    for record in spec["records"]:
+    for record in android_records(spec):
         body, _ = kotlin_fun_body(android, record["android"]["form"])
         for forbidden in spec["payloadKeys"]["mustNotAppear"]:
             assert not re.search(rf"\b{forbidden}\s*=", body), (
@@ -494,7 +506,7 @@ def test_the_destination_rule_is_written_exactly_once_on_each_client():
         )
 
     # And no record form re-derives it.
-    for record in spec["records"]:
+    for record in web_records(spec):
         source = read(record["web"]["form"])
         assert "routesToDesignWorkshop ?" not in source, (
             f"{record['web']['form']} branches on `routesToDesignWorkshop` itself. That decision "
@@ -529,7 +541,7 @@ def test_the_routing_of_an_existing_record_is_pinned_by_its_stored_columns():
 
     # The forms pass the record's stored ids in, which is the other half: a picker that is never
     # told the record's columns cannot pin anything.
-    for record in spec["records"]:
+    for record in web_records(spec):
         if record["web"]["update"] is None:
             continue
         source = read(record["web"]["form"])
@@ -678,7 +690,7 @@ def test_the_retired_third_control_is_gone_from_both_trees():
         )
 
     # And no record form narrows WITHIN a table by the stage registry's own token.
-    for record in spec["records"]:
+    for record in web_records(spec):
         source = read(record["web"]["form"])
         for name in forbidden["inRecordFormsOnly"]:
             assert name not in source, (
@@ -702,7 +714,7 @@ def test_every_record_form_runs_the_submission_pre_flight_before_it_writes():
     """
     spec = contract()
     web = spec["validation"]["web"]
-    for record in spec["records"]:
+    for record in web_records(spec):
         rel = record["web"]["form"]
         source = read(rel)
         gate = source.find(web["call"])
@@ -719,7 +731,7 @@ def test_every_record_form_runs_the_submission_pre_flight_before_it_writes():
         )
 
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
-    for record in spec["records"]:
+    for record in android_records(spec):
         body, at = kotlin_fun_body(android, record["android"]["form"])
         gate = body.find(spec["validation"]["android"]["call"])
         assert gate >= 0, (
@@ -898,8 +910,11 @@ def test_the_contract_is_internally_consistent():
             "record with one column is not a two-dropdown form and belongs in "
             "`declaredDifferences`, not here."
         )
-        for client in ("web", "android"):
-            assert record[client]["form"], f"{record['key']} names no {client} form"
+        assert record["android"]["form"], f"{record['key']} names no android form"
+        if record["web"] is None:
+            assert record.get("webRetired"), f"{record['key']} has no web form and does not say why"
+        else:
+            assert record["web"]["form"], f"{record['key']} names no web form"
 
     for row in spec["declaredDifferences"]["rows"]:
         assert row.get("stillTrue") and row.get("why") and row.get("id"), (
@@ -908,7 +923,7 @@ def test_the_contract_is_internally_consistent():
             "no reason beside it is not a licence."
         )
 
-    forms = {record["web"]["form"] for record in spec["records"]}
+    forms = {record["web"]["form"] for record in web_records(spec)}
     declared = set(spec["workshopControls"]["web"]["forms"])
     assert forms == declared, (
         f"{CONTRACT_PATH.name} declares {len(forms)} records and {len(declared)} web forms carrying "
