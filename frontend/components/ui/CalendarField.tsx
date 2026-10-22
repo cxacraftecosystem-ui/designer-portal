@@ -26,7 +26,10 @@ import { DateField } from "@/components/forms/DateTimeField";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 
 export type CalendarFieldProps = {
-  label: string;
+  /** The visible label. Omit it only where the caller draws its own `<label htmlFor={id}>` or passes `ariaLabel`. */
+  label?: string;
+  /** The accessible name when there is no visible label (the shared questionnaire screens). */
+  ariaLabel?: string;
   value?: string;
   defaultValue?: string;
   onChange?: (iso: string) => void;
@@ -48,6 +51,7 @@ export type CalendarFieldProps = {
 
 export function CalendarField({
   label,
+  ariaLabel,
   value,
   defaultValue,
   onChange,
@@ -78,11 +82,13 @@ export function CalendarField({
 
   return (
     <div className={`grid min-w-0 gap-1.5 ${className}`}>
-      <label htmlFor={fieldId} className="field-label">
-        {label}
-        {/* The same asterisk `Field` draws, so a required date reads like every other required box. */}
-        <RequiredMark when={required} />
-      </label>
+      {label ? (
+        <label htmlFor={fieldId} className="field-label">
+          {label}
+          {/* The same asterisk `Field` draws, so a required date reads like every other required box. */}
+          <RequiredMark when={required} />
+        </label>
+      ) : null}
       <div className="flex min-w-0 items-start gap-2">
         <div className="min-w-0 flex-1">
           <DateField
@@ -97,6 +103,7 @@ export function CalendarField({
             required={required}
             disabled={disabled}
             invalid={invalid}
+            ariaLabel={label ? undefined : ariaLabel}
             describedBy={hint ? hintId : undefined}
           />
         </div>
@@ -105,7 +112,7 @@ export function CalendarField({
             type="button"
             className="field-button-secondary min-h-11 shrink-0 px-3 sm:min-h-10"
             onClick={() => set("")}
-            aria-label={`Clear ${label}`}
+            aria-label={`Clear ${label ?? ariaLabel ?? "date"}`}
           >
             <X className="h-4 w-4" aria-hidden />
             <span className="hidden sm:inline">Clear</span>

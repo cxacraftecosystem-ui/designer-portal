@@ -540,7 +540,6 @@ def _assert_uploadable(mime_type: str, size_bytes: int | None, settings: Any) ->
         )
 
 
-@router.post("/presign", response_model=PresignResponse)
 async def presign_media_upload(
     payload: PresignRequest,
     current_user: Any = Depends(get_current_user),
@@ -567,6 +566,125 @@ async def presign_media_upload(
     }
 
 
+# ── the shared questionnaire's takes (UNIFY B14-B16; DESIGN 5.5) ─────────────────────────────────
+#
+# A v2 clip says ``linkedRecordType: "questionnaire_session"``: presign writes an upload intent and
+# signs the sha256, multipart resumes the intent's open upload, and /complete is atomic and
+# idempotent on ``clientClipKey`` (201 the first time, 200 on a replay). Every other body goes to the
+# unchanged route functions below, validated with their own models and their own 422. The typed
+# functions stay importable under their old names (the tests call them directly).
+V2_TYPE = "questionnaire_session"
+
+
+async def _json_body(request: Request) -> dict[str, Any]:
+    from fastapi.exceptions import RequestValidationError
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - not JSON: the old route's 422
+        raise RequestValidationError(
+            [{"type": "json_invalid", "loc": ("body",), "msg": "JSON body expected", "input": None}]
+        ) from None
+    if not isinstance(body, dict):
+        raise RequestValidationError(
+            [{"type": "dict_type", "loc": ("body",), "msg": "An object is expected", "input": body}]
+        )
+    return body
+
+
+def _old_shape(model: Any, body: dict[str, Any]) -> Any:
+    from fastapi.exceptions import RequestValidationError
+    from pydantic import ValidationError
+
+    try:
+        return model.model_validate(body)
+    except ValidationError as exc:
+        errors = [{**e, "loc": ("body", *e.get("loc", ()))} for e in exc.errors()]
+        raise RequestValidationError(errors) from None
+
+
+async def _v2_shape(model: Any, body: dict[str, Any]) -> Any:
+    from pydantic import ValidationError
+
+    from app.api.routes.questionnaire_v2 import v2_enabled
+    from app.questionnaire.common import fail
+
+    if not v2_enabled():
+        fail("NOT_FOUND")
+    try:
+        return model.model_validate(body)
+    except ValidationError as exc:
+        errors = [{"loc": [str(p) for p in e.get("loc", ())], "msg": e.get("msg")} for e in exc.errors()]
+        fail("VALIDATION_FAILED", errors[0]["msg"] if errors else None, errors=errors)
+
+
+def _is_v2(body: dict[str, Any]) -> bool:
+    return str(body.get("linkedRecordType") or "").lower() == V2_TYPE
+
+
+@router.post("/presign", response_model=PresignResponse)
+async def presign_media_upload_route(
+    request: Request, current_user: Any = Depends(get_current_user)
+) -> Any:
+    from fastapi.responses import JSONResponse
+
+    from app.questionnaire import recordings as v2_recordings
+    from app.questionnaire.schemas import PresignRequest as V2PresignRequest
+
+    body = await _json_body(request)
+    if _is_v2(body):
+        return JSONResponse(await v2_recordings.presign(await _v2_shape(V2PresignRequest, body), current_user))
+    return await presign_media_upload(_old_shape(PresignRequest, body), current_user)
+
+
+@router.post("/multipart/create", response_model=MultipartCreateResponse)
+async def create_multipart_route(
+    request: Request, current_user: Any = Depends(get_current_user)
+) -> Any:
+    from fastapi.responses import JSONResponse
+
+    from app.questionnaire import recordings as v2_recordings
+    from app.questionnaire.schemas import MultipartCreateRequest as V2MultipartCreateRequest
+
+    body = await _json_body(request)
+    if _is_v2(body):
+        return JSONResponse(
+            await v2_recordings.multipart_create(await _v2_shape(V2MultipartCreateRequest, body), current_user)
+        )
+    return await create_multipart(_old_shape(MultipartCreateRequest, body), current_user)
+
+
+@router.get("/uploads/{client_clip_key}")
+async def upload_state(client_clip_key: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    """The parts already uploaded for a v2 clip, so a client resumes after a restart. 404 when no
+    intent exists, and while QUESTIONNAIRE_V2 is off."""
+    from app.api.routes.questionnaire_v2 import require_v2
+    from app.questionnaire import recordings as v2_recordings
+
+    await require_v2()
+    return await v2_recordings.upload_state(client_clip_key, current_user)
+
+
+@router.post("/complete", status_code=status.HTTP_201_CREATED)
+async def complete_media_upload_route(
+    request: Request, current_user: Any = Depends(get_current_user)
+) -> Any:
+    from fastapi.responses import JSONResponse
+
+    from app.questionnaire import recordings as v2_recordings, shims_dr
+    from app.questionnaire.schemas import CompleteRequest as V2CompleteRequest
+
+    body = await _json_body(request)
+    if _is_v2(body):
+        recording, created = await v2_recordings.complete(await _v2_shape(V2CompleteRequest, body), current_user)
+        return JSONResponse(recording, status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+    payload = _old_shape(MediaCompleteRequest, body)
+    answer = await complete_media_upload(payload, current_user)
+    # An old build's questionnaire clip, with v2 on, also gets a take (the shim; never a new error).
+    await shims_dr.after_legacy_complete(answer, payload, current_user)
+    return answer
+
+
 def _assert_owns_object(object_key: str, current_user: Any) -> None:
     """Multipart object keys live under media/<user_id>/ — refuse to touch another user's upload."""
     if not object_key.startswith(f"media/{current_user.id}/"):
@@ -575,7 +693,6 @@ def _assert_owns_object(object_key: str, current_user: Any) -> None:
         )
 
 
-@router.post("/multipart/create", response_model=MultipartCreateResponse)
 async def create_multipart(
     payload: MultipartCreateRequest,
     current_user: Any = Depends(get_current_user),
@@ -1001,7 +1118,6 @@ def _assert_enqueueable(processing_requests: list[str] | None) -> None:
     )
 
 
-@router.post("/complete", status_code=status.HTTP_201_CREATED)
 async def complete_media_upload(
     payload: MediaCompleteRequest,
     current_user: Any = Depends(get_current_user),

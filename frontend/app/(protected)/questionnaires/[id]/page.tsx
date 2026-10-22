@@ -47,6 +47,10 @@ import { DeletedSittings } from "@/components/questionnaires/DeletedSittings";
 import { cappedListNotice, cutOf } from "@/components/data/cappedList";
 import { useRecordOffPage } from "@/components/forms/recordPickers";
 import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
+import { DownloadBundleButton } from "@/components/questionnaires/BundleControls";
+import { FormAdminPanel, FormSessions } from "@/components/questionnaires/FormAdminPanel";
+import { useQuestionnaireConfig } from "@/components/questionnaire/useQuestionnaireConfig";
+import { answerFormTarget } from "@/lib/questionnaireLinks";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
 import { QuestionRow } from "@/components/questionnaires/QuestionRow";
@@ -293,6 +297,7 @@ export default function QuestionnaireDetailPage() {
   const attachedHold = useHeldPostRefusal(form?.designWorkshopId ?? null);
   const mayEdit = owns && attachedHold === null;
   const mayDelete = mayEdit && mayDeleteQuestionnaire(user, form?.ownerId);
+  const v2 = Boolean(useQuestionnaireConfig()?.v2Enabled);
   const mayDeleteSittings = mayEdit && canDeleteRecords;
 
   async function deleteForm() {
@@ -588,8 +593,11 @@ export default function QuestionnaireDetailPage() {
                 Re-upload
               </button>
             ) : null}
-            <Link className="field-button" href={`/questionnaires/${id}/answer`}>
-              Record answers
+            {/* The handoff file (A10): questions only, like the question set, so as open as it. */}
+            <DownloadBundleButton form={form} />
+            {/* With the shared questionnaire on, answering a form is a session on it (UNIFY 4.2). */}
+            <Link className="field-button" href={v2 ? answerFormTarget(id) : `/questionnaires/${id}/answer`}>
+              {v2 ? "Start session" : "Record answers"}
             </Link>
             {mayDelete ? (
               <button type="button" data-danger className="field-danger" onClick={deleteForm} disabled={busy}>
@@ -1081,6 +1089,9 @@ export default function QuestionnaireDetailPage() {
           </ul>
         )}
       </section>
+
+      <FormAdminPanel questionnaireId={id} />
+      <FormSessions questionnaireId={id} />
 
       {/* Restoring a sitting is a content admin's act, in admin view (2026-10-20). */}
       {mayDeleteSittings && adminMode ? (

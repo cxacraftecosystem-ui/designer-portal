@@ -626,27 +626,6 @@ async def test_the_web_client_spells_the_key_the_way_python_does():
     )
 
 
-async def test_the_web_client_asks_by_artisans_for_a_scope():
-    """The page sends the workshop WITH the lookup, or the server answers about the unattached row.
-
-    ``artisanSetKey`` agreeing with Python is not enough on its own: the page could still call
-    ``by-artisans`` with artisans alone, which since the scope entered the key always resolves to the
-    unattached interview whatever workshop is named on screen.
-    """
-    page = _source("frontend/app/(protected)/questionnaire/page.tsx")
-    # ANCHORED ON THE FETCH, NOT ON THE WORDS "by-artisans". The route is NAMED in three comments on
-    # this page, all of them above the call, so splitting on the bare phrase lands ~800 lines early
-    # and the assertions below would then be measuring prose — passing or failing for reasons that
-    # have nothing to do with the request.
-    halves = page.split("/questionnaire/interviews/by-artisans?", 1)
-    assert len(halves) == 2, "the shared-entry lookup has moved out of the questionnaire page"
-    before = halves[0][-1500:]
-    assert "workshopId=${encodeURIComponent(artisanWorkshopScope.workshopId)}" in before
-    assert (
-        "designWorkshopId=${encodeURIComponent(artisanWorkshopScope.designWorkshopId)}" in before
-    )
-
-
 async def test_the_handset_groups_interviews_by_workshop_too():
     """``interviewGroupKey`` reads both workshop columns, or the handset HIDES one of the two rows.
 

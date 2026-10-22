@@ -8,6 +8,7 @@ from app.api.routes import (
     annual_plan,
     answer_drafts,
     app_release,
+    app_versions,
     artisan_cards,
     artisan_duplicates,
     artisans,
@@ -49,6 +50,7 @@ from app.api.routes import (
     public,
     questionnaire,
     questionnaire_forms,
+    questionnaire_v2,
     reference,
     report_deliveries,
     review,
@@ -93,6 +95,9 @@ api_router.include_router(access.router)
 # module docstring for the full boundary — the list of surfaces a planned row must never be counted
 # on — and tests/test_annual_plan_is_not_a_workshop.py, which asserts it surface by surface.
 api_router.include_router(annual_plan.router)
+# The shared questionnaire's artisan record (/artisans/{id}/record[.csv]; 404 while QUESTIONNAIRE_V2
+# is off). Before artisans so no catch-all there can shadow it.
+api_router.include_router(questionnaire_v2.artisans_router)
 api_router.include_router(artisans.router)
 # Artisan QR cards: /artisans/{id}/card*, /artisan-cards/* (services/artisan_card.py).
 api_router.include_router(artisan_cards.router)
@@ -136,6 +141,10 @@ api_router.include_router(transcript_insights.router)
 api_router.include_router(media.router)
 # Before ``questionnaire`` so its fixed paths are matched first (C28; nothing collides today).
 api_router.include_router(answer_drafts.router)
+# The shared questionnaire (UNIFY_2026-10-21.md): sessions, takes, coverage, answers, inbox,
+# bindings. Every route but GET /questionnaire/config answers 404 while QUESTIONNAIRE_V2 is off.
+# Before the older questionnaire router so its fixed paths are matched first.
+api_router.include_router(questionnaire_v2.router)
 api_router.include_router(questionnaire.router)
 # Custom questionnaires — /api/questionnaires (PLURAL), a form a designer authored themselves, as
 # distinct from the one global artisan questionnaire on the singular prefix above. Mounted after it
@@ -272,6 +281,8 @@ api_router.include_router(data_browser.router)
 # is the credential it accepts (see app/api/routes/datasets.py and deps.require_dataset_admin).
 api_router.include_router(datasets.router)
 api_router.include_router(app_release.router)
+# GET /admin/app-versions: which builds are in use (the old-build create cutoff waits on it).
+api_router.include_router(app_versions.router)
 # Next to app_release because it is the same kind of thing: this deployment handing its own client a
 # large immutable binary it cannot get anywhere else. The difference is that the APK is redirected to
 # object storage while these bytes are served from the API itself, which

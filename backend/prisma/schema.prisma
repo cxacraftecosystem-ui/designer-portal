@@ -2607,6 +2607,9 @@ model ReviewLog {
   recordId   String
   status     RecordStatus
   notes      String?
+  /// The short-list reason a reviewer picked, as documentation-portal's column; the shared
+  /// questionnaire reads it (migration 20261108090000_review_log_reason).
+  reason     String?
   reviewerId String
   createdAt  DateTime         @default(now())
 

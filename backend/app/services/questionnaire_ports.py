@@ -4,12 +4,15 @@ The package is byte-identical in both portals and never imports portal code; it 
 by its well-known name. Every function looks its target up at call time, so a test that patches
 ``app.core.db.db`` or a service module is seen by the package.
 
-U0 (22 Oct 2026) SHIPS THE PACKAGE DARK HERE: nothing mounts its routes until U1. The database, the
-settings, the role ladder, naming, storage, AI drafting and ``attach_location`` are served now. The
-consent gate, the transcription enqueue and the workshop-submission check are the three ports whose
-designer-portal side U1 writes (the gate adds the design workshop's dictation consent; the enqueue
-goes through this portal's transcription jobs; workshop access is a design workshop's membership),
-and until then they refuse with :class:`PortUnavailable` rather than guess.
+Every port is served (U1, 22 Oct 2026):
+
+* ``consent_gate`` is ``services/questionnaire_consent``: the shared ledger rule over a take's
+  subjects plus the design workshop's dictation consent (opt-out; C4, DR audit H3);
+* ``transcription`` is ``services/questionnaire_transcription``: the pause-aware enqueue, which
+  writes a QUEUED job and never calls a provider;
+* ``workshop_access`` is ``services/workshop_access`` (the Workshop submission rules, identical in
+  shape to documentation-portal's). A session on a DESIGN workshop is checked in the route layer
+  (``api/routes/questionnaire_v2.py``) with the design workshop's own filing rule.
 """
 
 from __future__ import annotations
@@ -18,8 +21,6 @@ import importlib
 from types import ModuleType
 from typing import Any
 
-from app.questionnaire.ports import PortUnavailable
-
 PORTAL = "designer-portal"
 
 _MODULES = {
@@ -27,11 +28,9 @@ _MODULES = {
     "s3": "app.services.s3",
     "records": "app.services.records",
     "answer_drafts": "app.services.answer_drafts",
-}
-_LATER = {
-    "consent_gate": "U1 wires designer-portal's consent gate (the ledger plus DesignWorkshop.dictationConsent).",
-    "transcription": "U1 wires the enqueue through designer-portal's transcription jobs.",
-    "workshop_access": "U1 wires the design-workshop submission check.",
+    "consent_gate": "app.services.questionnaire_consent",
+    "transcription": "app.services.questionnaire_transcription",
+    "workshop_access": "app.services.workshop_access",
 }
 
 
@@ -84,6 +83,4 @@ def can_manage_questionnaire(user: Any) -> bool:
 
 
 def module(name: str) -> ModuleType:
-    if name in _LATER:
-        raise PortUnavailable(f"designer-portal does not serve the questionnaire port '{name}' yet: {_LATER[name]}")
     return importlib.import_module(_MODULES[name])
