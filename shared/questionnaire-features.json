@@ -616,11 +616,15 @@
       "source": "matrix",
       "api": {
         "designer-portal": [],
-        "documentation-portal": []
+        "documentation-portal": [
+          "POST /questionnaires",
+          "POST /questionnaire/sections",
+          "POST /questionnaire/questions"
+        ]
       },
       "server": {
         "designer-portal": "built",
-        "documentation-portal": "planned"
+        "documentation-portal": "built"
       },
       "clients": {
         "dr-web": "required",
@@ -631,7 +635,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "tagged",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -653,11 +657,14 @@
       "source": "matrix",
       "api": {
         "designer-portal": [],
-        "documentation-portal": []
+        "documentation-portal": [
+          "GET /questionnaires",
+          "GET /questionnaires/{id}"
+        ]
       },
       "server": {
         "designer-portal": "built",
-        "documentation-portal": "planned"
+        "documentation-portal": "built"
       },
       "clients": {
         "dr-web": "required",
@@ -668,7 +675,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "tagged",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -1795,7 +1802,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "tagged",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2385,7 +2392,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "tagged",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2735,7 +2742,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "tagged",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2774,7 +2781,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "tagged",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
@@ -2799,7 +2806,7 @@
       },
       "server": {
         "designer-portal": "built",
-        "documentation-portal": "planned"
+        "documentation-portal": "built"
       },
       "clients": {
         "dr-web": "required",
@@ -2810,7 +2817,7 @@
       "status": {
         "dr-web": "tagged",
         "dr-android": "planned",
-        "fr-web": "planned",
+        "fr-web": "tagged",
         "fr-android": "planned"
       },
       "stream": {
