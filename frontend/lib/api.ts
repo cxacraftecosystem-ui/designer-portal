@@ -160,6 +160,42 @@ export function describeApiDetail(detail: unknown, fallback: string): string {
 export { endSession, getSessionMarker } from "@/lib/session";
 
 /**
+ * THE BUILD THIS PAGE IS, on every call (UNIFY 4.5, FR audit C7): `X-App-Version` (a name for people),
+ * `X-App-Platform: web` and `X-App-Version-Code` (the deploy run's number, baked in by
+ * `next.config.ts`). The server records which builds are in use (`GET /api/admin/app-versions`) and
+ * compares the NUMBER, never the name, for the questionnaire's old-build create cutoff. A local dev
+ * server sends no code, which the server never refuses on the web.
+ */
+export const APP_VERSION = `web-${(process.env.NEXT_PUBLIC_APP_VERSION ?? "").trim() || "0.1.0"}`;
+export const APP_PLATFORM = "web";
+export const APP_VERSION_CODE: string | null = /^[1-9]\d{0,8}$/.test((process.env.NEXT_PUBLIC_BUILD_NUMBER ?? "").trim())
+  ? (process.env.NEXT_PUBLIC_BUILD_NUMBER ?? "").trim()
+  : null;
+
+let clockOffsetMs: number | null = null;
+let clockOffsetAt = 0;
+
+/**
+ * `serverDate - clientTime` from the last response that carried a `Date` header, and when it was
+ * measured (B17). A questionnaire take's `capturedAt` is corrected by it; an offset older than seven
+ * days makes a capture time "estimated" on the server.
+ */
+export function clockOffset(): { offsetMs: number; measuredAt: number } | null {
+  return clockOffsetMs === null ? null : { offsetMs: clockOffsetMs, measuredAt: clockOffsetAt };
+}
+
+/** Exported for the unit spec: a `Date` header against the client time the request left with. */
+export function recordClockOffset(dateHeader: string | null, sentAt: number, now: number = Date.now()) {
+  if (!dateHeader) return;
+  const server = Date.parse(dateHeader);
+  if (Number.isNaN(server)) return;
+  // `Date` has whole-second resolution and the response took time to come back: compare against the
+  // midpoint of the round trip, which halves the error.
+  clockOffsetMs = server - Math.round((sentAt + now) / 2);
+  clockOffsetAt = now;
+}
+
+/**
  * Has the token a request LEFT with been replaced by a different one while it was in flight?
  *
  * A refusal of such a token is about a session this tab has already let go of, and says nothing about
@@ -327,6 +363,11 @@ export async function apiFetchWithHeaders<T>(
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
+  const sentAt = Date.now();
+  headers.set("X-Client-Time", new Date(sentAt).toISOString());
+  headers.set("X-App-Version", APP_VERSION);
+  headers.set("X-App-Platform", APP_PLATFORM);
+  if (APP_VERSION_CODE) headers.set("X-App-Version-Code", APP_VERSION_CODE);
 
   const response = await fetch(`${API_BASE}/api${path}`, {
     ...init,
@@ -338,6 +379,7 @@ export async function apiFetchWithHeaders<T>(
     cache: options.revalidateFromHttpCache ? "no-cache" : "no-store"
   });
 
+  recordClockOffset(response.headers.get("date"), sentAt);
   if (response.status === 204) return { body: undefined as T, headers: response.headers };
 
   const contentType = response.headers.get("content-type") ?? "";

@@ -513,13 +513,9 @@ const RECORD_FORMS: ReadonlyArray<{ form: string; path: string[]; stored: string
   { form: "the artisan form", path: ["components", "forms", "ArtisanForm.tsx"], stored: "initial?.designWorkshopId", noun: "artisan" },
   { form: "the product form", path: ["components", "forms", "ProductForm.tsx"], stored: "initial?.designWorkshopId", noun: "product" },
   { form: "the process form", path: ["components", "forms", "ProcessForm.tsx"], stored: "initial?.designWorkshopId", noun: "process" },
-  { form: "the tool form", path: ["components", "forms", "ToolForm.tsx"], stored: "initial?.designWorkshopId", noun: "tool" },
-  {
-    form: "the interview form",
-    path: ["app", "(protected)", "questionnaire", "page.tsx"],
-    stored: "editingInterview?.designWorkshopId",
-    noun: "interview"
-  }
+  { form: "the tool form", path: ["components", "forms", "ToolForm.tsx"], stored: "initial?.designWorkshopId", noun: "tool" }
+  // The interview form is retired on the web (UNIFY 4.4): a questionnaire session is filed under a
+  // design workshop only through the server's `assert_may_file_under`, on create and on every edit.
 ];
 
 for (const { form, path, stored, noun } of RECORD_FORMS) {
@@ -568,8 +564,6 @@ test("a refused save or delete shows the server's sentence word for word", async
     [["components", "forms", "ProductForm.tsx"], "Unable to save product record"],
     [["components", "forms", "ProcessForm.tsx"], "Unable to save process"],
     [["components", "forms", "ToolForm.tsx"], "Unable to save tool record"],
-    [["app", "(protected)", "questionnaire", "page.tsx"], "Unable to save interview"],
-    [["app", "(protected)", "questionnaire", "page.tsx"], "Unable to delete interview"],
     [["app", "(protected)", "artisans", "page.tsx"], "Unable to delete artisan"],
     [["app", "(protected)", "products", "page.tsx"], "Unable to delete product record"],
     [["app", "(protected)", "processes", "page.tsx"], "Unable to delete process record"],
@@ -1282,7 +1276,6 @@ test("every web call that adds to a workshop or edits it from elsewhere comes fr
     [
       "app/(protected)/crafts/page.tsx", // a craft's files: a craft is never filed under a design workshop
       "app/(protected)/media/page.tsx", // `uploadHold`: the workshop chosen and the record linked
-      "app/(protected)/questionnaire/page.tsx", // an interview's files: `filing.saveHeld`
       "app/(protected)/workshops/page.tsx", // a crafts workshop's files: never filed under a design workshop
       "components/designers/DesignerProfileForm.tsx", // a designer's own profile: belongs to no workshop
       "components/designworkshop/FieldInput.tsx", // a stage's capture: the stage form's own lock
@@ -1316,7 +1309,11 @@ test("every web call that adds to a workshop or edits it from elsewhere comes fr
 
   // A QUESTIONNAIRE ATTACHED TO A WORKSHOP AS IT IS MADE — created, uploaded or reused into it.
   expect(callersOf(/endpoint:\s*"\/questionnaires",/)).toEqual(["app/(protected)/questionnaires/page.tsx"]);
-  expect(callersOf(/\bcreateQuestionnaire\(/, ["lib/questionnaireForms.ts"]), "the queued create is the one door").toEqual([]);
+  // A received bundle (UNIFY A10) is added as a NEW form attached to no workshop — the body carries no
+  // `designWorkshopId` — so it adds nothing to a workshop and needs no hold; it is the one other caller.
+  expect(callersOf(/\bcreateQuestionnaire\(/, ["lib/questionnaireForms.ts"]), "the queued create is the one door into a workshop").toEqual([
+    "components/questionnaires/BundleControls.tsx"
+  ]);
   expect(callersOf(/\buploadQuestionnaire\(/, ["lib/questionnaireForms.ts"])).toEqual(["components/questionnaires/UploadDialog.tsx"]);
   expect(callersOf(/\breuseQuestionnaire\(/, ["lib/questionnaireForms.ts"])).toEqual(["components/questionnaires/ReuseDialog.tsx"]);
   // And an existing form MOVED into one, from its own page: held for the workshop it is stored under

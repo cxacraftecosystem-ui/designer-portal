@@ -70,8 +70,7 @@
           "frontend/app/(protected)/products/[id]/edit/page.tsx",
           "frontend/app/(protected)/tools/new/page.tsx",
           "frontend/app/(protected)/tools/[id]/edit/page.tsx",
-          "frontend/app/(protected)/processes/page.tsx",
-          "frontend/app/(protected)/questionnaire/page.tsx"
+          "frontend/app/(protected)/processes/page.tsx"
         ]
       },
       "integrated": {
@@ -220,12 +219,7 @@
         "workshopId",
         "designWorkshopId"
       ],
-      "web": {
-        "form": "frontend/app/(protected)/questionnaire/page.tsx",
-        "endpoint": "\"/questionnaire/interviews\"",
-        "create": "POST /questionnaire/interviews",
-        "update": null
-      },
+      "web": null,
       "android": {
         "retired": "UNIFY 4.4 (owner decision 2): the global interview form is retired on Android. A session is created by the questionnaire start sheet into the session outbox (questionnaire/ui/SessionStartSheet.kt, questionnaire/data/SessionOutbox.kt); entries an older build queued still drain through the server's shims.",
         "form": "QuestionnaireForm",
@@ -247,6 +241,13 @@
         "ITS WEB FORM IS CREATE-ONLY, which is why `update` is null there: an interview is corrected",
         "through the review panel, never re-opened in the capture form. The handset DOES edit one in",
         "place, and refuses to queue that edit offline for a stated reason — see `declaredDifferences`."
+      ],
+      "webRetired": [
+        "THE WEB'S GLOBAL INTERVIEW FORM IS RETIRED (owner decision 2, 21 Oct 2026; UNIFY 4.4).",
+        "An interview on the web is a questionnaire session now: the shared client under",
+        "`frontend/components/questionnaire/**` writes it through `/questionnaire/sessions` and",
+        "`PUT /questionnaire/answers`, and `POST /questionnaire/interviews` survives only for the",
+        "handset until its own stream moves it. Every web assertion in this file skips this record."
       ]
     }
   ],
@@ -490,8 +491,7 @@
         "frontend/components/forms/ArtisanForm.tsx",
         "frontend/components/forms/ProductForm.tsx",
         "frontend/components/forms/ToolForm.tsx",
-        "frontend/components/forms/ProcessForm.tsx",
-        "frontend/app/(protected)/questionnaire/page.tsx"
+        "frontend/components/forms/ProcessForm.tsx"
       ]
     },
     "android": {

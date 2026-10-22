@@ -74,7 +74,7 @@ from app.core.deps import (
     is_content_admin,
     require_content_admin,
 )
-from app.questionnaire import authoring as questionnaire_authoring
+from app.questionnaire import authoring as questionnaire_authoring, shims_dr
 from app.schemas.questionnaire import (
     CustomAnswerBatch,
     CustomQuestionCreate,
@@ -1008,6 +1008,11 @@ async def read_questionnaire(
     )
     if form is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
+    if await shims_dr.form_is_unified(questionnaire_id):
+        # QUESTIONNAIRE_V2 on and the form in the shared tables: its sittings are sessions now
+        # (UNIFY 4.5), read back in the old shape so an old build's screen still fills in.
+        entries = await shims_dr.entries_for_form(questionnaire_id)
+        form["entries"] = [e for e in entries if mine_only is None or e.get("createdById") == mine_only]
     return public_encode(form)
 
 
@@ -1606,6 +1611,10 @@ async def create_entry(
             status_code=status.HTTP_409_CONFLICT,
             detail="This questionnaire has been deactivated, so no new answers can be recorded against it.",
         )
+    if await shims_dr.form_is_unified(questionnaire_id):
+        # A sitting is a session on this form now (UNIFY 4.5): the respondent is a guest, the typed
+        # title is kept as legacyTitle. The same response shape, never a new error code.
+        return await shims_dr.create_entry(questionnaire_id, payload, current_user)
     entry = await db.questionnaireformentry.create(
         data={
             "questionnaireId": questionnaire_id,
@@ -1636,6 +1645,9 @@ async def update_entry(
     nothing in the document would show it had happened.
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        await _refuse_its_workshops_holder(record, current_user)
+        return await shims_dr.update_entry(entry_id, payload, current_user)
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=True
     )
@@ -1693,6 +1705,10 @@ async def record_answers(
     # two are different questions — the permissive answer to the first was being read as an answer
     # to the second, which is how a stranger's answers reached another workshop's annexure.
     await _require_recordable_questionnaire(record, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        # Per-item answers on the sitting's session, create-only; a locked item is reported in the
+        # old ``rejected`` list, never as a 403 for the batch (UNIFY 4.5).
+        return public_encode(await shims_dr.record_answers(questionnaire_id, entry_id, payload, current_user))
     # ``rewriting=False``: recording answers against somebody else's sitting is DELIBERATE — two
     # people filling in different sections of one interview is the ordinary case, and a sitting
     # only its starter may answer is a sitting nobody finishes. The authorship rule that belongs
@@ -1740,6 +1756,10 @@ async def delete_entry(
     """
     assert_can_delete(current_user)
     record = await _require_questionnaire(questionnaire_id, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        await _refuse_its_workshops_holder(record, current_user)
+        await shims_dr.delete_entry(entry_id, current_user)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=False
     )
@@ -1758,6 +1778,8 @@ async def list_deleted_entries(
 ) -> list[dict[str, Any]]:
     """The sittings deleted from one live questionnaire, newest deletion first. Content admins only."""
     await _require_questionnaire(questionnaire_id, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        return public_encode(await shims_dr.entries_for_form(questionnaire_id, deleted=True))
     rows = await db.questionnaireformentry.find_many(
         where={"questionnaireId": questionnaire_id, "deletedAt": {"not": None}},
         order=[{"deletedAt": "desc"}, {"id": "asc"}],
@@ -1793,6 +1815,9 @@ async def restore_entry(
     holds a post on its workshop is refused, as on the delete.
     """
     record = await _require_questionnaire(questionnaire_id, current_user)
+    if await shims_dr.form_is_unified(questionnaire_id):
+        await _refuse_its_workshops_holder(record, current_user)
+        return public_encode(await shims_dr.restore_entry(entry_id, current_user))
     entry = await db.questionnaireformentry.find_unique(where={"id": entry_id})
     if entry is None or entry.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
