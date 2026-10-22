@@ -382,7 +382,7 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
 
     before = _db(fingerprint)
     idx_before = _db(indexes)
-    deferred_keys = (BACKEND / "prisma" / "deferred" / unify.PREREQUISITES[1]).is_dir()
+    deferred_keys = (BACKEND / "prisma" / "deferred" / unify.PREREQUISITES[0]).is_dir()
     if deferred_keys:  # until the switch-on commit, the global keys are still there before the apply
         assert {"QuestionnaireSection_code_key", "QuestionnaireSection_sortOrder_key"} <= idx_before
 
@@ -436,7 +436,24 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     _final, report4 = _dry(reports, capfd, *CHOICES)
     code, out = _run(["--out", str(reports), "--apply", "--run-id", "four", "--approved-report", str(_approve(report4)), *CHOICES], capfd)
     assert code == 0, out
-    deferred = sorted(p.name for p in (BACKEND / "prisma" / "deferred").iterdir() if p.is_dir())
+
+    # 9. authoring still writes the old form tables: the mirror keeps the instrument tables in step
+    _db(author_in_the_old_screens)
+    _db(check_mirrored)
+
+    # 10. a sitting typed or edited in the old screens before the switch: a second apply takes it in
+    _db(sit_in_the_old_screens)
+    late, report5 = _dry(reports, capfd, *CHOICES)
+    assert (late["toWrite"]["sessionsFromSittings"], late["toWrite"]["revisions"], late["toWrite"]["revisionsChangedAtSource"]) == (1, 1, 1)
+    assert late["toWrite"]["sections"] == late["toWrite"]["questions"] == 0, "the mirror missed an authoring write"
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "five", "--approved-report", str(_approve(report5)), *CHOICES], capfd)
+    assert code == 0, out
+    done, _ = _dry(reports, capfd, *CHOICES)
+    assert done["changes"] == 0, done["toWrite"]
+    _db(check_late_sitting)
+
+    folder = BACKEND / "prisma" / "deferred"
+    deferred = sorted(p.name for p in folder.iterdir() if p.is_dir()) if folder.is_dir() else []
     _deploy(migrations_dir, _migrations() + deferred)
     _db(check_deferred)
 
@@ -515,6 +532,54 @@ async def check_applied(client) -> None:
     assert int(view[0]["n"]) == 2
     rows = await q("SELECT \"title\" FROM \"QuestionnaireInterview\" WHERE \"id\" = 'e1'")
     assert rows[0]["title"] and rows[0]["title"] != "Lakshmi at the dye pit"
+
+
+async def author_in_the_old_screens(client) -> None:
+    ex = client.execute_raw
+    # a new section at a position another already holds, with a question
+    await ex("INSERT INTO \"QuestionnaireFormSection\" (\"id\", \"questionnaireId\", \"code\", \"title\", \"sortOrder\", \"isActive\", \"createdAt\", \"updatedAt\") "
+             "VALUES ('f2sC', 'f2', 'C', 'Channels', 1, true, '2026-10-01', '2026-10-01')")
+    await ex("INSERT INTO \"QuestionnaireFormQuestion\" (\"id\", \"sectionId\", \"prompt\", \"isRequired\", \"sortOrder\", \"isActive\", \"createdAt\", \"updatedAt\") "
+             "VALUES ('f2q3', 'f2sC', 'Where do you sell?', true, 1, true, '2026-10-01', '2026-10-01')")
+    # a reword, the old service's way: the new wording first, then the old row points at it
+    await ex("INSERT INTO \"QuestionnaireFormQuestion\" (\"id\", \"sectionId\", \"prompt\", \"sortOrder\", \"isActive\", \"createdAt\", \"updatedAt\") "
+             "VALUES ('f1q4b', 'f1sB', 'Which blocks do you carve?', 1, true, '2026-10-02', '2026-10-02')")
+    await ex("UPDATE \"QuestionnaireFormQuestion\" SET \"supersededById\" = 'f1q4b', \"isActive\" = false, \"retiredAt\" = '2026-10-02' WHERE \"id\" = 'f1q4'")
+    # a renamed section, a deleted question, a form made after the apply
+    await ex("UPDATE \"QuestionnaireFormSection\" SET \"title\" = 'The craft today' WHERE \"id\" = 'f1sA'")
+    await ex("DELETE FROM \"QuestionnaireFormQuestion\" WHERE \"id\" = 'f2q2'")
+    await ex("INSERT INTO \"Questionnaire\" (\"id\", \"title\", \"ownerId\", \"updatedAt\") VALUES ('f4', 'Made after the apply', 'd1', now())")
+    await ex("INSERT INTO \"QuestionnaireFormSection\" (\"id\", \"questionnaireId\", \"code\", \"title\", \"sortOrder\", \"updatedAt\") VALUES ('f4sA', 'f4', 'A', 'New', 1, now())")
+    await ex("INSERT INTO \"QuestionnaireFormQuestion\" (\"id\", \"sectionId\", \"prompt\", \"sortOrder\", \"updatedAt\") VALUES ('f4q1', 'f4sA', 'New question', 1, now())")
+
+
+async def check_mirrored(client) -> None:
+    q = client.query_raw
+    secs = {r["id"]: r["sortOrder"] for r in await q('SELECT "id", "sortOrder" FROM "QuestionnaireSection" WHERE "questionnaireId" IN (\'f2\', \'f4\')')}
+    assert secs == {"f2sA": 1, "f2sB": 2, "f2sC": 3, "f4sA": 1}
+    qs = {r["id"]: r for r in await q('SELECT "id", "questionnaireId", "lineageId", "displayCode", "sectionTitle", "supersededById", "isRequired" FROM "QuestionnaireQuestion"')}
+    assert (qs["f2q3"]["lineageId"], qs["f2q3"]["displayCode"], qs["f2q3"]["isRequired"]) == ("f2q3", "C1", True)
+    assert (qs["f1q4"]["supersededById"], qs["f1q4b"]["lineageId"], qs["f1q4b"]["displayCode"]) == ("f1q4b", "f1q4", "B1")
+    assert qs["f1q1"]["sectionTitle"] == "The craft today" and "f2q2" not in qs
+    assert (qs["f4q1"]["questionnaireId"], qs["f4q1"]["displayCode"]) == ("f4", "A1")
+
+
+async def sit_in_the_old_screens(client) -> None:
+    await client.execute_raw(
+        "INSERT INTO \"QuestionnaireFormEntry\" (\"id\", \"questionnaireId\", \"title\", \"respondentName\", \"createdById\", \"createdAt\", \"updatedAt\") "
+        "VALUES ('e4', 'f1', 'A late sitting', 'Kamla', 'd1', '2026-10-03 06:00', '2026-10-03 06:00')")
+    await client.execute_raw(
+        "INSERT INTO \"QuestionnaireFormAnswer\" (\"id\", \"entryId\", \"questionId\", \"answerText\", \"answeredById\", \"createdAt\", \"updatedAt\") "
+        "VALUES ('fa7', 'e4', 'f1q1', 'Bandhani', 'd1', '2026-10-03 06:00', '2026-10-03 06:00')")
+    await client.execute_raw("UPDATE \"QuestionnaireFormAnswer\" SET \"answerText\" = 'Dabu and indigo', \"updatedAt\" = '2026-10-03 07:00' WHERE \"id\" = 'fa1'")
+
+
+async def check_late_sitting(client) -> None:
+    rows = {r["id"]: r for r in await client.query_raw(
+        'SELECT v."id", v."text", a."respondentId" FROM "QuestionnaireAnswerRevision" v JOIN "QuestionnaireAnswer" a ON a."id" = v."answerId" '
+        "WHERE v.\"id\" IN ('u5-rev-fa1', 'u5-rev-fa7')")}
+    assert rows["u5-rev-fa1"]["text"] == "Dabu and indigo"
+    assert (rows["u5-rev-fa7"]["text"], rows["u5-rev-fa7"]["respondentId"]) == ("Bandhani", "u5-resp-e4")
 
 
 async def check_deferred(client) -> None:

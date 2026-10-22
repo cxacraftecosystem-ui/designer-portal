@@ -31,6 +31,8 @@ SHARED_FILES_EXTRA = (
     "shared/enums.json",
     "shared/languages.json",
     "shared/strings/questionnaire.json",
+    # The generator of the shared web vocabularies (strings.ts, enums.ts) and its sources above.
+    "scripts/generate_questionnaire_web.py",
     # The tests that hold the two portals together.
     "backend/tests/test_questionnaire_parity.py",
     "backend/tests/test_questionnaire_schema_parity.py",
@@ -39,6 +41,11 @@ SHARED_FILES_EXTRA = (
     # The safety rails every questionnaire data script shares (dry run, host allow-list, approval).
     "backend/scripts/qv2_guard.py",
 )
+
+
+#: The shared web client (UNIFY 2.4, Web): byte-identical in both portals, synced from here.
+#: Each portal keeps its own ``frontend/lib/questionnairePortal.ts`` beside them (not shared).
+WEB_TREES = ("frontend/lib/questionnaire", "frontend/components/questionnaire")
 
 
 def shared_files(root: Path) -> list[str]:
@@ -51,7 +58,13 @@ def shared_files(root: Path) -> list[str]:
         path.relative_to(root).as_posix() for path in (root / "shared").glob("questionnaire*")
         if path.relative_to(root).as_posix() not in NOT_SHARED
     )
-    return package + contracts + list(SHARED_FILES_EXTRA)
+    web = sorted(
+        path.relative_to(root).as_posix()
+        for tree in WEB_TREES
+        for path in (root / tree).rglob("*")
+        if path.is_file() and path.suffix in (".ts", ".tsx")
+    )
+    return package + contracts + list(SHARED_FILES_EXTRA) + web
 
 
 def digest(path: Path) -> str:
@@ -83,6 +96,9 @@ def main() -> int:
         package = target / PACKAGE
         if package.exists():
             shutil.rmtree(package)
+        for tree in WEB_TREES:
+            if (target / tree).exists():
+                shutil.rmtree(target / tree)
         for rel in shared_files(ROOT):
             destination = target / rel
             destination.parent.mkdir(parents=True, exist_ok=True)

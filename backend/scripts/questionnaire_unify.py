@@ -47,12 +47,12 @@ MODES (all refuse a host not named in ``--allow-host``; ``scripts/qv2_guard.py``
         lines aside) and P carries ``Approved-by: <owner email> <YYYY-MM-DD>``, and no blocker is listed.
         Then: (1) SNAPSHOTS every affected table into the schema ``questionnaire_unify_<R>``
         (``CREATE TABLE ... AS SELECT``) with the index state, which is the undo record; (2) applies
-        the three prerequisite deferred migrations (prisma/deferred: WORKBOOK, the per-form section
-        keys, the shared-title unique); (3) writes everything in ONE transaction. Idempotent: a second
-        dry run shows 0 to write and a second apply writes nothing.
+        the two prerequisite deferred migrations (prisma/deferred: the per-form section keys and the
+        shared-title unique; WORKBOOK is an ordinary migration since U1); (3) writes everything in
+        ONE transaction. Idempotent: a second dry run shows 0 to write and a second apply writes nothing.
     python scripts/questionnaire_unify.py --allow-host H --undo --run-id R
-        Restores every affected table EXACTLY to the snapshot and puts the dropped keys back (the
-        WORKBOOK enum value stays; Postgres cannot drop one, and nothing uses it). Refuses once rows
+        Restores every row the run wrote EXACTLY to the snapshot and puts the dropped keys back.
+        Refuses once rows
         exist that the run did not write (native v2 content), because undoing would orphan them.
 
 ORDER (section 3.2): the nightly ``backup-db.yml`` dump run on demand first (pg_dump to S3), then the
@@ -89,10 +89,13 @@ DEFERRED = BACKEND / "prisma" / "deferred"
 MIGRATIONS = BACKEND / "prisma" / "migrations"
 #: Applied by --apply before it writes (each idempotent); the rest wait for the switch-on commit.
 PREREQUISITES = (
-    "20261108090000_questionnaire_unify_workbook_origin",
     "20261108091000_questionnaire_unify_section_keys",
     "20261108092000_questionnaire_unify_form_title_unique",
+    "20261108093500_questionnaire_unify_form_mirror",
 )
+#: The form mirror's triggers and functions (prerequisite 3), removed by --undo when the run installed them.
+MIRROR_TRIGGERS = (("questionnaire_form_section_mirror", "QuestionnaireFormSection"), ("questionnaire_form_question_mirror", "QuestionnaireFormQuestion"))
+MIRROR_FUNCTIONS = ("questionnaire_form_section_mirror()", "questionnaire_form_question_mirror()", "questionnaire_form_mirror_rank(text)")
 #: Index names the prerequisites drop or create, recorded in the snapshot for the undo.
 INDEX_DDL = {
     "QuestionnaireSection_code_key": 'CREATE UNIQUE INDEX "QuestionnaireSection_code_key" ON "QuestionnaireSection"("code")',
@@ -232,7 +235,11 @@ async def schema_state(client: Any) -> dict[str, Any]:
     indexes = await client.query_raw(
         "SELECT indexname AS n FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ANY($1::text[])", list(INDEX_DDL),
     )
+    mirror = await client.query_raw(
+        "SELECT tgname AS n FROM pg_trigger WHERE tgname = ANY($1::text[])", [t for t, _ in MIRROR_TRIGGERS],
+    )
     return {
+        "mirror": len(mirror) == len(MIRROR_TRIGGERS),
         "columns": columns,
         "u0": "QuestionnaireBinding" in columns and "QuestionnaireRespondent" in columns and "lineageId" in columns["QuestionnaireQuestion"],
         "workbook": any(str(r["v"]) == "WORKBOOK" for r in origins),
@@ -375,6 +382,8 @@ async def load(client: Any, state: dict[str, Any]) -> dict[str, Any]:
             (f"A:{r['artisanId']}" if r.get("artisanId") else f"R:{r['respondentId']}", str(r["questionLineageId"])): str(r["id"])
             for r in await q('SELECT "id", "artisanId", "respondentId", "questionLineageId" FROM "QuestionnaireAnswer"')
         }
+        v2["revision_text"] = {str(r["id"]): (r["text"], r.get("note")) for r in await q(
+            """SELECT "id", "text", "note" FROM "QuestionnaireAnswerRevision" WHERE "id" LIKE 'u5-rev-%'""")}
         v2["revisions"] = {str(r["id"]) for r in await q('SELECT "id" FROM "QuestionnaireAnswerRevision"')}
         v2["recordings"] = {str(r["mediaFileId"]) for r in await q('SELECT "mediaFileId" FROM "QuestionnaireRecording"')}
         v2["drafts"] = {str(r["id"]) for r in await q('SELECT "id" FROM "QuestionnaireTakeDraft"')}
@@ -677,6 +686,10 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
     # counts
     sessions_ids = {s["id"] for s in plan.sessions}
     have_answers = set(v2["answers"].values())
+    source_text = {str(a["id"]): (a.get("answerText") or "", a.get("notes")) for a in data["form_answers"]}
+    source_text.update({str(r["id"]): (r.get("answerText") or "", r.get("notes")) for r in data["responses"]})
+    stale = sum(1 for a in plan.answers for r in a["revisions"]
+                if r["id"] in v2.get("revision_text", {}) and v2["revision_text"][r["id"]] != source_text.get(r["sourceId"]))
     plan.pending.update({
         "sessionsFromSittings": sum(1 for s in plan.sessions if s["id"] not in data["all_session_ids"]),
         "sessionsReconstructed": sum(1 for r in plan.reconstruct if r["id"] not in v2["reconstructed"]),
@@ -687,6 +700,7 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
         "recordings": sum(1 for r in plan.recordings if r["mediaId"] not in v2["recordings"]),
         "takeDrafts": sum(1 for d in plan.drafts if d["id"] not in v2["drafts"]),
         "consentRows": len(plan.consents),
+        "revisionsChangedAtSource": stale,
     })
     revisions = [r for a in plan.answers for r in a["revisions"]]
     plan.counts = {
@@ -870,6 +884,7 @@ async def take_snapshot(client: Any, run_id: str, *, approver: str, state: dict[
         await _set_meta(tx, snap, "run", {"runId": run_id, "approvedBy": approver, "takenAt": datetime.now(UTC).isoformat(), "rows": counts})
         await _set_meta(tx, snap, "indexes", sorted(state["indexes"]))
         await _set_meta(tx, snap, "workbookBefore", state["workbook"])
+        await _set_meta(tx, snap, "mirrorBefore", state["mirror"])
     return snap
 
 
@@ -996,6 +1011,17 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
                 f'x."updatedAt", x."notes" FROM "{src}" x WHERE x."id" = $5 ON CONFLICT ("id") DO NOTHING',
                 r["id"], a["id"], r["origin"], r["attribution"], r["sourceId"],
             ) or 0)
+            # a sitting edited in the old screens after an earlier apply (the window before the switch)
+            n += int(await ex(
+                f"""UPDATE "QuestionnaireAnswerRevision" v SET "text" = COALESCE(x."answerText", ''), "note" = x."notes", """
+                f"""\"createdAt\" = x."updatedAt" FROM "{src}" x WHERE v."id" = $1 AND x."id" = $2 """
+                f"""AND (v."text" IS DISTINCT FROM COALESCE(x."answerText", '') OR v."note" IS DISTINCT FROM x."notes")""",
+                r["id"], r["sourceId"],
+            ) or 0)
+        n += int(await ex(
+            'UPDATE "QuestionnaireAnswer" SET "currentRevisionId" = $2, "version" = $3 WHERE "id" = $1 '
+            'AND ("currentRevisionId" IS DISTINCT FROM $2 OR "version" <> $3)', a["id"], a["revisions"][-1]["id"], len(a["revisions"]),
+        ) or 0)
     # clips -> recordings
     for r in plan.recordings:
         written = int(await ex(
@@ -1046,6 +1072,7 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
 #: Tables whose new rows can only be v2 content (the switch is off while this runs). A row in one of
 #: them that neither the snapshot nor the run holds is native content, and the undo refuses.
 V2_ONLY = (
+    "QuestionnaireSection", "QuestionnaireQuestion",  # new rows there since the apply came through the form mirror
     "QuestionnaireInterviewResearcher", "QuestionnaireRespondent", "QuestionnaireAnswer", "QuestionnaireAnswerRevision",
     "QuestionnaireRecording", "QuestionnaireRecordingTarget", "QuestionnaireRecordingSubject", "QuestionnaireRecordingRespondent",
     "QuestionnaireRecordingEvent", "QuestionnaireTakeDraft",
@@ -1130,13 +1157,18 @@ async def undo(client: Any, run_id: str) -> int:
             if n:
                 native[table] = n
     if native:
-        raise UndoRefused(f"native v2 content exists since the apply ({native}); undoing would orphan it")
+        raise UndoRefused(f"native v2 content or mirrored authoring exists since the apply ({native}); undoing would orphan it")
     if moved:
         raise UndoRefused(f"rows the run wrote have been changed since ({moved}); undoing would discard those changes")
     restored = 0
     async with client.tx(max_wait=timedelta(seconds=15), timeout=timedelta(seconds=900)) as tx:
         # The U0 CHECK holds every row written since (NOT VALID); an old interview may name both workshops.
         await tx.execute_raw('ALTER TABLE "QuestionnaireInterview" DROP CONSTRAINT IF EXISTS "QuestionnaireInterview_one_workshop_kind"')
+        if not meta.get("mirrorBefore"):  # the form mirror goes with the run that installed it
+            for trigger, table in MIRROR_TRIGGERS:
+                await tx.execute_raw(f'DROP TRIGGER IF EXISTS {trigger} ON "{table}"')
+            for function in MIRROR_FUNCTIONS:
+                await tx.execute_raw(f"DROP FUNCTION IF EXISTS {function}")
         for table in TABLES:  # rows the run changed: back to the snapshot
             pk, cols = info[table]
             rest = [c for c in cols if c not in pk]
@@ -1195,7 +1227,7 @@ async def run(args: argparse.Namespace) -> int:
                 restored = await undo(client, args.run_id)
             except UndoRefused as exc:
                 raise qv2_guard.Refused(str(exc)) from None
-            print(f"UNDONE: run {args.run_id}, {restored} rows restored to the snapshot. The AnswerOrigin value WORKBOOK stays (unused).")
+            print(f"UNDONE: run {args.run_id}, {restored} rows restored to the snapshot.")
             return 0
         plan, state = await dry_plan(client, args)
         csv_text = report_csv(plan)

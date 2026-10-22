@@ -264,6 +264,8 @@ def test_the_recorder_sits_inside_cors_and_outside_the_router(
         "CORSMiddleware",
         "UsageEventMiddleware",
         "UnhandledErrorMiddleware",
+        # Notes the caller's app build after the response (services/app_versions); never answers.
+        "AppVersionMiddleware",
         # Innermost: it must see the route's own answer (app/core/idempotency.py).
         "IdempotencyMiddleware",
     ]
@@ -732,6 +734,8 @@ async def test_get_current_user_writes_only_the_identity_into_scope_state(
     assert scope["state"] == {
         usage.USAGE_USER_ID_KEY: "u-42",
         usage.USAGE_CONSENT_KEY: usage.UsageConsent.NOT_RECORDED,
+        # The same identity, for the app-build telemetry (services/app_versions.SCOPE_USER_KEY).
+        "appVersionUserId": "u-42",
     }
 
 
@@ -780,6 +784,8 @@ async def test_the_stitch_asks_for_a_connection_and_not_for_a_request(
     assert scope["state"] == {
         usage.USAGE_USER_ID_KEY: "u-42",
         usage.USAGE_CONSENT_KEY: usage.UsageConsent.NOT_RECORDED,
+        # The same identity, for the app-build telemetry (services/app_versions.SCOPE_USER_KEY).
+        "appVersionUserId": "u-42",
     }
 
 

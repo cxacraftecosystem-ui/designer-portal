@@ -97,9 +97,9 @@ test("every record form carries the anchors its rules name", () => {
     "components/forms/ArtisanForm.tsx": ["dateOfBirth", "craftStartDate", "craft", "dos", "donts", "location", "photo"],
     "components/forms/ProductForm.tsx": ["artisan", "sellingPrice", "costOfMaking", "timeTaken", "dimensions", "marketDemand", "photo"],
     "components/forms/ToolForm.tsx": ["artisan", "localName", "material", "dimensions", "maker", "traditionType", "replacementCost", "photo"],
-    "app/(protected)/workshops/page.tsx": ["startDate", "endDate", "artisans", "crafts", "photo"],
-    // The interview date is derived by the server, so it has no box to jump to.
-    "app/(protected)/questionnaire/page.tsx": ["place", "language", "artisans", "answers", "recording"]
+    "app/(protected)/workshops/page.tsx": ["startDate", "endDate", "artisans", "crafts", "photo"]
+    // The retired global interview form (UNIFY 4.4) had anchors here; a session's coverage grid is
+    // where an interview's gaps are shown now.
   };
   for (const [file, keys] of Object.entries(expected)) {
     const found = anchors(file);
@@ -110,8 +110,7 @@ test("every record form carries the anchors its rules name", () => {
     "components/forms/ArtisanForm.tsx": "artisan",
     "components/forms/ProductForm.tsx": "product",
     "components/forms/ToolForm.tsx": "tool",
-    "app/(protected)/workshops/page.tsx": "workshop",
-    "app/(protected)/questionnaire/page.tsx": "interview"
+    "app/(protected)/workshops/page.tsx": "workshop"
   };
   for (const [file, kind] of Object.entries(kindOf)) {
     const keys = BUNDLED_RULES.kinds[kind as keyof typeof BUNDLED_RULES.kinds].map((rule) => rule.key).filter((key) => key !== "interviewDate");

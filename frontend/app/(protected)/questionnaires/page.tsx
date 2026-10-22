@@ -40,6 +40,12 @@ import { SearchInput } from "@/components/SearchInput";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
 import { DeletedQuestionnairesCard } from "@/components/questionnaires/DeletedQuestionnairesCard";
+import { OpenBundleButton } from "@/components/questionnaires/BundleControls";
+import { useQuestionnaireConfig } from "@/components/questionnaire/useQuestionnaireConfig";
+import { SegmentedChoice } from "@/components/ui/SegmentedChoice";
+import { useAuth } from "@/components/AuthProvider";
+import { qs } from "@/lib/questionnaire/qs";
+import { inTab } from "@/lib/questionnaireLinks";
 import { ReuseDialog } from "@/components/questionnaires/ReuseDialog";
 import { UploadDialog } from "@/components/questionnaires/UploadDialog";
 import { UploadReport } from "@/components/questionnaires/UploadReport";
@@ -91,6 +97,14 @@ export default function QuestionnairesPage() {
   // The trash and its Restore: a content admin sees every deleted form, in admin view (2026-10-20);
   // anyone else sees the forms they authored, which they may restore (owner, 22 Oct 2026).
   const { adminMode, canDeleteRecords } = useAdminView();
+  const { user: me } = useAuth();
+  const v2 = Boolean(useQuestionnaireConfig()?.v2Enabled);
+  /**
+   * THE LIBRARY'S TABS (UNIFY 4.2): Mine (this account's own forms), Shared (published to everyone),
+   * Workshop (on a workshop this account works on, someone else's), and Deleted for content admins.
+   * One list from the server, which already scopes what this account may see; the tab narrows it.
+   */
+  const [tab, setTab] = useState<"mine" | "shared" | "workshop" | "deleted">("mine");
   const [data, setData] = useState<PageResult<QFormSummary> | null>(null);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
@@ -420,6 +434,13 @@ export default function QuestionnairesPage() {
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
         actions={
           <>
+            <button type="button" className="field-button" onClick={() => setFormOpen((open) => !open)} data-new-form>
+              {qs("newForm")}
+            </button>
+            <button type="button" className="field-button-secondary" onClick={() => setUploadOpen(true)}>
+              <Upload className="h-4 w-4" aria-hidden />
+              {qs("uploadWorkbook")}
+            </button>
             <button
               type="button"
               className="field-button-secondary"
@@ -427,12 +448,9 @@ export default function QuestionnairesPage() {
               onClick={() => download(downloadProForma, "Unable to download the pro-forma")}
             >
               <Download className="h-4 w-4" aria-hidden />
-              {downloading ? "Preparing…" : "Download the pro-forma"}
+              {downloading ? "Preparing…" : qs("downloadProForma")}
             </button>
-            <button type="button" className="field-button" onClick={() => setUploadOpen(true)}>
-              <Upload className="h-4 w-4" aria-hidden />
-              Upload a filled-in pro-forma
-            </button>
+            <OpenBundleButton />
           </>
         }
       />
@@ -501,13 +519,29 @@ export default function QuestionnairesPage() {
         not use. Drawing this behind a permission would be exactly the "hidden behind a permission
         the API would in fact allow" failure this change was asked to remove.
       */}
-      <p className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
-        The shared artisan questionnaire is on{" "}
-        <Link href="/questionnaire" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
-          Take interview
-        </Link>
-        .
-      </p>
+      {v2 ? (
+        <p className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
+          Answer a form in a{" "}
+          <Link href="/questionnaire" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
+            session
+          </Link>
+          .
+        </p>
+      ) : null}
+
+      <div className="mb-4" data-forms-tabs>
+        <SegmentedChoice
+          label={qs("formsTitle")}
+          value={tab}
+          onChange={(v) => setTab(v as typeof tab)}
+          options={[
+            { value: "mine", label: qs("formsMine") },
+            { value: "shared", label: qs("formsShared") },
+            { value: "workshop", label: qs("formsWorkshop") },
+            ...(canDeleteRecords ? [{ value: "deleted", label: qs("formsDeleted") }] : [])
+          ]}
+        />
+      </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <SearchInput
@@ -736,7 +770,7 @@ export default function QuestionnairesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-200">
-                {data.items.map((row) => (
+                {data.items.filter((row) => inTab(row, tab, me?.id ?? null)).map((row) => (
                   // The whole row opens the questionnaire; every action button keeps its own click.
                   <OpenableRow key={row.id} href={`/questionnaires/${row.id}`}>
                     <td className="px-4 py-3">
@@ -862,7 +896,7 @@ export default function QuestionnairesPage() {
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
 
-      {adminMode || !canDeleteRecords ? (
+      {tab === "deleted" || adminMode || !canDeleteRecords ? (
         <DeletedQuestionnairesCard ownOnly={!canDeleteRecords} onRestored={() => void load()} />
       ) : null}
 

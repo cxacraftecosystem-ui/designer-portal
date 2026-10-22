@@ -936,6 +936,14 @@ export type SearchableSelectProps = {
   clearable?: boolean;
   /** The Clear button's accessible name. Defaults to "Clear <ariaLabel>" or "Clear selection". */
   clearLabel?: string;
+  /**
+   * The filter box's value, reported on every keystroke AND every reset (opening and closing the
+   * panel blank it), so a caller that narrows its list on the server never holds a term the reader
+   * can see is gone. The shared questionnaire screens use it; everything else leaves it undefined.
+   */
+  onSearch?: (query: string) => void;
+  /** The trigger's id, so a sibling `<label htmlFor>` names it. */
+  id?: string;
 };
 
 export function SearchableSelect({
@@ -955,7 +963,9 @@ export function SearchableSelect({
   noneLabel,
   createAction,
   clearable = false,
-  clearLabel
+  clearLabel,
+  onSearch,
+  id
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   /**
@@ -963,7 +973,16 @@ export function SearchableSelect({
    * `serverQuery`. With one, the term is the caller's state and this stays unread — a second copy
    * would be a second answer to "what is in the box".
    */
-  const [ownQuery, setOwnQuery] = useState("");
+  const [ownQuery, setOwnQueryState] = useState("");
+  // `onSearch` through a ref: callers pass an inline closure, a new identity on every render.
+  const searchRef = useRef(onSearch);
+  useEffect(() => {
+    searchRef.current = onSearch;
+  });
+  const setOwnQuery = useCallback((next: string) => {
+    setOwnQueryState(next);
+    searchRef.current?.(next);
+  }, []);
   const [highlight, setHighlight] = useState(0);
   /**
    * Has the reader MOVED the highlight, as against it merely defaulting to row 0?
@@ -980,7 +999,7 @@ export function SearchableSelect({
   const panelRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
   const listboxId = `${baseId}-listbox`;
-  const triggerId = `${baseId}-trigger`;
+  const triggerId = id ?? `${baseId}-trigger`;
   const typeahead = useTypeahead();
   const fieldLabelId = useFieldLabelId();
 
@@ -1124,7 +1143,7 @@ export function SearchableSelect({
     setOpen(false);
     // `ownQuery` only. A caller's `serverQuery.value` is theirs; see `writeQuery`.
     setOwnQuery("");
-  }, []);
+  }, [setOwnQuery]);
 
   /** Close, then hand the keyboard on. `advanceOnSelect` decides whether "on" means the next field. */
   const closeAndMoveOn = useCallback(
