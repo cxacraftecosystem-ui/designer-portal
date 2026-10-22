@@ -278,9 +278,18 @@ async def seed(client) -> None:
     )
 
 
+SOURCES = ("QuestionnaireFormSection", "QuestionnaireFormQuestion", "QuestionnaireFormEntry", "QuestionnaireFormAnswer",
+           "QuestionnaireResponse", "QuestionnaireAnswerDraft", "MediaFile", "DesignWorkshop")
+
+
 async def fingerprint(client) -> dict[str, str]:
+    """Every affected table and every source table, as text, hashed (those that exist yet)."""
+    present = {str(r["t"]) for r in await client.query_raw(
+        "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = current_schema()")}
     out = {}
-    for table in unify.TABLES:
+    for table in (*unify.TABLES, *SOURCES):
+        if table not in present:
+            continue
         rows = await client.query_raw(f"SELECT md5(COALESCE(string_agg(t::text, '|' ORDER BY t::text), '')) AS h, count(*) AS n FROM \"{table}\" t")
         out[table] = f"{rows[0]['n']}:{rows[0]['h']}"
     return out
