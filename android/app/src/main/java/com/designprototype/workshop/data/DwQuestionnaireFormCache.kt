@@ -93,7 +93,17 @@ data class CachedQuestionnaireForm(
     /** The questionnaire's own version at the moment of the fetch. The write's precondition. */
     val version: Int = 0,
     val form: CustomQuestionnaireDto,
+    /**
+     * A16 / DR audit M15 (22 Oct 2026): the account whose session read this copy. The form carries
+     * its sittings and respondents' names, so a copy is served only to that same signed-in account
+     * ([formCacheReadableBy]); a file with no owner (written by an older build) is never served.
+     */
+    val ownerUserId: String = "",
 )
+
+/** A16: may [viewerId] be served a form copy written for [ownerUserId]? Only the same signed-in account. */
+fun formCacheReadableBy(ownerUserId: String, viewerId: String?): Boolean =
+    !viewerId.isNullOrBlank() && ownerUserId.isNotBlank() && ownerUserId == viewerId
 
 /** See [CachedQuestionnaireForm.schemaVersion]. */
 const val QUESTIONNAIRE_FORM_CACHE_VERSION = 1
@@ -138,7 +148,10 @@ object DwQuestionnaireFormCache {
         context: Context,
         form: CustomQuestionnaireDto,
         includeRetired: Boolean,
+        ownerUserId: String?,
     ): Boolean = withContext(Dispatchers.IO) {
+        // A16: a copy nobody owns is never written, so nothing unscoped reaches the disk.
+        if (ownerUserId.isNullOrBlank()) return@withContext false
         mutex.withLock {
             runCatching {
                 val target = file(context, form.id, includeRetired)
@@ -149,6 +162,7 @@ object DwQuestionnaireFormCache {
                         includeRetired = includeRetired,
                         version = form.version,
                         form = form,
+                        ownerUserId = ownerUserId,
                     )
                 ).toByteArray()
                 FileOutputStream(temp).use { out ->
@@ -170,6 +184,7 @@ object DwQuestionnaireFormCache {
         context: Context,
         id: String,
         includeRetired: Boolean,
+        viewerId: String?,
     ): CachedQuestionnaireForm? = withContext(Dispatchers.IO) {
         mutex.withLock {
             val target = file(context, id, includeRetired)
@@ -179,6 +194,8 @@ object DwQuestionnaireFormCache {
             }.getOrNull() ?: return@withLock null
             // A file from the future is not read. See CachedQuestionnaireForm.schemaVersion.
             if (cached.schemaVersion > QUESTIONNAIRE_FORM_CACHE_VERSION) return@withLock null
+            // A16: another account's copy is refused, never served.
+            if (!formCacheReadableBy(cached.ownerUserId, viewerId)) return@withLock null
             cached
         }
     }
@@ -206,7 +223,8 @@ object DwQuestionnaireFormCache {
         context: Context,
         id: String,
         preferred: Boolean,
-    ): CachedQuestionnaireForm? = get(context, id, preferred) ?: get(context, id, !preferred)
+        viewerId: String?,
+    ): CachedQuestionnaireForm? = get(context, id, preferred, viewerId) ?: get(context, id, !preferred, viewerId)
 
     /** Forget one questionnaire's copies — used when it is deleted, never on a clock. */
     suspend fun forget(context: Context, id: String) = withContext(Dispatchers.IO) {

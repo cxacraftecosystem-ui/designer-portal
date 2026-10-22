@@ -199,6 +199,13 @@ export class QuestionnaireFake {
     return this.calls.filter((c) => c.method === method && (typeof path === "string" ? c.path === path : path.test(c.path)));
   }
 
+  /** B24: question lineage -> artisan column it is prefilled from (none by default). */
+  prefill: Record<string, string> = {};
+  /** B32: whether f1 is the global default form. */
+  isDefault = false;
+  /** Paths answered with a dropped connection (A16: reading a form with no signal). */
+  unreachable: RegExp[] = [];
+
   /** Artisan consent answers the fake gives (`GET /artisans/{id}/consent`). */
   consent: Record<string, string> = { a2: "REFUSED" };
   /** The open session `GET /questionnaire/sessions/open-match` reports, when set. */
@@ -255,12 +262,49 @@ export class QuestionnaireFake {
       return { status: 201, json: form };
     }
     if (path === "/artisans/a1" && method === "GET")
-      return { status: 200, json: { id: "a1", name: "Giriraj Prasad Chhipa", place: "Bagru", status: "APPROVED", createdById: ME.id, craft: { name: "Hand Block Printing" }, designWorkshopId: WORKSHOP.id } };
+      return { status: 200, json: { id: "a1", name: "Giriraj Prasad Chhipa", place: "Bagru", phone: "9829000000", phoneCountryCode: "+91", status: "APPROVED", createdById: ME.id, craft: { name: "Hand Block Printing" }, designWorkshopId: WORKSHOP.id } };
+    if (path === "/questionnaires/upload" && method === "POST")
+      return {
+        status: 201,
+        json: {
+          questionnaire: { ...this.forms[0], id: "fup", title: "Bagru dyers", questionCount: 4, sections: [], entries: [] },
+          report: {
+            created: 4, superseded: 0, retired: 0, removed: 0, unchanged: 0, sections: 2, versionBefore: 0, versionAfter: 1, problems: [],
+            entriesCreated: 2, answersImported: 7, answersSkipped: 0,
+            provenance: { action: "answersImported", sourceQuestionnaireId: null, answersImported: 7, answersSkipped: 0, entriesCreated: 2, reason: "The sheet's answers were recorded under your name." }
+          }
+        }
+      };
+    if (path === "/questionnaires/f1/upload" && method === "POST")
+      return {
+        status: 200,
+        json: {
+          questionnaire: { ...this.forms[0], questionCount: 4, version: 2, sections: [], entries: [] },
+          report: { created: 1, updated: 0, superseded: 1, retired: 0, removed: 0, kept: 0, unchanged: 2, sections: 0, versionBefore: 1, versionAfter: 2, problems: [], details: [], provenance: null }
+        }
+      };
+    if (path === "/questionnaires/f1/reuse" && method === "POST")
+      return {
+        status: 201,
+        json: {
+          sourceQuestionnaireId: "f1",
+          questionnaire: { ...this.forms[0], id: "fcopy", title: "2nd Craft Toolkit (copy)", questionCount: 3, sections: [], entries: [] },
+          report: {
+            created: 3, superseded: 0, retired: 0, removed: 0, unchanged: 0, sections: 2, versionBefore: 0, versionAfter: 1, problems: [],
+            provenance: { action: "reused", sourceQuestionnaireId: "f1", answersSkipped: 0, reason: "Questions only; no answers were copied." }
+          }
+        }
+      };
+    if (path === "/questionnaires/f1/default" && method === "PUT") {
+      this.isDefault = Boolean((body as Json).isDefault);
+      return { status: 200, json: { ...this.forms[0], isDefault: this.isDefault, sections: [], entries: [], questionCount: 3 } };
+    }
     if (path === "/questionnaires/f1" && method === "GET")
       return {
         status: 200,
         json: {
           ...this.forms[0],
+          isDefault: this.isDefault,
           questionCount: 3,
           entries: [],
           sections: FORM.sections.map((sec) => ({
@@ -334,7 +378,17 @@ export class QuestionnaireFake {
       };
     }
     m = one(/^\/questionnaire\/forms\/([^/]+)\/structure$/);
-    if (m) return { status: 200, json: FORM };
+    if (m)
+      return {
+        status: 200,
+        json: {
+          ...FORM,
+          sections: FORM.sections.map((sec) => ({
+            ...sec,
+            questions: sec.questions.map((q) => ({ ...q, artisanField: this.prefill[q.lineageId] ?? q.artisanField }))
+          }))
+        }
+      };
     m = one(/^\/questionnaire\/forms\/([^/]+)\/bindings$/);
     if (m && method === "GET") return { status: 200, json: { questionnaireId: m[1], bindings: this.bindings } };
     if (m && method === "PUT") {
@@ -390,7 +444,7 @@ export class QuestionnaireFake {
         if (current && String(current.text).trim() && current.actorId !== ME.id && this.role !== "ADMIN") {
           return { ...base, status: "FORBIDDEN", code: "ANSWER_LOCKED", answer: null, current };
         }
-        const saved = { id: current?.id ?? `ans-${this.answers.length + 1}`, version: Number(current?.version ?? 0) + 1, text: item.text, origin: item.origin, attribution: item.attribution, pinned: false, sourceRecordingId: item.sourceRecordingId ?? null, actorId: ME.id, note: item.note ?? null };
+        const saved = { id: current?.id ?? `ans-${this.answers.length + 1}`, version: Number(current?.version ?? 0) + 1, text: item.text, origin: item.origin, attribution: item.attribution, pinned: false, sourceRecordingId: item.sourceRecordingId ?? null, actorId: ME.id, note: item.note ?? null, richText: item.richText ?? null };
         if (current) Object.assign(current, saved);
         else this.answers.push({ ...saved, ...base });
         return { ...base, status: "SAVED", answer: saved, current: null };
@@ -498,6 +552,7 @@ export class QuestionnaireFake {
           body = null;
         }
         this.calls.push({ method: request.method(), path, query: url.searchParams, body });
+        if (this.unreachable.some((re) => re.test(path))) return route.abort("internetdisconnected");
         const out = this.answer(request.method(), path, url.searchParams, body);
         if (!out) return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "Not Found" }) });
         if (out.status === 204) return route.fulfill({ status: 204, body: "" });

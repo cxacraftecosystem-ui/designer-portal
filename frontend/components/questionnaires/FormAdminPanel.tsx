@@ -13,6 +13,7 @@ import { formatDate } from "@/lib/format";
 import { isAdmin as isAdminUser } from "@/lib/permissions";
 import { questionnaireApi, type Binding, type Session } from "@/lib/questionnaire/api";
 import { qs } from "@/lib/questionnaire/qs";
+import { setDefaultQuestionnaire } from "@/lib/questionnaireForms";
 import { listWorkshops, type PortalWorkshop } from "@/lib/questionnairePortal";
 
 /**
@@ -32,6 +33,8 @@ export function FormAdminPanel({ questionnaireId, isDefault }: { questionnaireId
   const [kind, setKind] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [isGlobalDefault, setGlobalDefault] = useState(Boolean(isDefault));
+  useEffect(() => setGlobalDefault(Boolean(isDefault)), [isDefault]);
 
   useEffect(() => {
     if (!on || !isAdmin) return;
@@ -133,7 +136,21 @@ export function FormAdminPanel({ questionnaireId, isDefault }: { questionnaireId
           {qs("save")}
         </button>
       </div>
-      {isDefault ? <p className="text-xs text-ink-500">{qs("setDefault")}</p> : null}
+      {/* B32: the global default — the form a session gets when its workshop has none bound. */}
+      <Toggle
+        label={qs("defaultFormToggle")}
+        description={qs("defaultFormNote")}
+        checked={isGlobalDefault}
+        disabled={busy}
+        onChange={(next: boolean) => {
+          setBusy(true);
+          setMessage(null);
+          void setDefaultQuestionnaire(questionnaireId, next)
+            .then((form) => setGlobalDefault(Boolean(form.isDefault)))
+            .catch((failure: unknown) => setMessage(failure instanceof Error ? failure.message : String(failure)))
+            .finally(() => setBusy(false));
+        }}
+      />
 
       {/* B29: the corpus of this form's approved answers and recordings, for an admin's dataset work. */}
       <h3 className="mt-2 text-sm font-semibold text-ink-900">{qs("corpusTitle")}</h3>

@@ -72,6 +72,7 @@ from app.core.deps import (
     can_run_design_workshops,
     get_current_user,
     is_content_admin,
+    require_admin,
     require_content_admin,
 )
 from app.questionnaire import authoring as questionnaire_authoring, shims_dr
@@ -82,6 +83,7 @@ from app.schemas.questionnaire import (
     CustomSectionCreate,
     CustomSectionUpdate,
     QuestionnaireCreate,
+    QuestionnaireDefaultUpdate,
     QuestionnaireEntryCreate,
     QuestionnaireEntryUpdate,
     QuestionnaireReuse,
@@ -1868,6 +1870,35 @@ async def restore_questionnaire(
         where={"id": questionnaire_id}, data={"deletedAt": None, "deletedById": None}
     )
     return public_encode({"id": restored.id, "title": restored.title, "deletedAt": None})
+
+
+@router.put("/{questionnaire_id}/default")
+async def set_default_questionnaire(
+    questionnaire_id: str,
+    payload: QuestionnaireDefaultUpdate,
+    current_user: Any = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin only (UNIFY B32; set on the web alone, ministry/admin authoring): the global default.
+
+    NOT AN EDIT TO THE FORM, so not its author's: it decides where every session lands that has no
+    form bound to its workshop or the workshop's kind (``questionnaire.bindings.resolve``). One
+    default at a time, held by the partial unique index ``Questionnaire_isDefault_key``: the old one
+    is cleared first, in the same transaction. Clearing touches this form only, never another's
+    default. A deleted or retired form cannot become the default.
+    """
+    record = await require_record(db.questionnaire, questionnaire_id)
+    if payload.isDefault and (record.deletedAt is not None or not record.isActive):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A deleted or retired questionnaire cannot be the default. Restore or reactivate it first.",
+        )
+    async with db.tx() as tx:
+        if payload.isDefault:
+            await tx.questionnaire.update_many(
+                where={"isDefault": True, "NOT": {"id": questionnaire_id}}, data={"isDefault": False}
+            )
+        await tx.questionnaire.update(where={"id": questionnaire_id}, data={"isDefault": payload.isDefault})
+    return public_encode(await load_form(questionnaire_id, include_retired=True))
 
 
 async def _entry_in(

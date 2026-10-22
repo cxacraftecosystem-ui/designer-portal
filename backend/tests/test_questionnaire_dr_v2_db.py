@@ -179,3 +179,67 @@ def test_an_old_global_form_create_lands_on_the_primary_form(monkeypatch: pytest
             await client.disconnect()
 
     asyncio.run(go())
+
+
+def test_a_session_keeps_the_start_sheet_fix_and_an_admin_sets_the_global_default(monkeypatch: pytest.MonkeyPatch, v2_on) -> None:
+    """C9: the start sheet's GPS fix becomes the session's Location (never asked on an edit). B32:
+    ``PUT /questionnaires/{id}/default`` is an admin's; one default at a time; a session whose
+    workshop has nothing bound is offered it."""
+    from fastapi import HTTPException
+
+    from app.api.routes import questionnaire_forms as forms_routes
+    from app.core import db as core_db
+    from app.questionnaire import bindings, schemas as S, sessions
+    from app.schemas.questionnaire import QuestionnaireDefaultUpdate
+    from app.services import questionnaire_forms as forms_service, records
+
+    async def go() -> None:
+        client = await _client()
+        for module in (core_db, forms_service, records, forms_routes):
+            monkeypatch.setattr(module, "db", client)
+        tag = uuid.uuid4().hex[:10]
+        try:
+            ids = await _seed(client, tag)
+            lead, admin = _user(ids["lead"]), _user(ids["admin"], "ADMIN")
+            create = S.SessionCreate(
+                clientKey=f"loc{tag}", questionnaireId=ids["form"], designWorkshopId=ids["dw"], sessionDate=date(2026, 10, 22),
+                place="Bagru", respondents=[S.RespondentInput(name="Visitor", kind="GUEST")],
+                location=S.SessionLocation(latitude=26.82, longitude=75.55, accuracy=12),
+            )
+            session, _ = await sessions.create_session(create, lead)
+            row = (await client.query_raw(
+                'SELECT l."latitude", l."longitude", l."accuracy", i."place" FROM "QuestionnaireInterview" i '
+                'JOIN "Location" l ON l."id" = i."locationId" WHERE i."id" = $1', session["id"],
+            ))[0]
+            assert (row["latitude"], row["longitude"], row["accuracy"], row["place"]) == (26.82, 75.55, 12, "Bagru")
+            from pydantic import ValidationError
+
+            with pytest.raises(ValidationError):
+                S.SessionCreate(clientKey="x", questionnaireId="f", sessionDate=date(2026, 10, 22),
+                                respondents=[S.RespondentInput(name="V", kind="GUEST")], location={"latitude": 120, "longitude": 0})
+
+            # B32: only an admin; the old default is cleared; clearing touches this form only.
+            other = f"g{tag}"
+            await client.execute_raw(
+                'INSERT INTO "Questionnaire" ("id", "title", "ownerId", "isDefault", "updatedAt") VALUES ($1, $2, $3, false, now())',
+                other, f"Other {tag}", ids["admin"],
+            )
+            await client.execute_raw('UPDATE "Questionnaire" SET "isDefault" = false WHERE "isDefault"')
+            out = await forms_routes.set_default_questionnaire(other, QuestionnaireDefaultUpdate(isDefault=True), admin)
+            assert out["isDefault"] is True
+            out = await forms_routes.set_default_questionnaire(ids["form"], QuestionnaireDefaultUpdate(isDefault=True), admin)
+            assert out["isDefault"] is True
+            defaults = await client.query_raw('SELECT "id" FROM "Questionnaire" WHERE "isDefault"')
+            assert [r["id"] for r in defaults] == [ids["form"]], "one default at a time"
+            resolved = await bindings.resolve_for_workshop(client=client)
+            assert (resolved["questionnaireId"], resolved["reason"]) == (ids["form"], "GLOBAL_DEFAULT")
+            await forms_routes.set_default_questionnaire(other, QuestionnaireDefaultUpdate(isDefault=False), admin)
+            assert [r["id"] for r in await client.query_raw('SELECT "id" FROM "Questionnaire" WHERE "isDefault"')] == [ids["form"]]
+            await client.execute_raw('UPDATE "Questionnaire" SET "deletedAt" = now() WHERE "id" = $1', other)
+            with pytest.raises(HTTPException):
+                await forms_routes.set_default_questionnaire(other, QuestionnaireDefaultUpdate(isDefault=True), admin)
+            await forms_routes.set_default_questionnaire(ids["form"], QuestionnaireDefaultUpdate(isDefault=False), admin)
+        finally:
+            await client.disconnect()
+
+    asyncio.run(go())

@@ -169,3 +169,9 @@ export async function coverageScope(workshopId: string): Promise<{ workshopId?: 
   const page = await apiFetch<PageResult<{ id: string }>>(`/artisans${buildQuery({ page: 1, pageSize: 100, designWorkshopId: workshopId })}`);
   return { artisanIds: (page.items ?? []).map((a) => a.id) };
 }
+
+/**
+ * The answer box's editor (decision C8). designer-portal answers with its own rich-text editor and
+ * sends the canonical plain text with the document beside it; see `AnswerTextEditor`.
+ */
+export { AnswerTextEditor, answerEditorValue, answerParts } from "@/components/questionnaires/AnswerTextEditor";

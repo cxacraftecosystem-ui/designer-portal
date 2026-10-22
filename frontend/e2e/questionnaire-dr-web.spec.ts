@@ -92,7 +92,7 @@ test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked wi
   // P15 for Giriraj: Priya answered, and only she or a lead can change it.
   await a1.locator("[data-searchable-select]").first().click();
   await page.getByRole("option", { name: "Giriraj Prasad Chhipa" }).click();
-  await expect(a1.locator("textarea")).toHaveAttribute("readonly", "");
+  await expect(a1.locator("[role=textbox]")).toHaveAttribute("aria-readonly", "true");
   await expect(a1.locator("[data-p15]")).toHaveText("Answered by Priya. Only they or a lead can change it.");
   await a1.locator("[data-history]").click();
   await expect(page.locator("[data-answer-history]")).toContainText("Wooden blocks");
@@ -102,8 +102,8 @@ test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked wi
   const a2 = page.locator("[data-answer-box='l2']");
   await a2.getByRole("button", { name: "Add a note" }).click();
   await a2.locator("[data-answer-note]").fill("Asked twice");
-  await a2.locator("textarea").fill("Carved locally");
-  await a2.locator("textarea").blur();
+  await a2.locator("[role=textbox]").fill("Carved locally");
+  await a2.locator("[role=textbox]").blur();
   await expect.poll(() => fake.calledWith("PUT", "/questionnaire/answers").length).toBeGreaterThan(0);
   const items = (fake.calledWith("PUT", "/questionnaire/answers").at(-1)!.body as { items: Record<string, unknown>[] }).items;
   expect(items).toEqual([
@@ -129,8 +129,8 @@ test("@qf:B22 @qf:C2 @qf:B23 @qf:C3 @qf:B18 @qf:B40 a take's transcript is offer
   const a2 = page.locator("[data-answer-box='l2']");
   await expect(a2.locator("[data-use-as-answer]")).toContainText("My uncle carves them in Pethapur.");
   await a2.locator("[data-use-as-answer]").getByRole("button", { name: "Use as answer" }).click();
-  await a2.locator("textarea").focus();
-  await a2.locator("textarea").blur();
+  await a2.locator("[role=textbox]").focus();
+  await a2.locator("[role=textbox]").blur();
   await expect.poll(() => fake.calledWith("PUT", "/questionnaire/answers").length).toBeGreaterThan(0);
   const items = (fake.calledWith("PUT", "/questionnaire/answers").at(-1)!.body as { items: Record<string, unknown>[] }).items;
   expect(items[0]).toMatchObject({ questionLineageId: "l2", text: "My uncle carves them in Pethapur.", origin: "TRANSCRIPT", sourceRecordingId: "rec-1" });
@@ -343,4 +343,216 @@ test("@qf:B27 a reviewer approves a session from its read view", async ({ page }
   await open(page, fake, "/questionnaire/sessions/s-1/view");
   await page.getByRole("button", { name: "Approve" }).click();
   await expect.poll(() => fake.calledWith("POST", "/review/questionnaire/s-1/approve").length).toBe(1);
+});
+
+
+const WORKBOOK = { name: "Bagru_dyers.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from("PK workbook") };
+
+test("@qf:A2 a hand-filled workbook becomes a form, and its answers come in as sittings", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaires");
+  await page.getByRole("button", { name: "Upload workbook" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("input[type=file]").setInputFiles(WORKBOOK);
+  await dialog.getByRole("button", { name: "Upload questionnaire" }).click();
+  await expect.poll(() => fake.calledWith("POST", "/questionnaires/upload").length).toBe(1);
+  await expect(page.getByText("answers imported")).toBeVisible();
+  await expect(page.getByText("sittings recorded from the sheet")).toBeVisible();
+});
+
+test("@qf:A4 a re-upload edits the form under the keep-old-wording rule and says what it did", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaires/f1");
+  await page.getByRole("button", { name: "Re-upload" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("input[type=file]").setInputFiles(WORKBOOK);
+  await dialog.getByRole("button", { name: "Upload and apply" }).click();
+  await expect.poll(() => fake.calledWith("POST", "/questionnaires/f1/upload").length).toBe(1);
+  await expect(page.getByText("reworded into new questions")).toBeVisible();
+});
+
+test("@qf:A5 a form is reused as a template: its questions, no answers", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaires/f1");
+  await page.getByRole("button", { name: "Reuse at another workshop" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Create the reuse" }).click();
+  await expect.poll(() => fake.calledWith("POST", "/questionnaires/f1/reuse").length).toBe(1);
+  await expect(page.getByText("questions copied")).toBeVisible();
+});
+
+test("@qf:A16 a form read once opens again with no signal, from this account's copy", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaires/f1");
+  await expect(page.getByRole("heading", { name: "2nd Craft Toolkit" })).toBeVisible();
+  await expect(page.getByText("Which tools do you use?")).toBeVisible();
+  fake.unreachable = [/^\/questionnaires\/f1$/];
+  await page.reload();
+  await expect(page.getByText("You are reading the copy this browser downloaded")).toBeVisible();
+  await expect(page.getByText("Which tools do you use?")).toBeVisible();
+});
+
+test("@qf:A15 a form, a section and a question made offline are sent in order once online", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "onLine", { configurable: true, get: () => !(window as unknown as { __qOffline?: boolean }).__qOffline });
+  });
+  await open(page, fake, "/questionnaires");
+  await page.evaluate(() => ((window as unknown as { __qOffline: boolean }).__qOffline = true));
+  await page.locator("[data-new-form]").click();
+  await page.locator("input[name='title']").fill("Dyers of Bagru");
+  await page.getByRole("button", { name: "Create questionnaire" }).click();
+  await expect(page).toHaveURL(/\/questionnaires\/tmp-form-/);
+  await expect(page.locator("[data-offline-form]")).toContainText("Dyers of Bagru");
+  await page.getByRole("textbox", { name: "Section title" }).fill("Dyes");
+  await page.getByRole("button", { name: "Add section" }).click();
+  await expect(page.locator("[data-pending-section]")).toContainText("Dyes");
+  await page.getByRole("textbox", { name: "Question" }).fill("Which dyes?");
+  await page.getByRole("button", { name: "Add question" }).click();
+  await expect(page.locator("[data-pending-question]")).toContainText("Which dyes?");
+  expect(fake.calledWith("POST", /^\/questionnaires/)).toHaveLength(0);
+  await page.evaluate(() => {
+    (window as unknown as { __qOffline: boolean }).__qOffline = false;
+    window.dispatchEvent(new Event("online"));
+  });
+  await expect(page).toHaveURL(/\/questionnaires\/fnew1$/);
+  expect(fake.calledWith("POST", /^\/questionnaires/).map((c) => c.path)).toEqual([
+    "/questionnaires",
+    "/questionnaires/fnew1/sections",
+    "/questionnaires/fnew1/sections/fnew1-s1/questions"
+  ]);
+  expect(fake.calledWith("POST", "/questionnaires/fnew1/sections/fnew1-s1/questions")[0].body).toMatchObject({ prompt: "Which dyes?" });
+});
+
+test("@qf:B32 an admin makes a form the default for workshops with none bound", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaires/f1");
+  await page.locator("[data-form-admin]").getByRole("switch", { name: "Default form when nothing is bound" }).click();
+  await expect.poll(() => fake.calledWith("PUT", "/questionnaires/f1/default").length).toBe(1);
+  expect(fake.calledWith("PUT", "/questionnaires/f1/default")[0].body).toEqual({ isDefault: true });
+  await expect(page.locator("[data-form-admin]").getByRole("switch", { name: "Default form when nothing is bound" })).toHaveAttribute("aria-checked", "true");
+});
+
+test("@qf:C9 the start sheet takes the device's location beside the typed place", async ({ page, context }) => {
+  const fake = new QuestionnaireFake();
+  await context.grantPermissions(["geolocation"]);
+  await context.setGeolocation({ latitude: 26.82, longitude: 75.55, accuracy: 12 });
+  await open(page, fake, "/questionnaire/sessions/new?artisanId=a1");
+  const sheet = page.locator("[data-start-sheet]");
+  await sheet.getByRole("button", { name: "Use my location" }).click();
+  await expect(sheet.locator("[data-device-location='saved']")).toContainText("Location saved (within 12 m)");
+  await sheet.getByRole("button", { name: "Start session" }).click();
+  await expect.poll(() => fake.calledWith("POST", "/questionnaire/sessions").length).toBe(1);
+  expect(fake.calledWith("POST", "/questionnaire/sessions")[0].body).toMatchObject({ location: { latitude: 26.82, longitude: 75.55, accuracy: 12 } });
+});
+
+test("@qf:B24 a question mapped to an artisan column is prefilled from the artisan's record", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  fake.prefill = { l2: "craft" };
+  await open(page, fake, "/questionnaire/sessions/s-1");
+  await expect.poll(() => fake.calledWith("PUT", "/questionnaire/answers").length).toBe(1);
+  const items = (fake.calledWith("PUT", "/questionnaire/answers")[0].body as { items: Record<string, unknown>[] }).items;
+  expect(items).toEqual([expect.objectContaining({ artisanId: "a1", questionLineageId: "l2", text: "Hand Block Printing", origin: "PREFILL" })]);
+});
+
+test("@qf:C8 a formatted answer is written as the document and its plain text", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire/sessions/s-1");
+  await page.getByRole("button", { name: "A", exact: true }).click();
+  await page.getByRole("switch", { name: "Type answers" }).click();
+  const box = page.locator("[data-answer-box='l2'] [role=textbox]");
+  await box.click();
+  await page.keyboard.type("Indigo");
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.press("ControlOrMeta+B");
+  await box.blur();
+  await expect.poll(() => fake.calledWith("PUT", "/questionnaire/answers").length).toBeGreaterThan(0);
+  const item = (fake.calledWith("PUT", "/questionnaire/answers").at(-1)!.body as { items: Record<string, unknown>[] }).items[0];
+  expect(item.text).toBe("Indigo");
+  expect(String(item.richText)).toContain("BOLD");
+  expect(String(item.richText)).toContain("Indigo");
+});
+
+/** Writes into the shared client's IndexedDB once the page has opened it. */
+async function seedQuestionnaireDb(page: Page, store: string, rows: unknown[]) {
+  await page.evaluate(
+    async ({ store, rows }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("field-repo-questionnaire");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(store, "readwrite");
+        for (const row of rows as Record<string, unknown>[]) {
+          const value = { ...row };
+          if (typeof value.blobText === "string") {
+            value.blob = new Blob([value.blobText as string], { type: "audio/webm" });
+            delete value.blobText;
+          }
+          tx.objectStore(store).put(value);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    },
+    { store, rows }
+  );
+}
+
+test("@qf:B15 a take cut short by a closed tab is offered back by P13 when the session opens again", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire/sessions/s-1");
+  await expect(page.locator("[data-session-workspace]")).toBeVisible();
+  const startedAt = Date.now() - 12 * 60_000;
+  await seedQuestionnaireDb(page, "takes", [
+    { takeKey: "t-crash", sessionKey: "ck-s-1", clientClipKey: "clip-crash", deviceCapturedAt: new Date(startedAt).toISOString(), mimeType: "audio/webm", targetLabel: "Section A", targets: [{ sectionId: "s1" }], roster: ["a1"], startedAt, finishedAt: null }
+  ]);
+  await seedQuestionnaireDb(page, "chunks", [
+    { takeKey: "t-crash", index: 0, blobText: "HEAD", at: startedAt },
+    { takeKey: "t-crash", index: 1, blobText: "B", at: startedAt + 12 * 60_000 }
+  ]);
+  await page.reload();
+  const p13 = page.getByRole("dialog");
+  await expect(p13).toContainText("Recovered a recording");
+  await expect(p13).toContainText("A 12-minute take of Section A was saved before the app closed.");
+  await p13.getByRole("button", { name: "Discard" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("@qf:B39 the fix tray sends a refused step again, sends without the conflicting answers, and discards", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire");
+  await expect(page.locator("[data-sessions-list]")).toBeVisible();
+  const item = { artisanId: "a1", questionLineageId: "l1", text: "Mine", origin: "TYPED", attribution: "INDIVIDUAL", sourceRecordingId: null };
+  await seedQuestionnaireDb(page, "units", [
+    {
+      id: "ck-s-1",
+      sessionId: "s-1",
+      createdAt: "2026-10-22T05:00:00Z",
+      steps: [
+        { kind: "participant", status: "FAILED", op: "join", artisanId: "a2", at: "2026-10-22T05:00:00Z", idempotencyKey: "p-tray", error: "That artisan was removed." },
+        {
+          kind: "answers", status: "FAILED", error: "CONFLICT", key: "ans-tray",
+          items: [item, { ...item, questionLineageId: "l2", text: "Fine" }],
+          conflicts: [{ artisanId: "a1", questionLineageId: "l1", status: "CONFLICT", answer: null, current: { id: "ans-1", version: 2, text: "Wooden blocks" } }]
+        }
+      ]
+    }
+  ]);
+  await page.reload();
+  const tray = page.locator("[data-outbox-tray]");
+  await expect(tray).toContainText("Not sent: That artisan was removed.");
+  await expect(tray).toContainText("1 changed by someone else");
+  await tray.locator("[data-tray-item='conflict']").getByRole("button", { name: "Send without the conflicting answers" }).click();
+  await expect.poll(() => fake.calledWith("PUT", "/questionnaire/answers").length).toBe(1);
+  expect((fake.calledWith("PUT", "/questionnaire/answers")[0].body as { items: Record<string, unknown>[] }).items).toEqual([
+    expect.objectContaining({ artisanId: "a1", questionLineageId: "l2", text: "Fine" })
+  ]);
+  await tray.locator("[data-tray-item='failed']").getByRole("button", { name: "Send again" }).click();
+  await expect.poll(() => fake.calls.filter((c) => /\/questionnaire\/sessions\/s-1\/participants/.test(c.path)).length).toBeGreaterThan(0);
+  await expect(tray.locator("[data-tray-item='failed']")).toBeVisible();
+  await tray.locator("[data-tray-item='failed']").getByRole("button", { name: "Discard" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Discard" }).click();
+  await expect(page.locator("[data-outbox-tray]")).toHaveCount(0);
 });

@@ -677,7 +677,7 @@ private fun ReceivedQuestionnaireRow(
  * `readQuestionnaireBundle` does it there with a sentence per refusal.
  */
 @Composable
-private fun rememberQuestionnaireBundlePicker(onPicked: (Uri) -> Unit): () -> Unit {
+internal fun rememberQuestionnaireBundlePicker(onPicked: (Uri) -> Unit): () -> Unit {
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onPicked(uri)
     }
@@ -685,6 +685,7 @@ private fun rememberQuestionnaireBundlePicker(onPicked: (Uri) -> Unit): () -> Un
         launcher.launch(
             arrayOf(
                 QUESTIONNAIRE_BUNDLE_MIME,
+                com.designprototype.workshop.data.QUESTIONNAIRE_BUNDLE_MIME_FR,
                 "application/gzip",
                 "application/x-gzip",
                 "application/octet-stream",
