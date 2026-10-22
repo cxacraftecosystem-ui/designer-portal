@@ -1309,7 +1309,11 @@ test("every web call that adds to a workshop or edits it from elsewhere comes fr
 
   // A QUESTIONNAIRE ATTACHED TO A WORKSHOP AS IT IS MADE — created, uploaded or reused into it.
   expect(callersOf(/endpoint:\s*"\/questionnaires",/)).toEqual(["app/(protected)/questionnaires/page.tsx"]);
-  expect(callersOf(/\bcreateQuestionnaire\(/, ["lib/questionnaireForms.ts"]), "the queued create is the one door").toEqual([]);
+  // A received bundle (UNIFY A10) is added as a NEW form attached to no workshop — the body carries no
+  // `designWorkshopId` — so it adds nothing to a workshop and needs no hold; it is the one other caller.
+  expect(callersOf(/\bcreateQuestionnaire\(/, ["lib/questionnaireForms.ts"]), "the queued create is the one door into a workshop").toEqual([
+    "components/questionnaires/BundleControls.tsx"
+  ]);
   expect(callersOf(/\buploadQuestionnaire\(/, ["lib/questionnaireForms.ts"])).toEqual(["components/questionnaires/UploadDialog.tsx"]);
   expect(callersOf(/\breuseQuestionnaire\(/, ["lib/questionnaireForms.ts"])).toEqual(["components/questionnaires/ReuseDialog.tsx"]);
   // And an existing form MOVED into one, from its own page: held for the workshop it is stored under
