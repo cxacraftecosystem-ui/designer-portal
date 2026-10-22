@@ -2137,7 +2137,7 @@ model QuestionnaireInterview {
   // `routes/questionnaire.artisan_set_key`, the recompute in migration 20260920120000,
   // `frontend/components/questionnaires/interviewArtisans.ts` and the handset's `interviewGroupKey`.
   // `backend/tests/test_questionnaire_artisan_set_scope.py` holds the first three together.
-  artisanSetKey String?      @unique
+  artisanSetKey String?
   /// The workshop this interview was conducted at, named EXPLICITLY on the record — previously an
   /// interview had no path to a workshop at all. Nullable, so every interview recorded before this
   /// column keeps behaving exactly as before.
@@ -2193,6 +2193,8 @@ model QuestionnaireInterview {
   researchers QuestionnaireInterviewResearcher[]
 
   @@index([createdById])
+  /// Was @unique until the switch-on (migration 20261108093000): a v2 session is a dated event.
+  @@index([artisanSetKey])
   @@index([status])
   @@index([interviewDate])
   @@index([workshopId, createdAt])

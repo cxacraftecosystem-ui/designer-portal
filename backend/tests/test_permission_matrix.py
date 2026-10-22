@@ -522,7 +522,7 @@ def test_a_researcher_or_designer_opens_the_fifth_record_type_an_interview(api: 
     subject location first, so the tripwire fires there and ``reached`` means exactly what it means
     everywhere else in this file.
     """
-    api.preload("questionnaireinterview", SimpleNamespace(find_unique=_returning(None)))
+    api.preload("questionnaireinterview", SimpleNamespace(find_unique=_returning(None), find_first=_returning(None)))
 
     assert api.as_(_user(role)).call("POST", "/questionnaire/interviews", INTERVIEW_BODY).reached
 
@@ -580,7 +580,7 @@ def test_a_volunteer_still_answers_an_interview_that_already_exists(
         return {"id": existing.id}
 
     monkeypatch.setattr(questionnaire, "merge_into_interview", fold)
-    api.preload("questionnaireinterview", SimpleNamespace(find_unique=_returning(SimpleNamespace(id="i1"))))
+    api.preload("questionnaireinterview", SimpleNamespace(find_unique=_returning(SimpleNamespace(id="i1")), find_first=_returning(SimpleNamespace(id="i1"))))
 
     outcome = api.as_(_user(role)).call("POST", "/questionnaire/interviews", INTERVIEW_BODY)
 
@@ -591,7 +591,7 @@ def test_a_volunteer_still_answers_an_interview_that_already_exists(
 @pytest.mark.parametrize("role", LOWER_TIERS)
 def test_a_volunteer_may_not_open_an_interview_for_an_artisan_set_that_has_none(api: _Api, role: str) -> None:
     """The other half of the same endpoint: nothing to fold into means this really is a create."""
-    api.preload("questionnaireinterview", SimpleNamespace(find_unique=_returning(None)))
+    api.preload("questionnaireinterview", SimpleNamespace(find_unique=_returning(None), find_first=_returning(None)))
 
     outcome = api.as_(_user(role)).call("POST", "/questionnaire/interviews", INTERVIEW_BODY)
 
