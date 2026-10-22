@@ -20,6 +20,9 @@ import shutil
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import questionnaire_android  # noqa: E402  (the shared Android trees; see its docstring)
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("shared/questionnaire.sha256")
 PACKAGE = "backend/app/questionnaire"
@@ -31,12 +34,19 @@ SHARED_FILES_EXTRA = (
     "shared/enums.json",
     "shared/languages.json",
     "shared/strings/questionnaire.json",
+    # The generator of the shared web vocabularies (strings.ts, enums.ts) and its sources above.
+    "scripts/generate_questionnaire_web.py",
     # The tests that hold the two portals together.
     "backend/tests/test_questionnaire_parity.py",
     "backend/tests/test_questionnaire_schema_parity.py",
     "backend/tests/test_questionnaire_feature_parity.py",
     "backend/tests/test_questionnaire_core.py",
 )
+
+
+#: The shared web client (UNIFY 2.4, Web): byte-identical in both portals, synced from here.
+#: Each portal keeps its own ``frontend/lib/questionnairePortal.ts`` beside them (not shared).
+WEB_TREES = ("frontend/lib/questionnaire", "frontend/components/questionnaire")
 
 
 def shared_files(root: Path) -> list[str]:
@@ -49,7 +59,13 @@ def shared_files(root: Path) -> list[str]:
         path.relative_to(root).as_posix() for path in (root / "shared").glob("questionnaire*")
         if path.relative_to(root).as_posix() not in NOT_SHARED
     )
-    return package + contracts + list(SHARED_FILES_EXTRA)
+    web = sorted(
+        path.relative_to(root).as_posix()
+        for tree in WEB_TREES
+        for path in (root / tree).rglob("*")
+        if path.is_file() and path.suffix in (".ts", ".tsx")
+    )
+    return package + contracts + list(SHARED_FILES_EXTRA) + web
 
 
 def digest(path: Path) -> str:
@@ -71,9 +87,17 @@ def main() -> int:
         if expected != manifest_text(ROOT):
             print("shared/questionnaire.sha256 is out of date; run with --to to resync", file=sys.stderr)
             return 1
+        android = questionnaire_android.check(ROOT)
+        if android:
+            print("\n".join(android), file=sys.stderr)
+            return 1
         print("questionnaire manifest OK")
         return 0
 
+    # The Android trees first: the generated enums are a shared file of their own.
+    copied = questionnaire_android.sync(ROOT, args.to.resolve() if args.to else None)
+    if args.to:
+        print(f"synced {copied} Android files to {args.to.resolve()}")
     text = manifest_text(ROOT)
     (ROOT / MANIFEST).write_text(text, encoding="utf-8", newline="\n")
     if args.to:
@@ -81,6 +105,9 @@ def main() -> int:
         package = target / PACKAGE
         if package.exists():
             shutil.rmtree(package)
+        for tree in WEB_TREES:
+            if (target / tree).exists():
+                shutil.rmtree(target / tree)
         for rel in shared_files(ROOT):
             destination = target / rel
             destination.parent.mkdir(parents=True, exist_ok=True)

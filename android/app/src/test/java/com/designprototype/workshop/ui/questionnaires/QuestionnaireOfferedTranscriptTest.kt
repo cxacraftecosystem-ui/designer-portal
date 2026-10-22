@@ -193,25 +193,4 @@ class QuestionnaireOfferedTranscriptTest {
         }
     }
 
-    @Test
-    fun `the host saves an offered take through the app's one writer`() {
-        // And it re-reads the offer at the press rather than capturing it, so an offer that has just
-        // been accepted or discarded cannot still be written to a file from a stale closure.
-        val source = mainActivitySource()
-        // Matched with `\s+` rather than by transcribing the file's own indentation, which at this
-        // depth is forty-odd columns inside eight nested composables — a test that pinned it would
-        // fail on a reformat that changed nothing about the rule it is defending.
-        val call = Regex(
-            """onSave = \{ fileName ->\s+offeredTranscript\[question\.id]\?\.let \{ offer ->\s+""" +
-                """saveTranscriptToDownloads\(context, repository, scope, fileName, offer\)"""
-        )
-        assertTrue(
-            "the per-question offer must save through saveTranscriptToDownloads, re-reading the offer",
-            call.containsMatchIn(source)
-        )
-        assertTrue(
-            "and be named by section code and question number, not by the prompt",
-            "filenameBase = \"Section-\${section.code}-Q\${question.sortOrder}-transcript\"," in source
-        )
-    }
 }

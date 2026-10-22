@@ -101,7 +101,9 @@ class DiscardDropsDraftTest {
         val sources = main.walkTopDown().filter { it.extension == "kt" }.map { it.readText() }.joinToString("\n")
         val calls = sources.lines()
             .filter { it.contains("RegisterUnsavedGuard(dirty") && !it.contains("dirty: Boolean") }
-        assertEquals(8, calls.size)
+        // Seven: the retired global interview form's guard went with it (UNIFY §4.4); a v2 session
+        // keeps its takes in the outbox and asks before leaving with its own prompt.
+        assertEquals(7, calls.size)
         calls.forEach { args ->
             assertTrue("no draft in RegisterUnsavedGuard($args)", Regex("""draft = \w+""").containsMatchIn(args))
             assertFalse("null draft in RegisterUnsavedGuard($args)", args.contains("draft = null"))

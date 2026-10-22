@@ -366,8 +366,22 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
         where={"designWorkshopId": design_workshop_id, "isActive": True, "deletedAt": None},
         order={"createdAt": "asc"},
     )
+    # With QUESTIONNAIRE_V2 on, every form BOUND to the workshop (several per workshop, UNIFY U5)
+    # prints, and each live session on it is a sitting (C10). Nothing changes while it is off.
+    from app.services import questionnaire_readers
+
+    bound = await questionnaire_readers.forms_for_design_workshop(design_workshop_id)
+    attached = {q.id for q in questionnaires}
+    extra_ids = [str(b["id"]) for b in bound if str(b["id"]) not in attached]
+    if extra_ids:
+        questionnaires = [*questionnaires, *await db.questionnaire.find_many(
+            where={"id": {"in": extra_ids}}, order={"createdAt": "asc"}
+        )]
     if not questionnaires:
         return []
+    v2_sittings = await questionnaire_readers.annexure_sittings(
+        [q.id for q in questionnaires], design_workshop_id=design_workshop_id
+    )
 
     ids = [q.id for q in questionnaires]
     sections, entries = await gather_reads(
@@ -475,8 +489,10 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
                 # The questions the form ASKS today. Retired ones are printed where they carry an
                 # answer but are not counted here, because this number is what a reader compares
                 # against the instrument, and the instrument no longer contains them.
-                question_count=sum(1 for _s, q in pairs if q.isActive),
-                sittings=tuple(sittings),
+                question_count=sum(1 for _s, q in pairs if q.isActive) or v2_sittings.get(
+                    questionnaire.id, {}
+                ).get("questionCount", 0),
+                sittings=(*sittings, *v2_sittings.get(questionnaire.id, {}).get("sittings", ())),
             )
         )
     return items

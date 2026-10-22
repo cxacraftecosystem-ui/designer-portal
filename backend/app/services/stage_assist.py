@@ -602,24 +602,38 @@ async def _sittings(workshop_id: str) -> list[dict[str, Any]]:
         },
         order={"createdAt": "asc"},
     )
-    if not forms:
+    from app.services import questionnaire_readers
+
+    # Forms bound to the workshop (UNIFY U5) join the attached ones, and their sessions count as
+    # sittings (C10). Nothing extra, and no query, while v2 is off.
+    known = {f.id for f in forms}
+    listed = [(f.id, f.title) for f in forms] + [
+        (str(b["id"]), b.get("title")) for b in await questionnaire_readers.forms_for_design_workshop(
+            workshop_id, kind="MARKET_SURVEY"
+        ) if str(b["id"]) not in known
+    ]
+    if not listed:
         return []
     groups = await db.questionnaireformentry.group_by(
         by=["questionnaireId"],
         where={"questionnaireId": {"in": [f.id for f in forms]}, "deletedAt": None},
         count=True,
         max={"createdAt": True},
-    )
+    ) if forms else []
     by_form = {str(g.get("questionnaireId") or ""): g for g in groups}
+    sessions = await questionnaire_readers.session_counts([fid for fid, _ in listed])
     out = []
-    for form in forms:
-        group = by_form.get(form.id) or {}
+    for form_id, title in listed:
+        group = by_form.get(form_id) or {}
         latest = (group.get("_max") or {}).get("createdAt")
+        extra = sessions.get(form_id) or {}
+        if extra.get("latest") is not None and (latest is None or _latest_day(extra["latest"]) > (_latest_day(latest) or "")):
+            latest = extra["latest"]
         out.append(
             {
-                "questionnaireId": form.id,
-                "title": form.title,
-                "count": int((group.get("_count") or {}).get("_all") or 0),
+                "questionnaireId": form_id,
+                "title": title,
+                "count": int((group.get("_count") or {}).get("_all") or 0) + int(extra.get("count") or 0),
                 "latest": _latest_day(latest),
                 "respondents": [],
             }

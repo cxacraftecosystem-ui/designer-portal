@@ -384,7 +384,7 @@ test("every record type that has a screen shows its code there, and every mount 
       "app/(protected)/media/page.tsx",
       "app/(protected)/processes/page.tsx",
       "app/(protected)/products/[id]/edit/page.tsx",
-      "app/(protected)/questionnaire/page.tsx",
+      "app/(protected)/questionnaire/sessions/[id]/view/page.tsx",
       "app/(protected)/tools/[id]/edit/page.tsx",
       "app/(protected)/workshops/page.tsx"
     ].sort()

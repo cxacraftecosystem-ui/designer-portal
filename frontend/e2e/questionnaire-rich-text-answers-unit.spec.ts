@@ -43,7 +43,6 @@ import { fromStored } from "@/lib/richText";
 
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
 
-const QUESTIONNAIRE_PAGE = read("app", "(protected)", "questionnaire", "page.tsx");
 const ARTISAN_PANEL = read("components", "ArtisanQuestionnairePanel.tsx");
 
 /** An answer a researcher could actually produce in that box: one sentence with a bolded term. */
@@ -178,26 +177,6 @@ test("a dictated sentence is never filed under a photograph", () => {
   expect(blocksOf(merged).map((block) => block.kind)).toEqual(["PARAGRAPH", "IMAGE", "PARAGRAPH"]);
   expect(textOf(merged, 1)).toBe("Block four.");
   expect(textOf(merged, 2)).toBe(PHRASE);
-});
-
-test("both append paths on /questionnaire go through the stored-value append", () => {
-  // The transcript that lands in an untouched box, and the button that accepts an offered transcript
-  // over a written one. Read from source because neither can be mounted here.
-  expect(QUESTIONNAIRE_PAGE).toContain("appendDictatedToStored(inBox, text)");
-  expect(QUESTIONNAIRE_PAGE).toContain('appendDictatedToStored(answers[question.id] ?? "", text)');
-  expect(QUESTIONNAIRE_PAGE).not.toMatch(/appendDictatedPhrase\(\s*inBox/);
-  expect(QUESTIONNAIRE_PAGE).not.toMatch(/appendDictatedPhrase\(\s*answers\[/);
-});
-
-test("the two boxes that are NOT stored columns keep the plain joiner", () => {
-  // Over-applying the fix would be its own defect. A SECTION clip's transcript accumulates in
-  // `machineText`, which is React state rendered under the recorder and never written to a column,
-  // and the question-builder's prompt box is a plain input. Neither is rich text, and routing them
-  // through the stored-value append would parse a value that is not a stored value.
-  expect(QUESTIONNAIRE_PAGE).toMatch(/appendDictatedPhrase\(current\[key\] \?\? ""/);
-  expect(QUESTIONNAIRE_PAGE).toMatch(
-    /setPrompt\(\(current\) => appendDictatedPhrase\(current, phrase\)\)/
-  );
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

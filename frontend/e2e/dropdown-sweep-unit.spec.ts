@@ -2386,7 +2386,6 @@ test("a picker's fetch asks for exactly the number of rows the panel can draw", 
   expect(withoutComments(read("app", "(protected)", "users", "page.tsx"))).toContain(
     'listResource<User>("/users", { pageSize: LIST_PAGE_CEILING })'
   );
-  expect(withoutComments(read("app", "(protected)", "questionnaire", "consolidated", "page.tsx"))).toContain(
-    "pageSize: LIST_PAGE_CEILING, workshopIds: scope.queryValue"
-  );
+  // The consolidated index was the third; it is retired with the global interview form (UNIFY 4.4)
+  // and redirects to the questionnaire sessions list.
 });

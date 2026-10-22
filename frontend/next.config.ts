@@ -106,6 +106,11 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // The web build number for `X-App-Version-Code` (lib/api.ts): the deploy workflow's run number,
+  // which only rises. The old-build create cutoff compares it per platform (UNIFY 4.5).
+  env: {
+    NEXT_PUBLIC_BUILD_NUMBER: process.env.NEXT_PUBLIC_BUILD_NUMBER || process.env.GITHUB_RUN_NUMBER || ""
+  },
   experimental: {
     /*
       ONLY FOR A SELF-HOSTED SERVER (`next dev`, `next start`, the e2e stack) — Vercel never buffers
