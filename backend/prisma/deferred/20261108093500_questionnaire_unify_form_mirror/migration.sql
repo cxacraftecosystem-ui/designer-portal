@@ -89,6 +89,18 @@ BEGIN
   RETURN NEW;
 END $$ LANGUAGE plpgsql;
 
+-- A form deleted outright (old cleanup paths, account removal) takes its mirrored copy with it first,
+-- so the old cascade is not stopped by the copy; anything v2 recorded against it still refuses.
+CREATE OR REPLACE FUNCTION questionnaire_form_mirror_drop() RETURNS trigger AS $$
+BEGIN
+  DELETE FROM "QuestionnaireQuestion" WHERE "questionnaireId" = OLD."id";
+  DELETE FROM "QuestionnaireSection" WHERE "questionnaireId" = OLD."id";
+  RETURN OLD;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS questionnaire_form_mirror_drop ON "Questionnaire";
+CREATE TRIGGER questionnaire_form_mirror_drop BEFORE DELETE ON "Questionnaire"
+  FOR EACH ROW EXECUTE FUNCTION questionnaire_form_mirror_drop();
 DROP TRIGGER IF EXISTS questionnaire_form_section_mirror ON "QuestionnaireFormSection";
 CREATE TRIGGER questionnaire_form_section_mirror AFTER INSERT OR UPDATE OR DELETE ON "QuestionnaireFormSection"
   FOR EACH ROW EXECUTE FUNCTION questionnaire_form_section_mirror();
