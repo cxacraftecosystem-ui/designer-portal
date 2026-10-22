@@ -291,12 +291,12 @@ async def indexes(client) -> set[str]:
     return {str(r["n"]) for r in rows}
 
 
-def _run(args: list[str], capsys) -> tuple[int, str]:
+def _run(args: list[str], capfd) -> tuple[int, str]:
     try:
         code = unify.main(["--database-url", URL, "--allow-host", urlsplit(URL).hostname, *args])
     except SystemExit as exc:
         code = int(exc.code or 0)
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     return code, captured.out + captured.err
 
 
@@ -306,10 +306,10 @@ def _counts(out: str) -> dict:
     return json.loads(match.group(0))
 
 
-def _dry(tmp: Path, capsys, *choices: str) -> tuple[dict, Path]:
+def _dry(tmp: Path, capfd, *choices: str) -> tuple[dict, Path]:
     for old in tmp.glob("*Unify-Dry-Run-Report*"):
         old.unlink()
-    code, out = _run(["--out", str(tmp), *choices], capsys)
+    code, out = _run(["--out", str(tmp), *choices], capfd)
     assert code == 0, out
     assert "DRY RUN: nothing was written." in out
     report = next(tmp.glob("DesignWorkshop_Questionnaire_*_Unify-Dry-Run-Report.md"))
@@ -326,7 +326,7 @@ CHOICES = ("--default-form", "f1")
 
 
 @needs_unify_db
-def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Path, capsys) -> None:
+def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Path, capfd) -> None:
     migrations_dir = tmp_path / "m"
     reports = tmp_path / "r"
     reports.mkdir()
@@ -334,7 +334,7 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     _deploy(migrations_dir, _migrations(before=U0))
     _db(seed)
     before_dry = _db(fingerprint)
-    pre, pre_report = _dry(reports, capsys, *CHOICES)
+    pre, pre_report = _dry(reports, capfd, *CHOICES)
     assert _db(fingerprint) == before_dry, "the dry run wrote"
     c = pre["counts"]
     assert (c["forms"], c["formsDeleted"], c["formSections"], c["formQuestions"]) == (3, 1, 5, 8)
@@ -349,25 +349,25 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     pre_csv = pre_report.with_suffix(".csv").read_text(encoding="utf-8")
 
     # --apply refuses on that schema
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "early", "--approved-report", str(_approve(pre_report)), *CHOICES], capsys)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "early", "--approved-report", str(_approve(pre_report)), *CHOICES], capfd)
     assert code == 2 and "no U0 questionnaire tables" in out
 
     # 2. the U0 release: the same plan, the global codes the SQL computed equal the dry run's
     _deploy(migrations_dir, _migrations())
-    post, report = _dry(reports, capsys, *CHOICES)
+    post, report = _dry(reports, capfd, *CHOICES)
     assert post["counts"] == pre["counts"]
     assert report.with_suffix(".csv").read_text(encoding="utf-8") == pre_csv
     assert post["toWrite"]["primaryBindings"] == 1
 
     # 3. refusals: no report, no approval line, different choices
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", *CHOICES], capsys)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", *CHOICES], capfd)
     assert code == 2 and "--approved-report" in out
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(report), *CHOICES], capsys)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(report), *CHOICES], capfd)
     assert code == 2 and "Approved-by" in out
     approved = _approve(report)
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(approved), "--default-form", "f2"], capsys)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(approved), "--default-form", "f2"], capfd)
     assert code == 2 and "REFUSED" in out
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "Bad_Id", "--approved-report", str(approved), *CHOICES], capsys)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "Bad_Id", "--approved-report", str(approved), *CHOICES], capfd)
     assert code == 2 and "--run-id" in out
 
     before = _db(fingerprint)
@@ -375,7 +375,7 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     assert {"QuestionnaireSection_code_key", "QuestionnaireSection_sortOrder_key"} <= idx_before
 
     # 4. apply
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(approved), *CHOICES], capsys)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(approved), *CHOICES], capfd)
     assert code == 0 and "APPLIED run one" in out, out
     _db(check_applied)
     idx = _db(indexes)
@@ -383,46 +383,46 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     assert {"QuestionnaireSection_questionnaireId_sortOrder_key", "Questionnaire_shared_title_key"} <= idx
 
     # 5. idempotent: the dry run shows nothing to write, a second apply writes nothing
-    again, report2 = _dry(reports, capsys, *CHOICES)
+    again, report2 = _dry(reports, capfd, *CHOICES)
     assert again["changes"] == 0, again["toWrite"]
     assert again["counts"]["sessions"] == 7
     after = _db(fingerprint)
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "two", "--approved-report", str(_approve(report2)), *CHOICES], capsys)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "two", "--approved-report", str(_approve(report2)), *CHOICES], capfd)
     assert code == 0 and "0 changes" in out
     assert _db(fingerprint) == after
 
     # 6. undo restores every affected table exactly, and the keys
-    code, out = _run(["--undo", "--run-id", "one"], capsys)
+    code, out = _run(["--undo", "--run-id", "one"], capfd)
     assert code == 0 and "UNDONE" in out, out
     assert _db(fingerprint) == before
     assert _db(indexes) == idx_before
-    code, out = _run(["--undo", "--run-id", "one"], capsys)
+    code, out = _run(["--undo", "--run-id", "one"], capfd)
     assert code == 2 and "undone already" in out
 
     # 7. undo refuses once native v2 content exists
-    fresh, report3 = _dry(reports, capsys, *CHOICES)
+    fresh, report3 = _dry(reports, capfd, *CHOICES)
     assert fresh["changes"] == post["changes"]
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "three", "--approved-report", str(_approve(report3)), *CHOICES], capsys)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "three", "--approved-report", str(_approve(report3)), *CHOICES], capfd)
     assert code == 0, out
 
     async def native(client):
         await client.execute_raw("INSERT INTO \"QuestionnaireInterviewResearcher\" (\"interviewId\", \"userId\", \"role\") VALUES ('i3', 'owner', 'VOLUNTEER')")
 
     _db(native)
-    code, out = _run(["--undo", "--run-id", "three"], capsys)
+    code, out = _run(["--undo", "--run-id", "three"], capfd)
     assert code == 2 and "native v2 content" in out
 
     async def unnative(client):
         await client.execute_raw("DELETE FROM \"QuestionnaireInterviewResearcher\" WHERE \"interviewId\" = 'i3' AND \"userId\" = 'owner'")
 
     _db(unnative)
-    code, out = _run(["--undo", "--run-id", "three"], capsys)
+    code, out = _run(["--undo", "--run-id", "three"], capfd)
     assert code == 0, out
     assert _db(fingerprint) == before
 
     # 8. the switch-on and the later deferred migrations apply on top of the migrated data
-    _final, report4 = _dry(reports, capsys, *CHOICES)
-    code, out = _run(["--out", str(reports), "--apply", "--run-id", "four", "--approved-report", str(_approve(report4)), *CHOICES], capsys)
+    _final, report4 = _dry(reports, capfd, *CHOICES)
+    code, out = _run(["--out", str(reports), "--apply", "--run-id", "four", "--approved-report", str(_approve(report4)), *CHOICES], capfd)
     assert code == 0, out
     deferred = sorted(p.name for p in (BACKEND / "prisma" / "deferred").iterdir() if p.is_dir())
     _deploy(migrations_dir, _migrations() + deferred)
