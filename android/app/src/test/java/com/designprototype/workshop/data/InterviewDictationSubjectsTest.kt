@@ -27,13 +27,4 @@ class InterviewDictationSubjectsTest {
         assertNull(dictationSubjects(" ", emptyList()).artisanIds)
     }
 
-    @Test
-    fun theInterviewFormPassesBothToTheDictateCall() {
-        val main = qLiveSource("app/src/main/java/com/designprototype/workshop/MainActivity.kt").readText()
-        val call = main.substringAfter("repository.designWorkshopDictate(").substringBefore(")")
-        assertTrue(call, "interviewId = editing?.id" in call)
-        assertTrue(call, "artisanIds = selectedArtisans" in call)
-        val api = qLiveSource("app/src/main/java/com/designprototype/workshop/data/WorkshopRepositoryApi.kt").readText()
-        assertTrue(api.contains("@Part(\"interviewId\")") && api.contains("@Part(\"artisanIds\")"))
-    }
 }

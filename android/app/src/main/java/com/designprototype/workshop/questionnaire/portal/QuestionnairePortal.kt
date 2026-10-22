@@ -100,11 +100,9 @@ object QuestionnairePortal {
      * creates and the forms' sitting entries queued by builds before v2. They drain through the
      * server's shims first (UNIFY §4.5), and the v2 queue waits for them.
      */
-    fun legacyQuestionnaireWaiting(context: Context): Int =
+    suspend fun legacyQuestionnaireWaiting(context: Context): Int =
         runCatching {
-            OfflineOutbox.all(context).count { entry ->
-                entry.failure == null && !entry.needsReview && entry.type in LEGACY_QUESTIONNAIRE_TYPES
-            }
+            OfflineOutbox.all(context).count { entry -> entry.failure == null && entry.type in LEGACY_QUESTIONNAIRE_TYPES }
         }.getOrDefault(0)
 
     /**

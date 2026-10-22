@@ -506,6 +506,7 @@ object QuestionnaireCopy {
         // The questionnaire home (UNIFY §4.2 Android).
         "home.forms" to "Forms",
         "home.newForm" to "New form",
+        "home.back" to "Back",
         "form.pick" to "Pick a form",
         "form.bound" to "Bound to this workshop",
         "form.needsSignal" to "Needs a connection",

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Badge
@@ -163,7 +164,11 @@ fun QuestionnaireHome(
     onNewForm: () -> Unit,
     onUpdateApp: () -> Unit,
     onError: (String) -> Unit,
-    initialTab: QuestionnaireTab = QuestionnaireTab.SESSIONS
+    initialTab: QuestionnaireTab = QuestionnaireTab.SESSIONS,
+    /** The host's way out, when the home owns the whole viewport (its own back control). */
+    onBack: (() -> Unit)? = null,
+    /** The home's box: the host gives it a bounded height when it sits in a page that scrolls. */
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val v2 = remember { QuestionnaireV2.get(context) }
@@ -289,11 +294,15 @@ fun QuestionnaireHome(
     }
 
     if (route != QRoute.List) BackHandler { route = QRoute.List; refresh++ }
+    else if (onBack != null) BackHandler { onBack() }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(modifier.fillMaxSize()) {
         when (val r = route) {
             QRoute.List -> Column(Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (onBack != null) IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = QuestionnaireCopy.s("home.back"))
+                    }
                     SegmentedChoice(
                         label = "",
                         options = listOf(SelectOption(QuestionnaireTab.SESSIONS.name, QuestionnaireCopy.s("home.sessions")), SelectOption(QuestionnaireTab.FORMS.name, QuestionnaireCopy.s("home.forms"))),
@@ -301,8 +310,9 @@ fun QuestionnaireHome(
                     ) { tab = QuestionnaireTab.valueOf(it) }
                     if (config?.updateRequired(BuildConfig.VERSION_CODE) == true) UpdateBanner(onUpdateApp)
                 }
-                if (tab == QuestionnaireTab.FORMS) Box(Modifier.weight(1f)) {
+                if (tab == QuestionnaireTab.FORMS) Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
                     formsTab { questionnaireId -> prefillForm = questionnaireId; tab = QuestionnaireTab.SESSIONS; starting = true }
+                    Box(Modifier.padding(bottom = 72.dp))
                 } else Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(QuestionnaireCopy.s("sessions.title"), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))

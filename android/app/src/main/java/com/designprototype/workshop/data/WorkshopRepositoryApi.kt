@@ -1,12 +1,6 @@
 package com.designprototype.workshop.data
 
-// THE ONE TYPE THIS LAYER BORROWS FROM THE UI PACKAGE, and the direction is backwards on purpose:
-// the consolidated-questionnaire DTOs were declared beside their screen in
-// ui/ConsolidatedQuestionnaireScreen.kt while this file and ApiModels.kt were being edited
-// concurrently, so re-declaring them here would give the app two incompatible spellings of one wire
-// format. If they are ever moved into ApiModels.kt, this import is the only line to delete.
 import android.content.Context
-import com.designprototype.workshop.ui.ConsolidatedQuestionnaireDto
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
@@ -978,15 +972,6 @@ interface WorkshopRepositoryApi {
 
     @PUT("questionnaire/completion")
     suspend fun setCompletionCell(@Body body: CompletionCellRequest): JsonElement
-
-    // One artisan's answers gathered from EVERY interview they sat in. Scoped by the shared
-    // workshopIds so the same document can be read "as it stands for these workshops" — the whole
-    // document is always returned, the scope only decides which sittings feed it.
-    @GET("questionnaire/artisans/{id}/consolidated")
-    suspend fun consolidatedQuestionnaire(
-        @Path("id") artisanId: String,
-        @Query("workshopIds") workshopIds: String? = null
-    ): ConsolidatedQuestionnaireDto
 
     // --- Cross-researcher data access (Sharing) ---
     @GET("data-access/tiers")

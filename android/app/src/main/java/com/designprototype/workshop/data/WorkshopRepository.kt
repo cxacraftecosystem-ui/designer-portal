@@ -13,7 +13,6 @@ import androidx.annotation.VisibleForTesting
 // questionnaire's DTOs live beside their screen because this file and ApiModels.kt were being edited
 // concurrently when that feature landed. Re-declaring them here would give the app two spellings of
 // one wire format; if they ever move into ApiModels.kt this import is the only line to delete.
-import com.designprototype.workshop.ui.ConsolidatedQuestionnaireDto
 // Backwards for a different reason: the gate's one reading of `mustChangePassword` lives with its
 // copy and is pinned by `PasswordSetupCopyTest`, and the outbox must hold back on exactly that test.
 import com.designprototype.workshop.ui.RecordOpen
@@ -7076,21 +7075,6 @@ class WorkshopRepository(
     /** Admin-only: set ([status] = COMPLETED/NEEDS_REVIEW/NEEDS_REDO) or clear ([status] = null) one cell. */
     suspend fun setCompletionCell(artisanId: String, sectionId: String, status: String?) =
         api.setCompletionCell(CompletionCellRequest(artisanId, sectionId, status))
-
-    /**
-     * One artisan's questionnaire gathered from EVERY interview they sat in.
-     *
-     * [workshopIds] reads the document as it stands FOR THOSE WORKSHOPS: the whole document comes back
-     * either way, the scope only decides which sittings feed it. Null or empty is every workshop.
-     *
-     * The DTO is declared in `ui/ConsolidatedQuestionnaireScreen.kt` beside the screen that renders
-     * it — see the import note at the top of [WorkshopRepositoryApi] for why it is not in ApiModels.kt.
-     */
-    suspend fun consolidatedQuestionnaire(
-        artisanId: String,
-        workshopIds: List<String>? = null
-    ): ConsolidatedQuestionnaireDto =
-        api.consolidatedQuestionnaire(artisanId, workshopIds.toQueryCsv())
 
     /**
      * Upload a captured/selected file as a single streamed object. The bytes are streamed straight
