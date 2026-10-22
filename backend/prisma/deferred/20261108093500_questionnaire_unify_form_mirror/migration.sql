@@ -74,8 +74,9 @@ BEGIN
     INSERT INTO "QuestionnaireQuestion" ("id", "sectionCode", "sectionTitle", "prompt", "sortOrder", "isActive", "retiredAt",
                                          "supersededById", "createdAt", "updatedAt", "sectionId", "questionCode", "questionnaireId",
                                          "helpText", "isRequired")
-    VALUES (NEW."id", sec."code", sec."title", NEW."prompt", NEW."sortOrder", NEW."isActive", NEW."retiredAt", NEW."supersededById",
-            NEW."createdAt", NEW."updatedAt", NEW."sectionId", NEW."questionCode", sec."questionnaireId", NEW."helpText", NEW."isRequired")
+    SELECT NEW."id", sec."code", sec."title", NEW."prompt", NEW."sortOrder", NEW."isActive", NEW."retiredAt", NEW."supersededById",
+           NEW."createdAt", NEW."updatedAt", NEW."sectionId", NEW."questionCode", sec."questionnaireId", NEW."helpText", NEW."isRequired"
+     WHERE EXISTS (SELECT 1 FROM "QuestionnaireSection" i WHERE i."id" = NEW."sectionId")  -- a form not copied yet: the apply copies it
     ON CONFLICT ("id") DO NOTHING;
     RETURN NEW;
   END IF;
