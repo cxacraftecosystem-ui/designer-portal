@@ -43,6 +43,8 @@ MEASUREMENT = "MEASUREMENT"
 #: it never loads the audio, and it is not held back by the processing window or the transcription
 #: rate-limit cooldown. Drained only while its AI capability flag is on.
 TRANSCRIPT_INSIGHTS = "TRANSCRIPT_INSIGHTS"
+#: A questionnaire take's byte check (app/questionnaire/recordings.verify_sha).
+SHA_VERIFY = "SHA_VERIFY"
 QUEUED = "QUEUED"
 PROCESSING = "PROCESSING"
 COMPLETED = "COMPLETED"
@@ -976,6 +978,14 @@ async def _lock_job(job_id: str, worker_id: str) -> Any | None:
 
 async def _process_job(job: Any, settings: Settings) -> None:
     media = job.mediaFile
+    if job.jobType == SHA_VERIFY:
+        # A questionnaire take (app/questionnaire): hash the stored object (streamed, never held
+        # whole) and apply the identical-bytes rules. Calls no outside service.
+        from app.questionnaire import recordings as v2_recordings
+
+        result = await v2_recordings.verify_sha(media.id)
+        await _complete_job(job.id, result)
+        return
     # Text only, and first: an insights job never reaches the S3 reads below.
     if job.jobType == TRANSCRIPT_INSIGHTS:
         await _process_insights_job(job, media)

@@ -27,16 +27,17 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**513 operations** in the working tree — 243 GET, 176 POST, 41 DELETE,
-28 PATCH, 25 PUT. 2 of them (`/health`, `/health/ready`) are declared
+**563 operations** in the working tree — 262 GET, 196 POST, 45 DELETE,
+32 PATCH, 28 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
 |---|---|
 | `design_workshops.py` | 50 |
+| `questionnaire_v2.py` | 48 |
 | `questionnaire_forms.py` | 24 |
+| `media.py` | 22 |
 | `questionnaire.py` | 22 |
-| `media.py` | 21 |
 | `workshops.py` | 21 |
 | `design_workshop_oversight.py` | 20 |
 | `aadhaar.py` | 14 |
@@ -93,6 +94,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `map_points.py` | 2 |
 | `report_deliveries.py` | 2 |
 | `analytics.py` | 1 |
+| `app_versions.py` | 1 |
 | `completeness.py` | 1 |
 | `dashboard.py` | 1 |
 | `idempotency_keys.py` | 1 |
@@ -144,7 +146,7 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 355 | 6359 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Backend unit (`backend/tests/`) | 357 | 6371 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 297 | 3384 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 342 | 3958 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 13 | 40 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
@@ -172,7 +174,7 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 354 | 207,468 | 354 | 207,468 |
+| `backend/app` | 361 | 209,501 | 361 | 209,501 |
 | `frontend/app` | 123 | 61,609 | 123 | 61,609 |
 | `frontend/components` | 403 | 149,437 | 403 | 149,437 |
 | `frontend/lib` | 199 | 84,589 | 199 | 84,589 |

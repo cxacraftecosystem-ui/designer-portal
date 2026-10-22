@@ -406,6 +406,10 @@ async def dataset_manifest(
         products = [p for p in products if _in_scope("product", p.id)]
         tools = [t for t in tools if _in_scope("tool", t.id)]
         interviews = [i for i in interviews if _in_scope("questionnaire", i.id)]
+    # The shared questionnaire's answers for these sessions (UNIFY C10; empty while v2 is off).
+    from app.services import questionnaire_readers
+
+    v2_answers = await questionnaire_readers.session_answers([i.id for i in interviews])
 
     # ===== THE DESIGN-WORKSHOP READ ==========================================================
     #
@@ -724,6 +728,10 @@ async def dataset_manifest(
             # unchanged by identity, so the existing corpus renders byte-for-byte as it did.
             text = answer_drafts.marked_answer(cell(r.answerText), getattr(r, "answerOrigin", None))
             answers.append(f"[{code}] {prompt}\n  -> {text}\n")
+        for a in v2_answers.get(interview.id, []):
+            owner = f" ({a['owner']})" if a.get("owner") else ""
+            code = a.get("displayCode") or a.get("sectionCode") or ""
+            answers.append(f"[{code}] {a['prompt']}{owner}\n  -> {cell(a['text'])}\n")
         add_text(base, "answers.txt", _details("interview", interview) + "\n\n" + "".join(answers))
         add_media(base, "questionnaire", interview.id)
 

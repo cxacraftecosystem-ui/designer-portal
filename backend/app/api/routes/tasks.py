@@ -495,6 +495,17 @@ async def _count_sections(
         for link in get_value(response.interview, "artisans") or []:
             if link.artisanId in scope:
                 pairs.add((link.artisanId, section_id))
+    # The shared questionnaire's sessions (UNIFY C10): this person's takes and typed answers, live
+    # sessions only. Typed or recorded, either counts. Empty, with no query, while v2 is off.
+    from app.services import questionnaire_readers
+
+    for subject_key, section_id in await questionnaire_readers.covered_pairs(
+        assignee_id, section_ids, workshop_id=workshop_id
+    ):
+        if not scope:
+            plain_sections.add(section_id)
+        elif subject_key.startswith("A:") and subject_key[2:] in scope:
+            pairs.add((subject_key[2:], section_id))
     return len(pairs) if scope else len(plain_sections)
 
 

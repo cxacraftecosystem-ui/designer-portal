@@ -21,6 +21,7 @@ from app.core.deps import (
     require_content_admin,
     require_questionnaire_manager,
 )
+from app.questionnaire import shims_dr
 from app.schemas.questionnaire import (
     CompletionCellUpdate,
     QuestionnaireInterviewCreate,
@@ -1292,6 +1293,15 @@ async def create_interview(
     # `designWorkshopId` is creator / admin / `DesignWorkshopViewer` — so it is a second gate
     # rather than a replacement. See `services/record_design_workshop.py`.
     await assert_may_file_under(payload.designWorkshopId, current_user)
+    # THE RETIRED GLOBAL FORM, WITH QUESTIONNAIRE_V2 ON (UNIFY 4.5): an old build's create becomes a
+    # session on the design workshop's primary form, returned in this route's shape. With no form
+    # to resolve to, the route below runs as before, so an old build never sees a new error code.
+    shimmed = await shims_dr.create_global_interview(payload, current_user)
+    if shimmed is not None:
+        await hydrate_relations([shimmed], RELATIONS)
+        return await attach_completeness(
+            "interview", public_encode(shimmed, current_user, media_urls=await media_url_owners(current_user))
+        )
     # One interview per exact artisan set PER WORKSHOP: if one already exists for this set under the
     # workshop being filed under, fold into it instead of creating a duplicate. This holds for EVERY
     # client (web + old/new app) regardless of UI.
@@ -1818,6 +1828,14 @@ async def update_interview(
     # answers, an unfile or a move out (2026-10-09). Above ``attach_location``, which WRITES a
     # ``Location`` row, so a refused PATCH leaves none behind.
     await assert_payload_workshop(data, current_user, filed_under=interview.designWorkshopId)
+    if shims_dr.enabled() and getattr(interview, "clientKey", None):
+        # A SHARED-QUESTIONNAIRE SESSION edited by an old build (UNIFY 4.5): the typed title is kept
+        # as legacyTitle, artisans become participant changes (one with takes is never dropped) and
+        # responses become answers, all through the package; the columns left go through below.
+        shims_dr.legacy_title_change(data)
+        await shims_dr.patch_global_interview(interview, payload, current_user)
+        payload.artisanIds = None
+        payload.responses = None
     data = await attach_location(data)
     # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
     # ends in ``record_revision``, which used to COMMIT on its own several statements before the
