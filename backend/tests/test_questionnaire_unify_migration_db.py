@@ -101,7 +101,7 @@ def test_a_new_global_question_gets_a_lineage_and_the_override_keeps_three_state
             )
             row = (await client.query_raw('SELECT "lineageId", "displayCode" FROM "QuestionnaireQuestion" WHERE "id" = $1', f"q{tag}"))[0]
             assert row["lineageId"] == f"q{tag}" and row["displayCode"] == f"Z{tag}1"
-            with pytest.raises(PrismaError, match="three_states"):
+            with pytest.raises(PrismaError, match="three_states|invalid input value for enum"):
                 await client.execute_raw(
                     'INSERT INTO "QuestionnaireSectionStatus" ("id", "artisanId", "sectionId", "status", "setById", "updatedAt") '
                     "VALUES ($1, 'nobody', $2, 'DONE', 'nobody', now())",

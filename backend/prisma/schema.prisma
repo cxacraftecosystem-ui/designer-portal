@@ -1982,7 +1982,7 @@ model MediaProcessingJob {
 
 model QuestionnaireSection {
   id        String   @id @default(cuid())
-  code      String   @unique
+  code      String
   /// UNIFY U4: the form this section belongs to (null for the retired global instrument until U5).
   questionnaireId String?
   title     String
@@ -1994,7 +1994,7 @@ model QuestionnaireSection {
   questions QuestionnaireQuestion[]
   sectionStatuses QuestionnaireSectionStatus[]
 
-  @@unique([sortOrder])
+  @@unique([questionnaireId, sortOrder])
   @@index([isActive, sortOrder])
   @@unique([questionnaireId, code])
   @@index([questionnaireId])
@@ -2008,7 +2008,7 @@ model QuestionnaireSectionStatus {
   artisanId String
   sectionId String
   // COMPLETED (green) | NEEDS_REVIEW (yellow) | NEEDS_REDO (red).
-  status    String
+  status    SectionStatus
   setById   String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
