@@ -733,7 +733,7 @@ class Settings(BaseSettings):
     # tables ship dark here (U0); U1 mounts its routes behind QUESTIONNAIRE_V2, exactly as
     # documentation-portal does, and the forms keep working as they are until then. Turning it on in
     # code makes tests/test_questionnaire_feature_parity.py demand every client's marker.
-    questionnaire_v2: bool = Field(default=False, alias="QUESTIONNAIRE_V2")
+    questionnaire_v2: bool = Field(default=True, alias="QUESTIONNAIRE_V2")
     # Old builds stop CREATING sessions once every active device runs the new build (GET
     # /api/admin/app-versions says when). Unset = old builds keep creating. Set = a create from a
     # lower BUILD NUMBER (X-App-Version-Code; the version name is never compared) gets 503 +

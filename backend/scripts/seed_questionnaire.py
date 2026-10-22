@@ -16,22 +16,20 @@ async def main() -> None:
         for section_index, section in enumerate(sections, start=1):
             section_code = section["code"]
             section_title = section["title"]
-            section_record = await db.questionnairesection.upsert(
-                where={"code": section_code},
-                data={
-                    "create": {
-                        "code": section_code,
-                        "title": section_title,
-                        "sortOrder": section_index,
-                        "isActive": True,
-                    },
-                    "update": {
-                        "title": section_title,
-                        "sortOrder": section_index,
-                        "isActive": True,
-                    },
-                },
+            # A section code is unique within its form since the unification (U5); the global
+            # instrument's sections are the ones with the retired instrument's id.
+            section_record = await db.questionnairesection.find_first(
+                where={"code": section_code, "questionnaireId": "questionnaire-retired-global-form"}
             )
+            if section_record is None:
+                section_record = await db.questionnairesection.create(
+                    data={"code": section_code, "title": section_title, "sortOrder": section_index, "isActive": True,
+                          "questionnaireId": "questionnaire-retired-global-form"}
+                )
+            else:
+                section_record = await db.questionnairesection.update(
+                    where={"id": section_record.id}, data={"title": section_title, "sortOrder": section_index, "isActive": True}
+                )
             for question in section["questions"]:
                 existing = await db.questionnairequestion.find_first(
                     where={"sectionId": section_record.id, "sortOrder": question["sortOrder"]}

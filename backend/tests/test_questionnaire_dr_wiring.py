@@ -116,10 +116,11 @@ def _client(monkeypatch: pytest.MonkeyPatch, user: Any = DESIGNER) -> TestClient
     return TestClient(app)
 
 
-def test_v2_is_dark_by_default_and_the_config_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.core.config import Settings
+def test_v2_is_dark_when_switched_off_and_the_config_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.config import Settings, get_settings
 
-    assert Settings.model_fields["questionnaire_v2"].default is False
+    assert Settings.model_fields["questionnaire_v2"].default is True, "the switch-on commit defaults it on"
+    monkeypatch.setattr(get_settings(), "questionnaire_v2", False)
     client = _client(monkeypatch)
     config = client.get("/api/questionnaire/config").json()
     assert config["v2Enabled"] is False
@@ -199,8 +200,11 @@ class Tripwire:
         raise AssertionError(f"a reader touched the database while QUESTIONNAIRE_V2 is off ({name})")
 
 
-def test_the_readers_read_nothing_while_v2_is_off() -> None:
+def test_the_readers_read_nothing_while_v2_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.config import get_settings
     from app.services import questionnaire_readers as r
+
+    monkeypatch.setattr(get_settings(), "questionnaire_v2", False)
 
     trip = Tripwire()
     assert asyncio.run(r.forms_for_design_workshop("dw1", client=trip)) == []
@@ -229,8 +233,11 @@ def test_a_typed_answer_or_a_take_counts_towards_a_section_task(monkeypatch: pyt
 
 
 # ── the old-build shims are this portal's and dark while off ───────────────────────────────────
-def test_the_shims_run_nothing_while_v2_is_off() -> None:
+def test_the_shims_run_nothing_while_v2_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.config import get_settings
     from app.questionnaire import shims_dr
+
+    monkeypatch.setattr(get_settings(), "questionnaire_v2", False)
 
     assert shims_dr.enabled() is False
     assert asyncio.run(shims_dr.form_is_unified("f1", client=Tripwire())) is False

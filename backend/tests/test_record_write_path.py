@@ -388,6 +388,9 @@ def _drive_rejected_create(monkeypatch, *, artisans_found, questions_found, payl
         async def find_unique(self, **_kwargs):
             return None
 
+        async def find_first(self, **_kwargs):
+            return None
+
     async def _no_workshop_check(_user, _workshop_id):
         return None
 

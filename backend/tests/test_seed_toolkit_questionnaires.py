@@ -111,16 +111,18 @@ async def seeded():
         owner = await db.user.find_first(where={"role": {"in": ["ADMIN", "MASTER_ADMIN"]}})
 
         # The GLOBAL instrument, counted before and after. Property 2.
-        facts["global_sections_before"] = await db.questionnairesection.count()
-        facts["global_questions_before"] = await db.questionnairequestion.count()
+        # the global instrument only: since U5 the forms' own sections and questions live here too
+        facts["global_sections_before"] = await db.questionnairesection.count(where={"questionnaireId": None})
+        facts["global_questions_before"] = await db.questionnairequestion.count(where={"questionnaireId": None})
 
         # 1. The first run.
         facts["first"] = {
             instrument.title: (questionnaire_id, counts)
             for instrument, questionnaire_id, counts in await seed_toolkit_questionnaires()
         }
-        facts["global_sections_after"] = await db.questionnairesection.count()
-        facts["global_questions_after"] = await db.questionnairequestion.count()
+        # the global instrument only: since U5 the forms' own sections and questions live here too
+        facts["global_sections_after"] = await db.questionnairesection.count(where={"questionnaireId": None})
+        facts["global_questions_after"] = await db.questionnairequestion.count(where={"questionnaireId": None})
 
         facts["rows"] = {}
         for instrument in INSTRUMENTS:
