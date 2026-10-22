@@ -1,6 +1,6 @@
 package com.designprototype.workshop.questionnaire.ui
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.portal.QuestionnairePortal
 import com.designprototype.workshop.questionnaire.data.QArtisanRecord
 import com.designprototype.workshop.questionnaire.ui.ArtisanTimeline

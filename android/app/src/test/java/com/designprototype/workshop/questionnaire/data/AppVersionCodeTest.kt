@@ -1,6 +1,6 @@
 package com.designprototype.workshop.questionnaire.data
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request

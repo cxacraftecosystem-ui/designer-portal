@@ -1,6 +1,6 @@
 package com.designprototype.workshop.questionnaire.data
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

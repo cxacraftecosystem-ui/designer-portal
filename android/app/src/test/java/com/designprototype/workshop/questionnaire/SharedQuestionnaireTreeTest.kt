@@ -1,6 +1,6 @@
 package com.designprototype.workshop.questionnaire
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.data.QuestionnaireCopy
 import com.designprototype.workshop.questionnaire.data.QuestionnaireVocabulary
 import com.designprototype.workshop.questionnaire.data.SessionOutbox

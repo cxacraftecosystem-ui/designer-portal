@@ -1,6 +1,6 @@
 package com.designprototype.workshop.questionnaire.ui
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.data.QAnswer
 import com.designprototype.workshop.questionnaire.data.QConsentVerdict
 import com.designprototype.workshop.questionnaire.data.QParticipant

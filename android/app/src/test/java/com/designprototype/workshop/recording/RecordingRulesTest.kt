@@ -1,6 +1,6 @@
 package com.designprototype.workshop.recording
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.data.QCompleteSubject
 import com.designprototype.workshop.questionnaire.data.QTargetRef
 import com.designprototype.workshop.questionnaire.data.QuestionnaireV2

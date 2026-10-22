@@ -11,7 +11,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.data.QAnswer
 import com.designprototype.workshop.questionnaire.data.QAnswerResult
 import com.designprototype.workshop.questionnaire.data.QArtisanOption
@@ -88,7 +88,7 @@ class QuestionnaireSessionUiTest {
                     typed = setOf("a1" to "lin1"), locked = false, typeAnswers = true,
                     answerLines = listOf(AnswerLine("a1", "Teak", null, onPhone = false, lockedLine = p15, answerId = "ans1")),
                     currentText = { "Teak" }, lockedFor = { p15 }, nameOf = { "Giriraj" },
-                    onRecord = {}, onOpenTakes = {}, onSaveAnswer = { _, _, _ -> }, onHistory = {}
+                    onRecord = {}, onOpenTakes = {}, onSaveAnswer = { _, _, _, _ -> }, onHistory = {}
                 )
             }
         }
@@ -107,7 +107,7 @@ class QuestionnaireSessionUiTest {
                     question = question, roster = listOf(HeaderParticipant("a1", "Giriraj", true)), known = emptyList(), overlay = emptyList(),
                     typed = emptySet(), locked = false, typeAnswers = true, answerLines = emptyList(),
                     currentText = { "" }, lockedFor = { null }, nameOf = { "Giriraj" },
-                    onRecord = {}, onOpenTakes = {}, onSaveAnswer = { text, _, _ -> saved = text }, onHistory = {}
+                    onRecord = {}, onOpenTakes = {}, onSaveAnswer = { text, _, _, _ -> saved = text }, onHistory = {}
                 )
             }
         }

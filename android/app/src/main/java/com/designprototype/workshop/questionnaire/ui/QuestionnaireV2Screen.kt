@@ -160,7 +160,7 @@ fun QuestionnaireHome(
     /** May approve or return a session in the read view (B27). */
     canReview: Boolean = false,
     /** The forms library, given "start a session on this form" (A9, D3). */
-    formsTab: @Composable (onStartSession: (questionnaireId: String) -> Unit) -> Unit,
+    formsTab: @Composable (onStartSession: ((questionnaireId: String) -> Unit)?) -> Unit,
     onNewForm: () -> Unit,
     onUpdateApp: () -> Unit,
     onError: (String) -> Unit,

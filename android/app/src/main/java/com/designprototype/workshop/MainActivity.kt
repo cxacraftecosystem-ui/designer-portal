@@ -541,6 +541,7 @@ import com.designprototype.workshop.ui.designworkshop.WorkshopInspectorsScreen
 import com.designprototype.workshop.ui.designworkshop.WorkshopViewersScreen
 import com.designprototype.workshop.questionnaire.portal.DesignerArtisanQuestionnaireRecords
 import com.designprototype.workshop.questionnaire.portal.DesignerQuestionnaireHome
+import com.designprototype.workshop.questionnaire.portal.questionnaireSessionsOn
 import com.designprototype.workshop.questionnaire.portal.questionnaireViewportHeight
 import com.designprototype.workshop.questionnaire.ui.QuestionnaireTab
 import com.designprototype.workshop.questionnaire.ui.QuestionnaireV2Nav
@@ -4871,6 +4872,8 @@ private fun HomeScreen(
                             onError = { showError(it) },
                             incoming = incomingQuestionnaire,
                             onIncomingConsumed = onIncomingQuestionnaireConsumed,
+                            newFormRequest = questionnaireNewForm,
+                            onStartSession = onStartSession,
                         )
                     },
                     onNewForm = { questionnaireNewForm++ },
@@ -5391,6 +5394,8 @@ private fun HomeScreen(
                         onError = { showError(it) },
                         incoming = incomingQuestionnaire,
                         onIncomingConsumed = onIncomingQuestionnaireConsumed,
+                        newFormRequest = questionnaireNewForm,
+                        onStartSession = onStartSession,
                     )
                 },
                 onNewForm = { questionnaireNewForm++ },
@@ -5411,6 +5416,13 @@ private fun HomeScreen(
                 onResolvedId = { real -> screen = Screen.QuestionnaireDetail(real) },
                 // L9: a deleted questionnaire is no longer there to look at.
                 onDeleted = { message = null; screen = Screen.Questionnaires },
+                // Questionnaire v2: a form starts a session (UNIFY A9, D3); with sessions off, its sittings.
+                onStartSession = if (questionnaireSessionsOn()) { id ->
+                    message = null
+                    QuestionnaireV2Nav.startOnForm.value = id
+                    screen = screenFor(EntryMode.QUESTIONNAIRE)
+                } else null,
+                onOpenSessions = if (questionnaireSessionsOn()) { _ -> message = null; screen = screenFor(EntryMode.QUESTIONNAIRE) } else null,
             )
 
             is Screen.QuestionnaireAnswers -> QuestionnaireAnswerScreen(

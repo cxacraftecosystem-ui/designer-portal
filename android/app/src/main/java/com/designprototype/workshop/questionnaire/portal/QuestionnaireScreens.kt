@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.ArtisanDto
@@ -43,6 +44,15 @@ import com.designprototype.workshop.ui.field
 fun questionnaireViewportHeight(): androidx.compose.ui.unit.Dp =
     (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp - 190.dp).coerceAtLeast(420.dp)
 
+/** Whether the server has sessions switched on (QUESTIONNAIRE_V2): a form then starts a session. */
+@Composable
+fun questionnaireSessionsOn(): Boolean {
+    val context = LocalContext.current
+    val v2 = remember { QuestionnaireV2.get(context) }
+    val config by v2.config.collectAsState()
+    return config?.v2Enabled == true
+}
+
 /** The designer portal's artisans, as the shared screens read them. */
 fun ArtisanDto.asQuestionnaireArtisan(): QArtisanOption = QArtisanOption(id = id, name = name, place = place, craft = craft?.name)
 
@@ -61,7 +71,8 @@ fun DesignerQuestionnaireHome(
     user: UserDto?,
     initialTab: QuestionnaireTab,
     prefillArtisanIds: List<String> = emptyList(),
-    formsTab: @Composable (onStartSession: (questionnaireId: String) -> Unit) -> Unit,
+    /** The forms library; given "start a session on this form" when sessions are switched on, else null. */
+    formsTab: @Composable (onStartSession: ((questionnaireId: String) -> Unit)?) -> Unit,
     onNewForm: () -> Unit,
     onError: (String) -> Unit,
     /** Null when the app's own header draws the way back (the home sits in the scrolling page). */
@@ -69,7 +80,18 @@ fun DesignerQuestionnaireHome(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val v2 = remember { QuestionnaireV2.get(context) }
+    val config by v2.config.collectAsState()
+    LaunchedEffect(Unit) { runCatching { v2.refreshConfig() } }
     val contentAdmin = FieldPermissions.isContentAdmin(user)
+    // Sessions are the server's switch (QUESTIONNAIRE_V2, UNIFY U12): until it says on, the forms and
+    // their sittings are the whole questionnaire, exactly as before.
+    if (config?.v2Enabled != true) {
+        androidx.compose.foundation.layout.Column(modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+            formsTab(null)
+        }
+        return
+    }
     // "Continue with…" or "Start session" from an artisan's record arrives through the nav holder.
     val pending by QuestionnaireV2Nav.pending.collectAsState()
     val prefill = remember(pending, prefillArtisanIds) { prefillArtisanIds.ifEmpty { listOfNotNull(pending) } }

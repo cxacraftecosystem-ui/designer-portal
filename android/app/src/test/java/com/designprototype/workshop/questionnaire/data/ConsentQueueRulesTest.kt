@@ -1,6 +1,6 @@
 package com.designprototype.workshop.questionnaire.data
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.ui.joinCodeUnknown
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals

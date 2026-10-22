@@ -584,6 +584,8 @@ data class QAnswer(
     val respondentId: String? = null,
     /** A20: the answerer's note on this answer (the revision's `note`). */
     val note: String? = null,
+    /** C8: the answer with its formatting, in the portal's rich-text format; [text] is always the plain words. */
+    val richText: String? = null,
     /** Who wrote the current revision, when the server says (P15 names them). */
     val actorId: String? = null,
     val actorName: String? = null,
@@ -606,7 +608,9 @@ data class QAnswerItem(
     val sourceRecordingId: String? = null,
     val baseVersion: Int? = null,
     /** A20: the answerer's note. */
-    val note: String? = null
+    val note: String? = null,
+    /** C8: the formatted answer, when the editor has formatting; null for plain prose. */
+    val richText: String? = null
 )
 
 /** [artisanId] is a subject id (an artisan, or `R:<respondentId>`); [wire] splits it for the server. */
@@ -618,7 +622,7 @@ data class QAnswersPut(val items: List<QAnswerItem>) {
 fun QAnswerItem.wire(): QAnswerItemWire = QAnswerItemWire(
     artisanId = QSubjects.artisanOf(artisanId), respondentId = QSubjects.respondentOf(artisanId),
     questionLineageId = questionLineageId, text = text, origin = origin, attribution = attribution, sessionId = sessionId,
-    sourceRecordingId = sourceRecordingId, baseVersion = baseVersion, note = note
+    sourceRecordingId = sourceRecordingId, baseVersion = baseVersion, note = note, richText = richText
 )
 
 @Serializable
@@ -632,7 +636,8 @@ data class QAnswerItemWire(
     val sessionId: String,
     val sourceRecordingId: String? = null,
     val baseVersion: Int? = null,
-    val note: String? = null
+    val note: String? = null,
+    val richText: String? = null
 )
 
 @Serializable
@@ -674,7 +679,8 @@ data class QRevision(
     val actor: QUserRef? = null,
     val createdAt: String? = null,
     val current: Boolean = false,
-    val note: String? = null
+    val note: String? = null,
+    val richText: String? = null
 )
 
 @Serializable

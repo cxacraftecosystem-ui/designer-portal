@@ -112,7 +112,7 @@ private data class RecordRequest(val target: QTargetRef?, val label: String, val
 private data class PickedFile(val path: String, val sha256: String, val size: Long, val mime: String, val ext: String, val metadataTime: Instant?, val durationMs: Long)
 
 /** P8 waiting for the researcher: the answer to save, once they confirm the recorded one is replaced. */
-private data class PendingAnswer(val question: InstrumentQuestion, val text: String, val forIds: Set<String>, val replacing: String, val note: String?)
+private data class PendingAnswer(val question: InstrumentQuestion, val text: String, val forIds: Set<String>, val replacing: String, val note: String?, val richText: String?)
 
 /** A tray Discard waiting for its confirmation. */
 private data class PendingDiscard(val row: TrayRow)
@@ -415,14 +415,14 @@ fun SessionWorkspace(
     }
 
     /** H19: save an answer with the version it replaces; P8 first when that answer came from a recording. */
-    fun saveAnswer(question: InstrumentQuestion, text: String, forIds: Set<String>, note: String?, confirmed: Boolean = false) {
+    fun saveAnswer(question: InstrumentQuestion, text: String, forIds: Set<String>, note: String?, richText: String?, confirmed: Boolean = false) {
         if (!confirmed) {
             AnswerModel.replacesRecordedAnswer(answers, forIds, question.lineageId)?.let { current ->
-                p8 = PendingAnswer(question, text, forIds, current.sourceRecordingId.orEmpty(), note)
+                p8 = PendingAnswer(question, text, forIds, current.sourceRecordingId.orEmpty(), note, richText)
                 return
             }
         }
-        val items = AnswerModel.items(text, forIds, question.lineageId, unit?.sessionId ?: clientKey, answers, note = note)
+        val items = AnswerModel.items(text, forIds, question.lineageId, unit?.sessionId ?: clientKey, answers, note = note, richText = richText)
         withUnit { key -> v2.outbox.addAnswers(key, QAnswersPut(items)) }
     }
 
@@ -526,12 +526,12 @@ fun SessionWorkspace(
                     QuestionBlock(
                         question = q, roster = roster, known = known, overlay = overlay, typed = typed, locked = locked, typeAnswers = typeAnswers,
                         answerLines = AnswerModel.lines(roster.map { it.artisanId }, q.lineageId, answers, unit, meId, leadOrAdmin) { recId -> detail?.recordings?.firstOrNull { it.id == recId }?.rosterCount },
-                        currentText = { forIds -> forIds.map { id -> AnswerModel.queued(unit, id, q.lineageId) ?: AnswerModel.current(answers, id, q.lineageId)?.text.orEmpty() }.distinct().singleOrNull().orEmpty() },
+                        currentText = { forIds -> forIds.map { id -> AnswerModel.queued(unit, id, q.lineageId) ?: AnswerModel.current(answers, id, q.lineageId)?.let { it.richText ?: it.text }.orEmpty() }.distinct().singleOrNull().orEmpty() },
                         lockedFor = { forIds -> forIds.mapNotNull { id -> AnswerModel.current(answers, id, q.lineageId)?.takeIf { AnswerModel.locked(it, meId, leadOrAdmin) } }.firstOrNull()?.let { QuestionnaireCopy.locked(it.authorName) } },
                         nameOf = participantName,
                         onRecord = { requestRecord(RecordRequest(QTargetRef(questionLineageId = q.lineageId), q.displayCode, q.displayCode)) },
                         onOpenTakes = { takeSheet = section.id to null },
-                        onSaveAnswer = { text, forIds, note -> saveAnswer(q, text, forIds, note) },
+                        onSaveAnswer = { text, forIds, note, rich -> saveAnswer(q, text, forIds, note, rich) },
                         onHistory = { line -> line.answerId?.let { historyOf = HistoryOf(it, "${q.displayCode} · ${QuestionnaireCopy.firstName(participantName(line.artisanId))}") } },
                         onPrefill = { forIds ->
                             val items = AnswerModel.prefillItems(forIds, q.lineageId, unit?.sessionId ?: clientKey, answers)
@@ -621,7 +621,7 @@ fun SessionWorkspace(
                 PromptButton(QuestionnaireCopy.s("p8.keepCurrent")) { p8 = null },
                 PromptButton(QuestionnaireCopy.s("p8.replace"), primary = true) {
                     p8 = null
-                    saveAnswer(pending.question, pending.text, pending.forIds, pending.note, confirmed = true)
+                    saveAnswer(pending.question, pending.text, pending.forIds, pending.note, pending.richText, confirmed = true)
                 }
             ),
             onDismiss = { p8 = null }
@@ -1002,13 +1002,14 @@ internal fun QuestionBlock(
     nameOf: (String) -> String,
     onRecord: () -> Unit,
     onOpenTakes: () -> Unit,
-    onSaveAnswer: (text: String, forArtisanIds: Set<String>, note: String?) -> Unit,
+    onSaveAnswer: (text: String, forArtisanIds: Set<String>, note: String?, richText: String?) -> Unit,
     onHistory: (AnswerLine) -> Unit,
     /** B24: fill from the artisans' profiles (a question mapped to an artisan field). */
     onPrefill: (Set<String>) -> Unit = {}
 ) {
     var answerFor by remember(question.lineageId) { mutableStateOf(ALL_ARTISANS) }
     // The box opens on the answer it would replace (audit H19: a saved answer used to vanish).
+    // The box holds the portal's stored form (rich when formatted); the plain words are read off it.
     var answer by remember(question.lineageId, answerFor) { mutableStateOf(currentText(answerForIds(roster, answerFor))) }
     var note by remember(question.lineageId, answerFor) { mutableStateOf("") }
     var noting by remember(question.lineageId) { mutableStateOf(false) }
@@ -1055,8 +1056,9 @@ internal fun QuestionBlock(
                     value = note, onValueChange = { note = it.take(2000) },
                     label = { Text(QuestionnaireCopy.s("answer.note")) }, modifier = Modifier.fillMaxWidth()
                 ) else TextButton(onClick = { noting = true }) { Text(QuestionnaireCopy.s("answer.noteAdd"), style = MaterialTheme.typography.labelMedium) }
-                if (answer.isNotBlank() && (answer.trim() != currentText(ids) || note.isNotBlank())) PromptButtons(listOf(PromptButton(QuestionnaireCopy.s("save"), primary = true) {
-                    onSaveAnswer(answer.trim(), ids, note.trim().ifBlank { null })
+                val parts = QuestionnairePortal.answerParts(answer)
+                if (parts.text.isNotBlank() && (answer.trim() != currentText(ids) || note.isNotBlank())) PromptButtons(listOf(PromptButton(QuestionnaireCopy.s("save"), primary = true) {
+                    onSaveAnswer(parts.text.trim(), ids, note.trim().ifBlank { null }, parts.richText)
                 }))
             }
         }

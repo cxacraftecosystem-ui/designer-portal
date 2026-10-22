@@ -31,4 +31,17 @@ class QuestionnairePortalTest {
         assertTrue(QuestionnairePortal.FILES_UNDER_DESIGN_WORKSHOP)
         assertEquals("designer-portal", QuestionnairePortal.NAME)
     }
+
+    @Test fun `the answer box gives plain words always, and its document only when formatted`() {
+        assertEquals(QuestionnairePortal.AnswerParts("Teak and sal", null), QuestionnairePortal.answerParts("Teak and sal"))
+        val doc = com.designprototype.workshop.ui.recordStoredKeepingFormat(
+            com.designprototype.workshop.ui.recordDocFromStored("Teak").let { d ->
+                d.copy(blocks = d.blocks.map { b -> b.copy(spans = b.spans.map { it.copy(marks = setOf(com.designprototype.workshop.report.Mark.BOLD)) }) })
+            }
+        )!!
+        val parts = QuestionnairePortal.answerParts(doc)
+        assertEquals(doc, parts.richText)
+        assertFalse(parts.text.contains("{"))
+        assertTrue(parts.text.contains("Teak"))
+    }
 }

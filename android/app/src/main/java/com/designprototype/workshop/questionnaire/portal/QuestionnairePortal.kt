@@ -128,9 +128,18 @@ object QuestionnairePortal {
     @Composable
     fun AnswerField(label: String?, value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier) {
         com.designprototype.workshop.ui.RecordProseField(
-            label = label, value = value, onValueChange = onValueChange, modifier = modifier, minLines = 2, rich = true
+            label = label, value = value, onValueChange = onValueChange, modifier = modifier, minLines = 2, rich = true, keepFormatting = true
         )
     }
+
+    /** What the answer box holds, as an answer: its plain words, and its formatting when it has any. */
+    data class AnswerParts(val text: String, val richText: String?)
+
+    /** C8: plain `text` always; `richText` (this app's rich-text document) only when it is formatted. */
+    fun answerParts(stored: String): AnswerParts =
+        if (com.designprototype.workshop.ui.looksLikeRichDocument(stored)) {
+            AnswerParts(com.designprototype.workshop.report.toPlain(com.designprototype.workshop.ui.recordDocFromStored(stored)), stored)
+        } else AnswerParts(stored, null)
 
     /** The live QR reader of the join screen: one tap opens the camera, a read code comes back once. */
     @Composable

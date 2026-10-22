@@ -9,7 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 
 /**
  * Audit M23 (21 Oct 2026), the Android gaps that strand or lose takes:

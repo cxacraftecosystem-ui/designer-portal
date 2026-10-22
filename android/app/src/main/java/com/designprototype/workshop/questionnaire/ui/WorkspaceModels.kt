@@ -165,7 +165,7 @@ object AnswerModel {
      */
     fun items(
         text: String, forIds: Collection<String>, lineageId: String, sessionId: String, answers: List<QAnswer>,
-        origin: String = "TYPED", sourceRecordingId: String? = null, note: String? = null
+        origin: String = "TYPED", sourceRecordingId: String? = null, note: String? = null, richText: String? = null
     ): List<QAnswerItem> {
         val shared = forIds.size > 1
         return forIds.map { id ->
@@ -173,7 +173,8 @@ object AnswerModel {
                 artisanId = id, questionLineageId = lineageId, text = text, origin = origin,
                 attribution = if (shared) "GROUP_SHARED" else "INDIVIDUAL", sessionId = sessionId,
                 sourceRecordingId = sourceRecordingId, baseVersion = current(answers, id, lineageId)?.version,
-                note = note?.trim()?.ifBlank { null }
+                note = note?.trim()?.ifBlank { null },
+                richText = richText?.ifBlank { null }
             )
         }
     }

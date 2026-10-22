@@ -1,6 +1,6 @@
 package com.designprototype.workshop.questionnaire.ui
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.data.InMemorySessionUnitStore
 import com.designprototype.workshop.questionnaire.data.QAnswer
 import com.designprototype.workshop.questionnaire.data.QAnswerResult
@@ -93,6 +93,20 @@ class AnswerRulesTest {
         assertNull(AnswerModel.items("Teak", setOf("a1"), "lin1", "s1", emptyList(), note = " ").single().note)
         val shown = AnswerModel.lines(listOf("a1"), "lin1", listOf(nandini.copy(note = "Wholesale price")), null) { null }.single()
         assertEquals("Wholesale price", shown.note)
+    }
+
+    @QFeature("C8")
+    @Test fun `a formatted answer keeps its plain words and its formatting, a plain one only its words`() {
+        val rich = """{"blocks":[{"kind":"BULLET","spans":[{"text":"Teak"}]}]}"""
+        val item = AnswerModel.items("Teak", setOf("a1"), "lin1", "s1", emptyList(), richText = rich).single()
+        val wire = QAnswersPut(listOf(item)).wire().items.single()
+        assertEquals("Teak", wire.text)
+        assertEquals(rich, wire.richText)
+        val plain = com.designprototype.workshop.questionnaire.portal.QuestionnairePortal.json.encodeToString(
+            com.designprototype.workshop.questionnaire.data.QAnswersPutWire.serializer(),
+            QAnswersPut(AnswerModel.items("Teak", setOf("a1"), "lin1", "s1", emptyList(), richText = " ")).wire()
+        )
+        assertFalse("no richText key for plain prose", plain.contains("richText"))
     }
 
     @QFeature("A19")

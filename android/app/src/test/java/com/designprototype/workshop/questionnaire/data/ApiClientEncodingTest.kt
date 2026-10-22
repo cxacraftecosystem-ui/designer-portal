@@ -1,6 +1,6 @@
 package com.designprototype.workshop.questionnaire.data
 
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.portal.QuestionnairePortal
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject

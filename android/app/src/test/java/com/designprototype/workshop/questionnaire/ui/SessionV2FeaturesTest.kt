@@ -1,7 +1,7 @@
 package com.designprototype.workshop.questionnaire.ui
 
 import com.designprototype.workshop.questionnaire.portal.QuestionnairePortal
-import com.designprototype.workshop.QFeature
+import com.designprototype.workshop.questionnaire.QFeature
 import com.designprototype.workshop.questionnaire.data.FakeSessionTransport
 import com.designprototype.workshop.questionnaire.data.InMemorySessionUnitStore
 import com.designprototype.workshop.questionnaire.data.ParticipantChange
