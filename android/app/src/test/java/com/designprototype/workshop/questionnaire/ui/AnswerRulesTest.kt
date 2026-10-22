@@ -65,6 +65,26 @@ class AnswerRulesTest {
         assertFalse(row.sendAgain)
     }
 
+    @QFeature("B39")
+    @Test fun `Send without the conflicting answers lets the refused ones go and keeps what landed`() = runBlocking {
+        val outbox = SessionOutbox(InMemorySessionUnitStore(), clock = { t0 })
+        outbox.startSession(QSessionCreate(clientKey = "c2", questionnaireId = "q", sessionDate = "2026-07-01", startedAt = t0.toString(), participants = listOf(QArtisanRef("a1"), QArtisanRef("a2"))), "u9")
+        outbox.addAnswers("c2", QAnswersPut(AnswerModel.items("Sal", setOf("a1"), "lin1", "c2", emptyList()) + AnswerModel.items("Bamboo", setOf("a2"), "lin1", "c2", emptyList())))
+        val fake = FakeSessionTransport()
+        val server = object : SessionTransport by fake {
+            override suspend fun putAnswers(body: QAnswersPut) = QAnswersPutResponse(body.items.map {
+                if (it.artisanId == "a1") QAnswerResult(it.artisanId, it.questionLineageId, "CONFLICT", current = QAnswer(id = "x", version = 3, text = "Teak"))
+                else QAnswerResult(it.artisanId, it.questionLineageId, "SAVED", answer = QAnswer(id = "y", version = 1, text = it.text))
+            })
+        }
+        outbox.sync(server, "u9")
+        val rows = OutboxTrayModel.rows(outbox.unit("c2")!!, { "Giriraj" }, { "D3" })
+        val step = OutboxTrayModel.conflictSteps(rows).single()
+        outbox.dropConflicts("c2", step)
+        assertTrue(outbox.unit("c2")!!.failedSteps.isEmpty())
+        assertTrue("nothing is left to send again", outbox.unit("c2")!!.steps.none { it.kind == com.designprototype.workshop.questionnaire.data.StepKind.ANSWERS })
+    }
+
     @QFeature("A20")
     @Test fun `a note goes with the answer it was written on, and shows under it`() {
         val item = AnswerModel.items("Teak", setOf("a1"), "lin1", "s1", emptyList(), note = "  Said twice  ").single()

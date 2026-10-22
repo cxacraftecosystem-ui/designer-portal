@@ -412,6 +412,7 @@ object QuestionnaireCopy {
         "tray.answers" to "Typed answers",
         "tray.finish" to "Finishing the session",
         "tray.discardTitle" to "Discard this?",
+        "tray.sendWithout" to "Send without the conflicting answers",
         // Session actions.
         "session.more" to "More",
         "session.edit" to "Edit session",

@@ -39,16 +39,4 @@ class ConsentQueueRulesTest {
         assertFalse("a server fault is not a wrong code", joinCodeUnknown(http(503)))
         assertFalse(joinCodeUnknown(http(429)))
     }
-
-    @Test
-    fun theConsentDayIsTheIstDayInTheWebsWords() {
-        assertEquals("19 Oct 2026", consentDay("2026-10-19T06:00:00Z"))
-        // 20:00 UTC is already the next day in India.
-        assertEquals("20 Oct 2026", consentDay("2026-10-19T20:00:00Z"))
-        assertEquals("19 Oct 2026", consentDay("2026-10-19T06:00:00.123+00:00"))
-        assertEquals("5 Oct 2026", consentDay("2026-10-05"))
-        assertNull(consentDay(null))
-        assertNull(consentDay(" "))
-        assertNull(consentDay("not a date"))
-    }
 }

@@ -543,6 +543,15 @@ class SessionOutbox(
             unit.copy(steps = unit.steps.mapNotNull { if (it.id == stepId) next else it })
         }
 
+    /**
+     * "Send without the conflicting answers" (DR audit H4): an answers step holds only the items the
+     * server refused (the rest saved when it answered), so letting them go is dropping the step.
+     * The server keeps what it has; nothing is sent again.
+     */
+    suspend fun dropConflicts(clientKey: String, stepId: String) = mutate(clientKey) { unit ->
+        unit.copy(steps = unit.steps.filterNot { it.id == stepId && it.kind == StepKind.ANSWERS && it.state == StepState.FAILED })
+    }
+
     private suspend fun mutate(clientKey: String, change: (SessionUnit) -> SessionUnit): SessionUnit = lockFor(clientKey).withLock {
         val current = store.read(clientKey) ?: throw MissingSessionUnit(clientKey)
         change(current).copy(touchedAt = clock().toString()).also { store.write(it) }

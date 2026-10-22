@@ -78,6 +78,10 @@ object OutboxTrayModel {
         }
     }
 
+    /** The answers steps with at least one answer the server refused: "Send without the conflicting answers". */
+    fun conflictSteps(rows: List<TrayRow>): List<String> =
+        rows.filter { it.kind == StepKind.ANSWERS && (it.conflict != null || !it.sendAgain) }.map { it.stepId }.distinct()
+
     /** "Uploading 40%" from the clip's parts on the server; "Waiting for signal" before any. */
     fun uploadLine(percent: Int): String = if (percent <= 0) QuestionnaireCopy.s("upload.waiting") else QuestionnaireCopy.uploading(percent)
 }

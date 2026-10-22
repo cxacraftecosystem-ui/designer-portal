@@ -483,7 +483,9 @@ fun SessionWorkspace(
             onSendAgain = { row -> withUnit { key -> v2.outbox.retryStep(key, row.stepId) } },
             onDiscard = { row -> discard = PendingDiscard(row) },
             onKeepTheirs = { row -> row.conflict?.let { c -> withUnit { key -> v2.outbox.resolveConflict(key, row.stepId, c.artisanId, c.questionLineageId, keepMine = false) } } },
-            onKeepMine = { row -> row.conflict?.let { c -> withUnit { key -> v2.outbox.resolveConflict(key, row.stepId, c.artisanId, c.questionLineageId, keepMine = true) } } }
+            onKeepMine = { row -> row.conflict?.let { c -> withUnit { key -> v2.outbox.resolveConflict(key, row.stepId, c.artisanId, c.questionLineageId, keepMine = true) } } },
+            // DR audit H4: the answers that landed stay landed; only the refused ones are let go.
+            onSendWithoutConflicts = { stepId -> withUnit { key -> v2.outbox.dropConflicts(key, stepId) } }
         )
         (recorderState as? RecordingService.State.Recording)?.takeIf { it.draft.sessionKey == clientKey }?.let { RecorderControl(it) }
         (recorderState as? RecordingService.State.Finished)?.takeIf { it.draft.sessionKey == clientKey && roster.size > 1 && !it.reason.startsWith("error:") }?.let { done ->
@@ -951,7 +953,8 @@ internal fun OutboxTray(
     onSendAgain: (TrayRow) -> Unit,
     onDiscard: (TrayRow) -> Unit,
     onKeepTheirs: (TrayRow) -> Unit,
-    onKeepMine: (TrayRow) -> Unit
+    onKeepMine: (TrayRow) -> Unit,
+    onSendWithoutConflicts: (stepId: String) -> Unit = {}
 ) {
     Surface(color = MaterialTheme.field.surface100, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -974,6 +977,10 @@ internal fun OutboxTray(
                     ))
                 }
                 HorizontalDivider(color = MaterialTheme.field.hairline)
+            }
+            // One choice per refused answers step: send what can go and let the conflicting ones go.
+            OutboxTrayModel.conflictSteps(rows).forEach { stepId ->
+                PromptButtons(listOf(PromptButton(QuestionnaireCopy.s("tray.sendWithout")) { onSendWithoutConflicts(stepId) }))
             }
         }
     }

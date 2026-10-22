@@ -100,9 +100,13 @@ class QuestionnairePromptsTest {
 
     @Test
     fun `every questionnaire prompt goes through the shared button row`() {
-        val prompts = repoSource("app/src/main/java/com/fieldrepository/app/ui/questionnaire/QuestionnairePrompts.kt")
+        // The shared tree's own folder, found from this package wherever the test runs.
+        val pkgPath = PromptButton::class.java.name.substringBeforeLast('.').replace('.', '/')
+        val dir = generateSequence(java.io.File(".").absoluteFile) { it.parentFile }
+            .flatMap { sequenceOf(java.io.File(it, "src/main/java/$pkgPath"), java.io.File(it, "android/app/src/main/java/$pkgPath")) }
+            .first { it.isDirectory }
+        val prompts = java.io.File(dir, "QuestionnairePrompts.kt").readText()
         assertTrue(prompts.contains("ActionRow("))
-        val dir = repoFile("app/src/main/java/com/fieldrepository/app/ui/questionnaire/QuestionnairePrompts.kt").parentFile
         dir.listFiles { f -> f.extension == "kt" }!!.forEach { file ->
             val text = file.readText()
             assertFalse("${file.name} draws its own dismissButton", text.contains("dismissButton ="))
