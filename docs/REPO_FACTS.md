@@ -176,8 +176,8 @@ and this one asserted an absence it had never looked for.
 |---|---|---|---|---|
 | `backend/app` | 362 | 209,588 | 362 | 209,588 |
 | `frontend/app` | 123 | 61,609 | 123 | 61,609 |
-| `frontend/components` | 401 | 148,991 | 426 | 153,928 |
-| `frontend/lib` | 199 | 84,644 | 214 | 88,012 |
+| `frontend/components` | 403 | 149,437 | 403 | 149,437 |
+| `frontend/lib` | 199 | 84,589 | 199 | 84,589 |
 | `android/app/src/main/java` | 376 | 260,768 | 376 | 260,768 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
