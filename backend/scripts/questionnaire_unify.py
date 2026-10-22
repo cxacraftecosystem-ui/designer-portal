@@ -94,8 +94,10 @@ PREREQUISITES = (
     "20261108093500_questionnaire_unify_form_mirror",
 )
 #: The form mirror's triggers and functions (prerequisite 3), removed by --undo when the run installed them.
-MIRROR_TRIGGERS = (("questionnaire_form_section_mirror", "QuestionnaireFormSection"), ("questionnaire_form_question_mirror", "QuestionnaireFormQuestion"))
-MIRROR_FUNCTIONS = ("questionnaire_form_section_mirror()", "questionnaire_form_question_mirror()", "questionnaire_form_mirror_rank(text)")
+MIRROR_TRIGGERS = (("questionnaire_form_section_mirror", "QuestionnaireFormSection"), ("questionnaire_form_question_mirror", "QuestionnaireFormQuestion"),
+                   ("questionnaire_form_mirror_drop", "Questionnaire"))
+MIRROR_FUNCTIONS = ("questionnaire_form_section_mirror()", "questionnaire_form_question_mirror()", "questionnaire_form_mirror_rank(text)",
+                    "questionnaire_form_mirror_drop()")
 #: Index names the prerequisites drop or create, recorded in the snapshot for the undo.
 INDEX_DDL = {
     "QuestionnaireSection_code_key": 'CREATE UNIQUE INDEX "QuestionnaireSection_code_key" ON "QuestionnaireSection"("code")',
