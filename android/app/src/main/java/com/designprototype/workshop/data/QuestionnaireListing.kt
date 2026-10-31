@@ -222,6 +222,8 @@ suspend fun <T> walkPagedListing(
 suspend fun WorkshopRepository.visibleQuestionnaires(
     search: String? = null,
     activeOnly: Boolean = true,
+    /** The shared questionnaire filters beyond the text, encoded (owner, 31 Oct 2026). */
+    filters: Map<String, String> = emptyMap(),
 ): PagedListing<CustomQuestionnaireSummaryDto> =
     walkPagedListing(idOf = { it.id }) { page, pageSize ->
         customQuestionnaires(
@@ -229,5 +231,6 @@ suspend fun WorkshopRepository.visibleQuestionnaires(
             pageSize = pageSize,
             search = search,
             activeOnly = activeOnly,
+            filters = filters,
         )
     }

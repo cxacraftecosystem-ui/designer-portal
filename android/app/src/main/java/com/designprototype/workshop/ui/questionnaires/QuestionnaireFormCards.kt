@@ -39,7 +39,7 @@ import com.designprototype.workshop.ui.field
  */
 
 @Composable
-private fun FormSurfaceCard(content: @Composable () -> Unit) {
+internal fun FormSurfaceCard(content: @Composable () -> Unit) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
         shape = RoundedCornerShape(14.dp),
