@@ -10,7 +10,13 @@ from prisma.errors import UniqueViolationError
 
 from app.core.config import Settings, get_settings
 from app.core.db import db
-from app.services import ai_verb_cap, dictation_consent, transcript_insights, transcription_jobs
+from app.services import (
+    ai_verb_cap,
+    dictation_consent,
+    transcript_insights,
+    transcript_pipeline,
+    transcription_jobs,
+)
 from app.services.ai import (
     analyze_measurement_image_bytes,
     redact_secrets,
@@ -516,8 +522,9 @@ async def process_next_media_jobs(
     held_back: list[str] = []
     if not allow_transcription:
         held_back.append(TRANSCRIPTION)
-    if not transcript_insights.enabled():
-        # Switched off: leave queued insights jobs where they are rather than failing them.
+    if not transcript_insights.enabled() or transcript_pipeline.holds_translation(app_settings):
+        # Switched off, or the monthly transcript budget is used up: leave queued insights jobs
+        # where they are rather than failing them.
         held_back.append(TRANSCRIPT_INSIGHTS)
     if len(held_back) == 1:
         where["jobType"] = {"not": held_back[0]}
@@ -1230,7 +1237,9 @@ async def _process_insights_job(job: Any, media: Any) -> None:
         await _finalize_refused_job(job, verdict)
         return
     try:
-        outcome = await transcript_insights.generate(media, user_id=requested_by)
+        # Turns (Scribe) are translated turn by turn with the summary in the same Gemini pass; a
+        # transcript without turns takes the old path (services/transcript_pipeline.generate).
+        outcome = await transcript_pipeline.generate(media, user_id=requested_by)
     except transcript_insights.InsightsUnavailable as exc:
         await _finalize_unavailable_job(job.id, {"status": UNAVAILABLE}, str(exc))
         return
