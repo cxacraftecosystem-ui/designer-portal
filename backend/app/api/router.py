@@ -60,6 +60,7 @@ from app.api.routes import (
     settings,
     tasks,
     tools,
+    transcript_data,
     transcript_insights,
     transcription_admin,
     transcripts,
@@ -283,6 +284,8 @@ api_router.include_router(data_browser.router)
 # The bulk, admin-authenticated dataset API. Mounted like any other router; what makes it different
 # is the credential it accepts (see app/api/routes/datasets.py and deps.require_dataset_admin).
 api_router.include_router(datasets.router)
+# Transcripts in View data / Download data (0.0.6): app/api/routes/transcript_data.py.
+api_router.include_router(transcript_data.router)
 api_router.include_router(app_release.router)
 # GET /admin/app-versions: which builds are in use (the old-build create cutoff waits on it).
 api_router.include_router(app_versions.router)
