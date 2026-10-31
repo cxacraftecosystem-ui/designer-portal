@@ -37,6 +37,10 @@ import { Pagination } from "@/components/Pagination";
 import { RecordCodeCard } from "@/components/RecordCode";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
+import { chipToggler, FilterBar } from "@/components/questionnaire/FilterBar";
+import { RecordingChips } from "@/components/questionnaire/RecordingChips";
+import { useUrlFilters } from "@/components/questionnaire/useUrlFilters";
+import { filtersAsParams, type Filters } from "@/lib/questionnaire/filters";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
@@ -403,11 +407,14 @@ function MediaPageBody() {
    */
   const currentLoad = useRef(0);
 
+  // The questionnaire filters (owner, 31 Oct 2026): a take by its form, section, artisans, workshop …
+  const { filters: takeFilters, setFilters: setTakeFilters, ready: filtersReady } = useUrlFilters();
   const load = useCallback(
-    async (pageToLoad: number, term: string) => {
+    async (pageToLoad: number, term: string, shared: Filters = {}) => {
       const generation = (currentLoad.current += 1);
       try {
         const result = await listResource<MediaFile>("/media", {
+          ...filtersAsParams(shared),
           page: pageToLoad,
           pageSize: 20,
           search: term || undefined
@@ -442,10 +449,10 @@ function MediaPageBody() {
 
   // Live search: debounce keystrokes, reload most-recent-first from page 1.
   useEffect(() => {
-    if (!placeRestored) return;
-    const timer = setTimeout(() => load(page, search), 300);
+    if (!placeRestored || !filtersReady) return;
+    const timer = setTimeout(() => load(page, search, takeFilters), 300);
     return () => clearTimeout(timer);
-  }, [page, search, load, placeRestored]);
+  }, [page, search, load, placeRestored, filtersReady, takeFilters]);
 
   // Android parity: when the linked record type changes, load that type's entries
   // for the optional second dropdown.
@@ -568,7 +575,7 @@ function MediaPageBody() {
       addCompleted(MEDIA_SECTION, MEDIA_SECTION_LABEL, uploaded);
       // Anything that got through is already in the repository, so refresh the table either way and
       // keep the form (and its selection) intact when part of the batch still needs another attempt.
-      load(page, search);
+      load(page, search, takeFilters);
       if (failed.length) {
         // THE CAUSE, NOT ONLY THE CASUALTIES. This branch named the files and stopped, so a designer
         // whose uploads were being refused by the bucket's CORS rule was told which photographs had
@@ -623,7 +630,7 @@ function MediaPageBody() {
     if (!ok) return;
     try {
       await apiFetch(`/media/${item.id}`, { method: "DELETE" });
-      await load(page, search);
+      await load(page, search, takeFilters);
     } catch (err) {
       // The server's sentence, as written — a post holder's 403 names the post.
       setError(err instanceof Error ? err.message : "Unable to remove media file");
@@ -923,6 +930,18 @@ function MediaPageBody() {
             }}
             placeholder="Search media by filename, caption, or file type"
           />
+          <div className="mt-3">
+            <FilterBar
+              filters={takeFilters}
+              onChange={(next) => {
+                setTakeFilters(next);
+                setPage(1);
+              }}
+              placeholder=""
+              search={false}
+              hide={["q", "dateFrom", "dateTo"]}
+            />
+          </div>
           {/* Why some rows' Delete and Transcribe now are held — said once, the rows marked in words. */}
           <HeldPostNotice
             refusal={mediaListNotice((data?.items ?? []).map(holdOf), "deleted or re-transcribed")}
@@ -965,6 +984,7 @@ function MediaPageBody() {
                         <StatusBadge status={item.status} />
                       </div>
                       {item.caption ? <p className="truncate text-xs text-ink-500">{item.caption}</p> : null}
+                      <RecordingChips chips={item.questionnaireChips} onChip={chipToggler(takeFilters, setTakeFilters)} filters={takeFilters} className="mt-1" />
                       <p className="mt-1 text-xs leading-5 text-ink-500">
                         {[
                           item.mediaType,
@@ -1035,6 +1055,7 @@ function MediaPageBody() {
                             {item.originalFilename}
                           </OpenableRowLink>
                           {item.caption ? <div className="max-w-xs truncate text-xs text-ink-500">{item.caption}</div> : null}
+                          <RecordingChips chips={item.questionnaireChips} onChip={chipToggler(takeFilters, setTakeFilters)} filters={takeFilters} className="mt-1 max-w-md" />
                         </td>
                         <td className="px-4 py-3 text-ink-700">{item.mediaType}</td>
                         <td className="px-4 py-3 text-ink-700">{bytes(item.sizeBytes)}</td>
