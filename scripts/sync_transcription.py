@@ -48,6 +48,11 @@ SHARED_FILES_EXTRA = (
     "backend/tests/test_audio_isolation.py",
     # D37 (0.0.6): the sized, swept working directory and the download that never leaks a temp file.
     "backend/tests/test_transcription_workdir.py",
+    # Transcripts in View data / Download data (0.0.6): the shared loader, its routes and its tests.
+    "backend/app/services/transcript_export.py",
+    "backend/app/api/routes/transcript_data.py",
+    "backend/tests/test_transcript_export.py",
+    "backend/tests/test_transcript_export_db.py",
 )
 #: Recorded provider responses the transcript tests read, every file in the folder.
 FIXTURE_DIR = "backend/tests/fixtures/transcript"
