@@ -33,6 +33,7 @@ import com.designprototype.workshop.questionnaire.data.QSession
 import com.designprototype.workshop.questionnaire.data.QuestionnaireCopy
 import com.designprototype.workshop.questionnaire.data.QuestionnaireFilters
 import com.designprototype.workshop.questionnaire.data.QuestionnaireV2
+import com.designprototype.workshop.transcript.ui.TranscriptPreviewText
 import com.designprototype.workshop.ui.AudioPlayer
 import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import com.designprototype.workshop.ui.field
@@ -103,6 +104,8 @@ fun RecordingsList(
                         modifier = Modifier.clickable { r.sessionId?.let(onOpenSession) }
                     )
                 }
+                // What was said (0.0.6): speakers as labels, never markdown, three lines at most.
+                r.transcript?.shownPreview()?.let { TranscriptPreviewText(it, maxLines = 3) }
                 RecordingChips(r.chips, filters = applied, onChip = onChip)
             }
             HorizontalDivider(color = MaterialTheme.field.hairline)
