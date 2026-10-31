@@ -205,6 +205,12 @@ export class QuestionnaireFake {
   isDefault = false;
   /** Paths answered with a dropped connection (A16: reading a form with no signal). */
   unreachable: RegExp[] = [];
+  /**
+   * Artisans removed from the workshop: the server refuses every participant call naming one, with the
+   * same detail each time, so a re-send (the outbox re-runs a refused step on every drain) reads the
+   * same "Not sent" reason as the refusal it replaces.
+   */
+  removedArtisans = new Set<string>();
 
   /** Artisan consent answers the fake gives (`GET /artisans/{id}/consent`). */
   consent: Record<string, string> = { a2: "REFUSED" };
@@ -419,6 +425,9 @@ export class QuestionnaireFake {
       if (s) this.sessions.unshift(s);
       return { status: 200, json: s };
     }
+    m = one(/^\/questionnaire\/sessions\/([^/]+)\/participants(?:\/([^/]+))?$/);
+    if (m && this.removedArtisans.has(m[2] ?? String((body as Json)?.artisanId ?? "")))
+      return { status: 409, json: { detail: { code: "ARTISAN_REMOVED", message: "That artisan was removed." } } };
     m = one(/^\/questionnaire\/sessions\/([^/]+)\/(finish|researchers|respondents|merge-into\/[^/]+)$/);
     if (m) return { status: 200, json: m[2] === "respondents" ? { respondents: [] } : this.sessions[0] };
     m = one(/^\/questionnaire\/sessions\/([^/]+)\/respondents\/([^/]+)$/);

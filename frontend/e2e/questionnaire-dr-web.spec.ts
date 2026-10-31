@@ -530,6 +530,10 @@ test("@qf:B15 a take cut short by a closed tab is offered back by P13 when the s
 
 test("@qf:B39 the fix tray sends a refused step again, sends without the conflicting answers, and discards", async ({ page }) => {
   const fake = new QuestionnaireFake();
+  // The page drains the outbox as soon as it loads, and that drain re-sends the refused participant
+  // step. The server must refuse it the way it was refused before, or the reason in the tray is
+  // replaced by whatever the re-send happens to get, depending on which lands first.
+  fake.removedArtisans.add("a2");
   await open(page, fake, "/questionnaire");
   await expect(page.locator("[data-sessions-list]")).toBeVisible();
   const item = { artisanId: "a1", questionLineageId: "l1", text: "Mine", origin: "TYPED", attribution: "INDIVIDUAL", sourceRecordingId: null };
