@@ -32,6 +32,9 @@ SHARED_FILES_EXTRA = (
     # The one consent store (19 Oct 2026): its migration and its tests, beside the rule in the package.
     "backend/prisma/migrations/20261103090000_one_consent_store/migration.sql",
     "backend/tests/test_consent_ledger.py",
+    # The transcript pipeline (31 Oct 2026): the API contract and UI strings both clients build on.
+    "shared/transcript-contract.json",
+    "shared/strings/transcript.json",
 )
 
 
