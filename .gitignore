@@ -152,3 +152,6 @@ android/app/libs/
 *.jks
 *.keystore
 *.p12
+
+# The transcription working directory (app/transcription/workdir.py, D37).
+backend/var/

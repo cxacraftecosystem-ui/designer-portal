@@ -37,6 +37,7 @@ from app.services.app_versions import AppVersionMiddleware
 from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
+from app.transcription import workdir
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,11 @@ async def lifespan(app: FastAPI):
         queue_lock = acquire_queue_worker_lock()
         if queue_lock is not None:
             logger.info("Media queue worker elected in pid %s", os.getpid())
+            # D37: the transcription working directory, swept of what a killed run left behind.
+            try:
+                await asyncio.to_thread(workdir.on_worker_start)
+            except Exception:
+                logger.warning("transcription workdir sweep failed", exc_info=True)
             queue_task = asyncio.create_task(_media_queue_worker())
             app.state.media_queue_task = queue_task
             app.state.media_queue_lock = queue_lock
