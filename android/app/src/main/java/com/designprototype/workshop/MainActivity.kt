@@ -155,6 +155,7 @@ import com.designprototype.workshop.ui.appMenuBleed
 import com.designprototype.workshop.ui.appMenuHidesPage
 import com.designprototype.workshop.ui.appMenuShowing
 import com.designprototype.workshop.ui.appSearchCachedItems
+import com.designprototype.workshop.ui.appSearchRecordingItems
 import com.designprototype.workshop.ui.appSearchRemoteItems
 import com.designprototype.workshop.ui.RemoteRecordScreen
 import com.designprototype.workshop.ui.appSearchScreenItems
