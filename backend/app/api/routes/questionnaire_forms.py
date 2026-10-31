@@ -913,7 +913,11 @@ async def list_questionnaires(
     if activeOnly and not deletedOnly:
         where["isActive"] = True
     if designWorkshopId:
-        where["designWorkshopId"] = designWorkshopId
+        # One workshop (the workshop screen), or several from the library's filter: repeated or
+        # comma-separated, the shared filters' spelling.
+        chosen = [w.strip() for value in request.query_params.getlist("designWorkshopId") or [designWorkshopId]
+                  for w in value.split(",") if w.strip()]
+        where["designWorkshopId"] = chosen[0] if len(chosen) == 1 else {"in": chosen}
     # THE SHARED FILTERS (owner, 31 Oct 2026; ``app/questionnaire/filters.py``): the free text
     # (``search`` or ``q``) finds a form by its title, description, sections, questions and the
     # sessions held on it; kind, artisans, researchers, workshops, dates, source, transcript and
