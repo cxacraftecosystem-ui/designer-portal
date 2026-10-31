@@ -102,11 +102,13 @@ fun QuestionnaireListScreen(
     /** Questionnaire v2: the sessions on one form. Carried for the detail screen's router. */
     onOpenSessions: ((questionnaireId: String) -> Unit)? = null,
 ) {
-    var rows by remember { mutableStateOf<List<CustomQuestionnaireSummaryDto>>(emptyList()) }
+    // The rows, the tab and the switches are kept in the screen's memory, so Back from a form lands
+    // on the library as it was left, scrolled to the row that was opened (owner, 1 Nov 2026).
+    var rows by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.rows") { emptyList<CustomQuestionnaireSummaryDto>() }
     var loading by remember { mutableStateOf(true) }
-    var offline by remember { mutableStateOf(false) }
+    var offline by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.offline") { false }
     /** Set when [rows] are this phone's saved copy of the unfiltered list — see [ReadCache]. */
-    var cachedNote by remember { mutableStateOf<String?>(null) }
+    var cachedNote by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.cachedNote") { null as String? }
     // The shared search and filters (owner, 31 Oct 2026), kept across navigation for this account:
     // the text finds a form by its title, sections, questions and sessions; the rest keep the forms
     // with a session that matches (artisans, researcher, workshop, dates, kind, source, transcript).
@@ -117,17 +119,19 @@ fun QuestionnaireListScreen(
     )
     val search = formFilters.q
     val narrowed = formFilters.without("q")
-    var showDeactivated by remember { mutableStateOf(false) }
+    var showDeactivated by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.showDeactivated") { false }
     var showCreate by remember { mutableStateOf(false) }
     /** The library tab (UNIFY §4.2): Mine · Shared · Workshop, and Deleted for whoever may restore. */
-    var tab by remember { mutableStateOf(FormsTab.MINE) }
+    var tab by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.tab") { FormsTab.MINE }
     /** A bundle picked from the Open bundle pill; handed to the received card like a shared file. */
     var pickedBundle by remember { mutableStateOf<Uri?>(null) }
     val pickBundle = rememberQuestionnaireBundlePicker { pickedBundle = it }
-    LaunchedEffect(newFormRequest) { if (newFormRequest > 0) showCreate = true }
+    // A request is answered once: coming Back to the library must not reopen the New form dialog.
+    var answeredNewForm by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.answeredNewForm") { newFormRequest }
+    LaunchedEffect(newFormRequest) { if (newFormRequest > answeredNewForm) { answeredNewForm = newFormRequest; showCreate = true } }
     var reload by remember { mutableIntStateOf(0) }
     /** Rows shown, of the total the server reports — set only when the walk stopped short. */
-    var partial by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var partial by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.partial") { null as Pair<Int, Int>? }
 
     // ── The .xlsx interchange ────────────────────────────────────────────────────────────────────
     // The application context, so a download that is still copying into MediaStore when the designer
