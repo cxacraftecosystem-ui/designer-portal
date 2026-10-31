@@ -5,6 +5,7 @@ import { Brush } from "lucide-react";
 
 import { GI_LABEL } from "@/components/crafts/craftAdmin";
 import { ExistingMedia } from "@/components/media/ExistingMedia";
+import { GlossaryView } from "@/components/transcript/GlossaryView";
 import { RecordFieldList, RecordViewPage } from "@/components/records/RecordView";
 import { craftFields, type RecordFieldRow } from "@/components/records/recordFields";
 import { craftIndex, craftPath, useCraftCatalogue, type CraftCatalogue } from "@/lib/craftCatalogue";
@@ -47,6 +48,7 @@ export default function CraftViewPage() {
         <>
           <RecordFieldList rows={[...masterListFields(craft as Craft, catalogue), ...craftFields(craft).filter((row) => row.label !== "Category")]} />
           <ExistingMedia linkedRecordType="craft" linkedRecordId={craft.id} recordHold={null} title="Media" readOnly />
+          <GlossaryView craftId={craft.id} mediaHref={(mediaId) => `/media/${encodeURIComponent(mediaId)}`} />
         </>
       )}
     </RecordViewPage>

@@ -118,6 +118,7 @@ import { DateField, TimeField } from "@/components/forms/DateTimeField";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { DocumentPreview } from "@/components/media/DocumentPreview";
+import { TranscriptViewer } from "@/components/transcript/TranscriptViewer";
 import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { GalleryProgress } from "@/components/media/GalleryProgress";
 import { MediaCarousel, type CarouselItem } from "@/components/media/MediaCarousel";
@@ -4486,7 +4487,8 @@ function MediaField({
             const file = local ? undefined : files[id];
             const thumbnail = local?.url ?? (file?.mediaType === "IMAGE" ? file.url : null);
             return (
-              <li key={id} className="flex items-center gap-2 rounded-md border border-line-200 bg-card px-3 py-2">
+              <li key={id} className="rounded-md border border-line-200 bg-card px-3 py-2">
+                <div className="flex items-center gap-2">
                 {thumbnail ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -4586,6 +4588,9 @@ function MediaField({
                 >
                   Remove
                 </button>
+                </div>
+                {/* A recording on a stage opens the shared transcript viewer: turns, copy, karaoke. */}
+                {file?.mediaType === "AUDIO" && file.url ? <TranscriptViewer mediaId={file.id} audioUrl={file.url} initiallyOpen={false} /> : null}
               </li>
             );
           })}
