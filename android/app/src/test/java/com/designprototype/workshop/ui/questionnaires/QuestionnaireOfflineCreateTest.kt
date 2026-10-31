@@ -29,7 +29,7 @@ class QuestionnaireOfflineCreateTest {
     fun `the router reopens the detail screen under the server id`() {
         assertTrue(detail.contains("onResolvedId(real)"))
         val main = qLiveSource("app/src/main/java/com/designprototype/workshop/MainActivity.kt").readText()
-        assertTrue(main.contains("onResolvedId = { real -> screen = Screen.QuestionnaireDetail(real) }"))
+        assertTrue(main.contains("onResolvedId = { real -> screen = Screen.QuestionnaireDetail(real, from = s.from) }"))
     }
 
     @Test

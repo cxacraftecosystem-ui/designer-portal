@@ -180,7 +180,7 @@ class DesignWorkshopCardTest {
         )
         assertTrue(
             "backing out of a workshop must build the route with startCreating false",
-            "is Screen.DesignWorkshopStages -> Screen.DesignWorkshops()" in source
+            "is Screen.DesignWorkshopStages -> s.from ?: Screen.DesignWorkshops()" in source
         )
     }
 }
