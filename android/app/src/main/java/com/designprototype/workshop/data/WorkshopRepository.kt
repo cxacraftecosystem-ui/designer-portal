@@ -3251,6 +3251,7 @@ class WorkshopRepository(
         designWorkshopId: String? = null,
         activeOnly: Boolean = true,
         mineOnly: Boolean = false,
+        filters: Map<String, String> = emptyMap(),
     ): PageResponse<CustomQuestionnaireSummaryDto> = api.customQuestionnaires(
         page = page,
         pageSize = pageSize,
@@ -3258,6 +3259,7 @@ class WorkshopRepository(
         designWorkshopId = designWorkshopId?.takeIf { it.isNotBlank() },
         activeOnly = activeOnly,
         mineOnly = mineOnly,
+        filters = filters,
     )
 
     // ── L9 (21 Oct 2026): soft delete and restore, content admins only ───────────────────────────

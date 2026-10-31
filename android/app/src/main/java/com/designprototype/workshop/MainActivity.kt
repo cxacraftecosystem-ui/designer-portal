@@ -10486,7 +10486,7 @@ private fun LoadingCard(mode: EntryMode, failed: String? = null, onRetry: () -> 
 
 /** One row of the record picker: the record, its label, and its completeness block when it has one. */
 @kotlinx.serialization.Serializable
-private data class PickerRow(val id: String, val label: String, val completeness: CompletenessDto? = null)
+private data class PickerRow(val id: String, val label: String, val completeness: CompletenessDto? = null, val chips: com.designprototype.workshop.questionnaire.data.QChips? = null)
 
 /**
  * The picker's read, with the last UNFILTERED list this phone read served when nothing reaches the
@@ -10573,7 +10573,7 @@ private fun RecordPickerScreen(
                 EntryMode.TOOL -> repository.toolPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.toolkitName} · ${it.artisanName}", it.completeness) } }
                 EntryMode.WORKSHOP -> repository.workshopPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place), it.completeness) } }
                 EntryMode.MEDIA -> repository.mediaPage(search).let { p ->
-                    p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename) }
+                    p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename, chips = m.questionnaireChips) }
                 }
                 EntryMode.QUESTIONNAIRE -> repository.interviewPage(search, wire).let { p ->
                     // Idempotent: all saved interview records for the same set of artisan(s) collapse
@@ -10674,7 +10674,10 @@ private fun RecordPickerScreen(
                                 .padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                            Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                                Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
+                                com.designprototype.workshop.questionnaire.ui.RecordingChips(row.chips)
+                            }
                             row.completeness?.let { block ->
                                 CompletenessRing(
                                     percent = block.percent,

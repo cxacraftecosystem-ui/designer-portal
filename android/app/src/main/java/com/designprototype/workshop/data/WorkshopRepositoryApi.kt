@@ -2520,6 +2520,9 @@ interface WorkshopRepositoryApi {
         @Query("mineOnly") mineOnly: Boolean = false,
         // L9 (21 Oct 2026): the trash, newest deletion first. Content admins only; 403 otherwise.
         @Query("deletedOnly") deletedOnly: Boolean = false,
+        // The shared questionnaire filters (owner, 31 Oct 2026), already encoded:
+        // `questionnaire/data/QuestionnaireFilters.toParams()`. `designWorkshopId` keeps its own meaning.
+        @QueryMap(encoded = true) filters: Map<String, String> = emptyMap(),
     ): PageResponse<CustomQuestionnaireSummaryDto>
 
     // ── L9 (21 Oct 2026): soft delete and restore, content admins only on every path ──────────────
