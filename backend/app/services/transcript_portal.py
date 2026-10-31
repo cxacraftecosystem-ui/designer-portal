@@ -7,7 +7,8 @@ and routes (``api/routes/transcripts.py``) call only the functions below.
 * reading follows ``GET /media/{id}``: the encoder every media read leaves by
   (``records.public_encode``); a transcript the viewer may not read is a 404;
 * editing follows ``POST /media/{id}/transcript``: the uploader or a content admin, and never a
-  person who inspects or supervises a workshop the recording belongs to;
+  person who inspects or supervises a workshop the recording belongs to; the view says so up front
+  (``readOnly``) by the same rule the writes refuse by;
 * consent is ``dictation_consent.transcription_verdict`` with :data:`dictation_consent.INSIGHTS`,
   re-read immediately before every send;
 * a design workshop adds its craft, state and artisans to the recording's context.
@@ -50,16 +51,45 @@ async def readable_ids(rows: list[Any], viewer: Any) -> set[str]:
     }
 
 
+#: Why a reader may not change this transcript, by ``readOnlyReason`` code (shared contract). The
+#: words are the ones the app already uses: the 403 of ``POST /media/{id}/transcript`` and the
+#: web's read-only note on a file of a workshop the reader oversees (``MEDIA_HELD_REASON``).
+READ_ONLY_MESSAGES: dict[str, str] = {
+    "NOT_EDITOR": "Only the uploader or an admin can change this transcript.",
+    "HELD_POST": "Read-only: part of a workshop you oversee.",
+}
+
+
+async def _write_refusal(user: Any, media: Any) -> tuple[str, Any] | None:
+    """``(code, the 403's detail)`` when ``user`` may not change this transcript; None when they may.
+
+    THE ONE RULE. :func:`guard_write` refuses every transcript write by it and :func:`read_only`
+    tells the view by it, so the controls a client draws can never disagree with the server.
+    """
+    if not may_edit(user, media):
+        return "NOT_EDITOR", {"code": "FORBIDDEN", "message": READ_ONLY_MESSAGES["NOT_EDITOR"]}
+    from fastapi import HTTPException  # here: the queue worker never loads FastAPI
+
+    try:
+        await design_workshop_posts.refuse_a_holders_media_write(media, user)
+    except HTTPException as exc:
+        return "HELD_POST", exc.detail
+    return None
+
+
+async def read_only(user: Any, media: Any) -> dict[str, str] | None:
+    """``{code, message}`` when ``user`` may read this transcript but not change it; None when they may."""
+    refusal = await _write_refusal(user, media)
+    return None if refusal is None else {"code": refusal[0], "message": READ_ONLY_MESSAGES[refusal[0]]}
+
+
 async def guard_write(user: Any, media: Any) -> None:
     """Raises 403 when ``user`` may not change this recording's transcript."""
-    if not may_edit(user, media):
+    refusal = await _write_refusal(user, media)
+    if refusal is not None:
         from fastapi import HTTPException, status  # here: the queue worker never loads FastAPI
 
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "FORBIDDEN", "message": "Only the uploader or an admin can change this transcript."},
-        )
-    await design_workshop_posts.refuse_a_holders_media_write(media, user)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=refusal[1])
 
 
 async def may_send(media: Any) -> tuple[bool, str | None]:
