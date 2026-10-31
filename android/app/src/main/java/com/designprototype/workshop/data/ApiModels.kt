@@ -3415,7 +3415,9 @@ data class DataTreeEntryDto(
     val url: String? = null,
     val sizeBytes: Long? = null,
     val transcriptAvailable: Boolean = false,
-    val content: String? = null
+    val content: String? = null,
+    /** A recording's transcript files (0.0.6): md and Word, with and without times; subtitles when timed. */
+    val transcriptFiles: List<com.designprototype.workshop.transcript.data.DataTranscriptFile> = emptyList()
 ) {
     val isFolder: Boolean get() = kind == "folder"
 }
