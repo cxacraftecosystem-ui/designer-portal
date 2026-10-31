@@ -107,7 +107,16 @@ fun QuestionnaireListScreen(
     var offline by remember { mutableStateOf(false) }
     /** Set when [rows] are this phone's saved copy of the unfiltered list — see [ReadCache]. */
     var cachedNote by remember { mutableStateOf<String?>(null) }
-    var search by remember { mutableStateOf("") }
+    // The shared search and filters (owner, 31 Oct 2026), kept across navigation for this account:
+    // the text finds a form by its title, sections, questions and sessions; the rest keep the forms
+    // with a session that matches (artisans, researcher, workshop, dates, kind, source, transcript).
+    val v2Context = LocalContext.current.applicationContext
+    val v2 = remember { com.designprototype.workshop.questionnaire.data.QuestionnaireV2.get(v2Context) }
+    val (formFilters, setFormFilters) = com.designprototype.workshop.questionnaire.ui.rememberKeptFilters(
+        v2, com.designprototype.workshop.questionnaire.data.FilterStore.FORMS
+    )
+    val search = formFilters.q
+    val narrowed = formFilters.without("q")
     var showDeactivated by remember { mutableStateOf(false) }
     var showCreate by remember { mutableStateOf(false) }
     /** The library tab (UNIFY §4.2): Mine · Shared · Workshop, and Deleted for whoever may restore. */
@@ -157,7 +166,7 @@ fun QuestionnaireListScreen(
         }
     }
 
-    LaunchedEffect(reload, search, showDeactivated) {
+    LaunchedEffect(reload, formFilters, showDeactivated) {
         // Debounced only for TYPING. Keying on `search` cancels and restarts the effect per keystroke,
         // so without this a five-letter craft name is five list requests and four replies nobody will
         // read. `reload` is a deliberate act (a create) and must not wait behind a delay.
@@ -176,7 +185,7 @@ fun QuestionnaireListScreen(
             // reach. See data/QuestionnaireListing.kt for the live reading this was written from.
             // THE UNFILTERED LIST IS KEPT ON THIS PHONE and shown when there is no connection. A search
             // is not: it is a question for the server, and an old answer to it would read as current.
-            if (search.isBlank()) {
+            if (search.isBlank() && narrowed.isEmpty) {
                 var listing: com.designprototype.workshop.data.PagedListing<CustomQuestionnaireSummaryDto>? = null
                 val read = ReadCache.read(
                     appContext,
@@ -191,14 +200,15 @@ fun QuestionnaireListScreen(
                 }
             } else {
                 repository.visibleQuestionnaires(
-                    search = search,
+                    search = search.ifBlank { null },
                     activeOnly = !showDeactivated,
+                    filters = narrowed.toParams(),
                 )
             }
         }.onSuccess {
             // QUESTIONNAIRES STARTED ON THIS PHONE AND NOT YET UPLOADED (2026-10-16) come first, under
             // their temporary ids, so they can be opened and written offline.
-            val waiting = if (search.isBlank()) {
+            val waiting = if (search.isBlank() && narrowed.isEmpty) {
                 runCatching { repository.pendingQuestionnaires(appContext) }.getOrDefault(emptyList()).map { queued ->
                     CustomQuestionnaireSummaryDto(
                         id = queued.id,
@@ -257,12 +267,11 @@ fun QuestionnaireListScreen(
             style = MaterialTheme.typography.bodySmall
         )
 
-        OutlinedTextField(
-            value = search,
-            onValueChange = { search = it },
-            label = { Text("Search") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+        com.designprototype.workshop.questionnaire.ui.FilterBar(
+            formFilters, setFormFilters,
+            com.designprototype.workshop.questionnaire.data.QuestionnaireCopy.t("filterSearchForms"),
+            options = { facet, q, ids -> v2.filterOptions(facet, q, ids) },
+            fields = com.designprototype.workshop.questionnaire.ui.FilterField.FORMS,
         )
 
         // THE LIBRARY'S FOUR ACTIONS, as pills (UNIFY §4.2; the design bar puts three or more on pills).
@@ -387,8 +396,8 @@ fun QuestionnaireListScreen(
             )
 
             shown.isEmpty() -> EmptyNote(
-                if (search.isNotBlank()) {
-                    "Nothing matches “$search”."
+                if (search.isNotBlank() || !narrowed.isEmpty) {
+                    com.designprototype.workshop.questionnaire.data.QuestionnaireCopy.t("filterNoMatches")
                 } else {
                     formsTabEmpty(tab)
                 }

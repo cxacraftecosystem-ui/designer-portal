@@ -293,9 +293,9 @@ export type OffPageIntent<Row> =
  * administrator for access they already have.
  *
  * `total` is `null` for a route that cannot count. Only one does — `GET /workshops/requestable`
- * returns a bare array with no envelope — and that is a server defect with a fix already specified;
- * until it lands, `truncated` is how a route says "there were more" without saying how many, which
- * is the split `selectFilter.ts::unknownTotalNoticeSentence` exists to print.
+ * answers `{items, truncated}`, reading one row past its cap rather than counting — and `truncated`
+ * is how it says "there were more" without saying how many, which is the split
+ * `selectFilter.ts::unknownTotalNoticeSentence` exists to print.
  */
 export type WorkshopListState<Row> =
   | { kind: "loading" }

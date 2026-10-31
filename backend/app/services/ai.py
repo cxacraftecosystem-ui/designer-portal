@@ -493,8 +493,12 @@ def _stt_options(
     language_bias: list[str] | None = None,
     session_id: str | None = None,
     keep_payload: bool = False,
+    keyterms: list[str] | None = None,
 ) -> SttOptions:
-    """The options every provider is asked with: craft keyterms, diarization, models, language hint."""
+    """The options every provider is asked with: craft keyterms, diarization, models, language hint.
+
+    ``keyterms`` replaces the general vocabulary with one recording's own terms, most specific first
+    (``transcript_pipeline.keyterms_for``); without it every provider gets the vocabulary file."""
     models = {"elevenlabs": _elevenlabs_model(settings)}
     deepgram_model = getattr(settings, "deepgram_stt_model", None)
     if deepgram_model:
@@ -507,7 +511,7 @@ def _stt_options(
         models["muse"] = muse_model
     return SttOptions(
         language_bias=list(language_bias or []),
-        keyterms=list(craft_keyterms()),
+        keyterms=list(keyterms) if keyterms else list(craft_keyterms()),
         models=models,
         session_id=session_id,
         keep_payload=keep_payload,
@@ -862,6 +866,7 @@ async def transcribe_audio_bytes(
     language_bias: list[str] | None = None,
     skip_providers: set[str] | None = None,
     source_path: str | None = None,
+    keyterms: list[str] | None = None,
 ) -> dict[str, Any]:
     """Transcribe a recording through this deployment's provider chain.
 
@@ -935,7 +940,9 @@ async def transcribe_audio_bytes(
     state = await store.load_state(job_id=job_id, providers=chain)
     state.skip |= set(skip_providers or ())
     hooks = StoreHooks(store, asyncio.get_running_loop(), media_id=media_id, job_id=job_id)
-    opts = _stt_options(settings, language_bias=language_bias, session_id=media_id)
+    opts = _stt_options(
+        settings, language_bias=language_bias, session_id=media_id, keyterms=keyterms
+    )
     try:
         return await asyncio.to_thread(
             _transcribe_sync,

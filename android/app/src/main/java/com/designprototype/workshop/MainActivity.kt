@@ -155,6 +155,7 @@ import com.designprototype.workshop.ui.appMenuBleed
 import com.designprototype.workshop.ui.appMenuHidesPage
 import com.designprototype.workshop.ui.appMenuShowing
 import com.designprototype.workshop.ui.appSearchCachedItems
+import com.designprototype.workshop.ui.appSearchRecordingItems
 import com.designprototype.workshop.ui.appSearchRemoteItems
 import com.designprototype.workshop.ui.RemoteRecordScreen
 import com.designprototype.workshop.ui.appSearchScreenItems
@@ -775,6 +776,7 @@ import java.time.ZoneId
 import java.util.Locale
 import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import com.designprototype.workshop.ui.TranscriptInsightsCard
+import com.designprototype.workshop.transcript.ui.TranscriptEntry
 import com.designprototype.workshop.ui.FieldProgressDefaults
 
 /*
@@ -4251,7 +4253,20 @@ private fun HomeScreen(
             } +
             appSearchCachedItems(artisans, crafts) { type, id -> attemptExit { openSearchRecord(type, id) } }
 
+    // A take found by the search, or a chip tapped where there is no list: the questionnaire screen
+    // opens on the recordings list filtered by it.
+    val recordingsRequest by QuestionnaireV2Nav.showRecordings.collectAsState()
+    LaunchedEffect(recordingsRequest) {
+        if (recordingsRequest != null) { message = null; screen = screenFor(EntryMode.QUESTIONNAIRE) }
+    }
+    // A session opened from a list outside the questionnaire screen (a design workshop's recordings).
+    val sessionRequest by QuestionnaireV2Nav.openServerSession.collectAsState()
+    LaunchedEffect(sessionRequest) {
+        if (sessionRequest != null && (screen as? Screen.Create)?.mode != EntryMode.QUESTIONNAIRE) { message = null; screen = screenFor(EntryMode.QUESTIONNAIRE) }
+    }
+
     suspend fun searchRemote(query: String): List<AppSearchItem> =
+        appSearchRecordingItems(context, query) { filters -> attemptExit { QuestionnaireV2Nav.showRecordings.value = filters } } +
         appSearchRemoteItems(
             repository = repository,
             query = query,
@@ -10486,7 +10501,7 @@ private fun LoadingCard(mode: EntryMode, failed: String? = null, onRetry: () -> 
 
 /** One row of the record picker: the record, its label, and its completeness block when it has one. */
 @kotlinx.serialization.Serializable
-private data class PickerRow(val id: String, val label: String, val completeness: CompletenessDto? = null)
+private data class PickerRow(val id: String, val label: String, val completeness: CompletenessDto? = null, val chips: com.designprototype.workshop.questionnaire.data.QChips? = null)
 
 /**
  * The picker's read, with the last UNFILTERED list this phone read served when nothing reaches the
@@ -10553,7 +10568,12 @@ private fun RecordPickerScreen(
     LaunchedEffect(Unit) { runCatching { repository.completenessRules(pickerContext) } }
     /** Set when the list is this phone's saved copy — see [ReadCache]. */
     var cachedNote by remember(mode) { mutableStateOf<String?>(null) }
-    LaunchedEffect(mode, query, attempt, completenessFilter) {
+    // The media list's questionnaire filters (owner, 31 Oct 2026): form, section or question,
+    // artisans, researcher, workshop, kind, source, transcript, language, kept for this account.
+    val mediaV2 = remember { com.designprototype.workshop.questionnaire.data.QuestionnaireV2.get(pickerContext) }
+    val (mediaFilters, setMediaFilters) = com.designprototype.workshop.questionnaire.ui.rememberKeptFilters(mediaV2, com.designprototype.workshop.questionnaire.data.FilterStore.MEDIA)
+    val mediaNarrowed = mode == EntryMode.MEDIA && mediaFilters.mediaParams().isNotEmpty()
+    LaunchedEffect(mode, query, attempt, completenessFilter, mediaFilters) {
         // Typing settles before the server is asked, so one name is one request rather than six.
         if (query.isNotBlank()) delay(350)
         loading = true
@@ -10564,7 +10584,8 @@ private fun RecordPickerScreen(
           // The last unfiltered list this phone read is offered with no signal, so a record can be
           // opened for a correction (see [cachedRecordForCorrection]); a search is always asked live.
           val wire = completenessFilter.wire.takeIf { completenessKind != null }
-          pickerReadCached(pickerContext, mode, search, wire, onCached = { cachedNote = it }) {
+          // A filtered media list is a question for the server, like a search: never the kept copy.
+          pickerReadCached(pickerContext, mode, search ?: "".takeIf { mediaNarrowed }, wire, onCached = { cachedNote = it }) {
             when (mode) {
                 EntryMode.ARTISAN -> repository.artisanPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.name} · ${it.place}", it.completeness) } }
                 EntryMode.CRAFT -> repository.craftPage(search).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.place?.let { pl -> " · $pl" } ?: "")) } }
@@ -10572,8 +10593,8 @@ private fun RecordPickerScreen(
                 EntryMode.PROCESS -> repository.processPage(search).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.product?.productName?.let { pr -> " · $pr" } ?: "")) } }
                 EntryMode.TOOL -> repository.toolPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.toolkitName} · ${it.artisanName}", it.completeness) } }
                 EntryMode.WORKSHOP -> repository.workshopPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place), it.completeness) } }
-                EntryMode.MEDIA -> repository.mediaPage(search).let { p ->
-                    p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename) }
+                EntryMode.MEDIA -> repository.mediaPage(search, if (mediaNarrowed) mediaFilters.mediaParams() else emptyMap()).let { p ->
+                    p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename, chips = m.questionnaireChips) }
                 }
                 EntryMode.QUESTIONNAIRE -> repository.interviewPage(search, wire).let { p ->
                     // Idempotent: all saved interview records for the same set of artisan(s) collapse
@@ -10625,6 +10646,11 @@ private fun RecordPickerScreen(
                 CompletenessFilterMemory.write(pickerContext, mode.name, next)
             }
         }
+        if (mode == EntryMode.MEDIA) com.designprototype.workshop.questionnaire.ui.FilterBar(
+            mediaFilters, setMediaFilters, "",
+            options = { facet, q, ids -> mediaV2.filterOptions(facet, q, ids) },
+            fields = com.designprototype.workshop.questionnaire.ui.FilterField.MEDIA, showSearch = false
+        )
         cachedNote?.let { CachedCopyNote(it) }
         when {
             loadError != null -> LoadFailedCard(message = loadError.orEmpty(), onRetry = { attempt++ })
@@ -10674,7 +10700,13 @@ private fun RecordPickerScreen(
                                 .padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                            Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                                Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
+                                // A take's chips; a tap narrows this list by it (a day is the upload day here, so not a filter).
+                                com.designprototype.workshop.questionnaire.ui.RecordingChips(row.chips, filters = mediaFilters, onChip = if (mode == EntryMode.MEDIA) ({ f: com.designprototype.workshop.questionnaire.data.ChipFilter, l: String ->
+                                    if (mediaFilters.appliesToMedia(f)) setMediaFilters(mediaFilters.applyChip(f, l))
+                                }) else null)
+                            }
                             row.completeness?.let { block ->
                                 CompletenessRing(
                                     percent = block.percent,
@@ -15495,6 +15527,8 @@ private fun MediaWithTranscript(
             style = MaterialTheme.typography.bodySmall
         )
     }
+    // A questionnaire take's chips (owner, 31 Oct 2026); a tap opens the recordings list filtered by it.
+    com.designprototype.workshop.questionnaire.ui.RecordingChips(media.questionnaireChips, onChip = QuestionnaireV2Nav::openRecordings)
     val scope = rememberCoroutineScope()
     val isAudio = media.mediaType.equals("AUDIO", ignoreCase = true)
     val processing = setOf("QUEUED", "PROCESSING", "PENDING", "RUNNING")
@@ -15523,6 +15557,10 @@ private fun MediaWithTranscript(
         }
     }
 
+    val isVideo = media.mediaType.equals("VIDEO", ignoreCase = true)
+    // The transcript viewer (DESIGN_2026-10-31 §3) wherever the pipeline answers; the plain
+    // transcript below wherever it does not (the switch is off, or the file predates it).
+    val legacyTranscript: @Composable () -> Unit = {
     when {
         !transcriptText.isNullOrBlank() -> {
             Column(
@@ -15655,6 +15693,9 @@ private fun MediaWithTranscript(
             }
         }
     }
+    Unit
+    }
+    if (isAudio || isVideo) TranscriptEntry(mediaId = media.id, audio = null, legacy = legacyTranscript) else legacyTranscript()
 }
 
 /** Admin "Transcribe now" / "Re-transcribe" action — runs transcription on the spot via the settings mode. */

@@ -48,7 +48,9 @@ import { Children, type ReactNode } from "react";
  * content's intrinsic width is how a long filename pushes a whole column sideways.
  */
 
-const COLUMN_CLASS: Record<2 | 3 | 4, string> = {
+const COLUMN_CLASS: Record<1 | 2 | 3 | 4, string> = {
+  // One: a single file's own page, whose card carries the whole transcript viewer.
+  1: "grid gap-3",
   // Two: for cards that carry a block of their own — `ExistingMedia` hangs a transcript off each.
   2: "grid gap-3 lg:grid-cols-2",
   // Three: the capture grids' existing shape, kept verbatim so this component is a drop-in for them.
@@ -66,7 +68,7 @@ export function MediaCardGrid({
   /** Names the list for a screen reader — "Previously uploaded media", not "Media grid". */
   label: string;
   /** The widest this list is allowed to get. See COLUMN_CLASS for what each is for. */
-  maxColumns?: 2 | 3 | 4;
+  maxColumns?: 1 | 2 | 3 | 4;
 }) {
   return (
     <ul role="list" aria-label={label} className={COLUMN_CLASS[maxColumns]}>

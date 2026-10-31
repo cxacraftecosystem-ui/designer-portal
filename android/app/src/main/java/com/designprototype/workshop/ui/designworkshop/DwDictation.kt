@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
+import com.designprototype.workshop.transcript.ui.TranscriptEntry
 import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -390,6 +391,8 @@ internal fun DwDictationButton(
     onPartial: (String) -> Unit,
     onCommit: (String) -> Unit,
     onError: (String) -> Unit,
+    /** The server kept the clip (`mediaId`): the caller draws its transcript under the field. */
+    onKept: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -515,6 +518,7 @@ internal fun DwDictationButton(
     val currentPartial by rememberUpdatedState(onPartial)
     val currentCommit by rememberUpdatedState(onCommit)
     val currentError by rememberUpdatedState(onError)
+    val currentKept by rememberUpdatedState(onKept)
 
     /**
      * Put every engine down and go back to IDLE.
@@ -913,7 +917,8 @@ internal fun DwDictationButton(
                 failure = e
             }
             // THE CLIP IS DELETED ON EVERY PATH, including this one. Audio of a named artisan has no
-            // business outliving the sentence it became; the endpoint stores nothing either.
+            // business outliving the sentence it became on this phone. The server keeps its own copy
+            // only when it heard words, so the transcript can open under the field (`mediaId`).
             runCatching { clip.delete() }
             sendingClip = null
             // Cleared before anything below can call `release`, so a `release` triggered from inside
@@ -933,6 +938,7 @@ internal fun DwDictationButton(
                     currentPartial("")
                     release()
                     currentCommit(text)
+                    dwDictationKeptMediaId(dto)?.let { currentKept(it) }
                 } else {
                     // A round trip that worked and found no words is a different next move from a
                     // round trip that did not happen — the microphone and the room, not the signal.
@@ -1781,6 +1787,19 @@ private fun DwServerDictationPanel(
  * appearing in the box in front of them, and the button they pressed has visibly become a square.
  * `Dictation.tsx` prints `Listening… speak now.` and stops, and it is right to.
  */
+/**
+ * THE KEPT DICTATION'S TRANSCRIPT, under the field it was spoken into (0.0.4): the shared
+ * transcript row, collapsed, which opens the full viewer. Nothing while no clip was kept.
+ */
+@Composable
+internal fun DwDictationKept(mediaId: String?) {
+    if (mediaId != null) TranscriptEntry(mediaId = mediaId, audio = null)
+}
+
+/** Whether a dictation answer carries a kept clip the field should show the transcript of. */
+internal fun dwDictationKeptMediaId(dto: DwDictateDto): String? =
+    dto.mediaId?.takeIf { it.isNotBlank() && dto.text.isNotBlank() }
+
 @Composable
 internal fun DwDictationHint(listening: Boolean) {
     if (!listening) return

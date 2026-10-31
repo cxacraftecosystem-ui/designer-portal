@@ -1621,6 +1621,8 @@ private fun ScalarInput(
      * the final text when it arrives.
      */
     var spoken by remember(field.key, resetKey) { mutableStateOf("") }
+    /** The clip the last server dictation kept, whose transcript shows under the field. */
+    var keptMediaId by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
 
     val dictationAvailable = rememberDictationAvailable()
     // [dwNumericTextField] subtracts, and only ever subtracts. `dictatable` is right that a TEXT box
@@ -1765,12 +1767,14 @@ private fun ScalarInput(
                             spoken = ""
                             services?.onError?.invoke(message)
                         },
+                        onKept = { id -> keptMediaId = id },
                     )
                 }
             },
             modifier = Modifier.fillMaxWidth().onFocusChanged { state -> if (!state.isFocused && buffer.isNotBlank()) leftOnce = true }
         )
         DwDictationHint(listening = spoken.isNotBlank())
+        DwDictationKept(keptMediaId)
         // `canReadCard` already carries the null check, and the compiler propagates that through the
         // local val — repeating it here only earns a "condition is always true" warning.
         if (canReadCard) {
@@ -1883,6 +1887,8 @@ private fun DwNumberedPointsInput(
      */
     var spokenRow by remember(field.key, resetKey) { mutableStateOf(-1) }
     var spoken by remember(field.key, resetKey) { mutableStateOf("") }
+    /** The clip the last server dictation kept, whose transcript shows under the field. */
+    var keptMediaId by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
 
     // Adopt an incoming value only when it differs AS STORED — a hydration landing on the row, or a
     // fold from the server. Comparing the joined form rather than the row list is what stops the
@@ -1980,12 +1986,14 @@ private fun DwNumberedPointsInput(
                         spokenRow = -1
                         services?.onError?.invoke(message)
                     },
+                    onKept = { id -> keptMediaId = id },
                 )
             }
         },
         onChange = ::emit,
     )
     DwDictationHint(listening = spoken.isNotBlank())
+    DwDictationKept(keptMediaId)
 }
 
 @Composable

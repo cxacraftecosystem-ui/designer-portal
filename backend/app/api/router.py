@@ -62,6 +62,7 @@ from app.api.routes import (
     tools,
     transcript_insights,
     transcription_admin,
+    transcripts,
     two_factor,
     usage,
     users,
@@ -138,6 +139,8 @@ api_router.include_router(completeness.router)
 # /api/media/{id}/insights. BEFORE media, and the order is load-bearing: media declares
 # GET /{media_id}, which would answer GET /media/insights as a media id.
 api_router.include_router(transcript_insights.router)
+# The transcript pipeline's API (shared/transcript-contract.json), on its own prefix.
+api_router.include_router(transcripts.router)
 api_router.include_router(media.router)
 # Before ``questionnaire`` so its fixed paths are matched first (C28; nothing collides today).
 api_router.include_router(answer_drafts.router)

@@ -1274,7 +1274,12 @@ DICTATION_MAX_BYTES = 6 * 1024 * 1024
 
 
 async def _transcribe_one_dictation(
-    file: UploadFile, languageHint: str | None, current_user: Any, request: Request
+    file: UploadFile,
+    languageHint: str | None,
+    current_user: Any,
+    request: Request,
+    *,
+    record: Any = None,
 ) -> dict[str, Any]:
     """Everything a dictation spends: the cap, the size checks, the provider, the allowance.
 
@@ -1401,8 +1406,12 @@ async def _transcribe_one_dictation(
     # rather than an optimistic one: the words are already produced and a designer must not be handed a
     # 500 for text they can see.
     counted = await dictation_cap.spend(current_user.id, allowance.day)
+    # THE CLIP IS KEPT, so its transcript opens under the field (`mediaId`). After the spend, and
+    # never able to cost the designer the words: a failure here answers `mediaId: null`.
+    media_id = await _keep_dictation(content, file, result, current_user, record) if record is not None else None
     return {
         "status": result.get("status"),
+        "mediaId": media_id,
         # The plain text, never the speaker-labelled Markdown: this is going straight into a form
         # field, and "**Speaker 1:**" is not something a designer wants to delete by hand.
         "text": result.get("text") or "",
@@ -1417,6 +1426,75 @@ async def _transcribe_one_dictation(
             )
         ),
     }
+
+
+#: ``MediaFile.linkedRecordType`` of a kept dictation clip, filed under its workshop.
+DICTATION_LINK_TYPE = "dictation"
+
+
+async def _keep_dictation(
+    content: bytes, file: UploadFile, result: dict[str, Any], current_user: Any, record: Any
+) -> str | None:
+    """Store a transcribed dictation as a MediaFile with its turns; the new id, or None.
+
+    Only a clip a provider actually heard (COMPLETED, words present) is kept: nothing else has a
+    transcript to show. The bytes go to the user's own ``media/<userId>/`` prefix under the NAMING
+    grammar, the provider's answer becomes the first ``TranscriptVersion`` (no second Scribe call), and
+    the translation and summary step is queued as for any recording; it re-reads consent before it
+    sends. NEVER RAISES: the words are already in the designer's field, and losing the transcript
+    viewer is the whole cost of a failure. Logs carry the exception type only, never the words.
+    """
+    if str(result.get("status") or "").upper() != "COMPLETED" or not str(result.get("text") or "").strip():
+        return None
+    workshop_id = str(getattr(record, "id", "") or "")
+    if not workshop_id:
+        return None
+    try:
+        from pathlib import PurePosixPath
+
+        from app.services import transcript_insights, transcript_pipeline
+        from app.services.s3 import make_object_key, public_url_for_key, put_object_bytes
+
+        filename = file.filename or "dictation.webm"
+        mime = (file.content_type or "audio/webm").split(";")[0].strip() or "audio/webm"
+        ext = PurePosixPath(filename).suffix.lstrip(".") or mime.rsplit("/", 1)[-1]
+        leaf = naming.file_name(
+            entity="Workshop",
+            what="Dictation",
+            date=naming.now_ist(),
+            time=True,
+            subject=getattr(record, "workshopCode", None),
+            ext=ext,
+        )
+        key = make_object_key(str(current_user.id), leaf)
+        await asyncio.to_thread(put_object_bytes, key, content, mime_type=mime)
+        media = await db.mediafile.create(
+            data={
+                "originalFilename": filename,
+                "mediaType": "AUDIO",
+                "mimeType": mime,
+                "sizeBytes": len(content),
+                "bucket": get_settings().aws_s3_bucket,
+                "objectKey": key,
+                "url": public_url_for_key(key),
+                "uploadedBy": {"connect": {"id": str(current_user.id)}},
+                "designWorkshop": {"connect": {"id": workshop_id}},
+                "linkedRecordType": DICTATION_LINK_TYPE,
+                "linkedRecordId": workshop_id,
+                "transcriptText": str(result.get("text") or ""),
+                "transcriptStatus": "COMPLETED",
+                "transcriptProvider": result.get("provider"),
+            }
+        )
+        await transcript_pipeline.store_transcription(media, result)
+        try:
+            await transcript_insights.enqueue_after_transcript(media.id)
+        except Exception as exc:  # noqa: BLE001 - the transcript stands without its English
+            logger.warning("dictation %s: translation not queued (%s)", media.id, type(exc).__name__)
+        return str(media.id)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        logger.warning("a dictation clip was not kept (%s)", type(exc).__name__)
+        return None
 
 
 @router.get("/dictation-allowance")
@@ -1656,7 +1734,7 @@ async def dictate_for_workshop(
     )
     # The Request is handed down so the size cap can be answered off the declared `Content-Length`
     # before the body is read. Nothing else in this handler needs it.
-    return await _transcribe_one_dictation(file, languageHint, current_user, request)
+    return await _transcribe_one_dictation(file, languageHint, current_user, request, record=record)
 
 
 @router.post("/{workshop_id}/dictation-consent")

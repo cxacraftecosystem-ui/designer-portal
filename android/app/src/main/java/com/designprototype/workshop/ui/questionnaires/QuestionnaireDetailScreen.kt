@@ -536,6 +536,17 @@ fun QuestionnaireDetailScreen(
                         onStart = { onStartSession(questionnaireId) },
                         onOpenSessions = onOpenSessions?.let { open -> { open(questionnaireId) } },
                     )
+                    // The sessions on this form, with the shared search and filters and each one's
+                    // chips (owner, 31 Oct 2026). Opening one opens it in the questionnaire screen.
+                    if (!isTempId(questionnaireId)) FormSurfaceCard {
+                        com.designprototype.workshop.questionnaire.ui.FormSessionsList(
+                            com.designprototype.workshop.questionnaire.data.QuestionnaireV2.get(appContext), questionnaireId,
+                            onOpenSession = { session ->
+                                com.designprototype.workshop.questionnaire.ui.QuestionnaireV2Nav.openServerSession.value = session.id
+                                onOpenSessions?.invoke(questionnaireId)
+                            }
+                        )
+                    }
                 } else SittingsCard(
                     form = loaded,
                     busy = busy,

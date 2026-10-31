@@ -6,6 +6,7 @@ import { AudioLines, Loader2 } from "lucide-react";
 import { TranscriptInsights } from "@/components/media/TranscriptInsights";
 import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
 import { useAuth } from "@/components/AuthProvider";
+import { TranscriptViewer } from "@/components/transcript/TranscriptViewer";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { transcribeMediaNow } from "@/lib/media";
 import { isAdmin } from "@/lib/permissions";
@@ -41,7 +42,28 @@ const DONE = new Set(["COMPLETED", "DONE", "EMPTY"]);
  * `readOnly` drops the re-run altogether, for a record's read-only page: a re-run REPLACES the
  * transcript, so it is an update, and on those pages updating is only ever behind "Update".
  */
-export function TranscriptBlock({
+type TranscriptBlockProps = {
+  media: MediaFile;
+  onUpdated?: (updated: MediaFile) => void;
+  /** Why the re-run is held, or null when it is not. See the header. */
+  readOnlyReason?: string | null;
+  /** Hide the re-run control entirely — a read-only record page. See the header. */
+  readOnly?: boolean;
+};
+
+/**
+ * An audio recording opens the shared transcript viewer (`components/transcript/`, both portals):
+ * turns, copy, downloads, karaoke. A recording with no structured transcript yet (stored before the
+ * turn store, or a deployment without it) draws the stored text and states below, unchanged.
+ */
+export function TranscriptBlock(props: TranscriptBlockProps) {
+  const { media } = props;
+  const isAudio = media.mediaType === "AUDIO" || (media.mimeType ?? "").toLowerCase().startsWith("audio/");
+  if (!isAudio) return <LegacyTranscriptBlock {...props} />;
+  return <TranscriptViewer mediaId={media.id} audioUrl={media.url} fallback={<LegacyTranscriptBlock {...props} />} />;
+}
+
+function LegacyTranscriptBlock({
   media,
   onUpdated,
   readOnlyReason = null,

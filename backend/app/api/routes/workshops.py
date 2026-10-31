@@ -718,9 +718,10 @@ async def list_requestable_workshops(
     ``GET /tasks/options`` uses for its three picker ceilings: one row is read past ``limit`` and
     trimmed back off before the projection runs, so a repository of exactly ``limit`` workshops
     reports ``False`` honestly and nobody pays for a second COUNT to find out. A caller still decoding
-    this as a bare array breaks on the next response it reads — that follow-up belongs to
-    ``WorkshopAccessRequestPanel.tsx`` and ``components/settings/workshopAccess.tsx``, not to this
-    file.
+    this as a bare array breaks on the next response it reads — the web panel did exactly that and
+    threw "e is not iterable" in production, which is why every web reader now goes through
+    ``frontend/lib/requestableWorkshops.ts::readRequestableAnswer`` and why
+    ``tests/test_requestable_contract.py`` pins this shape identically in both portals.
     """
     uid = get_value(current_user, "id")
     # ONE ROW PAST THE CAP, TRIMMED — see the envelope paragraph above. ``take=limit`` alone cannot

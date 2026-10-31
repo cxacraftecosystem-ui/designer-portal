@@ -37,6 +37,8 @@ import { Pagination } from "@/components/Pagination";
 import { ResizableTh } from "@/components/ResizableTh";
 import { RowActions, rowAction } from "@/components/RowActions";
 import { SearchInput } from "@/components/SearchInput";
+import { FilterBar } from "@/components/questionnaire/FilterBar";
+import { useUrlFilters } from "@/components/questionnaire/useUrlFilters";
 import { useAdminView } from "@/components/AdminViewProvider";
 import { ArtefactNotice } from "@/components/questionnaires/ArtefactNotice";
 import { DeletedQuestionnairesCard } from "@/components/questionnaires/DeletedQuestionnairesCard";
@@ -211,6 +213,8 @@ export default function QuestionnairesPage() {
    * for a query nobody can see any more.
    */
   const generation = useRef(0);
+  // The shared filters (owner, 31 Oct 2026): forms with sessions of these artisans, workshops, dates …
+  const { filters: sharedFilters, setFilters: setSharedFilters, ready: filtersReady } = useUrlFilters();
 
   const load = useCallback(async () => {
     const mine = ++generation.current;
@@ -224,7 +228,8 @@ export default function QuestionnairesPage() {
         // WIDENS the list rather than swapping it, and the "Deactivated" badge on the row is what
         // tells the two apart. A filter that swapped them would hide the designer's live forms the
         // moment they went looking for an old one.
-        activeOnly: showDeactivated ? false : undefined
+        activeOnly: showDeactivated ? false : undefined,
+        filters: sharedFilters
       });
       if (mine !== generation.current) return;
       setData(result);
@@ -236,7 +241,7 @@ export default function QuestionnairesPage() {
       // designer can still read with "no questionnaires yet", which is indistinguishable from having
       // none — the most repeated bug class in this repository.
     }
-  }, [page, applied, showDeactivated]);
+  }, [page, applied, showDeactivated, sharedFilters]);
 
   /**
    * Search, page, the deactivated switch and scroll, so Back from a questionnaire lands on the same
@@ -249,9 +254,9 @@ export default function QuestionnairesPage() {
   );
   const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
-    if (!placeRestored) return;
+    if (!placeRestored || !filtersReady) return;
     load();
-  }, [load, placeRestored]);
+  }, [load, placeRestored, filtersReady]);
 
   // The design workshops a questionnaire can be attached to. Fetched once and shared by the create
   // form and the upload dialog, so the two cannot offer different lists.
@@ -542,6 +547,17 @@ export default function QuestionnairesPage() {
           .
         </p>
       ) : null}
+
+      <FilterBar
+        filters={sharedFilters}
+        onChange={(next) => {
+          setSharedFilters(next);
+          setPage(1);
+        }}
+        placeholder=""
+        search={false}
+        hide={["q", "questionnaireId"]}
+      />
 
       <div className="mb-4" data-forms-tabs>
         <SegmentedChoice

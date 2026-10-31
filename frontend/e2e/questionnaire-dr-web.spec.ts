@@ -229,9 +229,17 @@ for (const theme of ["light", "dark"] as const) {
     await open(page, fake, "/questionnaires");
     await page.locator("[data-bundle-input]").setInputFiles({ name: "x.frwq", mimeType: "application/octet-stream", buffer: bundleFile() });
     const prompt = page.locator("[data-prompt='P17']");
-    const notNow = await prompt.getByRole("button", { name: "Not now" }).boundingBox();
-    const add = await prompt.getByRole("button", { name: "Add" }).boundingBox();
-    expect(notNow && add && Math.abs(notNow.y - add.y) < 2).toBe(true);
+    await expect(prompt.getByRole("button", { name: "Not now" })).toBeVisible();
+    await expect(prompt.getByRole("button", { name: "Add" })).toBeVisible();
+    // The dialog panel springs in (y 10 -> 0, scale 0.98 -> 1), so two separate boundingBox() calls
+    // can land on different frames of that motion and disagree by several px with the buttons on one
+    // line. Read both tops in one layout pass, once the fonts the labels are set in have loaded.
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    const tops = await prompt
+      .getByRole("button", { name: /^(Not now|Add)$/ })
+      .evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().top));
+    expect(tops).toHaveLength(2);
+    expect(Math.abs(tops[0] - tops[1])).toBeLessThan(2);
     await page.screenshot({ path: `${SHOTS}/p17-360-${theme}.png` });
   });
 }
@@ -522,6 +530,10 @@ test("@qf:B15 a take cut short by a closed tab is offered back by P13 when the s
 
 test("@qf:B39 the fix tray sends a refused step again, sends without the conflicting answers, and discards", async ({ page }) => {
   const fake = new QuestionnaireFake();
+  // The page drains the outbox as soon as it loads, and that drain re-sends the refused participant
+  // step. The server must refuse it the way it was refused before, or the reason in the tray is
+  // replaced by whatever the re-send happens to get, depending on which lands first.
+  fake.removedArtisans.add("a2");
   await open(page, fake, "/questionnaire");
   await expect(page.locator("[data-sessions-list]")).toBeVisible();
   const item = { artisanId: "a1", questionLineageId: "l1", text: "Mine", origin: "TYPED", attribution: "INDIVIDUAL", sourceRecordingId: null };
@@ -555,4 +567,124 @@ test("@qf:B39 the fix tray sends a refused step again, sends without the conflic
   await tray.locator("[data-tray-item='failed']").getByRole("button", { name: "Discard" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Discard" }).click();
   await expect(page.locator("[data-outbox-tray]")).toHaveCount(0);
+});
+
+// ── Recording chips and the shared filters (owner, 31 Oct 2026) ───────────────────────────────
+
+/** Types into a filter's searchable select and picks a row the server's typeahead answered. */
+async function typeahead(page: Page, fake: QuestionnaireFake, scope: string, field: string, apiField: string, term: string, option: RegExp) {
+  await page.locator(`${scope} [data-filter-field='${field}'] button`).first().click();
+  await page.locator("[data-anchored-popover] input").last().fill(term);
+  await expect
+    .poll(() => fake.calledWith("GET", "/questionnaire/filters").some((c) => c.query.get("field") === apiField && c.query.get("q") === term))
+    .toBe(true);
+  await page.getByRole("option", { name: option }).click();
+  await page.keyboard.press("Escape");
+}
+
+test("@qf:E3 @qf:E6 the sessions list searches and filters on the server and keeps both in the URL", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire");
+  const list = page.locator("[data-sessions-list]");
+  await expect(list).toContainText("Second-Sitting");
+  await page.locator("[data-filter-bar]").getByRole("searchbox").fill("Second");
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("q") === "Second")).toBe(true);
+  await expect(page).toHaveURL(/[?&]q=Second/);
+  await expect(list).not.toContainText("Hand-Block-Printing_s-1");
+  await page.locator("[data-filters-toggle]").click();
+  await page.locator("[data-filter-pill='source=UPLOAD']").click();
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("source") === "UPLOAD")).toBe(true);
+  await expect(page).toHaveURL(/source=UPLOAD/);
+  // A refresh keeps the filters: the box and the pill come back from the URL, and so does the request.
+  fake.calls.length = 0;
+  await page.reload();
+  await expect(page.locator("[data-filter-bar]").getByRole("searchbox")).toHaveValue("Second");
+  await expect(page.locator("[data-active-filter='source=UPLOAD']")).toBeVisible();
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("source") === "UPLOAD" && c.query.get("q") === "Second")).toBe(true);
+  await page.locator("[data-clear-filters]").click();
+  await expect(page).not.toHaveURL(/source=/);
+  // The artisans select searches the server as the reader types, and its pick filters the list.
+  await page.locator("[data-filters-toggle]").click();
+  await typeahead(page, fake, "[data-filters-panel]", "artisanId", "artisans", "Mee", /Meena Devi/);
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("artisanId") === "a2")).toBe(true);
+  await expect(page).toHaveURL(/artisanId=a2/);
+});
+
+test("@qf:E1 @qf:E2 @qf:E5 @qf:E6 the recordings list shows each take's chips, a tap filters by one, and Back keeps it", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire");
+  await page.locator("[data-recordings-link]").click();
+  await expect(page).toHaveURL(/\/questionnaire\/recordings$/);
+  const row = page.locator("[data-recording-row='rec-1']");
+  const chips = row.locator("[data-recording-chips]");
+  await expect(chips).toContainText("A · Tools");
+  await expect(chips).toContainText("2nd Craft Toolkit");
+  await expect(chips).toContainText("Meena Devi · present");
+  await expect(chips).toContainText("22 Oct 2026");
+  await expect(chips).toContainText("Bagru block printing 2026");
+  await expect(chips).toContainText("Hindi");
+  await expect(chips).toContainText("1:32");
+  await chips.locator("[data-chip-filter='artisanId=a2']").click();
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/recordings").some((c) => c.query.get("artisanId") === "a2")).toBe(true);
+  await expect(page).toHaveURL(/artisanId=a2/);
+  await expect(page.locator("[data-active-filter='artisanId=a2']")).toContainText("Meena Devi · present");
+  await expect(chips.locator("[data-chip-filter='artisanId=a2']")).toHaveAttribute("aria-pressed", "true");
+  await page.locator("[data-filter-bar]").getByRole("searchbox").fill("Pethapur");
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/recordings").some((c) => c.query.get("q") === "Pethapur" && c.query.get("artisanId") === "a2")).toBe(true);
+  await expect(row).toBeVisible();
+  await row.getByRole("link").first().click();
+  await expect(page).toHaveURL(/\/questionnaire\/sessions\/s-1\/view/);
+  await page.goBack();
+  await expect(page).toHaveURL(/artisanId=a2/);
+  await expect(page.locator("[data-active-filter='artisanId=a2']")).toBeVisible();
+});
+
+test("@qf:E1 @qf:E2 a take's chips show on the take sheet, the read view and the record, and lead to the recordings list", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaire/sessions/s-1");
+  await page.locator("[data-coverage-grid]").getByRole("button", { name: "A Giriraj Prasad Chhipa: Recorded" }).click();
+  await expect(page.locator("[data-take-row='rec-1'] [data-recording-chips]")).toContainText("A · Tools");
+  await page.goto("/questionnaire/sessions/s-1/view");
+  await expect(page.locator("[data-recording-chips]").first()).toContainText("Giriraj Prasad Chhipa");
+  await page.goto("/artisans/a1?tab=questionnaire");
+  const take = page.locator("[data-timeline-take='rec-1']");
+  await take.locator("[data-chip-filter='sectionId=s1']").click();
+  await expect(page).toHaveURL(/\/questionnaire\/recordings\?sectionId=s1$/);
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/recordings").some((c) => c.query.get("sectionId") === "s1")).toBe(true);
+  await expect(page.locator("[data-active-filter='sectionId=s1']")).toContainText("A · Tools");
+});
+
+test("@qf:E4 the forms library and a form's own sessions narrow by the shared filters", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/questionnaires?artisanId=a1");
+  await expect.poll(() => fake.calledWith("GET", "/questionnaires").some((c) => c.query.get("artisanId") === "a1")).toBe(true);
+  await expect(page.locator("[data-active-filter='artisanId=a1']")).toContainText("Giriraj Prasad Chhipa");
+  await expect(page.getByText("Market survey 2026")).toHaveCount(0);
+  await page.goto("/questionnaires/f1");
+  const sessions = page.locator("[data-form-sessions]");
+  await expect(sessions.locator("[data-form-session-list]")).toContainText("Second-Sitting");
+  await sessions.locator("[data-filters-toggle]").click();
+  await sessions.locator("[data-filter-pill='source=APP']").click();
+  await expect
+    .poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("questionnaireId") === "f1" && c.query.get("source") === "APP"))
+    .toBe(true);
+  await expect(page).toHaveURL(/\/questionnaires\/f1\?source=APP/);
+  await sessions.locator("[data-form-session-list] [data-chip-filter='languageCode=hi']").first().click();
+  await expect(page).toHaveURL(/languageCode=hi/);
+  // A form's sessions: the researcher select is a server typeahead too.
+  await typeahead(page, fake, "[data-filters-panel]", "researcherId", "researchers", "Priya", /Priya Shah/);
+  await expect
+    .poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("questionnaireId") === "f1" && c.query.get("researcherId") === "u-other"))
+    .toBe(true);
+});
+
+test("@qf:E5 the media list carries a take's chips and takes the questionnaire filters", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  await open(page, fake, "/media?sectionId=s1");
+  await expect.poll(() => fake.calledWith("GET", "/media").some((c) => c.query.get("sectionId") === "s1")).toBe(true);
+  const chips = page.locator("[data-recording-chips]:visible").first();
+  await expect(chips).toContainText("A · Tools");
+  await chips.locator("[data-chip-filter='artisanId=a1']").click();
+  await expect.poll(() => fake.calledWith("GET", "/media").some((c) => c.query.get("artisanId") === "a1" && c.query.get("sectionId") === "s1")).toBe(true);
+  await expect(page).toHaveURL(/artisanId=a1/);
 });

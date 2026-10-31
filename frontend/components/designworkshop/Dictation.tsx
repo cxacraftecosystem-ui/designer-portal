@@ -72,6 +72,7 @@ import {
   dictationLanguageButtonLabel
 } from "@/components/dictation/dictationAdornment";
 import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
+import { TranscriptViewer } from "@/components/transcript/TranscriptViewer";
 import { AnchoredPopover } from "@/components/ui/AnchoredPopover";
 import { ApiError } from "@/lib/api";
 import {
@@ -170,6 +171,8 @@ export function DictationButton({
    * on a refusal. A courtesy request must not be able to take the microphone away.
    */
   const [allowance, setAllowance] = useState<DwDictationAllowance | null>(null);
+  /** The last dictation's stored recording, when the server keeps one: its transcript opens below. */
+  const [lastMediaId, setLastMediaId] = useState<string | null>(null);
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -392,6 +395,7 @@ export function DictationButton({
               dictationDay: result.dictationDay
             });
           }
+          setLastMediaId(result.mediaId ?? null);
           const text = (result.text ?? "").trim();
           if (text) commitRef.current(text);
           // NOT `result.message`, which is what this line used to be. The provider chain composes
@@ -573,6 +577,7 @@ export function DictationButton({
       ) : null}
 
       {problem ? <p className="text-xs font-medium leading-5 text-error-600">{problem}</p> : null}
+      {lastMediaId ? <TranscriptViewer mediaId={lastMediaId} initiallyOpen={false} /> : null}
     </>
   );
 

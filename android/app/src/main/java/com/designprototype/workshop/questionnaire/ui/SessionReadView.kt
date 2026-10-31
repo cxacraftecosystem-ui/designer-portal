@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.questionnaire.data.QRecording
@@ -32,6 +33,8 @@ import com.designprototype.workshop.questionnaire.data.QuestionnaireCopy
 import com.designprototype.workshop.questionnaire.data.QuestionnaireV2
 import com.designprototype.workshop.questionnaire.data.SharedLanguages
 import com.designprototype.workshop.ui.AudioPlayer
+import com.designprototype.workshop.transcript.data.TranscriptUiText
+import com.designprototype.workshop.transcript.ui.TranscriptDialog
 import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.launch
@@ -189,7 +192,9 @@ fun SessionReadView(
 
 @Composable
 private fun TakeLine(r: QRecording, onPlay: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onPlay), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    var transcript by remember { mutableStateOf(false) }
+    if (transcript) r.mediaFileId?.let { id -> TranscriptDialog(id, audio = null, onDismiss = { transcript = false }) }
+    Row(Modifier.fillMaxWidth().clickable(onClick = onPlay), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
             listOfNotNull(
                 ArtisanTimeline.targetsLabel(r.targets), QuestionnaireCopy.minutes(r.durationMs), r.recordedBy?.name?.ifBlank { null }?.let(QuestionnaireCopy::firstName),
@@ -197,6 +202,9 @@ private fun TakeLine(r: QRecording, onPlay: () -> Unit) {
             ).joinToString(" · "),
             style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)
         )
+        if (r.mediaFileId != null) TextButton(onClick = { transcript = true }) { Text(TranscriptUiText.open, style = MaterialTheme.typography.labelSmall) }
         Text("▶", style = MaterialTheme.typography.bodySmall)
     }
+    // The take's chips (owner, 31 Oct 2026); a tap opens the recordings list filtered by it.
+    RecordingChips(r.chips, onChip = QuestionnaireV2Nav::openRecordings)
 }

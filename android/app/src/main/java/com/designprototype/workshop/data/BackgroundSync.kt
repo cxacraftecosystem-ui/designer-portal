@@ -161,6 +161,8 @@ class OutboxSyncJobService : JobService() {
                 if (signedIn) {
                     val repository = WorkshopRepository(ApiClient.create(tokens), tokens)
                     runCatching { repository.syncOutbox(app) }
+                    // Transcript edits, speaker names and re-translations made offline (transcript/data).
+                    runCatching { com.designprototype.workshop.transcript.portal.TranscriptPortal.repository(app)?.drain() }
                     // `syncOutbox` holds itself back while a new password is owed; the join-card queue
                     // is told the same way `DwInductionFlusher` tells it, so no pass is spent on a 401.
                     if (!com.designprototype.workshop.ui.mustChangePasswordBlocks(tokens.getUser())) {
