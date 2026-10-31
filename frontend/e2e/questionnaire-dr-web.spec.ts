@@ -559,6 +559,17 @@ test("@qf:B39 the fix tray sends a refused step again, sends without the conflic
 
 // ── Recording chips and the shared filters (owner, 31 Oct 2026) ───────────────────────────────
 
+/** Types into a filter's searchable select and picks a row the server's typeahead answered. */
+async function typeahead(page: Page, fake: QuestionnaireFake, scope: string, field: string, apiField: string, term: string, option: RegExp) {
+  await page.locator(`${scope} [data-filter-field='${field}'] button`).first().click();
+  await page.locator("[data-anchored-popover] input").last().fill(term);
+  await expect
+    .poll(() => fake.calledWith("GET", "/questionnaire/filters").some((c) => c.query.get("field") === apiField && c.query.get("q") === term))
+    .toBe(true);
+  await page.getByRole("option", { name: option }).click();
+  await page.keyboard.press("Escape");
+}
+
 test("@qf:E3 @qf:E6 the sessions list searches and filters on the server and keeps both in the URL", async ({ page }) => {
   const fake = new QuestionnaireFake();
   await open(page, fake, "/questionnaire");
@@ -580,6 +591,11 @@ test("@qf:E3 @qf:E6 the sessions list searches and filters on the server and kee
   await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("source") === "UPLOAD" && c.query.get("q") === "Second")).toBe(true);
   await page.locator("[data-clear-filters]").click();
   await expect(page).not.toHaveURL(/source=/);
+  // The artisans select searches the server as the reader types, and its pick filters the list.
+  await page.locator("[data-filters-toggle]").click();
+  await typeahead(page, fake, "[data-filters-panel]", "artisanId", "artisans", "Mee", /Meena Devi/);
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("artisanId") === "a2")).toBe(true);
+  await expect(page).toHaveURL(/artisanId=a2/);
 });
 
 test("@qf:E1 @qf:E2 @qf:E5 @qf:E6 the recordings list shows each take's chips, a tap filters by one, and Back keeps it", async ({ page }) => {
@@ -643,6 +659,11 @@ test("@qf:E4 the forms library and a form's own sessions narrow by the shared fi
   await expect(page).toHaveURL(/\/questionnaires\/f1\?source=APP/);
   await sessions.locator("[data-form-session-list] [data-chip-filter='languageCode=hi']").first().click();
   await expect(page).toHaveURL(/languageCode=hi/);
+  // A form's sessions: the researcher select is a server typeahead too.
+  await typeahead(page, fake, "[data-filters-panel]", "researcherId", "researchers", "Priya", /Priya Shah/);
+  await expect
+    .poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("questionnaireId") === "f1" && c.query.get("researcherId") === "u-other"))
+    .toBe(true);
 });
 
 test("@qf:E5 the media list carries a take's chips and takes the questionnaire filters", async ({ page }) => {
