@@ -179,7 +179,7 @@ export function ReadOnlyMediaGallery({ title, items, empty }: { title: string; i
   }
   return (
     <>
-      <MediaCardGrid label={title} maxColumns={2}>
+      <MediaCardGrid label={title} maxColumns={items.length === 1 ? 1 : 2}>
         {items.map((media) => {
           const preview: PreviewMedia = {
             key: media.id,
