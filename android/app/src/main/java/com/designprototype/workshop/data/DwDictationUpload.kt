@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * THESE FIELD NAMES ARE THE SERVER'S, CHECKED AGAINST IT RATHER THAN REMEMBERED — the shared body of
  * the two dictation routes in backend/app/api/routes/design_workshops.py
- * (`_transcribe_one_dictation`) returns exactly `status`, `text`, `provider`, `languageHint` and
+ * (`_transcribe_one_dictation`) returns exactly `status`, `text`, `provider`, `languageHint`, `mediaId` and
  * `message`, plus the four keys of `dictation_cap.allowance_payload` spread into the same object, and
  * nothing else. The same discipline, and the same reason, as [DwIdentityOcrDto]: that DTO once declared
  * five keys the endpoint had never sent, and because this client decodes with `ignoreUnknownKeys = true`
@@ -63,6 +63,11 @@ data class DwDictateDto(
     val languageHint: String? = null,
     /** The provider chain's own account of a failure, worth showing verbatim when it is there. */
     val message: String? = null,
+    /**
+     * The kept clip (0.0.4): the MediaFile the server stored this dictation as, whose transcript opens
+     * under the field. Null when nothing was heard or the clip could not be stored; the words stand.
+     */
+    val mediaId: String? = null,
 
     /*
       ── THIS DESIGNER'S DAILY ALLOWANCE, CARRIED ON EVERY SUCCESSFUL DICTATION ─────────────────

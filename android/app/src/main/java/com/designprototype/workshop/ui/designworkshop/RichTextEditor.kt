@@ -371,6 +371,8 @@ fun RichTextEditor(
     // neighbour", which is what ordinary typing does; a non-null set is the designer having pressed
     // Bold with nothing selected, and it survives until the caret moves or a character consumes it.
     var pendingMarks by remember { mutableStateOf<List<String>?>(null) }
+    /** The clip the last server dictation kept, whose transcript shows above the box. */
+    var keptMediaId by remember { mutableStateOf<String?>(null) }
     var focusedBlock by remember { mutableStateOf<Int?>(null) }
     // Where the caret must be put after a structural edit moved it to a DIFFERENT block. Compose
     // gives focus to a composable, not to a document position, so a split has to ask the new
@@ -639,10 +641,12 @@ fun RichTextEditor(
                       where losing four minutes of speech costs the most.
                     */
                     onError = onError,
+                    onKept = { id -> keptMediaId = id },
                 )
             }
             Spacer(Modifier.height(6.dp))
         }
+        DwDictationKept(keptMediaId)
 
         Column(
             modifier = Modifier

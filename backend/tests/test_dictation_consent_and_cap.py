@@ -1185,6 +1185,14 @@ def dictation(monkeypatch):
     monkeypatch.setattr(routes, "get_settings", SimpleNamespace)
     monkeypatch.setattr(routes.dictation_cap, "load_allowance", _load_allowance)
     monkeypatch.setattr(routes.dictation_cap, "spend", _spend)
+
+    async def _keep(content, file, result, user, record):
+        # The clip's storage is tested on its own below; here it only records that it was asked.
+        seen.kept.append((len(content), result.get("status"), getattr(record, "id", None)))
+        return "med_1" if result.get("status") == "COMPLETED" else None
+
+    seen.kept = []
+    monkeypatch.setattr(routes, "_keep_dictation", _keep)
     return SimpleNamespace(routes=routes, seen=seen, state=state)
 
 
@@ -2152,3 +2160,99 @@ def test_a_measurement_job_is_not_touched_by_the_consent_gate():
         ) = original
 
     assert reached == ["media/u/2/grid.jpg", "applied"], reached
+
+
+# --------------------------------------------------------------------------------------
+# The kept clip (0.0.4): a dictation answers with `mediaId`, so its transcript opens under the field
+# --------------------------------------------------------------------------------------
+
+
+def test_a_dictation_answers_with_the_kept_clips_media_id(dictation):
+    payload = asyncio.run(
+        dictation.routes.dictate_for_workshop(
+            "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+        )
+    )
+    assert payload["text"] == "dabu resist printing"
+    assert payload["mediaId"] == "med_1"
+    assert dictation.seen.kept == [(4096, "COMPLETED", "wsp_1")], "the clip is kept against its workshop"
+
+
+def test_a_dictation_nobody_heard_answers_with_no_media_id(dictation):
+    dictation.state.result = {"status": "EMPTY", "text": "", "provider": "deepgram"}
+    payload = asyncio.run(
+        dictation.routes.dictate_for_workshop(
+            "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")
+        )
+    )
+    assert payload["mediaId"] is None
+
+
+@pytest.fixture
+def keeping(monkeypatch):
+    """`_keep_dictation` with S3, the MediaFile table, the turn store and the queue replaced."""
+    from app.api.routes import design_workshops as routes
+    from app.services import s3, transcript_insights, transcript_pipeline
+
+    seen = SimpleNamespace(puts=[], created=[], stored=[], queued=[], fail_put=False)
+
+    def _put(key, data, *, mime_type):
+        if seen.fail_put:
+            raise OSError("bucket unreachable")
+        seen.puts.append((key, len(data), mime_type))
+
+    async def _create(*, data, **_kw):
+        seen.created.append(data)
+        return SimpleNamespace(id="med_9", **{k: v for k, v in data.items() if isinstance(k, str)})
+
+    async def _store(media, result, **_kw):
+        seen.stored.append((media.id, result.get("status")))
+        return SimpleNamespace(version=1)
+
+    async def _enqueue(media_id):
+        seen.queued.append(media_id)
+
+    monkeypatch.setattr(s3, "put_object_bytes", _put)
+    monkeypatch.setattr(s3, "public_url_for_key", lambda key: None)
+    monkeypatch.setattr(routes, "db", SimpleNamespace(mediafile=SimpleNamespace(create=_create)))
+    monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(aws_s3_bucket="ci-bucket"))
+    monkeypatch.setattr(transcript_pipeline, "store_transcription", _store)
+    monkeypatch.setattr(transcript_insights, "enqueue_after_transcript", _enqueue)
+    return SimpleNamespace(routes=routes, seen=seen)
+
+
+_HEARD = {"status": "COMPLETED", "text": "dabu resist printing", "provider": "elevenlabs", "model": "scribe_v2"}
+
+
+def test_a_heard_clip_is_stored_named_turned_into_a_transcript_and_queued_for_english(keeping):
+    record = SimpleNamespace(id="wsp_1", workshopCode="DW-RJ-0012")
+    media_id = asyncio.run(keeping.routes._keep_dictation(b"\x00" * 512, _Clip(), dict(_HEARD), _person("DESIGNER"), record))
+    assert media_id == "med_9"
+    (key, size, mime), = keeping.seen.puts
+    assert key.startswith("media/usr_1/") and size == 512 and mime == "audio/webm"
+    leaf = key.rsplit("/", 1)[-1]
+    assert re.fullmatch(r"DesignWorkshop_Workshop_\d{4}-\d{2}-\d{2}_\d{4}_DW-RJ-0012_Dictation\.webm", leaf), leaf
+    (row,) = keeping.seen.created
+    assert row["designWorkshop"] == {"connect": {"id": "wsp_1"}}
+    assert row["uploadedBy"] == {"connect": {"id": "usr_1"}}
+    assert row["linkedRecordType"] == keeping.routes.DICTATION_LINK_TYPE and row["linkedRecordId"] == "wsp_1"
+    assert row["mediaType"] == "AUDIO" and row["objectKey"] == key and row["bucket"] == "ci-bucket"
+    assert keeping.seen.stored == [("med_9", "COMPLETED")], "the provider's own answer, no second Scribe call"
+    assert keeping.seen.queued == ["med_9"]
+
+
+def test_a_clip_that_cannot_be_stored_still_leaves_the_words(keeping, caplog):
+    keeping.seen.fail_put = True
+    record = SimpleNamespace(id="wsp_1", workshopCode=None)
+    with caplog.at_level("WARNING"):
+        media_id = asyncio.run(keeping.routes._keep_dictation(b"\x00" * 64, _Clip(), dict(_HEARD), _person("DESIGNER"), record))
+    assert media_id is None
+    assert keeping.seen.created == [] and keeping.seen.stored == []
+    assert "dabu" not in caplog.text, "a log line never carries the words"
+
+
+def test_nothing_is_kept_for_a_clip_with_no_words(keeping):
+    record = SimpleNamespace(id="wsp_1", workshopCode=None)
+    for result in ({"status": "EMPTY", "text": ""}, {"status": "FAILED", "text": None}, {"status": "COMPLETED", "text": "  "}):
+        assert asyncio.run(keeping.routes._keep_dictation(b"\x00", _Clip(), result, _person("DESIGNER"), record)) is None
+    assert keeping.seen.puts == [] and keeping.seen.created == []
