@@ -705,7 +705,10 @@ interface WorkshopRepositoryApi {
         @Query("mediaType") mediaType: String? = null,
         @Query("statusFilter") statusFilter: String? = null,
         @Query("dateFrom") dateFrom: String? = null,
-        @Query("dateTo") dateTo: String? = null
+        @Query("dateTo") dateTo: String? = null,
+        // The shared questionnaire filters for questionnaire takes (owner, 31 Oct 2026), already
+        // encoded: `QuestionnaireFilters.mediaParams()` (never the text or the dates, which are this list's own).
+        @QueryMap(encoded = true) filters: Map<String, String> = emptyMap()
     ): PageResponse<MediaFileDto>
 
     // The media processing queue: what became of the transcription job an audio upload enqueued.
