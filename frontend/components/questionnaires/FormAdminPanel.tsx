@@ -1,5 +1,9 @@
 "use client";
 
+import { chipToggler, FilterBar } from "@/components/questionnaire/FilterBar";
+import { RecordingChips } from "@/components/questionnaire/RecordingChips";
+import { useUrlFilters } from "@/components/questionnaire/useUrlFilters";
+import { cleanFilters } from "@/lib/questionnaire/filters";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -173,12 +177,21 @@ export function FormSessions({ questionnaireId }: { questionnaireId: string }) {
   const { canDeleteRecords } = useAdminView();
   const [items, setItems] = useState<Session[] | null>(null);
   const [deleted, setDeleted] = useState<Session[] | null>(null);
+  // The shared filters on this form's sessions (owner, 31 Oct 2026), kept in the page's URL.
+  const { filters, setFilters, ready } = useUrlFilters();
+  useEffect(() => {
+    if (!on || !ready) return;
+    let cancelled = false;
+    void questionnaireApi
+      .sessions({ ...filters, questionnaireId: [questionnaireId] }, { limit: 50 })
+      .then((page) => !cancelled && setItems(page.items))
+      .catch(() => !cancelled && setItems([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [on, ready, filters, questionnaireId]);
   useEffect(() => {
     if (!on) return;
-    void questionnaireApi
-      .listSessions({ questionnaireId, limit: 50 })
-      .then((page) => setItems(page.items))
-      .catch(() => setItems([]));
     if (canDeleteRecords)
       void questionnaireApi
         .deletedSessions({ questionnaireId, limit: 50 })
@@ -189,15 +202,21 @@ export function FormSessions({ questionnaireId }: { questionnaireId: string }) {
   return (
     <section className="panel mb-5 grid gap-3 p-4" data-form-sessions>
       <h2 className="font-display text-lg font-bold text-ink">{qs("sessionsOnForm")}</h2>
+      <FilterBar filters={filters} onChange={setFilters} placeholder={qs("filterSearchSessions")} hide={["questionnaireId", "kind"]} />
       {items === null ? <p className="text-sm text-ink-500">{qs("loading")}</p> : null}
-      {items && items.length === 0 ? <p className="text-sm text-ink-500">{qs("noSessionsYet")}</p> : null}
-      <ul className="grid gap-1">
+      {items && items.length === 0 ? (
+        <p className="text-sm text-ink-500">{Object.keys(cleanFilters(filters)).length ? qs("filterNoMatches") : qs("noSessionsYet")}</p>
+      ) : null}
+      <ul className="grid gap-2" data-form-session-list>
         {(items ?? []).map((s) => (
-          <li key={s.id} className="text-sm">
-            <Link className="font-medium text-purple-700 underline-offset-2 hover:underline dark:text-purple-300" href={`/questionnaire/sessions/${encodeURIComponent(s.id)}/view`}>
-              {s.title}
-            </Link>
-            <span className="ml-2 text-xs text-ink-500">{formatDate(s.sessionDate)}</span>
+          <li key={s.id} className="grid gap-1 text-sm">
+            <div>
+              <Link className="font-medium text-purple-700 underline-offset-2 hover:underline dark:text-purple-300" href={`/questionnaire/sessions/${encodeURIComponent(s.id)}/view`}>
+                {s.title}
+              </Link>
+              <span className="ml-2 text-xs text-ink-500">{formatDate(s.sessionDate)}</span>
+            </div>
+            <RecordingChips chips={s.chips} variant="session" onChip={chipToggler(filters, setFilters)} filters={filters} />
           </li>
         ))}
       </ul>

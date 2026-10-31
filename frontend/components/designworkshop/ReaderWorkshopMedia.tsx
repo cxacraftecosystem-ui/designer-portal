@@ -20,6 +20,7 @@ import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
 import type { DwCustomDefinition } from "@/lib/customSections";
 import type { DwEntryData, DwFieldStamp, DwValue } from "@/lib/designWorkshops";
 import { isUnreachable } from "@/lib/offline";
+import { TranscriptViewer } from "@/components/transcript/TranscriptViewer";
 import {
   customAnswersForStage,
   getReaderMedia,
@@ -121,9 +122,16 @@ export function ReaderMediaTile({ file }: { file: ReaderMediaFile }) {
           />
         </a>
       ) : kind === "audio" ? (
-        <audio controls preload="none" src={file.url} className="w-full max-w-sm">
-          <a href={file.url}>{name}</a>
-        </audio>
+        <TranscriptViewer
+          mediaId={file.id}
+          audioUrl={file.url}
+          initiallyOpen={false}
+          fallback={
+            <audio controls preload="none" src={file.url} className="w-full max-w-sm">
+              <a href={file.url}>{name}</a>
+            </audio>
+          }
+        />
       ) : kind === "video" ? (
         <video controls preload="metadata" src={file.url} className="max-h-64 w-full max-w-md rounded-md">
           <a href={file.url}>{name}</a>

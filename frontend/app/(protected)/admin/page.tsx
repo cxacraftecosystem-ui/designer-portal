@@ -1,5 +1,6 @@
 "use client";
 
+import { BudgetMeterCard } from "@/components/transcript/BudgetMeterCard";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import {
@@ -404,6 +405,11 @@ export default function AdminHubPage() {
               <p className="text-xs leading-5 text-ink-500">{tile.description}</p>
             </Link>
           ))}
+      </div>
+
+      {/* This month's transcription spend against the portal's budget (shared transcript tree). */}
+      <div className="mt-6">
+        <BudgetMeterCard />
       </div>
 
       <section id="recovered-recordings" className="panel mt-6 overflow-hidden">

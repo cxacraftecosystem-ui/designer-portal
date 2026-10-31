@@ -3251,6 +3251,7 @@ class WorkshopRepository(
         designWorkshopId: String? = null,
         activeOnly: Boolean = true,
         mineOnly: Boolean = false,
+        filters: Map<String, String> = emptyMap(),
     ): PageResponse<CustomQuestionnaireSummaryDto> = api.customQuestionnaires(
         page = page,
         pageSize = pageSize,
@@ -3258,6 +3259,7 @@ class WorkshopRepository(
         designWorkshopId = designWorkshopId?.takeIf { it.isNotBlank() },
         activeOnly = activeOnly,
         mineOnly = mineOnly,
+        filters = filters,
     )
 
     // ── L9 (21 Oct 2026): soft delete and restore, content admins only ───────────────────────────
@@ -5767,7 +5769,8 @@ class WorkshopRepository(
     suspend fun completenessRules(context: android.content.Context): CompletenessRules =
         RecordCompletenessStore.refresh(context) { api.completenessRules().toString() }
 
-    suspend fun mediaPage(search: String?) = api.media(pageSize = 100, search = search?.blankToNull())
+    suspend fun mediaPage(search: String?, filters: Map<String, String> = emptyMap()) =
+        api.media(pageSize = 100, search = search?.blankToNull(), filters = filters)
 
     /**
      * Every craft: the catalogue on hand when there is one (REQUIREMENTS_2026-10-20 §2.4), else the

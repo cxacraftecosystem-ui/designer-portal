@@ -5,6 +5,8 @@ import { Images } from "lucide-react";
 
 import { ReadOnlyMediaGallery, RecordFieldList, RecordViewPage } from "@/components/records/RecordView";
 import { mediaFields } from "@/components/records/recordFields";
+import { RecordingChips } from "@/components/questionnaire/RecordingChips";
+import { useChipNavigator } from "@/components/questionnaire/useUrlFilters";
 import type { MediaFile } from "@/lib/types";
 
 /**
@@ -13,6 +15,7 @@ import type { MediaFile } from "@/lib/types";
  */
 export default function MediaViewPage() {
   const { id } = useParams<{ id: string }>();
+  const goChip = useChipNavigator();
   return (
     <RecordViewPage<MediaFile>
       kind="media"
@@ -25,6 +28,7 @@ export default function MediaViewPage() {
       {(media) => (
         <>
           <section className="panel grid gap-3 p-4">
+            <RecordingChips chips={media.questionnaireChips} size="md" onChip={goChip} />
             <ReadOnlyMediaGallery title="File" items={[media]} />
           </section>
           <RecordFieldList rows={mediaFields(media)} />

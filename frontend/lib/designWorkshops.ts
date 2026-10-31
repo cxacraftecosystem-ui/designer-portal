@@ -3092,6 +3092,11 @@ export type DwDictationResult = {
   /** COMPLETED | EMPTY | FAILED | RATE_LIMITED, as `ai.transcribe_audio_bytes` resolved the chain. */
   status?: string | null;
   text?: string | null;
+  /**
+   * The stored recording, when the transcript pipeline keeps dictations (contract
+   * `transcript-v1-api`: every recording is a MediaFile). Absent on a deployment that stores none.
+   */
+  mediaId?: string | null;
   /** Which provider in the chain answered. Diagnostic; never shown beside the words. */
   provider?: string | null;
   /** The tag we sent, echoed. It steers nothing today — see the note in `dictateAudio`. */
