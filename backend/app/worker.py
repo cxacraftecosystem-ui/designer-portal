@@ -47,11 +47,11 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
-from app.services import artisan_duplicates, artisan_merge, ministry_exports
+from app.services import artisan_duplicates, artisan_merge, media_queue, ministry_exports
 from app.services.aadhaar import log_retention as aadhaar_log_retention
 from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
-from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs, run_insights_lane
+from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 from app.services.ministry_export import process_next_ministry_exports
 from app.services.search_indexer import (
     compact_queue as compact_search_queue,
@@ -206,7 +206,7 @@ async def _run() -> None:
     logger.info("Media queue worker started (interval=%.1fs)", interval)
     # THE TRANSLATION LANE (0.0.5), beside the loop below rather than inside it: English and the
     # summary for transcripts already made run while the next recording is being transcribed.
-    lane = asyncio.create_task(run_insights_lane(stop, settings))
+    lane = asyncio.create_task(media_queue.run_insights_lane(stop, settings))
     last_search_pass = 0.0
     last_recovery = float("-inf")
     try:
