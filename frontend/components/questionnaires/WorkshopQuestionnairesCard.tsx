@@ -6,7 +6,9 @@ import { useEffect, useState } from "react";
 
 import { useQuestionnaireConfig } from "@/components/questionnaire/useQuestionnaireConfig";
 import { ButtonRow } from "@/components/ui/ButtonRow";
-import { questionnaireApi, type Annexure, type FormFor } from "@/lib/questionnaire/api";
+import { RecordingChips } from "@/components/questionnaire/RecordingChips";
+import { chipHref, useChipNavigator } from "@/components/questionnaire/useUrlFilters";
+import { questionnaireApi, type Annexure, type FormFor, type Recording } from "@/lib/questionnaire/api";
 import { qs } from "@/lib/questionnaire/qs";
 import { formHref, listForms, type PortalForm } from "@/lib/questionnairePortal";
 
@@ -24,6 +26,21 @@ export function WorkshopQuestionnairesCard({ designWorkshopId }: { designWorksho
   const [annexure, setAnnexure] = useState<Annexure | null>(null);
   const [showAnnexure, setShowAnnexure] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [takes, setTakes] = useState<Recording[] | null>(null);
+  const goChip = useChipNavigator();
+
+  // The workshop's latest takes with their chips (owner, 31 Oct 2026); the rest are on Recordings.
+  useEffect(() => {
+    if (!on) return;
+    let cancelled = false;
+    void questionnaireApi
+      .listRecordings({ designWorkshopId: [designWorkshopId] }, null, null, 5)
+      .then((page) => !cancelled && setTakes(page.items))
+      .catch(() => !cancelled && setTakes([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [on, designWorkshopId]);
 
   useEffect(() => {
     if (!on) return;
@@ -92,7 +109,19 @@ export function WorkshopQuestionnairesCard({ designWorkshopId }: { designWorksho
         <button type="button" className="field-button-secondary" aria-expanded={showAnnexure} onClick={() => setShowAnnexure(!showAnnexure)}>
           {qs("annexureTitle")}
         </button>
+        <Link className="field-button-secondary" href={chipHref({ key: "designWorkshopId", value: designWorkshopId })} data-workshop-recordings>
+          {qs("recordingsTitle")}
+        </Link>
       </ButtonRow>
+      {takes && takes.length ? (
+        <ul className="grid gap-2" data-workshop-takes>
+          {takes.map((r) => (
+            <li key={r.id} className="rounded-md border border-line-200 p-2">
+              <RecordingChips chips={r.chips} onChip={goChip} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {showAnnexure ? (
         annexure ? (
           <div className="grid gap-3" data-annexure-preview>

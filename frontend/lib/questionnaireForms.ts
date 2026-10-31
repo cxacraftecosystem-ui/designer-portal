@@ -30,6 +30,7 @@
  */
 
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
+import { filtersToQuery, type Filters } from "@/lib/questionnaire/filters";
 import { fetchFile } from "@/lib/fileDownload";
 import type { PageResult } from "@/lib/types";
 import { exportFilename } from "@/lib/naming";
@@ -555,11 +556,20 @@ export type QFormListParams = {
   mineOnly?: boolean;
   /** The trash: soft-deleted questionnaires only, newest deletion first. Content admins only (403 otherwise). */
   deletedOnly?: boolean;
+  /** The shared questionnaire filters (artisans, workshops, dates …), as the library's bar sets them. */
+  filters?: Filters;
 };
 
+function appendQuery(query: string, extra: string): string {
+  if (!extra) return query;
+  return query ? `${query}&${extra}` : `?${extra}`;
+}
+
 export function listQuestionnaires(params: QFormListParams = {}) {
+  // The shared questionnaire filters (owner, 31 Oct 2026) ride after the page's own parameters.
+  const shared = params.filters ? filtersToQuery(params.filters) : "";
   return apiFetch<PageResult<QFormSummary>>(
-    `/questionnaires${buildQuery({
+    `/questionnaires${appendQuery(buildQuery({
       page: params.page,
       pageSize: params.pageSize,
       search: params.search ?? undefined,
@@ -569,7 +579,7 @@ export function listQuestionnaires(params: QFormListParams = {}) {
       activeOnly: params.activeOnly === false ? "false" : undefined,
       mineOnly: params.mineOnly ? "true" : undefined,
       deletedOnly: params.deletedOnly ? "true" : undefined
-    })}`
+    }), shared)}`
   );
 }
 

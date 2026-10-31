@@ -18,6 +18,7 @@ from app.core.deps import (
     require_content_admin,
     require_record_creator,
 )
+from app.questionnaire import chips as questionnaire_chips, filters as questionnaire_filters
 from app.schemas.media import (
     MediaCompleteRequest,
     MediaRelinkRequest,
@@ -128,6 +129,33 @@ MEDIA_PROCESSING_JOB_STATUSES = frozenset(
 )
 
 router = APIRouter(prefix="/media", tags=["media"])
+
+# ── QUESTIONNAIRE CHIPS AND FILTERS ON THE MEDIA LIST (owner, 31 Oct 2026) ────────────────────
+# A questionnaire take listed here carries ``questionnaireChips``: the same chips the session
+# screens draw (section or question, form, artisans, dates, workshop, language, duration), from
+# ``app/questionnaire/chips.for_media`` in a fixed number of reads for the whole page. The list also
+# takes the shared filters (``app/questionnaire/filters.py``) for questionnaire takes: form,
+# section or question, artisans, researcher, workshop, kind, source, transcript and language. The
+# media list's own ``dateFrom``/``dateTo`` (upload day), ``designWorkshopId`` and ``search`` keep
+# their meaning; ``search`` also finds a take by what its chips say.
+_MEDIA_OWN_FILTERS = ("q", "dateFrom", "dateTo", "designWorkshopId")
+
+
+def _questionnaire_media_filters(request: Request | None) -> Any:
+    return questionnaire_filters.parse(request.query_params if request is not None else {}).without(*_MEDIA_OWN_FILTERS)
+
+
+async def _with_questionnaire_chips(payload: Any) -> Any:
+    rows = payload.get("items") if isinstance(payload, dict) and isinstance(payload.get("items"), list) else (
+        payload if isinstance(payload, list) else [payload])
+    ids = [str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("questionnaireInterviewId")]
+    if ids:
+        found = await questionnaire_chips.for_media(db, ids)
+        for r in rows:
+            if isinstance(r, dict) and str(r.get("id")) in found:
+                r["questionnaireChips"] = found[str(r.get("id"))]
+    return payload
+
 
 # "the caller did not say whose media bytes may travel". Distinct from None, which MEANS "all of
 # them" — see ``records.public_encode``.
@@ -1329,6 +1357,7 @@ async def complete_media_upload(
 @router.get("")
 async def list_media(
     current_user: Any = Depends(get_current_user),
+    request: Request = None,  # type: ignore[assignment]  # FastAPI injects it; a direct call passes none
     search: str | None = None,
     mediaType: str | None = None,
     linkedRecordType: str | None = None,
@@ -1359,6 +1388,14 @@ async def list_media(
             {"caption": contains(search)},
             {"mimeType": contains(search)},
         ]
+        by_chips = await questionnaire_filters.media_text_ids(search.strip()[: questionnaire_filters.MAX_TEXT], client=db)
+        if by_chips:
+            where["OR"].append({"id": {"in": by_chips}})
+    questionnaire_only = _questionnaire_media_filters(request)
+    if questionnaire_filters.media_filtered(questionnaire_only):
+        where.setdefault("AND", []).append(
+            {"id": {"in": await questionnaire_filters.media_ids_matching(questionnaire_only, client=db)}}
+        )
     if mediaType:
         where["mediaType"] = enum_filter_or_422(mediaType, MEDIA_TYPES, field="mediaType")
     if linkedRecordType:
@@ -1389,7 +1426,7 @@ async def list_media(
             order=with_id_tiebreak({"createdAt": "desc"}),
         ),
     )
-    return page_payload(await _public(items, current_user), total, page, page_size)
+    return await _with_questionnaire_chips(page_payload(await _public(items, current_user), total, page, page_size))
 
 
 # linkedRecordType -> the typed foreign-key column that should point at the parent record. When a
@@ -2114,7 +2151,7 @@ async def delete_staged_object(
 async def get_media(media_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     media = await db.mediafile.find_unique(where={"id": media_id}, include=INCLUDE)
     media = media or await require_record(db.mediafile, media_id)
-    return await _public(media, current_user)
+    return await _with_questionnaire_chips(await _public(media, current_user))
 
 
 @router.delete("/{media_id}", status_code=status.HTTP_204_NO_CONTENT)

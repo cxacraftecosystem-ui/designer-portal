@@ -43,6 +43,7 @@ import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { Artisan, Craft, MediaFile, ProductDocumentation, ToolDocumentation, Workshop } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { UnifiedResults } from "@/components/search/UnifiedResults";
+import { RecordingSearchGroup } from "@/components/questionnaire/RecordingSearchGroup";
 import { fetchUnified, unifiedApplies, type UnifiedResponse, type UnifiedType } from "@/lib/unifiedSearch";
 
 type SearchResult = {
@@ -670,6 +671,11 @@ export default function SearchPage() {
             />
           ) : null}
           <SearchPager page={page} shown={shown} hasMore={hasMore} loading={loading} onPage={setPage} />
+        </div>
+      ) : null}
+      {applied?.q ? (
+        <div className="mt-5">
+          <RecordingSearchGroup q={applied.q} />
         </div>
       ) : null}
     </>

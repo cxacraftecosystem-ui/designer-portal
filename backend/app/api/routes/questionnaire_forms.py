@@ -75,7 +75,12 @@ from app.core.deps import (
     require_admin,
     require_content_admin,
 )
-from app.questionnaire import authoring as questionnaire_authoring, forms as unified_forms, shims_dr
+from app.questionnaire import (
+    authoring as questionnaire_authoring,
+    filters as shared_filters,
+    forms as unified_forms,
+    shims_dr,
+)
 from app.schemas.questionnaire import (
     CustomAnswerBatch,
     CustomQuestionCreate,
@@ -125,7 +130,6 @@ from app.services.questionnaire_xlsx import (
 from app.services.record_design_workshop import assert_may_write_a_record_filed_under
 from app.services.records import (
     clean_data,
-    contains,
     public_encode,
     require_record,
     with_id_tiebreak,
@@ -881,6 +885,7 @@ async def reupload_questionnaire(
 
 @router.get("")
 async def list_questionnaires(
+    request: Request,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1),
     search: str | None = None,
@@ -908,15 +913,22 @@ async def list_questionnaires(
     if activeOnly and not deletedOnly:
         where["isActive"] = True
     if designWorkshopId:
-        where["designWorkshopId"] = designWorkshopId
-    if search:
-        # ``records.contains``, not a hand-rolled filter: it strips the control bytes Postgres cannot
-        # store (a pasted NUL was a bare 500 from this box) and escapes the LIKE metacharacters, so a
-        # title typed with an underscore matches that title rather than every questionnaire.
-        where["OR"] = [
-            {"title": contains(search)},
-            {"description": contains(search)},
-        ]
+        # One workshop (the workshop screen), or several from the library's filter: repeated or
+        # comma-separated, the shared filters' spelling.
+        chosen = [w.strip() for value in request.query_params.getlist("designWorkshopId") or [designWorkshopId]
+                  for w in value.split(",") if w.strip()]
+        where["designWorkshopId"] = chosen[0] if len(chosen) == 1 else {"in": chosen}
+    # THE SHARED FILTERS (owner, 31 Oct 2026; ``app/questionnaire/filters.py``): the free text
+    # (``search`` or ``q``) finds a form by its title, description, sections, questions and the
+    # sessions held on it; kind, artisans, researchers, workshops, dates, source, transcript and
+    # language keep the forms with a live session that matches. ``designWorkshopId`` keeps its own
+    # meaning above (the forms attached to that workshop), so it is not passed on.
+    library_filters = shared_filters.parse(request.query_params).without("designWorkshopId")
+    if search and not library_filters.q:
+        library_filters = shared_filters.Filters(**{**library_filters.__dict__, "q": search.strip()[: shared_filters.MAX_TEXT]})
+    matching = await shared_filters.form_ids_matching(library_filters)
+    if matching is not None:
+        where.setdefault("AND", []).append({"id": {"in": sorted(matching)}})
     if mineOnly or (deletedOnly and not is_content_admin(current_user)):
         # An explicit "mine" means MINE — the ones this designer uploaded — and must not quietly
         # include a colleague's form that happens to hang off a shared workshop.

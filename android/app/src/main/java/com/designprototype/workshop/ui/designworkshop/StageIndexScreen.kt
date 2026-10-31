@@ -258,6 +258,8 @@ fun StageIndexScreen(
      * workshop that was sent a fortnight ago.
      */
     var onServer by remember(workshopId) { mutableStateOf(false) }
+    /** The workshop's id on the server, once known: its questionnaire recordings are listed by it. */
+    var serverWorkshopId by remember(workshopId) { mutableStateOf<String?>(null) }
     /**
      * `stageKey → (missing label → the box it names)`, for turning the list below into destinations.
      *
@@ -326,6 +328,7 @@ fun StageIndexScreen(
 
             val remoteId = draft?.remoteId ?: workshopId.takeUnless { isLocalOnlyWorkshop(it) }
             onServer = remoteId != null
+            serverWorkshopId = remoteId
             val remote = remoteId?.let {
                 runCatching { repository.designWorkshop(it) }.getOrNull()
             }
@@ -482,6 +485,10 @@ fun StageIndexScreen(
         )
         serverNote?.let { Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall) }
         frozenNote?.let { Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodyMedium) }
+
+        // THE QUESTIONNAIRE TAKES FILED UNDER THIS WORKSHOP, each with its chips (owner, 31 Oct 2026):
+        // the recordings list with the workshop fixed, searchable and filtered like every other list.
+        serverWorkshopId?.let { id -> DwWorkshopRecordings(id) }
 
         /*
          * THE WORKSHOP'S ACTIONS, through the one button-row primitive: stacked full width on a
@@ -1321,3 +1328,19 @@ private fun fromServer(dto: StageCompletenessDto, local: DwStageCompleteness): D
         collectionCounts = dto.collectionCounts,
         missing = dto.missing,
     )
+
+/** This design workshop's questionnaire recordings: the shared list, this workshop fixed. */
+@Composable
+private fun DwWorkshopRecordings(designWorkshopId: String) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val v2 = remember { com.designprototype.workshop.questionnaire.data.QuestionnaireV2.get(context) }
+    val fixed = remember(designWorkshopId) {
+        com.designprototype.workshop.questionnaire.data.QuestionnaireFilters().with("designWorkshopId", listOf(designWorkshopId))
+    }
+    com.designprototype.workshop.questionnaire.ui.RecordingsList(
+        v2, fixed = fixed, screen = "dw-recordings-$designWorkshopId",
+        onOpenSession = { sessionId ->
+            com.designprototype.workshop.questionnaire.ui.QuestionnaireV2Nav.openServerSession.value = sessionId
+        }
+    )
+}

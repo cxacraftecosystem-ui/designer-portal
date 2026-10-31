@@ -705,7 +705,10 @@ interface WorkshopRepositoryApi {
         @Query("mediaType") mediaType: String? = null,
         @Query("statusFilter") statusFilter: String? = null,
         @Query("dateFrom") dateFrom: String? = null,
-        @Query("dateTo") dateTo: String? = null
+        @Query("dateTo") dateTo: String? = null,
+        // The shared questionnaire filters for questionnaire takes (owner, 31 Oct 2026), already
+        // encoded: `QuestionnaireFilters.mediaParams()` (never the text or the dates, which are this list's own).
+        @QueryMap(encoded = true) filters: Map<String, String> = emptyMap()
     ): PageResponse<MediaFileDto>
 
     // The media processing queue: what became of the transcription job an audio upload enqueued.
@@ -2520,6 +2523,9 @@ interface WorkshopRepositoryApi {
         @Query("mineOnly") mineOnly: Boolean = false,
         // L9 (21 Oct 2026): the trash, newest deletion first. Content admins only; 403 otherwise.
         @Query("deletedOnly") deletedOnly: Boolean = false,
+        // The shared questionnaire filters (owner, 31 Oct 2026), already encoded:
+        // `questionnaire/data/QuestionnaireFilters.toParams()`. `designWorkshopId` keeps its own meaning.
+        @QueryMap(encoded = true) filters: Map<String, String> = emptyMap(),
     ): PageResponse<CustomQuestionnaireSummaryDto>
 
     // ── L9 (21 Oct 2026): soft delete and restore, content admins only on every path ──────────────
