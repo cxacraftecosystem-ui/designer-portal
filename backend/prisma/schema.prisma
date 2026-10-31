@@ -181,6 +181,8 @@ enum MediaProcessingJobType {
   TRANSCRIPT_INSIGHTS
   /// QUESTIONNAIRE V2: verify an uploaded take's sha256 (shared with documentation-portal).
   SHA_VERIFY
+  /// 0.0.5: ElevenLabs Voice Isolator on a transcribed recording (off unless AppSetting says so).
+  AUDIO_ISOLATION
 }
 
 enum MediaProcessingJobStatus {
@@ -1828,6 +1830,10 @@ model MediaFile {
   transcriptLanguage String?
   /// Which provider produced `transcriptText` (`elevenlabs`, `deepgram`, `whisper`, `muse`, `cache`).
   transcriptProvider String?
+  /// 0.0.5: the Voice Isolator copy, beside the original (same file name, its own key).
+  cleanedObjectKey   String?
+  cleanedMimeType    String?
+  cleanedAt          DateTime?
   linkedRecordType String?
   linkedRecordId   String?
   status           RecordStatus @default(PENDING)
@@ -2705,6 +2711,8 @@ model AppSetting {
   /// The transcript pipeline's monthly budget in USD (alert at 80 %, pause at 100 %), and the
   /// India-time month (YYYY-MM) the alert and the pause last fired in, so each fires once a month.
   transcriptMonthlyBudgetUsd   Float?  @default(100)
+  /// 0.0.5: clean each newly transcribed recording with ElevenLabs Voice Isolator. Off by default.
+  audioIsolationEnabled        Boolean @default(false)
   transcriptBudgetAlertedMonth String?
   transcriptBudgetPausedMonth  String?
 

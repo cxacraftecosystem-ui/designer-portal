@@ -33,6 +33,11 @@ def is_admin(user: Any) -> bool:
     return bool(_is_admin(user))
 
 
+def may_see_spend(user: Any) -> bool:
+    """Cost and the model names: ADMIN, MASTER_ADMIN and MINISTRY_ADMIN only (0.0.5)."""
+    return bool(is_content_admin(user))
+
+
 def may_edit(user: Any, media: Any) -> bool:
     return bool(
         is_content_admin(user) or getattr(media, "uploadedById", None) == getattr(user, "id", None)
@@ -104,6 +109,16 @@ async def may_send(media: Any) -> tuple[bool, str | None]:
     return bool(verdict.may_send), verdict.refusal
 
 
+async def may_send_audio(media: Any) -> tuple[bool, str | None]:
+    """Whether the RECORDING itself may go to ElevenLabs now (Voice Isolator). A failed read refuses."""
+    try:
+        verdict = await dictation_consent.transcription_verdict(media, resolve_from_stages=True)
+    except Exception as exc:  # noqa: BLE001 - an unreadable consent store sends nothing
+        logger.warning("consent unreadable for media %s (%s)", getattr(media, "id", None), type(exc).__name__)
+        return False, "The consent record could not be read, so nothing was sent."
+    return bool(verdict.may_send), verdict.refusal
+
+
 async def extra_context(media: Any, context: dict[str, Any]) -> None:
     """A design workshop's craft, state and artisans, beside what the shared tables say."""
     workshop_id = getattr(media, "designWorkshopId", None)
@@ -160,14 +175,17 @@ def kind_label(media: Any, context: dict[str, Any]) -> str:
     return "Interview" if context.get("artisans") else "Recording"
 
 
-def audio_url(media: Any) -> str | None:
+def audio_url(media: Any, *, original: bool = False) -> str | None:
+    """The player's signed URL: the Voice Isolator copy when there is one (0.0.5), else the recording
+    as made. ``original=True`` is always the recording as made."""
+    cleaned = None if original else getattr(media, "cleanedObjectKey", None)
     try:
         from app.services.s3 import presign_get_url
 
         return presign_get_url(
-            media.objectKey,
+            cleaned or media.objectKey,
             filename=media.originalFilename or "recording",
-            mime_type=media.mimeType or "audio/mpeg",
+            mime_type=(getattr(media, "cleanedMimeType", None) if cleaned else None) or media.mimeType or "audio/mpeg",
             disposition="inline",
         )
     except Exception as exc:  # noqa: BLE001 - the transcript reads without playback

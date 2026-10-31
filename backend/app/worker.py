@@ -47,7 +47,7 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
-from app.services import artisan_duplicates, artisan_merge, ministry_exports
+from app.services import artisan_duplicates, artisan_merge, media_queue, ministry_exports
 from app.services.aadhaar import log_retention as aadhaar_log_retention
 from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
@@ -124,6 +124,7 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> bool:
             worker_id="queue-service",
             settings=settings,
             recover=recover,
+            skip_insights=True,
         )
     except Exception:  # one bad iteration must never kill the worker
         swept = False
@@ -203,6 +204,9 @@ async def _run() -> None:
         await connect_db()
 
     logger.info("Media queue worker started (interval=%.1fs)", interval)
+    # THE TRANSLATION LANE (0.0.5), beside the loop below rather than inside it: English and the
+    # summary for transcripts already made run while the next recording is being transcribed.
+    lane = asyncio.create_task(media_queue.run_insights_lane(stop, settings))
     last_search_pass = 0.0
     last_recovery = float("-inf")
     try:
@@ -218,6 +222,10 @@ async def _run() -> None:
                 last_recovery = now
             await _wait_for_stop(stop, interval)
     finally:
+        stop.set()
+        lane.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await lane
         await disconnect_db()
         logger.info("Media queue worker stopped")
 
