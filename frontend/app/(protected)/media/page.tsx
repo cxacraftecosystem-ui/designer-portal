@@ -28,6 +28,7 @@ import { Field, TextArea, TextInput } from "@/components/FormControls";
 import { LocationFields } from "@/components/forms/LocationFields";
 import { MediaCaptureField } from "@/components/forms/MediaCaptureField";
 import { Markdown } from "@/components/Markdown";
+import { TranscriptPreview } from "@/components/transcript/TranscriptPreview";
 import { MediaJobsPanel } from "@/components/media/MediaJobsPanel";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { UploadProgress } from "@/components/media/UploadProgress";
@@ -995,6 +996,7 @@ function MediaPageBody() {
                           .filter(Boolean)
                           .join(" · ")}
                       </p>
+                      <TranscriptPreview preview={item.transcriptPreview} text={item.transcriptText} lines={2} className="mt-1" />
                       {item.transcriptText ? (
                         // `data-row-ignore`: reading the open transcript is not a press on the card.
                         <details data-row-ignore="" className="mt-1 text-sm">
@@ -1063,6 +1065,7 @@ function MediaPageBody() {
                           {item.linkedRecordType ? LINK_TYPE_LABEL.get(item.linkedRecordType) ?? item.linkedRecordType : "-"}
                         </td>
                         <td className="px-4 py-3 text-ink-700">
+                          <TranscriptPreview preview={item.transcriptPreview} text={item.transcriptText} lines={2} className="mt-1" />
                           {item.transcriptText ? (
                             // `data-row-ignore`: reading the open transcript is not a press on the row.
                             <details data-row-ignore="">
