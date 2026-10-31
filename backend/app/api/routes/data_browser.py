@@ -137,6 +137,7 @@ from app.services.rich_text import plain_from_stored
 from app.services.s3 import ObjectTooLarge, discard_temp, download_to_temp, head_object
 from app.services.transcript_format import transcript_cell
 from app.services.xlsx_report import XLSX_MIME, build_report_workbook
+from app.transcription import workdir
 
 router = APIRouter(
     prefix="/data",
@@ -4579,7 +4580,7 @@ async def download_media(
             )
         try:
             # Blocking S3 transfer off the event loop — this is the single-worker web process.
-            source_path = await asyncio.to_thread(
+            source_path = await workdir.owned(
                 download_to_temp, media.objectKey, suffix=".src", max_bytes=ceiling
             )
         except ObjectTooLarge as exc:
@@ -4621,7 +4622,7 @@ async def download_media(
     # Streaming it off disk instead makes the size a DISK question rather than a RAM one, and
     # ``MAX_DOWNLOAD_BYTES`` is the bound on that; the 413 says so rather than truncating.
     try:
-        source_path = await asyncio.to_thread(
+        source_path = await workdir.owned(
             download_to_temp, media.objectKey, max_bytes=MAX_DOWNLOAD_BYTES
         )
     except ObjectTooLarge as exc:

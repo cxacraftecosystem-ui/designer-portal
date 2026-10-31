@@ -46,6 +46,8 @@ SHARED_FILES_EXTRA = (
     "backend/app/services/audio_isolation.py",
     "backend/prisma/migrations/20261115090000_audio_isolation/migration.sql",
     "backend/tests/test_audio_isolation.py",
+    # D37 (0.0.6): the sized, swept working directory and the download that never leaks a temp file.
+    "backend/tests/test_transcription_workdir.py",
 )
 #: Recorded provider responses the transcript tests read, every file in the folder.
 FIXTURE_DIR = "backend/tests/fixtures/transcript"

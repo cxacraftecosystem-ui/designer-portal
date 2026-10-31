@@ -302,6 +302,7 @@ from app.services.stage_schema import (
 from app.services.uploads import read_upload_bounded
 from app.services.workshop_transcripts import load_transcript_items
 from app.transcription.schedule import PAUSED_MESSAGE
+from app.transcription import workdir
 
 router = APIRouter(prefix="/design-workshops", tags=["design-workshops"])
 
@@ -4725,7 +4726,7 @@ async def subtitle_ai_layer(
         # STREAMED TO DISK, NOT READ INTO THE HEAP — this is the single-worker web process, and a
         # whole-object read here competes with every request in flight. `transcribe_timed_bytes`
         # takes the path and hands it to the provider rung that answers.
-        source_path = await asyncio.to_thread(
+        source_path = await workdir.owned(
             download_to_temp, media.objectKey, max_bytes=MAX_SUBTITLE_FETCH_BYTES
         )
         answer = await ai.transcribe_timed_bytes(

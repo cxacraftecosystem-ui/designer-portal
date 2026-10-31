@@ -59,6 +59,7 @@ from app.services.search_indexer import (
     embed_pending as embed_search_documents,
 )
 from app.services.weekly_digest import run_weekly_digests
+from app.transcription import workdir
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("app.worker")
@@ -204,6 +205,9 @@ async def _run() -> None:
         await connect_db()
 
     logger.info("Media queue worker started (interval=%.1fs)", interval)
+    # D37: the transcription working directory, created and swept of whatever a killed run left.
+    with suppress(Exception):
+        await asyncio.to_thread(workdir.on_worker_start)
     # THE TRANSLATION LANE (0.0.5), beside the loop below rather than inside it: English and the
     # summary for transcripts already made run while the next recording is being transcribed.
     lane = asyncio.create_task(media_queue.run_insights_lane(stop, settings))
