@@ -35,7 +35,17 @@ SHARED_FILES_EXTRA = (
     # The transcript pipeline (31 Oct 2026): the API contract and UI strings both clients build on.
     "shared/transcript-contract.json",
     "shared/strings/transcript.json",
+    "backend/app/services/transcript_store.py",
+    "backend/app/services/transcript_pipeline.py",
+    "backend/app/api/routes/transcripts.py",
+    "backend/prisma/migrations/20261110090000_transcript_turns/migration.sql",
+    "backend/scripts/backfill_transcripts.py",
+    "backend/tests/test_transcript_pipeline.py",
+    "backend/tests/test_transcript_contract.py",
+    "backend/tests/test_transcript_db.py",
 )
+#: Recorded provider responses the transcript tests read, every file in the folder.
+FIXTURE_DIR = "backend/tests/fixtures/transcript"
 
 
 def shared_files(root: Path) -> list[str]:
@@ -44,7 +54,10 @@ def shared_files(root: Path) -> list[str]:
         for path in (root / "backend/app/transcription").rglob("*.py")
         if "__pycache__" not in path.parts
     )
-    return package + list(SHARED_FILES_EXTRA)
+    fixtures = sorted(
+        path.relative_to(root).as_posix() for path in (root / FIXTURE_DIR).glob("*.json")
+    )
+    return package + list(SHARED_FILES_EXTRA) + fixtures
 
 
 def digest(path: Path) -> str:
