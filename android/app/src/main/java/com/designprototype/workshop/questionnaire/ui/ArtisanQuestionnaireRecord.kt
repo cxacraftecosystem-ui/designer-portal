@@ -15,6 +15,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,6 +30,8 @@ import com.designprototype.workshop.questionnaire.data.QArtisanRecord
 import com.designprototype.workshop.questionnaire.data.QuestionnaireCopy
 import com.designprototype.workshop.questionnaire.data.QuestionnaireV2
 import com.designprototype.workshop.ui.AudioPlayer
+import com.designprototype.workshop.transcript.data.TranscriptUiText
+import com.designprototype.workshop.transcript.ui.TranscriptDialog
 import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import com.designprototype.workshop.questionnaire.ui.SegmentedChoice
 import com.designprototype.workshop.ui.SelectOption
@@ -65,6 +68,7 @@ fun ArtisanQuestionnaireRecord(
     var playing by remember { mutableStateOf<Uri?>(null) }
     var consent by remember { mutableStateOf<String?>("…") }
     // "Show removed" (B40): this artisan's removed takes, from the server, with Restore.
+    var transcriptOf by remember { mutableStateOf<String?>(null) }
     var removed by remember { mutableStateOf<List<com.designprototype.workshop.questionnaire.data.QRecording>>(emptyList()) }
     var showRemoved by remember { mutableStateOf(false) }
     var historyOf by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -150,6 +154,9 @@ fun ArtisanQuestionnaireRecord(
                                             chipFilter = com.designprototype.workshop.questionnaire.data.QuestionnaireFilters().applyChip(f, label)
                                         })
                                     }
+                                    row.mediaFileId?.let { id ->
+                                        TextButton(onClick = { transcriptOf = id }) { Text(TranscriptUiText.open, style = MaterialTheme.typography.labelSmall) }
+                                    }
                                     Text("▶", style = MaterialTheme.typography.bodySmall)
                                 }
                             }
@@ -200,6 +207,7 @@ fun ArtisanQuestionnaireRecord(
                 }
             }
             playing?.let { AudioPlayer(it) }
+            transcriptOf?.let { id -> TranscriptDialog(id, audio = null, onDismiss = { transcriptOf = null }) }
         }
     }
     historyOf?.let { (answerId, heading) -> AnswerHistoryDialog(v2, answerId, heading) { historyOf = null } }
