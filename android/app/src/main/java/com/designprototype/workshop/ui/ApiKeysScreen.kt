@@ -501,6 +501,9 @@ fun ApiKeysScreen(
         // shared error line.
         ProviderOrderPanel(onMessage = onMessage)
 
+        // The month's transcription spend (read only; the route answers admins only and draws nothing otherwise).
+        com.designprototype.workshop.transcript.ui.TranscriptBudgetCard()
+
         if (state.restricted) {
             ApiKeysRestrictedCard()
             return@Column

@@ -775,6 +775,7 @@ import java.time.ZoneId
 import java.util.Locale
 import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import com.designprototype.workshop.ui.TranscriptInsightsCard
+import com.designprototype.workshop.transcript.ui.TranscriptEntry
 import com.designprototype.workshop.ui.FieldProgressDefaults
 
 /*
@@ -15523,6 +15524,10 @@ private fun MediaWithTranscript(
         }
     }
 
+    val isVideo = media.mediaType.equals("VIDEO", ignoreCase = true)
+    // The transcript viewer (DESIGN_2026-10-31 §3) wherever the pipeline answers; the plain
+    // transcript below wherever it does not (the switch is off, or the file predates it).
+    val legacyTranscript: @Composable () -> Unit = {
     when {
         !transcriptText.isNullOrBlank() -> {
             Column(
@@ -15655,6 +15660,9 @@ private fun MediaWithTranscript(
             }
         }
     }
+    Unit
+    }
+    if (isAudio || isVideo) TranscriptEntry(mediaId = media.id, audio = null, legacy = legacyTranscript) else legacyTranscript()
 }
 
 /** Admin "Transcribe now" / "Re-transcribe" action — runs transcription on the spot via the settings mode. */
