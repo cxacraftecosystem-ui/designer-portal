@@ -235,8 +235,9 @@ export type SelectServerQuery = {
    * OPTIONAL BECAUSE A ROUTE MAY NOT SAY. `apiFetch` casts rather than validates, so a field a
    * deployment has not shipped yet arrives as `undefined`, and `undefined` must read as "nothing to
    * say" and never as "not truncated" — the same guard, for the same reason, as `cutOf`'s
-   * `Number.isFinite`. `GET /workshops/requestable` returns a bare array with no total and no flag
-   * and so is honestly silent here until it grows one.
+   * `Number.isFinite`. `GET /workshops/requestable` now answers the flag (`{items, truncated}`), but
+   * its picker searches locally and passes no `serverQuery`, so it states its ceiling as a field hint
+   * instead (`lib/requestableWorkshops.ts::requestableCeilingSentence`), in this sentence's words.
    */
   truncated?: boolean;
 };

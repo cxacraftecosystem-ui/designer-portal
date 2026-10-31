@@ -1254,7 +1254,7 @@ test("what the server cut is stated in selectFilter's words, and only there", ()
   );
 
   // A route that cannot count says "there were more" and nothing else. One does — `/workshops/
-  // requestable` returns a bare array — and an admitted unknown beats a total that is itself a cap.
+  // requestable` answers a flag and no total — and an admitted unknown beats a total that is a cap.
   const flagOnly = designWorkshopOptions(dwList([dw({ id: "a", title: "Ajrakh" })], null, true), {
     group: true,
     offPage: REFUSE
