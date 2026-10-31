@@ -43,6 +43,9 @@ SHARED_FILES_EXTRA = (
     "backend/tests/test_transcript_pipeline.py",
     "backend/tests/test_transcript_contract.py",
     "backend/tests/test_transcript_db.py",
+    "backend/app/services/audio_isolation.py",
+    "backend/prisma/migrations/20261115090000_audio_isolation/migration.sql",
+    "backend/tests/test_audio_isolation.py",
 )
 #: Recorded provider responses the transcript tests read, every file in the folder.
 FIXTURE_DIR = "backend/tests/fixtures/transcript"

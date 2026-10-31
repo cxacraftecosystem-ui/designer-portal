@@ -12,6 +12,7 @@ from app.core.config import Settings, get_settings
 from app.core.db import db
 from app.services import (
     ai_verb_cap,
+    audio_isolation,
     dictation_consent,
     transcript_insights,
     transcript_pipeline,
@@ -49,6 +50,7 @@ MEASUREMENT = "MEASUREMENT"
 #: it never loads the audio, and it is not held back by the processing window or the transcription
 #: rate-limit cooldown. Drained only while its AI capability flag is on.
 TRANSCRIPT_INSIGHTS = "TRANSCRIPT_INSIGHTS"
+AUDIO_ISOLATION = "AUDIO_ISOLATION"
 #: A questionnaire take's byte check (app/questionnaire/recordings.verify_sha).
 SHA_VERIFY = "SHA_VERIFY"
 QUEUED = "QUEUED"
@@ -484,8 +486,13 @@ async def process_next_media_jobs(
     settings: Settings | None = None,
     *,
     recover: bool = True,
+    skip_insights: bool = False,
 ) -> dict[str, int]:
     """Drain a batch of media processing jobs.
+
+    ``skip_insights=True`` is the queue process's main loop: translation and summary jobs have their
+    own lane (:func:`run_insights_lane`) that runs beside it, so a long transcription never holds an
+    English translation back.
 
     ``recover=False`` FOR ANY CALLER THAT IS NOT THE QUEUE PROCESS, and the reason is a double
     transcription. :func:`recover_stale_processing_jobs` decides a job is dead purely from the age of
@@ -522,9 +529,14 @@ async def process_next_media_jobs(
     held_back: list[str] = []
     if not allow_transcription:
         held_back.append(TRANSCRIPTION)
-    if not transcript_insights.enabled() or transcript_pipeline.holds_translation(app_settings):
-        # Switched off, or the monthly transcript budget is used up: leave queued insights jobs
-        # where they are rather than failing them.
+        held_back.append(AUDIO_ISOLATION)
+    if (
+        skip_insights
+        or not transcript_insights.enabled()
+        or transcript_pipeline.holds_translation(app_settings)
+    ):
+        # The lane's work, switched off, or the monthly transcript budget is used up: leave queued
+        # insights jobs where they are rather than failing them.
         held_back.append(TRANSCRIPT_INSIGHTS)
     if len(held_back) == 1:
         where["jobType"] = {"not": held_back[0]}
@@ -823,7 +835,14 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
     write = _transcript_write(result, status)
     await db.mediafile.update(where={"id": media_id}, data=write)
     if status == COMPLETED and write.get("transcriptText"):
+        # The recording is transcribed now; a job still queued for it would transcribe it again
+        # (and bill it again) when the queue reaches it. Close it as done.
+        await db.mediaprocessingjob.update_many(
+            where={"mediaFileId": media_id, "jobType": TRANSCRIPTION, "status": QUEUED},
+            data={"status": COMPLETED, "completedAt": datetime.now(UTC), "openKey": None, "error": None},
+        )
         await transcript_insights.enqueue_after_transcript(media_id)
+        await audio_isolation.enqueue_if_enabled(media_id)
     return result
 
 
@@ -996,6 +1015,9 @@ async def _process_job(job: Any, settings: Settings) -> None:
     # Text only, and first: an insights job never reaches the S3 reads below.
     if job.jobType == TRANSCRIPT_INSIGHTS:
         await _process_insights_job(job, media)
+        return
+    if job.jobType == AUDIO_ISOLATION:
+        await _process_isolation_job(job, media)
         return
     if job.jobType == TRANSCRIPTION:
         # RE-READ AT THE MOMENT OF SENDING, AND THIS IS THE CHECK THAT MAKES A WITHDRAWAL MEAN
@@ -1196,6 +1218,7 @@ async def _apply_transcription_result(job: Any, result: dict[str, Any]) -> None:
         await _complete_job(job.id, result)
         if status == COMPLETED and (result.get("formattedTranscript") or result.get("text")):
             await transcript_insights.enqueue_after_transcript(job.mediaFileId)
+            await audio_isolation.enqueue_if_enabled(job.mediaFileId)
     elif status == UNAVAILABLE:
         await _finalize_unavailable_job(job.id, result, message)
     else:
@@ -1244,6 +1267,9 @@ async def _process_insights_job(job: Any, media: Any) -> None:
         await _finalize_unavailable_job(job.id, {"status": UNAVAILABLE}, str(exc))
         return
     except transcript_insights.InsightsFailed as exc:
+        if getattr(exc, "hold_seconds", None):
+            await _hold_insights_job(job, str(exc), exc.hold_seconds)
+            return
         if exc.retry:
             raise RuntimeError(str(exc)) from None
         # A refused key or a declined request gives the same answer every time: spend once and
@@ -1556,3 +1582,136 @@ async def _finalize_failed_clip(job: Any, error: str) -> None:
             media_id,
             exc,
         )
+
+
+# --------------------------------------------------------------------------------------
+# The translation lane (0.0.5): English and summaries run BESIDE transcription, not after it
+# --------------------------------------------------------------------------------------
+#
+# The queue process used to take one job at a time, transcriptions first (priority 50 before 80), so
+# every translation waited for the last transcription in the queue. Translation is text only (no
+# audio is fetched) and is bounded by Gemini, not by this box, so it now has its own lane in the same
+# process: a few jobs at a time, claimed with the same compare-and-set as every other job, while the
+# main loop keeps transcribing. A failure that clears by itself (Gemini busy, unreachable, or the
+# project's credit run out) parks the job and asks again later without spending an attempt, so the
+# lane resumes on its own the moment Gemini answers again.
+
+#: Insights failures written before the hold existed, revived once so they finish by themselves.
+_HOLD_MESSAGES = (
+    "Gemini is busy just now; this will be tried again.",
+    "Gemini could not be reached; this will be tried again.",
+    "Gemini's credit for this project has run out. Translation resumes by itself once it is topped up.",
+)
+REVIVE_INTERVAL_SECONDS = 600.0
+_last_revive = float("-inf")
+
+
+async def _hold_insights_job(job: Any, message: str, hold_seconds: int) -> None:
+    """Back to QUEUED for ``hold_seconds``, the attempt this claim took given back."""
+    await db.mediaprocessingjob.update(
+        where={"id": job.id},
+        data={
+            "status": QUEUED,
+            "lockedAt": None,
+            "lockedBy": None,
+            "attempts": max(int(job.attempts or 0) - 1, 0),
+            "runAfter": datetime.now(UTC) + timedelta(seconds=int(hold_seconds)),
+            "error": str(message or "")[:2000],
+        },
+    )
+
+
+async def revive_held_insights(*, now: float | None = None) -> int:
+    """Requeue insights jobs that FAILED only because Gemini was busy, unreachable or unpaid.
+
+    At most every :data:`REVIVE_INTERVAL_SECONDS`. Each such job is set QUEUED with its attempts
+    reset; from then on the hold keeps it queued instead of failing it again.
+    """
+    global _last_revive
+    import time as _time
+
+    clock = _time.monotonic() if now is None else now
+    if clock - _last_revive < REVIVE_INTERVAL_SECONDS:
+        return 0
+    _last_revive = clock
+    return await db.mediaprocessingjob.update_many(
+        where={
+            "jobType": TRANSCRIPT_INSIGHTS,
+            "status": FAILED,
+            "error": {"in": list(_HOLD_MESSAGES)},
+        },
+        data={"status": QUEUED, "attempts": 0, "runAfter": datetime.now(UTC), "lockedAt": None, "lockedBy": None},
+    )
+
+
+async def process_next_insights_jobs(
+    *,
+    worker_id: str = "queue-insights",
+    settings: Settings | None = None,
+    width: int | None = None,
+) -> dict[str, int]:
+    """One pass of the translation lane: up to ``width`` insights jobs at once."""
+    settings = settings or get_settings()
+    if not transcript_insights.enabled():
+        return {"processed": 0, "succeeded": 0, "failed": 0}
+    app_settings = await load_app_settings()
+    if transcript_pipeline.holds_translation(app_settings):
+        return {"processed": 0, "succeeded": 0, "failed": 0}
+    await revive_held_insights()
+    lanes = max(1, int(width or getattr(settings, "media_queue_insights_concurrency", 2) or 2))
+    jobs = await db.mediaprocessingjob.find_many(
+        where={"status": QUEUED, "runAfter": {"lte": datetime.now(UTC)}, "jobType": TRANSCRIPT_INSIGHTS},
+        include={"mediaFile": True},
+        order=[{"priority": "asc"}, {"createdAt": "asc"}],
+        take=lanes,
+    )
+    outcome = {"processed": 0, "succeeded": 0, "failed": 0}
+
+    async def one(job: Any, n: int) -> None:
+        locked = await _lock_job(job.id, f"{worker_id}-{n}")
+        if locked is None:
+            return
+        outcome["processed"] += 1
+        try:
+            await _process_job(locked, settings)
+            outcome["succeeded"] += 1
+        except Exception as exc:  # noqa: BLE001 - the queue's own failure path
+            outcome["failed"] += 1
+            await _handle_job_failure(job.id, exc)
+
+    await asyncio.gather(*(one(job, n) for n, job in enumerate(jobs)))
+    return outcome
+
+
+async def run_insights_lane(stop: Any, settings: Settings | None = None, *, idle_seconds: float = 10.0) -> None:
+    """The queue process's translation lane, until ``stop`` (an ``asyncio.Event``) is set."""
+    settings = settings or get_settings()
+    while not stop.is_set():
+        busy = False
+        try:
+            result = await process_next_insights_jobs(settings=settings)
+            busy = result["processed"] > 0
+        except Exception:  # noqa: BLE001 - one bad pass must never kill the lane
+            logger.exception("Translation lane pass failed; backing off")
+        if not busy:
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=idle_seconds)
+            except asyncio.TimeoutError:
+                pass
+
+
+async def _process_isolation_job(job: Any, media: Any) -> None:
+    """ElevenLabs Voice Isolator on one transcribed recording (0.0.5; off unless switched on)."""
+    from app.transcription import isolation
+
+    try:
+        result = await audio_isolation.process(media)
+    except isolation.IsolationError as exc:
+        if exc.hold_seconds:
+            await _hold_insights_job(job, str(exc), exc.hold_seconds)
+            return
+        if exc.retry:
+            raise RuntimeError(str(exc)) from None
+        await _finalize_unavailable_job(job.id, {"status": FAILED}, str(exc))
+        return
+    await _complete_job(job.id, result)
