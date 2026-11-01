@@ -6,7 +6,10 @@ description = "API-first FastAPI backend for Design Prototype Workshop capture, 
 # python-build-standalone build; BOX_PYTHON_* in deploy-backend.yml), backend/Dockerfile, and every
 # CI job. 3.14 had been the line since 2026-10-09; deploy-backend.yml's job env says what held 3.15
 # back until then and what changed.
-requires-python = ">=3.15"
+# The floor below is 3.14, not 3.15, since 0.0.8 (2026-11-01): Dependabot supports Python 3.10-3.14
+# only and aborted its /backend pip scan and graph on ">=3.15". Production and CI still run 3.15.2
+# (BOX_PYTHON_* and checks.yml); ruff's target-version stays py315.
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.162.0",
     "uvicorn[standard]>=0.54.0",
@@ -184,7 +187,7 @@ select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
     "I",      # isort -- one import order, enforced mechanically rather than by review
-    "UP",     # pyupgrade -- requires-python is >=3.15, so write 3.15
+    "UP",     # pyupgrade -- target-version is py315, so write 3.15
     "B",      # flake8-bugbear -- mutable defaults, loop-variable capture, silent truncation
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify
