@@ -1,5 +1,5 @@
 plugins {
-    id("com.android.application") version "9.4.1" apply false
+    id("com.android.application") version "9.5.0" apply false
     // NO `org.jetbrains.kotlin.android` HERE OR IN `:app`, AND THAT IS NOT AN OMISSION. AGP 9 compiles
     // Kotlin itself ("built-in Kotlin"), using the Kotlin Gradle plugin that the `kotlin.jvm` line below
     // already puts on the build classpath, and it fails the build outright if the old plugin is applied

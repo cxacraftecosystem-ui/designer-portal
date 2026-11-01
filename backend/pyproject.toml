@@ -2,16 +2,16 @@
 name = "design-workshop-backend"
 version = "0.1.0"
 description = "API-first FastAPI backend for Design Prototype Workshop capture, review and report generation."
-# 3.14 EVERYWHERE SINCE 2026-10-09: the EC2 box (upstream CPython 3.14.8, a pinned
+# 3.15 EVERYWHERE SINCE 0.0.7 (2026-11-01): the EC2 box (upstream CPython 3.15.2, a pinned
 # python-build-standalone build; BOX_PYTHON_* in deploy-backend.yml), backend/Dockerfile, and every
-# CI job. 3.15.0 reached python.org on 2026-10-09 and is not a target until the builds and wheels
-# this stack needs exist; deploy-backend.yml's job env lists what was missing that day.
-requires-python = ">=3.14"
+# CI job. 3.14 had been the line since 2026-10-09; deploy-backend.yml's job env says what held 3.15
+# back until then and what changed.
+requires-python = ">=3.15"
 dependencies = [
-    "fastapi>=0.111.0",
-    "uvicorn[standard]>=0.30.0",
-    "pydantic>=2.7.0",
-    "pydantic-settings>=2.2.1",
+    "fastapi>=0.162.0",
+    "uvicorn[standard]>=0.54.0",
+    "pydantic>=2.14.2",
+    "pydantic-settings>=2.16.2",
     # PyJWT and bcrypt REPLACED python-jose and passlib on 2026-10-09 — app/core/security.py has
     # the argument, and tests/test_password_hash_compat.py and tests/test_jwt_compat.py hold the
     # hashes and the token the old pair wrote, so the swap stays provably invisible. bcrypt's floor is
@@ -27,11 +27,11 @@ dependencies = [
     # predates it) and Python 3.15 (never tested upstream), removed by moving app/core/db.py and every
     # `prisma.<model>` call to a maintained async stack (SQLAlchemy 2 with asyncpg or psycopg 3).
     "prisma==0.15.0",
-    "boto3>=1.34.0",
-    "python-multipart>=0.0.9",
-    "email-validator>=2.1.1",
-    "google-auth>=2.29.0",
-    "requests>=2.32.0",
+    "boto3>=1.43.123",
+    "python-multipart>=0.0.33",
+    "email-validator>=2.3.0",
+    "google-auth>=2.62.0",
+    "requests>=2.34.2",
     # Aadhaar offline e-KYC and online authentication (app/services/aadhaar/xmldsig.py): C14N for
     # XMLDSig, which the standard library does not offer in its 1.0 form, and a parser that can be
     # told to resolve no entity and touch no network.
@@ -50,7 +50,7 @@ dependencies = [
     # 3.14. audioop-lts is the maintained port of the removed module; tests/test_audio_runtime_deps.py
     # imports pydub for real so the next interpreter move cannot lose it again.
     "audioop-lts>=0.2.2",
-    "openpyxl>=3.1.2",
+    "openpyxl>=3.1.5",
     # PDF rendering for the workshop report (app/services/report_pdf.py). A CORE dependency, not
     # an extra, because app/api/routes/design_workshops.py imports it at module scope and the API
     # router imports that -- so an install without it does not degrade, it fails to boot. Pure
@@ -59,7 +59,7 @@ dependencies = [
     #
     # The .docx path deliberately has NO dependency at all -- see app/services/report_docx.py for
     # why that matters (the identical algorithm has to run on the phone, where python-docx cannot).
-    "reportlab>=4.0.0",
+    "reportlab>=5.1.0",
     # The Claude provider (app/services/anthropic_verbs.py), added with designer-supplied API keys.
     #
     # THE OFFICIAL SDK RATHER THAN `requests`, WHICH IS THE ODD ONE OUT IN THIS BACKEND. The OpenAI
@@ -72,7 +72,7 @@ dependencies = [
     # It is an IMPORT-OPTIONAL dependency all the same: anthropic_verbs imports it lazily inside the
     # call, so a deployment that has not installed it answers "Claude is unavailable on this server"
     # instead of failing to boot. Everything else in this backend keeps working.
-    "anthropic>=0.40.0",
+    "anthropic>=2.3.0",
     # Two-step verification (app/services/two_factor.py), 2026-10-16. `cryptography` was already
     # installed through google-auth and is now named, because the TOTP secret's AES-256-GCM
     # encryption at rest calls it directly. `segno` draws the setup QR code on the server: pure
@@ -100,8 +100,8 @@ dev = [
     # TO BUMP: raise both bounds, run `ruff check .` from backend/, and fold whatever the new
     # release finds into the baseline (or fix it) IN THAT COMMIT. That is a deliberate, reviewable
     # change with the findings in its diff, rather than a surprise on somebody else's branch.
-    "ruff>=0.16.1,<0.17",
-    "pytest>=8.2.0",
+    "ruff>=0.17.3,<0.18",
+    "pytest>=9.2.0",
     # LOAD-BEARING, AND IT WAS MISSING. `asyncio_mode = "auto"` below is what lets the 118
     # `async def test_` functions in tests/ run at all, and that setting is inert without this
     # plugin: pytest collects an async test, finds no runner, warns, and reports green. So a clean
@@ -110,8 +110,8 @@ dev = [
     # failure this project's test discipline is built to refuse. It happened to work on every
     # machine anybody used because the plugin was already sitting in `.venv` as a transitive
     # install; nothing declared it.
-    "pytest-asyncio>=0.23",
-    "httpx>=0.27.0",
+    "pytest-asyncio>=1.4.1",
+    "httpx>=0.28.1",
     # THE SAME DEFECT AS `pytest-asyncio` ABOVE, ONE ENTRY LATER, AND FOUND THE SAME WAY.
     # `tests/test_report_pdf.py` imports pypdf to read back the bytes `report_pdf` writes -- it is
     # how the .pdf writer is asserted at all -- and nothing declared it. It worked on every machine
@@ -124,7 +124,7 @@ dev = [
     # the two: an undeclared RUNNER silently skips tests and reports success, while an undeclared
     # IMPORT fails loudly at collection. Both come from the same habit of trusting a `.venv` that
     # accumulated a dependency nobody wrote down.
-    "pypdf>=4.2.0",
+    "pypdf>=6.21.4",
 ]
 # Optional AI image features (app/ai_features, all flags default off -- see docs/AI_FEATURES.md).
 # Nothing below is installed by `pip install -e .`, and nothing below is imported unless a
@@ -134,16 +134,16 @@ dev = [
 ai = [
     # Pillow composites the two layers of a separation from the alpha a hosted cutout returns.
     # Hosted background removal alone needs nothing here: requests is already a core dependency.
-    "pillow>=10.3.0",
+    "pillow>=13.0.0",
     # Rust raster-to-SVG tracer: a small wheel, no model, no per-image charge.
-    "vtracer>=0.6.11",
+    "vtracer>=0.6.15",
 ]
 ai-local = [
-    "pillow>=10.3.0",
+    "pillow>=13.0.0",
     # MEASURED on a laptop: importing rembg alone costs ~130 MB, a U2Net session ~560 MB, and one
     # 1.9 MP matte peaked the process at 1,032 MB. Do not install this on the t3.micro.
-    "rembg>=2.0.50",
-    "onnxruntime>=1.17.0",
+    "rembg>=2.0.86",
+    "onnxruntime>=1.31.1",
 ]
 # Only for SCALE_CACHE_BACKEND=redis. Deliberately NOT in `dependencies`: the default cache backend
 # is in-process and needs nothing installed, so `pip install -e .` stays exactly as light as it was.
@@ -151,7 +151,7 @@ ai-local = [
 # function, after the flag check), which is what lets the flag exist on a machine without the
 # package -- it logs one line and uses the in-process cache instead of failing to boot.
 cache = [
-    "redis>=5.0.0",
+    "redis>=8.1.0",
 ]
 
 [build-system]
@@ -167,9 +167,9 @@ exclude = ["prisma*"]
 
 [tool.ruff]
 line-length = 100
-# py314 with `requires-python` above. Raising it turned on the UP rules for 3.12-3.14 syntax; what
+# py315 with `requires-python` above (py314 from 2026-10-09). Raising it turned on the UP rules for 3.12-3.14 syntax; what
 # they found was fixed in the same commit (2026-10-09), so nothing was added to the baseline below.
-target-version = "py314"
+target-version = "py315"
 
 # The rule set is pinned HERE, by name, deliberately. With no [tool.ruff.lint] section ruff falls
 # back to its own implicit default, and that default has changed between ruff releases -- so this
@@ -184,7 +184,7 @@ select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
     "I",      # isort -- one import order, enforced mechanically rather than by review
-    "UP",     # pyupgrade -- requires-python is >=3.14, so write 3.14
+    "UP",     # pyupgrade -- requires-python is >=3.15, so write 3.15
     "B",      # flake8-bugbear -- mutable defaults, loop-variable capture, silent truncation
     "C4",     # flake8-comprehensions
     "SIM",    # flake8-simplify

@@ -144,7 +144,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           # 3.14 BECAUSE PRODUCTION RUNS IT, AND IT IS THE NEWEST PYTHON THIS STACK CAN RUN. The
           # owner's rule is the latest stable release of everything, production included. The EC2
@@ -159,7 +159,7 @@ jobs:
           # ubuntu-26.04 image of 2026-09-27, when 3.14.8 was current). The 37 integration failures
           # of 2026-10-01 to 2026-10-09 were plugin order, not the interpreter: see `addopts` in
           # backend/pyproject.toml.
-          python-version: "3.14"
+          python-version: "3.15"
           check-latest: true
           cache: pip
           # Both files, since 2026-09-03: the lock is what decides the installed set now, and a
@@ -595,6 +595,12 @@ jobs:
         # than a browser sitting there letting a screen-driving spec time out against no server.
         run: npm ci
 
+      - name: Audit the lockfile
+        # Fails on any advisory npm knows for an installed package, dev tools included (Dependabot
+        # alerts on the whole lockfile, so this does too). Added in 0.0.7 after minimatch and next
+        # sat open as Dependabot alerts with nothing in CI to say so.
+        run: npm audit --audit-level=low
+
       - name: Typecheck
         # `next build` also fails on a type error, but only during the deploy — i.e. AFTER the
         # backend has already shipped. Running it here moves the answer to before the merge.
@@ -966,9 +972,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
           check-latest: true
           cache: pip
           cache-dependency-path: |
@@ -1063,7 +1069,7 @@ jobs:
         with:
           # The major frontend/package.json's `engines.node` names; written out because this job
           # installs nothing and reads no package.json. Move it with that line.
-          node-version: "24"
+          node-version: "26"
 
       - name: Verify the documentation set
         # No `npm ci` anywhere: the script imports nothing outside node: builtins, deliberately,
@@ -1285,10 +1291,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           # 3.14 for job 1's reason: the newest stable Python, and the one production runs.
-          python-version: "3.14"
+          python-version: "3.15"
           check-latest: true
           cache: pip
           cache-dependency-path: |
@@ -1421,9 +1427,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
           check-latest: true
           cache: pip
           cache-dependency-path: |
@@ -1513,9 +1519,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
           check-latest: true
           cache: pip
           cache-dependency-path: |

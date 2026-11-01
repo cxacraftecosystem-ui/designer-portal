@@ -1035,7 +1035,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version-file: frontend/package.json # engines.node, 24.x; Next 16 needs ≥ 20.9
+          node-version-file: frontend/package.json # engines.node, 26.x; Next 16 needs ≥ 20.9
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

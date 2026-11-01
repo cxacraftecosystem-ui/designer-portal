@@ -47,7 +47,7 @@ jobs:
           # 24, the newest LTS line (20 reached end of life on 2026-04-30). Written out because the root
           # package.json this job installs declares no engines; frontend/package.json's `engines.node`
           # is the line the rest of the repository follows, so move this with it.
-          node-version: "24"
+          node-version: "26"
           cache: "npm"
 
       - name: Install npm 12

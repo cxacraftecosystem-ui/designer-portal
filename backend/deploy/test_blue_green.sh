@@ -20,10 +20,10 @@ setup() {
   T="$(mktemp -d)"
   echo "$T" > "$TMPDIR_CHECK/T"
   export APP="$T/app" NGINX_SITE="$T/nginx-site" UNIT_DIR="$T/units" NODE_CACHE="$T/node" \
-    STATE="$T/state" HEALTH_LIMIT=2 DRAIN=0 REAL_SLEEP="$real_sleep" NODE_PIN=26.11.1
-  mkdir -p "$APP/releases" "$UNIT_DIR" "$STATE/active" "$T/bin" "$NODE_CACHE/nodeenv-26.11.1/bin"
-  printf '#!/bin/sh\necho v26.11.1\n' > "$NODE_CACHE/nodeenv-26.11.1/bin/node"
-  chmod +x "$NODE_CACHE/nodeenv-26.11.1/bin/node"
+    STATE="$T/state" HEALTH_LIMIT=2 DRAIN=0 REAL_SLEEP="$real_sleep" NODE_PIN=26.13.0
+  mkdir -p "$APP/releases" "$UNIT_DIR" "$STATE/active" "$T/bin" "$NODE_CACHE/nodeenv-26.13.0/bin"
+  printf '#!/bin/sh\necho v26.13.0\n' > "$NODE_CACHE/nodeenv-26.13.0/bin/node"
+  chmod +x "$NODE_CACHE/nodeenv-26.13.0/bin/node"
   cat > "$NGINX_SITE" <<'NGINX'
 server {
     listen 80 default_server;

@@ -226,10 +226,10 @@ chown -R ubuntu:ubuntu /home/ubuntu/app
 # purpose: a failed download or a digest mismatch (refused before tar runs) stops the script with
 # the box otherwise provisioned, cloud-init's log says why, and the first deploy tries again.
 # (EC2 caps user data at 16 KB, which `terraform validate` enforces: keep these comments short.)
-BOX_PYTHON_VERSION="3.14.8"
-BOX_PYTHON_BUILD="20261009"
-BOX_PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261009/cpython-3.14.8%2B20261009-x86_64-unknown-linux-gnu-install_only.tar.gz"
-BOX_PYTHON_SHA256="83f9cb480b702548c592443f86209cf0fc03448d90692df257f095c01791dccc"
+BOX_PYTHON_VERSION="3.15.2"
+BOX_PYTHON_BUILD="20261026"
+BOX_PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.15.2%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz"
+BOX_PYTHON_SHA256="08d4ae9024a7cfbd3b70e559241afa2571cd3208d7bd5f96f88e0080dd4092aa"
 box_python_home="/opt/cpython/${BOX_PYTHON_VERSION}+${BOX_PYTHON_BUILD}"
 if [ ! -e "$box_python_home" ]; then
   install -d -o root -g root -m 0755 /opt/cpython

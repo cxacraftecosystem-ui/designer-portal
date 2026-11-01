@@ -376,4 +376,4 @@ const val DW_TIER2_PROVIDER: String = "litert-lm"
  * in one LiteRT-LM release is traceable only if the row says which one ran, so a dependency bump
  * moves this string in the same commit (`DwTier2LayerTest` reads both).
  */
-const val DW_TIER2_RUNTIME_VERSION: String = "litertlm-android 0.18.0"
+const val DW_TIER2_RUNTIME_VERSION: String = "litertlm-android 0.19.0"
