@@ -12,9 +12,9 @@ docs/SECURITY.md):
   sends. That bucket setting is the load-bearing control; the header here is belt-and-braces.
 """
 
+import contextlib
 import logging
 import os
-import tempfile
 import threading
 from dataclasses import dataclass
 from functools import lru_cache
@@ -28,6 +28,7 @@ from botocore.client import Config
 
 from app.core.config import get_settings
 from app.services import naming
+from app.transcription import workdir
 
 logger = logging.getLogger(__name__)
 
@@ -588,21 +589,31 @@ def download_to_temp(object_key: str, *, suffix: str = "", max_bytes: int | None
         if head is not None and head.size_bytes > max_bytes:
             raise ObjectTooLarge(object_key, head.size_bytes, max_bytes)
 
-    handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="s3obj-")  # noqa: SIM115
+    # The transcription working directory (D37), not the system temp: sized, and swept of stale
+    # files when the queue worker starts, so a process killed mid-download leaves nothing for ever.
+    handle = workdir.named_file(prefix="s3obj-", suffix=suffix)
     path = handle.name
     try:
         target: Any = handle if max_bytes is None else _BoundedWriter(handle, object_key, max_bytes)
         _client().download_fileobj(settings.aws_s3_bucket, object_key, target)
         handle.flush()
+        handle.close()
     except BaseException:
         # Every exit that is not a completed download leaves nothing behind, ObjectTooLarge and a
         # cancellation included: a temp file nobody holds a path to is a leak the process cannot
         # find again, and this runs on a box whose disk is the thing being protected.
-        handle.close()
+        with contextlib.suppress(Exception):
+            handle.close()
         discard_temp(path)
         raise
-    handle.close()
     return path
+
+
+async def download_to_temp_async(object_key: str, *, suffix: str = "", max_bytes: int | None = None) -> str:
+    """:func:`download_to_temp` on a worker thread, and safe to cancel (D37): when the awaiting task
+    is cancelled mid-download, the file the thread finishes is deleted (``workdir.owned``). Every
+    other failure is :func:`download_to_temp`'s own, which already leaves nothing behind."""
+    return await workdir.owned(download_to_temp, object_key, suffix=suffix, max_bytes=max_bytes)
 
 
 def discard_temp(path: str | None) -> None:

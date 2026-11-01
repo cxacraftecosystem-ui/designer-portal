@@ -39,6 +39,7 @@ import com.designprototype.workshop.ui.RecordDetailsDialog
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import com.designprototype.workshop.questionnaire.ui.rememberKept
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -178,11 +179,12 @@ fun DesignerRosterScreen(
     val viewer = remember(repository) { repository.cachedUser() }
     val canManage = remember(viewer) { mayManageDesignerRoster(viewer) }
 
-    var rows by remember { mutableStateOf<List<DesignerRosterDto>>(emptyList()) }
+    var rows by rememberKept("roster.rows") { emptyList<DesignerRosterDto>() }
     /** THE SERVER'S numbers, always. What this page holds is never presented as what the roster holds. */
-    var rosterTotal by remember { mutableIntStateOf(0) }
-    var pages by remember { mutableIntStateOf(0) }
-    var page by remember { mutableIntStateOf(1) }
+    var rosterTotal by rememberKept("roster.total") { 0 }
+    var pages by rememberKept("roster.pages") { 0 }
+    // The page, search and filters are kept for Back from a profile (owner, 1 Nov 2026).
+    var page by rememberKept("roster.page") { 1 }
     /** Lower-cased email -> the id of the account that signed up under it, for "Open designer profile". */
     var accounts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     /** Account id -> name, so "Empanelled by" can name the admin `addedById` points at. */
@@ -192,9 +194,9 @@ fun DesignerRosterScreen(
     var busy by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
     /** The BOX. [RosterFilters.search] is what was actually sent — see the debounce below. */
-    var search by remember { mutableStateOf("") }
+    var search by rememberKept("roster.search") { "" }
     /** Everything the server is asked to narrow and order by. Its default narrows nothing. */
-    var filters by remember { mutableStateOf(emptyRosterFilters(RosterKind.DESIGNER)) }
+    var filters by rememberKept("roster.filters") { emptyRosterFilters(RosterKind.DESIGNER) }
     var filterSheet by remember { mutableStateOf(false) }
     /** The institution vocabulary behind the filter, and which of §3.5's states it is in. */
     var institutions by remember {

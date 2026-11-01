@@ -49,6 +49,7 @@ import {
 } from "@/lib/designWorkshops";
 import { isUnreachable } from "@/lib/offline";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { TranscriptPreview } from "@/components/transcript/TranscriptPreview";
 
 /** The stage and the entity these settings live in. Both are backend keys, not display strings. */
 export const REPORT_STAGE_KEY = "REPORT_GENERATION";
@@ -346,9 +347,7 @@ export function TranscriptAnnexurePanel({ transcripts }: { transcripts: DwTransc
                     : `Not in the annexure — transcription is ${item.status.toLowerCase() || "not finished"}`}
                 </span>
               </div>
-              {item.firstLine ? (
-                <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink-500">{item.firstLine}</p>
-              ) : null}
+              <TranscriptPreview text={item.firstLine} lines={2} className="mt-1" />
             </li>
           ))}
         </ul>

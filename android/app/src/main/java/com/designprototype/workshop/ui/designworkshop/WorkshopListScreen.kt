@@ -48,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import com.designprototype.workshop.questionnaire.ui.rememberKept
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -297,10 +298,12 @@ fun WorkshopListScreen(
     val appContext = remember(context) { context.applicationContext }
     val scope = rememberCoroutineScope()
 
-    var schema by remember { mutableStateOf<SchemaResponse?>(null) }
-    var rows by remember { mutableStateOf<List<WorkshopRow>>(emptyList()) }
+    // The rows, the search and the type filter live in the screen's memory: Back from a workshop finds
+    // the list as it was left, so the host's restored scroll has its rows (owner, 1 Nov 2026).
+    var schema by rememberKept("dw.list.schema") { null as SchemaResponse? }
+    var rows by rememberKept("dw.list.rows") { emptyList<WorkshopRow>() }
     var loading by remember { mutableStateOf(true) }
-    var search by remember { mutableStateOf("") }
+    var search by rememberKept("dw.list.search") { "" }
     /**
      * The `WORKSHOP_KIND` this list is narrowed to, or `""` for every type.
      *
@@ -310,7 +313,7 @@ fun WorkshopListScreen(
      * disagree with. The same rule and the same reserved-empty as the web's type filter on this
      * screen.
      */
-    var kindFilter by remember { mutableStateOf("") }
+    var kindFilter by rememberKept("dw.list.kind") { "" }
     /**
      * May this account start a workshop at all — read from the CACHED user, with no network.
      *
