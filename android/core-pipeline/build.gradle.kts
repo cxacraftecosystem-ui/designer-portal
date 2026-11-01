@@ -11,7 +11,7 @@
  *     2. here only     tasks.withType<KotlinCompile> { incremental = false }
  *     3. here only     -Xjdk-release=17 beside that jvmTarget (since 2026-10-09)
  *     4. upstream       kotlinx-serialization-json:1.7.3 (as vendored on 2026-08-27)
- *        here          kotlinx-serialization-json:1.11.0 (since 2026-10-09)
+ *        here          kotlinx-serialization-json:1.12.0 (since 0.0.7; 1.11.0 from 2026-10-09)
  *
  * The first one, and why:
  *
@@ -120,7 +120,7 @@ dependencies {
     // (app/build.gradle.kts says why that is checked). 1.11.0 is the newest stable as of
     // 2026-10-09; it is built with Kotlin 2.3.20, which the 2.0.21 compiler used until that day
     // could not read, so it moved with the compiler.
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
     testImplementation(kotlin("test"))
 }
 

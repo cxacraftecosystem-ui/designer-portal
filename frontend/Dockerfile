@@ -20,7 +20,7 @@
 
 # The major frontend/package.json's `engines.node` names (24.x), which is also the Node Vercel runs the
 # site on and the one every workflow builds it with. Move them together, never this one alone.
-ARG NODE_VERSION=24
+ARG NODE_VERSION=26
 
 
 # =============================================================================================

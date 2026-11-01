@@ -595,6 +595,12 @@ jobs:
         # than a browser sitting there letting a screen-driving spec time out against no server.
         run: npm ci
 
+      - name: Audit the lockfile
+        # Fails on any advisory npm knows for an installed package, dev tools included (Dependabot
+        # alerts on the whole lockfile, so this does too). Added in 0.0.7 after minimatch and next
+        # sat open as Dependabot alerts with nothing in CI to say so.
+        run: npm audit --audit-level=low
+
       - name: Typecheck
         # `next build` also fails on a type error, but only during the deploy — i.e. AFTER the
         # backend has already shipped. Running it here moves the answer to before the merge.
@@ -1063,7 +1069,7 @@ jobs:
         with:
           # The major frontend/package.json's `engines.node` names; written out because this job
           # installs nothing and reads no package.json. Move it with that line.
-          node-version: "24"
+          node-version: "26"
 
       - name: Verify the documentation set
         # No `npm ci` anywhere: the script imports nothing outside node: builtins, deliberately,

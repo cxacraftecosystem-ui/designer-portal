@@ -53,8 +53,8 @@ val localProperties = Properties().apply {
 //
 // To cut a release: bump `appVersionName` AND add 1 to `appVersionCode`. publish-android.yml reads
 // both lines, checks the tag against the name and refuses a code at or below the published one.
-val appVersionName = "0.0.6"
-val appVersionCode = 32
+val appVersionName = "0.0.7"
+val appVersionCode = 33
 
 val releaseKeystorePath = signingProperty(localProperties, "releaseKeystore", "ANDROID_RELEASE_KEYSTORE")
 val releaseKeystorePassword = signingProperty(localProperties, "releaseKeystorePassword", "ANDROID_RELEASE_KEYSTORE_PASSWORD")
@@ -584,7 +584,7 @@ dependencies {
     // frontend/lib/modelViewerCore.ts). WebViewAssetLoader serves the page and the downloaded model
     // from an https origin inside the app, so the page's fetch of the model works and nothing in it
     // is loaded from the network. See ui/designworkshop/DwModelViewer.kt.
-    implementation("androidx.webkit:webkit:1.17.1")
+    implementation("androidx.webkit:webkit:1.18.0")
 
     /**
      * On-device text recognition, so an identity card can be read with NO CONNECTION.
@@ -680,7 +680,7 @@ dependencies {
      * model itself is NOT in the APK: it is fetched on demand and verified against a pinned SHA-256
      * (`DW_TIER2_ARTIFACTS`). See docs/TIER2-LANGUAGE-MODEL-MEASUREMENT.md.
      */
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.0")
 
     /**
      * READING a QR code — off the camera, and off a screenshot somebody was sent.
@@ -1052,8 +1052,8 @@ dependencies {
      */
     implementation("com.squareup.retrofit2:retrofit:3.0.0")
     implementation("com.squareup.retrofit2:converter-kotlinx-serialization:3.0.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:5.5.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:5.5.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
 
     /**
      * The `anyascii` table, for `data/Naming.kt` (NAMING_2026-10-18): the same table the server
@@ -1107,7 +1107,7 @@ dependencies {
      * a wall of unresolved references in code that never changed.
      *
      * VERSION ALIGNMENT, CHECKED RATHER THAN ASSUMED. `:core-pipeline` asks for
-     * `kotlinx-serialization-json:1.11.0` and the line directly above asks for the same 1.11.0, so
+     * `kotlinx-serialization-json:1.12.0` and the line directly above asks for the same 1.12.0, so
      * there is no conflict for Gradle to resolve and no chance of the engine being handed a
      * different serialization runtime from the one the app's DTOs use. Move the two together. The
      * serialization COMPILER PLUGIN `:core-pipeline` applies is declared in the root
