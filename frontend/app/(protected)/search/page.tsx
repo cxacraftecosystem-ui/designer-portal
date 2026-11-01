@@ -44,7 +44,8 @@ import type { Artisan, Craft, MediaFile, ProductDocumentation, ToolDocumentation
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { UnifiedResults } from "@/components/search/UnifiedResults";
 import { RecordingSearchGroup } from "@/components/questionnaire/RecordingSearchGroup";
-import { fetchUnified, unifiedApplies, type UnifiedResponse, type UnifiedType } from "@/lib/unifiedSearch";
+import { fetchUnified, UNIFIED_TYPES, unifiedApplies, type UnifiedResponse, type UnifiedType } from "@/lib/unifiedSearch";
+import { useUrlScrollMemory } from "@/components/hooks/useListMemory";
 
 type SearchResult = {
   artisans: Artisan[];
@@ -221,6 +222,13 @@ export default function SearchPage() {
     if (!q && !narrowed && !scoped.length) return;
     arrived.current = true;
     setFilters(seeded);
+    // Back from a record: the page and the "Show all" group the reader was on (written below).
+    const seededPage = Number(searchParams.get("page") ?? "1");
+    if (Number.isInteger(seededPage) && seededPage > 1) setPage(seededPage);
+    const [focusType, focusPage] = (searchParams.get("focus") ?? "").split(":");
+    if ((UNIFIED_TYPES as readonly string[]).includes(focusType)) {
+      setUnifiedFocus({ type: focusType as UnifiedType, page: Math.max(1, Number(focusPage) || 1) });
+    }
     setApplied({ q, filters: seeded });
   }, [searchParams, offeredTypes]);
 
@@ -343,10 +351,15 @@ export default function SearchPage() {
       `/search${buildQuery({
         q: applied.q,
         ...filtersToLinkParams(applied.filters),
-        workshopIds: scope.queryValue
+        workshopIds: scope.queryValue,
+        page: page > 1 ? page : undefined,
+        focus: unifiedFocus ? `${unifiedFocus.type}:${unifiedFocus.page}` : undefined
       })}`
     );
-  }, [applied, scope.queryValue]);
+  }, [applied, scope.queryValue, page, unifiedFocus]);
+
+  // The scroll position, under this exact URL, put back once the results are on screen.
+  useUrlScrollMemory(Boolean(result || unified));
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
