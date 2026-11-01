@@ -39,7 +39,7 @@ from app.services.s3 import (
     head_object,
 )
 from app.services.transcription_store import open_key
-from app.transcription import schedule
+from app.transcription import schedule, workdir
 from prisma import Json
 
 logger = logging.getLogger(__name__)
@@ -746,7 +746,7 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
     # hands it to whichever provider rung answers, so the recording is never a `bytes` in this
     # process. See `s3.download_to_temp` and `ai._upload_body`.
     try:
-        source_path = await asyncio.to_thread(
+        source_path = await workdir.owned(
             download_to_temp, _value(media, "objectKey"), max_bytes=MAX_TRANSCRIBE_FETCH_BYTES
         )
     except ObjectTooLarge as exc:
@@ -1064,7 +1064,7 @@ async def _process_job(job: Any, settings: Settings) -> None:
             )
             return
         try:
-            source_path = await asyncio.to_thread(
+            source_path = await workdir.owned(
                 download_to_temp, media.objectKey, max_bytes=MAX_TRANSCRIBE_FETCH_BYTES
             )
         except ObjectTooLarge as exc:

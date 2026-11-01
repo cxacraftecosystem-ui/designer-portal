@@ -95,7 +95,15 @@ from app.core.deps import (
     can_view_design_workshop_data,
     require_dataset_downloader,
 )
-from app.services import answer_drafts, design_workshop_data as dw, memory_budget, naming
+from app.services import (
+    answer_drafts,
+    design_workshop_data as dw,
+    memory_budget,
+    naming,
+    transcript_export,
+    transcript_pipeline,
+    transcript_portal,
+)
 from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
 from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_MEDIA_TAG
@@ -137,6 +145,7 @@ from app.services.rich_text import plain_from_stored
 from app.services.s3 import ObjectTooLarge, discard_temp, download_to_temp, head_object
 from app.services.transcript_format import transcript_cell
 from app.services.xlsx_report import XLSX_MIME, build_report_workbook
+from app.transcription import workdir
 
 router = APIRouter(
     prefix="/data",
@@ -745,6 +754,15 @@ def _media_entries(
                     step_number=step_number,
                     position=position,
                 ),
+                # 0.0.6: the row and its naming arguments, so /manifest and /tree can name the
+                # recording's transcript files (services/transcript_export.bundle_names).
+                "_media": m,
+                "_nameKw": {
+                    "record_type": record_type,
+                    "record_name": record_name,
+                    "step_number": step_number,
+                    "position": position,
+                },
             }
         )
     return entries
@@ -1680,6 +1698,10 @@ def _transcript_entries(parent: str, media: list[Any]) -> list[dict[str, Any]]:
                 "originalFilename": m.originalFilename,
                 "content": m.transcriptText,
                 "mediaId": m.id,
+                # 0.0.6: consent and the per-recording transcript files (transcript_export).
+                "_txMedia": m.id,
+                "_media": m,
+                "_nameKw": {"position": position},
             }
         )
     return entries
@@ -2418,6 +2440,7 @@ async def data_tree(
     scope = await _scope_for(current_user)
     norm = _norm(path)
     entries, info = await _list_level(norm, scope)
+    entries = await transcript_export.settle_tree(entries, pipeline_on=transcript_pipeline.enabled())
     crumbs = await _resolve_crumbs(norm)
     public = [{k: v for k, v in e.items() if not k.startswith("_")} for e in entries]
     public.sort(key=lambda e: (0 if e["kind"] == "folder" else 1, e["name"].lower()))
@@ -2499,6 +2522,20 @@ async def _walk(
             )
             continue
         if "content" in e:
+            if e.get("_txMedia"):
+                # A transcript file of the Transcripts folder: settled with the rest of them.
+                if include is None or "transcripts" in include or "text" in include:
+                    mid = str(e["_txMedia"])
+                    entry = {"content": e["content"], "mediaId": mid, "_tx": (mid, "legacy")}
+                    if e.get("originalFilename"):
+                        entry["originalFilename"] = e["originalFilename"]
+                    emit(entry, *_split_leaf(e["name"]))
+                    for leaf, file_entry, needs in transcript_export.bundle_entries(
+                        mid, transcript_export.bundle_names(e["_media"], e.get("_nameKw"))
+                    ):
+                        file_entry["_tx"] = (mid, "pipeline", needs)
+                        emit(file_entry, *_split_leaf(leaf))
+                continue
             if include is None or "text" in include:
                 entry = {"content": e["content"]}
                 if e.get("originalFilename"):
@@ -2545,14 +2582,26 @@ async def _walk(
                     extension,
                 )
         if e.get("transcriptAvailable") and (include is None or "transcripts" in include):
+            # The stored transcript inline, AND the recording's transcript files (md and docx with
+            # and without timestamps, srt and vtt): ``transcript_export.finalize_manifest`` keeps
+            # one set or the other per recording, and none where consent was refused.
+            mid = str(e["mediaId"])
             emit(
                 {
                     "content": e.get("_transcriptText") or "",
                     "originalFilename": original,
                     "mediaId": e["mediaId"],
+                    "_tx": (mid, "legacy"),
                 },
                 *_split_leaf(e.get("_transcriptName") or f"{stem}.md"),
             )
+            if e.get("_media") is not None:
+                for leaf, file_entry, needs in transcript_export.bundle_entries(
+                    mid, transcript_export.bundle_names(e["_media"], e.get("_nameKw"))
+                ):
+                    file_entry["originalFilename"] = original
+                    file_entry["_tx"] = (mid, "pipeline", needs)
+                    emit(file_entry, *_split_leaf(leaf))
     if child_walks:
         await asyncio.gather(*child_walks)
 
@@ -2697,7 +2746,10 @@ async def data_manifest(
     files: list[dict[str, Any]] = []
     state = {"truncated": False}
     await _walk(norm, "", include_set, files, 0, set(), state, scope)
-    total_media = sum(1 for f in files if f.get("mediaId") and f.get("content") is None)
+    await transcript_export.finalize_manifest(files, pipeline_on=transcript_pipeline.enabled())
+    total_media = sum(
+        1 for f in files if f.get("mediaId") and f.get("content") is None and f.get("mediaType") != "TRANSCRIPT"
+    )
     if stream:
         return manifest_ndjson_response(
             files, total_media, bool(state["truncated"]), "manifest.ndjson"
@@ -4405,7 +4457,17 @@ async def data_report(
     norm = _norm(path)
     segs = [s for s in norm.split("/") if s]
     records = await _report_records(segs, scope)
+    # 0.0.6: no words of a recording whose consent was refused, in any sheet; then the transcript
+    # pipeline's sheets (recordings with summary, quotes, glossary and chips; turns; glossary).
+    await transcript_export.withhold_refused(records["media"])
     sheets = _report_sheets(records)
+    sheets += await transcript_export.report_sheets(
+        [m.id for m in records["media"] if (m.transcriptText or "").strip()],
+        sees_spend=transcript_portal.may_see_spend(current_user),
+        sheet=_sheet,
+        cap=REPORT_TAKE,
+        color=TRANSCRIPT_COLOR,
+    )
     if fmt == "json":
         # THE VIEW. ``format=json`` is what the View Data page renders on screen — it hands back no
         # file — so a professor gets the design-workshop sheets here in full. The two flags travel
@@ -4579,7 +4641,7 @@ async def download_media(
             )
         try:
             # Blocking S3 transfer off the event loop — this is the single-worker web process.
-            source_path = await asyncio.to_thread(
+            source_path = await workdir.owned(
                 download_to_temp, media.objectKey, suffix=".src", max_bytes=ceiling
             )
         except ObjectTooLarge as exc:
@@ -4621,7 +4683,7 @@ async def download_media(
     # Streaming it off disk instead makes the size a DISK question rather than a RAM one, and
     # ``MAX_DOWNLOAD_BYTES`` is the bound on that; the 413 says so rather than truncating.
     try:
-        source_path = await asyncio.to_thread(
+        source_path = await workdir.owned(
             download_to_temp, media.objectKey, max_bytes=MAX_DOWNLOAD_BYTES
         )
     except ObjectTooLarge as exc:
