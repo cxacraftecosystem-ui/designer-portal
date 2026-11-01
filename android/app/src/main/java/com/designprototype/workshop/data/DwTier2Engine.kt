@@ -113,7 +113,7 @@ internal object DwTier2Engine {
     }
 }
 
-/** The JNI library LiteRT-LM 0.18.0 loads (`NativeLibraryLoader.JNI_LIBNAME`, read out of the AAR). */
+/** The JNI library LiteRT-LM 0.19.0 loads (`NativeLibraryLoader.JNI_LIBNAME`, read out of the AAR). */
 internal const val DW_TIER2_JNI_LIBRARY: String = "litertlm_jni"
 
 /** The model would not load on this phone. Carries what the runtime said, for the failure note. */

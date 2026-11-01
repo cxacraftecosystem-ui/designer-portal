@@ -1401,7 +1401,7 @@ const val DW_TIER1_RUNTIME_PRESENT: Boolean = true
 /**
  * Whether this APK contains an on-device language-model runtime. **IT DOES, SINCE 2026-10-10.**
  *
- * `com.google.ai.edge.litertlm:litertlm-android:0.18.0` is an `implementation` dependency of `:app`,
+ * `com.google.ai.edge.litertlm:litertlm-android:0.19.0` is an `implementation` dependency of `:app`,
  * so `liblitertlm_jni.so` ships in the package for arm64-v8a (and x86_64, for the emulator), loaded by
  * `DwTier2Engine.kt`. It is a fact about the BUILD, as [DW_TIER1_RUNTIME_PRESENT] is: what a particular
  * handset may run is still decided per row — a 32-bit-only phone fails [DwModelPlan.abi], a small one
