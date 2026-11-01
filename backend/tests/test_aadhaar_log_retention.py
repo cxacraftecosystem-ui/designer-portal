@@ -131,7 +131,11 @@ def test_old_entries_are_archived_held_ones_stay_and_expired_archives_are_delete
             entries = [json.loads(line) for line in lines]
             mine = [e for e in entries if e["recordId"] == ids["old"]]
             assert mine and mine[0][retention.ENTRY_KEY]["outcome"] == "VERIFIED"
-            assert re.search(r"\d{12}", " ".join(lines)) is None, "an archive holds a full number"
+            # A run of twelve digits standing on its own, not inside a cuid: a generated id such as
+            # cmvxl2198000072867f4wiwhw carries twelve digits in a row by chance and failed this once
+            # (Checks run 41289944121), with no Aadhaar number anywhere in the archive.
+            full = re.search(r"(?<![0-9A-Za-z])\d{12}(?![0-9A-Za-z])", " ".join(lines))
+            assert full is None, "an archive holds a full number"
 
             # Running again changes nothing that was already archived.
             again = await retention.archive_due(NOW, MemoryStore())
