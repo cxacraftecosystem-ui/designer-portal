@@ -4,7 +4,7 @@
 # deploy-backend.yml pipes this file over ssh, so the box runs the copy from the commit being
 # deployed and needs nothing installed:
 #
-#   ssh ubuntu@box "NODE_PIN=26.11.1 bash -s -- release <release id>" < backend/deploy/blue_green.sh
+#   ssh ubuntu@box "NODE_PIN=26.13.0 bash -s -- release <release id>" < backend/deploy/blue_green.sh
 #
 # On the box itself, as ubuntu:
 #

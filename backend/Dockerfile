@@ -18,7 +18,7 @@
 
 # The interpreter the EC2 box, CI and the lock all run (3.14 since 2026-10-09), on Debian 13
 # (trixie). The minor tag, not a patch, so every build takes the newest 3.14.x.
-ARG PYTHON_VERSION=3.14
+ARG PYTHON_VERSION=3.15
 
 # The Node major the Prisma CLI runs on, matching the box's pinned nodeenv (deploy-backend.yml,
 # PRISMA_CLI_NODE_VERSION). Copied from the official image in the `prisma` stage, never from apt:
