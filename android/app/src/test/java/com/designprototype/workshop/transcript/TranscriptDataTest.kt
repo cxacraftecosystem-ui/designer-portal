@@ -41,6 +41,18 @@ class TranscriptDataTest {
         assertTrue(refused.turns.isEmpty())
     }
 
+    @Test fun `a media row carries the server's preview`() {
+        val m = com.designprototype.workshop.data.ApiClient.json.decodeFromString(
+            com.designprototype.workshop.data.MediaFileDto.serializer(),
+            """{"id":"m1","originalFilename":"a.m4a","mediaType":"AUDIO","transcriptPreview":{"text":"Giriraj: Clay.","lines":[{"speaker":"Giriraj","speakerKey":"speaker_1","colorKey":"s1","text":"Clay."}]}}"""
+        )
+        assertEquals("s1", m.transcriptPreview!!.lines.single().colorKey)
+        val none = com.designprototype.workshop.data.ApiClient.json.decodeFromString(
+            com.designprototype.workshop.data.MediaFileDto.serializer(), """{"id":"m2","originalFilename":"b.jpg","mediaType":"IMAGE","transcriptPreview":null}"""
+        )
+        assertNull(none.transcriptPreview)
+    }
+
     @Test fun `a transcript file's chip names its format, track and times`() {
         assertEquals("Word", TranscriptUiText.fileLabel("docx", english = false, timestamps = true))
         assertEquals("Markdown, no times", TranscriptUiText.fileLabel("md", english = false, timestamps = false))

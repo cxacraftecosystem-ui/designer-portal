@@ -1171,7 +1171,12 @@ private sealed interface Screen {
          * ARTISAN only: a scanned Field Repository card the add-artisan form fills from
          * (`ScanTarget.AddFromPeer`; web `/artisans/new?card=`).
          */
-        val fromCard: String? = null
+        val fromCard: String? = null,
+        /**
+         * Where Back returns when it is not the dashboard: the form detail whose own sessions opened
+         * the questionnaire home (0.0.6), so Back from that session lands on the form, at its scroll.
+         */
+        val from: Screen? = null
     ) : Screen
     data class Browse(val mode: EntryMode) : Screen
     /**
@@ -3388,6 +3393,11 @@ private fun HomeScreen(
     // (owner, 1 Nov 2026) — handed back on the same Back that restores the scroll, and started over on
     // any other way in. See questionnaire/ui/ScreenMemory.kt.
     val screenMemories = remember { ScreenMemories<Screen>() }
+    // Where each design workshop was opened from when that was not its list (a search), so Back from
+    // any of its sub-screens and then from its index still returns there (0.0.6).
+    val workshopOrigins = remember { com.designprototype.workshop.ui.designworkshop.WorkshopOrigins<Screen>() }
+    fun workshopIndex(workshopId: String, focusConsent: Boolean = false): Screen =
+        Screen.DesignWorkshopStages(workshopId, focusConsent = focusConsent, from = workshopOrigins.of(workshopId))
 
     /**
      * A questionnaire arriving from another phone OPENS THE SCREEN THAT CAN RECEIVE IT.
@@ -3673,7 +3683,7 @@ private fun HomeScreen(
      */
     val openDesignWorkshopFromSearch: ((String) -> Unit)? =
         if (SearchDesignWorkshopRoute.offeredTo(user)) {
-            { workshopId -> message = null; screen = Screen.DesignWorkshopStages(workshopId, from = screen) }
+            { workshopId -> message = null; workshopOrigins.opened(workshopId, screen); screen = Screen.DesignWorkshopStages(workshopId, from = screen) }
         } else {
             null
         }
@@ -3974,7 +3984,7 @@ private fun HomeScreen(
             is Screen.Edit -> s.from ?: Screen.View(s.mode, s.recordId)
             is Screen.View -> (s.from ?: Screen.Browse(s.mode)).also { restoreScrollFor = it }
             is Screen.Browse -> Screen.Dashboard
-            is Screen.Create -> Screen.Dashboard
+            is Screen.Create -> s.from ?: Screen.Dashboard
             is Screen.MyActivity -> Screen.Dashboard
             is Screen.ToolAssign -> Screen.Dashboard
             is Screen.Feedback -> Screen.Dashboard
@@ -4000,21 +4010,21 @@ private fun HomeScreen(
             // `()` and not the arrival the designer came in on: coming back out of a workshop must
             // land on the list, never on the create dialog the dashboard card opened on the way in.
             is Screen.DesignWorkshopStages -> s.from ?: Screen.DesignWorkshops()
-            is Screen.DesignWorkshopStage -> Screen.DesignWorkshopStages(s.workshopId)
-            is Screen.DesignWorkshopReport -> Screen.DesignWorkshopStages(s.workshopId)
+            is Screen.DesignWorkshopStage -> workshopIndex(s.workshopId)
+            is Screen.DesignWorkshopReport -> workshopIndex(s.workshopId)
             // Back to the INDEX and not to the report screen, even though the two are siblings: the
             // index is the only route in, so it is the only route out.
-            is Screen.DesignWorkshopReportHistory -> Screen.DesignWorkshopStages(s.workshopId)
-            is Screen.DesignWorkshopCodes -> Screen.DesignWorkshopStages(s.workshopId)
-            is Screen.DesignWorkshopPhotos -> Screen.DesignWorkshopStages(s.workshopId)
+            is Screen.DesignWorkshopReportHistory -> workshopIndex(s.workshopId)
+            is Screen.DesignWorkshopCodes -> workshopIndex(s.workshopId)
+            is Screen.DesignWorkshopPhotos -> workshopIndex(s.workshopId)
             // Back to THIS workshop's index and not to the designer roster, which is the other
             // "who" screen and a different question entirely: the roster says who may sign in at
             // all, this says who may open one record. The only route in is the index, so the only
             // route out is back to it.
-            is Screen.DesignWorkshopViewers -> Screen.DesignWorkshopStages(s.workshopId)
+            is Screen.DesignWorkshopViewers -> workshopIndex(s.workshopId)
             // Back to THIS workshop's index for the same reason as the row above it: the index is
             // the only route in, so it is the only route out.
-            is Screen.DesignWorkshopInspectors -> Screen.DesignWorkshopStages(s.workshopId)
+            is Screen.DesignWorkshopInspectors -> workshopIndex(s.workshopId)
             // Reached from the menu, so back is the dashboard - the rule every menu-reached screen
             // in this family follows.
             is Screen.DesignWorkshopInspections -> Screen.Dashboard
@@ -4026,7 +4036,7 @@ private fun HomeScreen(
             // Back to THIS workshop's index for the same reason as the row above it: the index is the
             // only route in, so it is the only route out. An admin auditing a workshop is auditing a
             // workshop, not browsing the list.
-            is Screen.DesignWorkshopProvenance -> Screen.DesignWorkshopStages(s.workshopId)
+            is Screen.DesignWorkshopProvenance -> workshopIndex(s.workshopId)
             // An admin who opened somebody else's profile came from the roster and goes back to it;
             // a designer looking at their own came from the menu and goes back to the dashboard.
             // Sending both to the dashboard would make an admin re-find the row in a list they may
@@ -4059,7 +4069,8 @@ private fun HomeScreen(
         // filters (owner, 1 Nov 2026). Every record-of-a-list screen is named here; Back from anything
         // else (a list to the dashboard) is a fresh arrival.
         if (leaving is Screen.View || leaving is Screen.Edit || leaving is Screen.DesignWorkshopStages || leaving is Screen.QuestionnaireDetail ||
-            leaving is Screen.DesignWorkshopInspection || leaving is Screen.DesignerProfile || leaving is Screen.RemoteRecord
+            leaving is Screen.DesignWorkshopInspection || leaving is Screen.DesignerProfile || leaving is Screen.RemoteRecord ||
+            (leaving is Screen.Create && leaving.from != null)
         ) restoreScrollFor = screen
     }
 
@@ -4928,7 +4939,9 @@ private fun HomeScreen(
                     },
                     onNewForm = { questionnaireNewForm++ },
                     onError = { showError(it) },
-                    modifier = Modifier.fillMaxWidth().height(questionnaireViewportHeight())
+                    modifier = Modifier.fillMaxWidth().height(questionnaireViewportHeight()),
+                    // Opened from a form detail: Back from the session it opened lands on that form.
+                    onLeaveSession = s.from?.let { origin -> { message = null; restoreScrollFor = origin; screen = origin } }
                 )
                 EntryMode.TASKS -> MyTasksScreen(
                     repository = repository,
@@ -5014,7 +5027,7 @@ private fun HomeScreen(
                 onOpenLink = { link ->
                     val workshopId = notificationWorkshopId(link)
                     when {
-                        workshopId != null -> { message = null; screen = Screen.DesignWorkshopStages(workshopId) }
+                        workshopId != null -> { message = null; screen = workshopIndex(workshopId) }
                         link == "/settings" -> screen = Screen.Appearance
                         // The Monday summary is a web page with no handset screen; its notice's
                         // title and body already carry the figures. Intended: nothing opens.
@@ -5079,7 +5092,7 @@ private fun HomeScreen(
                 repository = repository,
                 // The dashboard card's "New workshop", carried through as the arrival it is.
                 startCreating = s.startCreating,
-                onOpen = { id -> message = null; screen = Screen.DesignWorkshopStages(id) },
+                onOpen = { id -> message = null; workshopOrigins.openedFromList(id); screen = Screen.DesignWorkshopStages(id) },
                 onMessage = { showMessage(it) },
                 onError = { showError(it) }
             )
@@ -5152,7 +5165,7 @@ private fun HomeScreen(
                 // own screen, so go there and scroll to it (web: `/design-workshops/{id}#consent`).
                 onOpenConsent = {
                     message = null
-                    screen = Screen.DesignWorkshopStages(s.workshopId, focusConsent = true)
+                    screen = workshopIndex(s.workshopId, focusConsent = true)
                 },
             )
 
@@ -5472,7 +5485,8 @@ private fun HomeScreen(
                     QuestionnaireV2Nav.startOnForm.value = id
                     screen = screenFor(EntryMode.QUESTIONNAIRE)
                 } else null,
-                onOpenSessions = if (questionnaireSessionsOn()) { _ -> message = null; screen = screenFor(EntryMode.QUESTIONNAIRE) } else null,
+                // The form's own sessions open in the questionnaire home, which hands Back to this form.
+                onOpenSessions = if (questionnaireSessionsOn()) { _ -> message = null; screen = Screen.Create(EntryMode.QUESTIONNAIRE, from = s) } else null,
             )
 
             is Screen.QuestionnaireAnswers -> QuestionnaireAnswerScreen(
@@ -10536,7 +10550,14 @@ private fun LoadingCard(mode: EntryMode, failed: String? = null, onRetry: () -> 
 
 /** One row of the record picker: the record, its label, and its completeness block when it has one. */
 @kotlinx.serialization.Serializable
-private data class PickerRow(val id: String, val label: String, val completeness: CompletenessDto? = null, val chips: com.designprototype.workshop.questionnaire.data.QChips? = null)
+private data class PickerRow(
+    val id: String,
+    val label: String,
+    val completeness: CompletenessDto? = null,
+    val chips: com.designprototype.workshop.questionnaire.data.QChips? = null,
+    /** A recording's list preview (0.0.6): two lines, speakers as coloured labels. */
+    val preview: com.designprototype.workshop.transcript.data.TranscriptPreviewDto? = null
+)
 
 /**
  * The picker's read, with the last UNFILTERED list this phone read served when nothing reaches the
@@ -10631,7 +10652,7 @@ private fun RecordPickerScreen(
                 EntryMode.TOOL -> repository.toolPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.toolkitName} · ${it.artisanName}", it.completeness) } }
                 EntryMode.WORKSHOP -> repository.workshopPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place), it.completeness) } }
                 EntryMode.MEDIA -> repository.mediaPage(search, if (mediaNarrowed) mediaFilters.mediaParams() else emptyMap()).let { p ->
-                    p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename, chips = m.questionnaireChips) }
+                    p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename, chips = m.questionnaireChips, preview = m.transcriptPreview) }
                 }
                 EntryMode.QUESTIONNAIRE -> repository.interviewPage(search, wire).let { p ->
                     // Idempotent: all saved interview records for the same set of artisan(s) collapse
@@ -10739,6 +10760,8 @@ private fun RecordPickerScreen(
                         ) {
                             Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
                                 Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
+                                // What was said (0.0.6): the server's preview, two lines, speakers as labels.
+                                row.preview?.let { com.designprototype.workshop.transcript.ui.TranscriptPreviewText(it, maxLines = 2) }
                                 // A take's chips; a tap narrows this list by it (a day is the upload day here, so not a filter).
                                 com.designprototype.workshop.questionnaire.ui.RecordingChips(row.chips, filters = mediaFilters, onChip = if (mode == EntryMode.MEDIA) ({ f: com.designprototype.workshop.questionnaire.data.ChipFilter, l: String ->
                                     if (mediaFilters.appliesToMedia(f)) setMediaFilters(mediaFilters.applyChip(f, l))

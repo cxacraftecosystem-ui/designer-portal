@@ -78,7 +78,9 @@ fun DesignerQuestionnaireHome(
     onError: (String) -> Unit,
     /** Null when the app's own header draws the way back (the home sits in the scrolling page). */
     onBack: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Back from a session another screen opened (the form detail) returns there (see [QuestionnaireHome]). */
+    onLeaveSession: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val v2 = remember { QuestionnaireV2.get(context) }
@@ -115,7 +117,8 @@ fun DesignerQuestionnaireHome(
             onError = onError,
             initialTab = initialTab,
             onBack = onBack,
-            modifier = modifier
+            modifier = modifier,
+            onLeaveSession = onLeaveSession
         )
     }
 }
