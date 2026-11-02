@@ -129,6 +129,10 @@ class _Empty:
     async def find_many(self, **_kwargs: Any) -> list[Any]:
         return []
 
+    async def group_by(self, **_kwargs: Any) -> list[Any]:
+        # The report picks its media ids this way (D39); none here.
+        return []
+
 
 class _Workshops:
     async def find_many(self, **_kwargs: Any) -> list[Any]:
