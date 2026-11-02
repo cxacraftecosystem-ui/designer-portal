@@ -53,6 +53,8 @@ SHARED_FILES_EXTRA = (
     "backend/app/api/routes/transcript_data.py",
     "backend/tests/test_transcript_export.py",
     "backend/tests/test_transcript_export_db.py",
+    # D38 (0.0.9): the one-off sweep that queues the translation old transcripts never got.
+    "backend/app/scripts/queue_pending_translations.py",
 )
 #: Recorded provider responses the transcript tests read, every file in the folder.
 FIXTURE_DIR = "backend/tests/fixtures/transcript"
