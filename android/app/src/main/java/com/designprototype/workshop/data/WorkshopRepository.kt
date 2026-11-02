@@ -6608,7 +6608,11 @@ class WorkshopRepository(
      */
     suspend fun downloadReport(context: Context, path: String = ""): String = withContext(Dispatchers.IO) {
         val response = api.dataReport(format = "xlsx", path = path)
-        if (!response.isSuccessful) throw IllegalStateException("The report could not be downloaded. Try again.")
+        // The server's own sentence when it gives one: a 503 while another report is being built
+        // says to try again in a minute (D39), which is more use than "try again".
+        if (!response.isSuccessful) throw IllegalStateException(
+            errorBodyDetail(response.errorBody()?.string()) ?: "The report could not be downloaded. Try again."
+        )
         val body = response.body() ?: throw IllegalStateException("The report could not be downloaded. Try again.")
         val name = Naming.exportFilename(
             "Dataset", "Report", "xlsx", withTime = true,
