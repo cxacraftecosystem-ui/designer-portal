@@ -541,7 +541,7 @@ None of them is a gate, and none of them may be added to branch protection.
 **`.github/workflows/backup-db.yml` — nightly database backup.** Daily at 21:17 UTC (02:47 IST; it
 was 03:00 UTC until 2026-10-18, and GitHub's late starts put it at 12:45-15:20 IST, inside the field
 day), plus manual dispatch. A second schedule, 09:23 UTC, runs only the `freshness` job, which fails
-when the newest nightly dump is over 26 hours old or, on a scheduled run, not dated today (IST), or the newest weekly copy is over 8 days old. It installs PostgreSQL client 17 from PGDG — a hard requirement, because `pg_dump` refuses
+when the newest nightly dump is older than the one that should exist by now, or was written over 26 hours before that dump's deadline, or the newest weekly copy is over 8 days old. "Should exist by now" is today's IST date once IST is past 02:47 plus 6 h of grace, yesterday's before that (2026-11-03: the old "dated today in IST" rule failed a check GitHub started ten hours late, past IST midnight). The rule is `scripts/ci/backup_freshness.sh`, tested against fixed clocks by `scripts/ci/test_backup_freshness.sh` in Checks → Deploy scripts. It installs PostgreSQL client 17 from PGDG — a hard requirement, because `pg_dump` refuses
 to dump a server newer than itself and the runner image ships whatever client it was built with —
 then `pg_dump --no-owner --no-privileges --schema=public`, gzipped, to:
 
