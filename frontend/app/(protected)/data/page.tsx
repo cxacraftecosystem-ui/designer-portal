@@ -291,8 +291,14 @@ type ReportSheet = {
   color?: string | null;
   columns: string[];
   rows: Array<Array<string | number | null>>;
-  /** Server hit a cap on this sheet. For the row cap, the last row is an explanatory note, not data. */
+  /** The screen shows fewer rows than exist: the preview cut it, or the download's own cap did. */
   truncated?: boolean;
+  /** The preview cut this sheet (`PREVIEW_ROWS` on the server); the .xlsx has the rest. */
+  preview?: boolean;
+  /** The .xlsx itself stops at the server's row cap. The last row is then a note, not data. */
+  capped?: boolean;
+  /** Rows in the .xlsx, or null where the server did not count them. */
+  totalRows?: number | null;
   /**
    * Why THIS sheet is truncated, when the reason is not the row cap.
    *
@@ -320,6 +326,8 @@ const DW_SHEET_GROUP = "designWorkshop";
 
 type ReportResponse = {
   sheets: ReportSheet[];
+  /** Rows per sheet in this preview. */
+  previewRows?: number;
   /** Whether this account may read design-workshop tables at all (Professor and above). */
   designWorkshopsVisible?: boolean;
   /**
@@ -329,6 +337,34 @@ type ReportResponse = {
    */
   designWorkshopsDownloadable?: boolean;
 };
+
+/** The line over a sheet the screen does not show in full; null when it is whole. */
+function sheetCutNote(sheet: ReportSheet): string | null {
+  const shown = sheet.rows.length - (sheet.capped ? 1 : 0);
+  if (sheet.capped) {
+    const lead = sheet.preview ? `Showing the first ${shown}. ` : "";
+    return lead + (sheet.truncatedNote ?? "Too long to show in full. Open a narrower folder.");
+  }
+  if (!sheet.preview) return sheet.truncated ? (sheet.truncatedNote ?? null) : null;
+  const of = typeof sheet.totalRows === "number" ? ` of ${sheet.totalRows.toLocaleString()}` : "";
+  return `Preview: first ${shown}${of} rows. The download has every row.`;
+}
+
+/** The count on a sheet's tab: every row when the server counted them. */
+function sheetCount(sheet: ReportSheet): string {
+  if (typeof sheet.totalRows === "number") return sheet.totalRows.toLocaleString();
+  return sheet.preview ? `${sheet.rows.length}+` : String(sheet.rows.length);
+}
+
+/** A refused report download's own sentence (the busy answer says when to try again). */
+async function reportRefusal(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { detail?: unknown };
+    return typeof body.detail === "string" && body.detail.trim() ? body.detail : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 /** Normalize a sheet color (accepts `RRGGBB`, `AARRGGBB`, or `#RRGGBB`) to a CSS color. */
 function sheetColor(raw?: string | null) {
@@ -387,27 +423,56 @@ function DataTablesPanel({
   const [activeSheet, setActiveSheet] = useState(0);
   const [filter, setFilter] = useState("");
 
+  // THE WHOLE REPOSITORY LOADS ON A CLICK (D39). The root and each taxonomy's top level are every
+  // record at once; opening the page used to build two of them together (the root, then the
+  // default taxonomy this page lands on a moment later), which ratcheted the API's memory.
+  const wholeRepository = path.split("/").filter(Boolean).length <= 1;
+  const [requested, setRequested] = useState(!wholeRepository);
+  // The one request in flight. A second load while it is out is dropped, never sent.
+  const inFlight = useRef<AbortController | null>(null);
+
   const load = useCallback(async () => {
+    if (inFlight.current) return;
+    const abort = new AbortController();
+    inFlight.current = abort;
     setLoading(true);
     setError(null);
     try {
-      const next = await apiFetch<ReportResponse>(`/data/report${buildQuery({ path, format: "json" })}`);
+      const next = await apiFetch<ReportResponse>(`/data/report${buildQuery({ path, format: "json" })}`, {
+        signal: abort.signal
+      });
+      if (abort.signal.aborted) return;
       setReport(next);
       setActiveSheet(0);
       setFilter("");
     } catch (err) {
+      if (abort.signal.aborted) return;
+      // The server's own sentence, the busy answer included.
       setError(err instanceof Error ? err.message : "Couldn't load this folder");
     } finally {
-      setLoading(false);
+      if (inFlight.current === abort) inFlight.current = null;
+      if (!abort.signal.aborted) setLoading(false);
     }
   }, [path]);
 
-  // Expanded-by-default means the fetch is driven by the path, not by a click.
   useEffect(() => {
-    if (open && !report && !loading) void load();
-    // Deliberately not depending on `report`/`loading`: this should fire on open/path only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, path]);
+    if (open && requested && !report) void load();
+  }, [open, requested, report, load]);
+
+  // Leaving the folder cancels its request. Releasing the guard here is what lets StrictMode's
+  // setup, cleanup, setup send it again rather than deadlock on an aborted attempt.
+  useEffect(
+    () => () => {
+      inFlight.current?.abort();
+      inFlight.current = null;
+    },
+    []
+  );
+
+  function requestTables() {
+    if (requested) void load();
+    else setRequested(true);
+  }
 
   // Sheets that carry no rows are noise in the tab strip — a folder with only products
   // should not offer eight empty tabs.
@@ -450,7 +515,7 @@ function DataTablesPanel({
     try {
       // Same-origin: the session cookie goes with it, and this site adds the bearer token.
       const response = await fetch(`${API_BASE}/api/data/report${buildQuery({ path, format: "xlsx" })}`);
-      if (!response.ok) throw new Error("The report download didn't finish. Please try again.");
+      if (!response.ok) throw new Error(await reportRefusal(response, "The report download didn't finish. Please try again."));
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -509,6 +574,18 @@ function DataTablesPanel({
                   <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden />
                   Building data tables…
                 </div>
+              ) : !report ? (
+                <div className="grid justify-items-center gap-3 p-6 text-center">
+                  <p className="text-sm text-ink-500">
+                    {wholeRepository ? "Every record in the repository. Load a preview when you need it." : "Tables didn't load."}
+                  </p>
+                  <ActionGroup>
+                    <button type="button" className="field-button" onClick={requestTables}>
+                      <Table2 className="h-4 w-4" aria-hidden />
+                      {error ? "Try again" : "Load tables"}
+                    </button>
+                  </ActionGroup>
+                </div>
               ) : sheets.length === 0 ? (
                 <div className="p-4 text-sm text-ink-500">No tabular data under this folder.</div>
               ) : (
@@ -544,7 +621,7 @@ function DataTablesPanel({
                             aria-hidden
                           />
                           {entry.name}
-                          <span className="text-ink-500">{entry.rows.length}</span>
+                          <span className="text-ink-500">{sheetCount(entry)}</span>
                         </button>
                       );
                     })}
@@ -587,10 +664,9 @@ function DataTablesPanel({
                         `truncatedNote` for the tab-budget case and are unaffected; this is the
                         fallback the record and media sheets fall to.
                       */}
-                      {sheet.truncated ? (
+                      {sheetCutNote(sheet) ? (
                         <p className="mx-4 mb-3 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-800">
-                          {sheet.truncatedNote ??
-                            "Too long to show in full. Open a narrower folder."}
+                          {sheetCutNote(sheet)}
                         </p>
                       ) : null}
 
