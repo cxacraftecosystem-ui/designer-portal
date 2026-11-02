@@ -114,20 +114,39 @@ test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked wi
 
 test("@qf:B22 @qf:C2 @qf:B23 @qf:C3 @qf:B18 @qf:B40 a take's transcript is offered as an answer; removed takes restore; a take has a history", async ({ page }) => {
   const fake = new QuestionnaireFake();
-  await open(page, fake, "/questionnaire/sessions/s-1");
+  await fake.install(page);
+  // The restore re-reads the session and then the form's structure. Hold that structure read open so
+  // the take is offered while the session is half re-read: the window in which the section used to
+  // lose its questions, and "Use as answer" never opened it (the 0.0.8 flake). Held, not delayed.
+  let holdStructure = false;
+  let heldStructureReads = 0;
+  let releaseStructure!: () => void;
+  const structureReleased = new Promise<void>((resolve) => (releaseStructure = resolve));
+  await page.route(/\/api\/questionnaire\/forms\/[^/?]+\/structure(\?|$)/, async (route) => {
+    if (holdStructure) {
+      heldStructureReads += 1;
+      await structureReleased;
+    }
+    await route.fallback();
+  });
+  await page.goto("/questionnaire/sessions/s-1");
   await page.locator("[data-coverage-grid]").getByRole("button", { name: "A Giriraj Prasad Chhipa: Recorded" }).click();
   const sheet = page.locator("[data-take-sheet]");
   await expect(sheet).toContainText("Nandini");
   await page.getByRole("button", { name: "History" }).first().click();
   await expect(page.locator("[data-take-history]")).toContainText("moved");
   await page.getByRole("button", { name: "Show removed takes" }).click();
+  holdStructure = true;
   await page.locator("[data-removed-takes]").getByRole("button", { name: "Restore" }).click();
   await expect.poll(() => fake.calledWith("POST", "/questionnaire/recordings/rec-gone/restore").length).toBe(1);
+  await expect.poll(() => heldStructureReads).toBeGreaterThan(0);
   await page.locator("[data-use-take]").click();
   await expect.poll(() => fake.calledWith("POST", "/questionnaire/recordings/rec-1/answer-proposals").length).toBe(1);
   await expect(page.locator("[data-proposal-note]")).toContainText("1 answers suggested");
   const a2 = page.locator("[data-answer-box='l2']");
   await expect(a2.locator("[data-use-as-answer]")).toContainText("My uncle carves them in Pethapur.");
+  holdStructure = false;
+  releaseStructure();
   await a2.locator("[data-use-as-answer]").getByRole("button", { name: "Use as answer" }).click();
   await a2.locator("[role=textbox]").focus();
   await a2.locator("[role=textbox]").blur();
