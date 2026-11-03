@@ -15710,7 +15710,8 @@ private fun MediaWithTranscript(
                 TranscriptInsightsCard(
                     mediaId = media.id,
                     load = { id -> repository.transcriptInsight(id) },
-                    formatDate = ::formatIsoDate
+                    formatDate = ::formatIsoDate,
+                    actions = if (readOnly) null else repository.transcriptInsightActions
                 )
             }
             // AI refinement controls under the transcript (only where a repository is available, i.e.

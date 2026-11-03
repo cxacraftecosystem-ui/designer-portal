@@ -5607,6 +5607,15 @@ class WorkshopRepository(
      */
     suspend fun transcriptInsight(mediaId: String): TranscriptInsightViewDto? = insightLoader.load(mediaId)
 
+    suspend fun saveTranscriptInsight(mediaId: String, body: TranscriptInsightPatchRequest): TranscriptInsightViewDto =
+        api.patchTranscriptInsight(mediaId, body)
+
+    suspend fun regenerateTranscriptInsight(mediaId: String, discardEdits: Boolean): TranscriptInsightViewDto =
+        api.regenerateTranscriptInsight(mediaId, TranscriptInsightRegenerateRequest(discardEdits))
+
+    val transcriptInsightActions: TranscriptInsightActions
+        get() = TranscriptInsightActions(save = ::saveTranscriptInsight, regenerate = ::regenerateTranscriptInsight)
+
     /**
      * THE CARDS OF ONE SCREEN ASK TOGETHER. Every transcript on a record draws its own
      * [TranscriptInsightsCard], and each used to send its own `GET media/{id}/insights` — and again

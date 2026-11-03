@@ -767,6 +767,12 @@ interface WorkshopRepositoryApi {
         @Query("includeTranslation") includeTranslation: Boolean? = null
     ): TranscriptInsightBatchDto
 
+    @PATCH("media/{id}/insights")
+    suspend fun patchTranscriptInsight(@Path("id") id: String, @Body body: TranscriptInsightPatchRequest): TranscriptInsightViewDto
+
+    @POST("media/{id}/insights/regenerate")
+    suspend fun regenerateTranscriptInsight(@Path("id") id: String, @Body body: TranscriptInsightRegenerateRequest): TranscriptInsightViewDto
+
     // Save an (approved, AI-refined) transcript in place of the stored one. Uploader or admin only.
     @POST("media/{id}/transcript")
     suspend fun setTranscript(@Path("id") id: String, @Body body: TranscriptUpdateRequest): MediaFileDto
