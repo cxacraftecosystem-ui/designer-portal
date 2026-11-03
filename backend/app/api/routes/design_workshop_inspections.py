@@ -4,7 +4,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.routes.design_workshop_oversight import require_workshop_assigner
-
 from app.api.routes.design_workshops import (
     _provenance_maps,
     _stages_payload,

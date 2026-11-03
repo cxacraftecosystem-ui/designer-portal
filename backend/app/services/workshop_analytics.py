@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.services.cost_integrity import compute_margin
-
 from app.services.market_analysis import (
     MIN_SAMPLE_FOR_QUANTILES,
     Distribution,
@@ -14,7 +13,6 @@ from app.services.market_analysis import (
     as_number,
     describe,
 )
-
 from app.services.text_format import by_count, count_noun
 
 MIN_WORKSHOPS_FOR_RATE = 5

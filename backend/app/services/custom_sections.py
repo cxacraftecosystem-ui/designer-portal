@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.db import db
-
 from app.services.stage_schema import (
     FieldSpec,
     FieldType,

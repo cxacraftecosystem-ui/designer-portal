@@ -8,7 +8,6 @@ from fastapi import HTTPException
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.core.db import db
 from app.core.security import create_access_token, hash_password
-
 from app.services import design_workshops as dw, rich_text
 
 _URL = os.environ.get("DATABASE_URL", "")

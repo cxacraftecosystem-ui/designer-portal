@@ -17,7 +17,6 @@ from app.schemas.designers import (
     DesignerRosterCreate,
     DesignerRosterUpdate,
 )
-
 from app.services import access_roster
 from app.services.designers import (
     canonical_email,

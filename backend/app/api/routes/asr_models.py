@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.core.deps import can_run_design_workshops, get_current_user
-
 from app.services import asr_artifacts
 from app.services.asr_artifacts import ArtifactVerdict, AsrArtifact, FileVerdict
 

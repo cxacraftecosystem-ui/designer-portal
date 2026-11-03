@@ -11,7 +11,6 @@ from app.core.user_fields import SECRET_USER_FIELDS
 from app.services import aadhaar_fingerprint
 from app.services.artisan_identity import mask_aadhaar
 from app.services.concurrency import gather_reads
-
 from app.services.dictation_consent import MEDIA_TAG
 from app.services.measurement_provenance import MARKER_BODY_KEY, method_stamps
 from app.services.rich_text import search_needles

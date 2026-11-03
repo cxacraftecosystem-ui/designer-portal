@@ -11,9 +11,7 @@ from starlette.requests import HTTPConnection
 from app.core.config import get_settings
 from app.core.db import db
 from app.core.security import CREDENTIAL_CLAIM, decode_access_token
-
 from app.services import access_roster, credential_links
-
 from app.services.usage import USAGE_CONSENT_KEY, USAGE_USER_ID_KEY, resolve_consent
 
 bearer_scheme = HTTPBearer(auto_error=False)

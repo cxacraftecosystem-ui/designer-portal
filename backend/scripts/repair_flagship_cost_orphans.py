@@ -6,7 +6,6 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from app.core.db import connect_db, db, disconnect_db
-
 from app.services.cost_integrity import (
     MARGIN_TOLERANCE_POINTS,
     TOLERANCE_RUPEES,

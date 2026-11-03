@@ -7,9 +7,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 from app.services import naming
-
 from app.services.xlsx_report import XLSX_MIME, _put, _sanitise
-
 from app.services.xlsx_table import (
     FormulaCell as _FormulaCell,
     ParseProblem,

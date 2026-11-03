@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services import report_docx, report_pdf
+from app.services import report_docx
 from app.services.report_model import ReportTheme
 from tests.test_report_docx import _png
 

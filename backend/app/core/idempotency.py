@@ -227,10 +227,9 @@ class IdempotencyMiddleware:
                 await send({"type": "http.response.start", "status": existing.status_code, "headers": headers})
                 await send({"type": "http.response.body", "body": existing.body or b""})
                 return
-            elif datetime.now(UTC) - existing.created_at < STALE_PENDING:
-                await self._in_progress(send)
-                return
-            elif not await self.store.take_over(user_id, key, fingerprint, existing.created_at):
+            elif datetime.now(UTC) - existing.created_at < STALE_PENDING or not await self.store.take_over(
+                user_id, key, fingerprint, existing.created_at
+            ):
                 await self._in_progress(send)
                 return
 

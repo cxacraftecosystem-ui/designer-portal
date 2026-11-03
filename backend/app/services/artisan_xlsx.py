@@ -15,7 +15,6 @@ from app.services.artisan_identity import (
     normalize_pehchan,
     pehchan_error,
 )
-
 from app.services.xlsx_report import _put, _safe_title
 from app.services.xlsx_table import (
     FormulaCell,

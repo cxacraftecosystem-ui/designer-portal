@@ -81,7 +81,6 @@ from app.services.records import (
     take_expected_updated_at,
     viewable_where,
 )
-
 from app.services.standard_values import StandardValueError, apply_interview_values
 from app.services.text_format import by_count, count_noun
 from app.services.workshop_access import (

@@ -6,7 +6,6 @@ from prisma.errors import UniqueViolationError
 
 from app.core.config import get_settings
 from app.core.db import db
-
 from app.services.designers import (
     GMAIL_DOMAINS,
     canonical_email,

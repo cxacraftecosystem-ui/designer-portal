@@ -32,7 +32,6 @@ from app.services import (
     two_factor,
 )
 from app.services.aadhaar import flags as aadhaar_flags
-
 from app.services.account_provisioning import (
     DUPLICATE_EMAIL_DETAIL,
     GRANT_FLAGS,
