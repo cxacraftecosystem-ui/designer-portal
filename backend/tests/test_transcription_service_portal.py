@@ -166,7 +166,7 @@ def test_enqueue_reuses_the_open_job_instead_of_paying_twice(monkeypatch) -> Non
     jobs = asyncio.run(
         media_queue.enqueue_media_processing_jobs(
             {"id": "m-1", "mediaType": "AUDIO"},
-            None,
+            ["TRANSCRIPTION"],
             "u-1",
             SimpleNamespace(media_queue_job_max_attempts=3),
         )

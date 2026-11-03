@@ -893,7 +893,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     ],
     watch: [
       "Choose a Linked record type before you upload. If the file doesn't belong to a particular record, choose \"Miscellaneous Media\" and leave the entry blank.",
-      "Audio uploaded here is transcribed after upload, just like interview audio.",
+      "Tick Transcribe and translate on a recording or video to get its text.",
       "If a file turns out to belong to a record, you can link it to that record later.",
       // THE MEDIA FORM'S OWN WORDING AND NOT THE RECORD FORMS', since 2026-09-16. This screen draws
       // ONE workshop box and no type box; the record-form sentence is entirely about choosing

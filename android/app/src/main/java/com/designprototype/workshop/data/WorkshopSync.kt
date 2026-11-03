@@ -2533,6 +2533,7 @@ object WorkshopSyncEngine {
                     longitude = descriptor.longitude,
                     workshopTitle = draft.title,
                     batchIndex = index + 1,
+                    transcribe = descriptor.transcribe,
                     // THE BYTES REPORT THEMSELVES NOW. Keyed by the LOCAL descriptor id, because
                     // there is no remote id until the file lands and the window this is drawn in is
                     // precisely the window before that. See [DwMediaUploadProgress] for the throttle

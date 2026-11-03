@@ -47,7 +47,13 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.db import connect_db, disconnect_db, ensure_db_connected
-from app.services import artisan_duplicates, artisan_merge, media_queue, ministry_exports
+from app.services import (
+    artisan_duplicates,
+    artisan_merge,
+    media_queue,
+    ministry_exports,
+    transcript_backfill,
+)
 from app.services.aadhaar import log_retention as aadhaar_log_retention
 from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
@@ -169,6 +175,10 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> bool:
         await artisan_duplicates.maybe_run(settings)
     except Exception:
         logger.exception("Duplicate-artisan scan failed; it runs again tomorrow")
+    try:
+        await transcript_backfill.maybe_run()
+    except Exception:
+        logger.exception("Transcript backfill pass failed; it runs again later")
     try:
         await artisan_merge.maybe_purge(settings)
     except Exception:

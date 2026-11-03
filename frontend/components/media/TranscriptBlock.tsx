@@ -59,8 +59,9 @@ type TranscriptBlockProps = {
 export function TranscriptBlock(props: TranscriptBlockProps) {
   const { media } = props;
   const isAudio = media.mediaType === "AUDIO" || (media.mimeType ?? "").toLowerCase().startsWith("audio/");
-  if (!isAudio) return <LegacyTranscriptBlock {...props} />;
-  return <TranscriptViewer mediaId={media.id} audioUrl={media.url} fallback={<LegacyTranscriptBlock {...props} />} />;
+  const isVideo = media.mediaType === "VIDEO" || (media.mimeType ?? "").toLowerCase().startsWith("video/");
+  if (!isAudio && !isVideo) return <LegacyTranscriptBlock {...props} />;
+  return <TranscriptViewer mediaId={media.id} audioUrl={media.url} video={isVideo} fallback={<LegacyTranscriptBlock {...props} />} />;
 }
 
 function LegacyTranscriptBlock({
@@ -92,7 +93,7 @@ function LegacyTranscriptBlock({
   const isAudio = current.mediaType === "AUDIO" || (current.mimeType ?? "").toLowerCase().startsWith("audio/");
   const hasText = !!current.transcriptText && current.transcriptText.trim().length > 0;
 
-  if (!isAudio && !status && !hasText) return null;
+  if (!isAudio && current.mediaType !== "VIDEO" && !status && !hasText) return null;
 
   // Inline playback above whatever transcript state renders below.
   const player = isAudio && current.url ? <AudioPlayer src={current.url} className="mt-2" /> : null;
@@ -124,7 +125,7 @@ function LegacyTranscriptBlock({
   // the stored mediaType column and 400s everything else, so a DOCUMENT row carrying an `audio/*`
   // mime would render a button that can only be refused.
   const control =
-    !readOnly && isAdmin(user) && current.mediaType === "AUDIO" ? (
+    !readOnly && isAdmin(user) && (current.mediaType === "AUDIO" || current.mediaType === "VIDEO") ? (
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -194,7 +195,17 @@ function LegacyTranscriptBlock({
     );
   }
 
-  if (PROCESSING.has(status) || (isAudio && !status)) {
+  if (!status) {
+    return (
+      <>
+        {player}
+        {control}
+        {failureNote}
+      </>
+    );
+  }
+
+  if (PROCESSING.has(status)) {
     return (
       <>
         {player}

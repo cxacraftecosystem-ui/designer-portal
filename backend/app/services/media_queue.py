@@ -14,6 +14,7 @@ from app.services import (
     ai_verb_cap,
     audio_isolation,
     dictation_consent,
+    transcribe_choice,
     transcript_insights,
     transcript_pipeline,
     transcription_jobs,
@@ -270,12 +271,13 @@ def _value(record: Any, key: str) -> Any:
     return getattr(record, key, None)
 
 
+TRANSCRIBABLE_TYPES = frozenset({"AUDIO", "VIDEO"})
+
+
 def _job_requests(media: Any, requested: list[str] | None) -> set[str]:
     media_type = str(_value(media, "mediaType") or "").upper()
     normalized = {str(item).strip().upper() for item in requested or [] if str(item).strip()}
-    if requested is None and media_type == "AUDIO":
-        normalized.add(TRANSCRIPTION)
-    if media_type != "AUDIO":
+    if media_type not in TRANSCRIBABLE_TYPES:
         normalized.discard(TRANSCRIPTION)
     if media_type != "IMAGE":
         normalized.discard(MEASUREMENT)
@@ -720,6 +722,7 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
     # bypasses the queue and the window, never the pause.
     if transcription_paused(await load_app_settings()):
         raise transcription_jobs.TranscriptionPaused()
+    await transcribe_choice.mark_requested(media, transcribe_choice.BUTTON)
     media_id = str(_value(media, "id"))
     # THE SIZE GATE BEFORE THE STATUS WRITE, so a refusal does not leave the row saying PROCESSING
     # for something this server is never going to process.

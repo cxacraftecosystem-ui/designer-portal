@@ -120,6 +120,7 @@ import {
   type DwCustomField
 } from "@/lib/customSections";
 import { uploadMediaBatch } from "@/lib/media";
+import { wantsTranscription } from "@/lib/transcript/uploadChoice";
 // THE CREATE RULE IS IMPORTED, NEVER RESTATED HERE. This store is the OFFLINE half of "who may
 // start a design workshop", and a second copy of the role set in a file that runs with no network
 // is the copy that would go on minting workshops for a designer months after the rule changed.
@@ -712,6 +713,7 @@ export type DwDraftMedia = {
    * will help, and whether an app update is the thing that would clear it.
    */
   failure?: DwDraftFailure | null;
+  transcribe?: boolean;
 };
 
 type RegistryRecord = { version: string; registry: DwRegistry; storedAt: number };
@@ -2203,7 +2205,8 @@ export async function stageLocalMedia(
     remoteMediaId: null,
     confirmedAt: null,
     attempts: 0,
-    lastError: null
+    lastError: null,
+    transcribe: wantsTranscription(file)
   };
   await transact([STORE_MEDIA], "readwrite", async (stores) => req(stores[STORE_MEDIA].put(media)));
   return { ref: `${LOCAL_MEDIA_PREFIX}${media.id}`, media };
@@ -5114,7 +5117,8 @@ async function runSync(): Promise<DwSyncResult> {
             files: [file],
             linkedRecordType: "designWorkshop",
             linkedRecordId: remoteId,
-            caption: media.caption ?? undefined
+            caption: media.caption ?? undefined,
+            transcribe: [Boolean(media.transcribe)]
           }));
         } catch (error) {
           // A 401 is about the session, not this photograph — the gate's and a plain expiry alike, see

@@ -511,7 +511,7 @@ function MediaPageBody() {
     ONE ASK PER DISTINCT WORKSHOP across the table's rows and the upload's two choices, so a workshop
     named both ways costs one staffing read.
   */
-  const writable = (item: MediaFile) => adminMode || (canTranscribe && item.mediaType === "AUDIO");
+  const writable = (item: MediaFile) => adminMode || (canTranscribe && (item.mediaType === "AUDIO" || item.mediaType === "VIDEO"));
   const uploadChosen = designWorkshop.workshopId ? [designWorkshop.workshopId] : [];
   const uploadLinked = linkedType
     ? [
@@ -716,7 +716,7 @@ function MediaPageBody() {
         <QrCode className="h-3.5 w-3.5" aria-hidden />
         {codeFor === item.id ? "Hide code" : "Code"}
       </button>
-      {canTranscribe && item.mediaType === "AUDIO" ? (
+      {canTranscribe && (item.mediaType === "AUDIO" || item.mediaType === "VIDEO") ? (
         <button
           className={rowAction("edit")}
           onClick={() => transcribeNow(item)}
@@ -760,7 +760,7 @@ function MediaPageBody() {
     <>
       <PageHeader
         title="Miscellaneous Media"
-        description="Images, video, audio and files. Audio is transcribed."
+        description="Images, video, audio and files."
         icon={<Images className="h-5 w-5" aria-hidden />}
       />
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
@@ -770,7 +770,7 @@ function MediaPageBody() {
           files={selectedFiles}
           onFilesChange={setSelectedFiles}
           title="Capture media"
-          description="Images, videos, audio and files. Audio is transcribed after it uploads."
+          description="Images, videos, audio and files."
         />
         <div className="grid gap-3 md:grid-cols-2">
           {/* DICTATED, and Android has been since the `TextInput` default flipped: this is the
