@@ -1004,3 +1004,15 @@ def test_a_retried_failure_spends_nothing(fake, provider, fault):
 def test_the_failed_translation_note_names_no_action_a_reader_may_not_have():
     assert ti.TRANSLATION_FAILED_NOTE == "The translation couldn't be finished."
     assert "egenerate" not in ti.TRANSLATION_FAILED_NOTE
+
+
+def test_a_provider_out_of_credit_holds_the_job_and_spends_nothing(fake, provider):
+    from app.services import media_queue
+
+    provider.fail_on = {1: "the service's credit has run out"}
+    media = fake.add_media(transcriptText=ENGLISH, transcriptStatus="COMPLETED")
+    job = _insights_job(fake, media, requested_by="usr_owner")
+    asyncio.run(media_queue._process_job(job, SimpleNamespace()))
+    stored = fake.mediaprocessingjob.get(job.id)
+    assert stored.status == "QUEUED" and stored.error == ti.BILLING
+    assert fake.spent == []

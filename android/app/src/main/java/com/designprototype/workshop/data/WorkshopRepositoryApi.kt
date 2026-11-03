@@ -767,6 +767,12 @@ interface WorkshopRepositoryApi {
         @Query("includeTranslation") includeTranslation: Boolean? = null
     ): TranscriptInsightBatchDto
 
+    @PATCH("media/{id}/insights")
+    suspend fun patchTranscriptInsight(@Path("id") id: String, @Body body: TranscriptInsightPatchRequest): TranscriptInsightViewDto
+
+    @POST("media/{id}/insights/regenerate")
+    suspend fun regenerateTranscriptInsight(@Path("id") id: String, @Body body: TranscriptInsightRegenerateRequest): TranscriptInsightViewDto
+
     // Save an (approved, AI-refined) transcript in place of the stored one. Uploader or admin only.
     @POST("media/{id}/transcript")
     suspend fun setTranscript(@Path("id") id: String, @Body body: TranscriptUpdateRequest): MediaFileDto
@@ -1998,6 +2004,30 @@ interface WorkshopRepositoryApi {
         // re-offered is the same suggestion.
         @Query("includeDeleted") includeDeleted: Boolean? = null
     ): DwAiLayerListDto
+
+    @GET("design-workshops/{id}/ai-layers/decisions")
+    suspend fun designWorkshopAiLayerDecisions(@Path("id") id: String): DwAiDecisionHistoryDto
+
+    @GET("design-workshops/{id}/ai-layers/{layerId}")
+    suspend fun designWorkshopAiLayer(
+        @Path("id") id: String,
+        @Path("layerId") layerId: String
+    ): DwAiLayerReadDto
+
+    @POST("design-workshops/{id}/ai-layers")
+    suspend fun registerDesignWorkshopAiLayer(
+        @Path("id") id: String,
+        @Body body: DwAiLayerRegisterBody
+    ): DwAiLayerRegisterResultDto
+
+    @GET("design-workshops/{id}/transcripts")
+    suspend fun designWorkshopTranscripts(@Path("id") id: String): DwTranscriptListDto
+
+    @GET("design-workshops/ai-verb-allowance")
+    suspend fun designWorkshopAiVerbAllowance(): DwAiVerbAllowanceDto
+
+    @GET("design-workshops/{id}/market-analysis")
+    suspend fun designWorkshopMarketAnalysis(@Path("id") id: String): JsonObject
 
     // TWO WRITES BEHIND ONE CALL, and both come back: the layer gains `acceptedAt`/`acceptedById` (the
     // current state the report builder reads) and a decision row is appended (the history, which is

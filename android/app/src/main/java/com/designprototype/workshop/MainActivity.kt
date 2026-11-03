@@ -527,6 +527,7 @@ import com.designprototype.workshop.ui.designworkshop.DwInlineRecordHost
 import com.designprototype.workshop.ui.designworkshop.DwInlineSeed
 import com.designprototype.workshop.ui.designworkshop.DwInlineRecordOutcome
 import com.designprototype.workshop.ui.designworkshop.DwProvenanceScreen
+import com.designprototype.workshop.ui.designworkshop.DwAiLayersScreen
 import com.designprototype.workshop.ui.designworkshop.InspectionAwaitingSection
 import com.designprototype.workshop.ui.designworkshop.InspectionDetailScreen
 import com.designprototype.workshop.ui.designworkshop.InspectionListScreen
@@ -1507,6 +1508,7 @@ private sealed interface Screen {
      * Carries the DRAFT STORE's id like its siblings; the screen resolves `remoteId` itself.
      */
     data class DesignWorkshopProvenance(val workshopId: String) : Screen
+    data class DesignWorkshopAiLayers(val workshopId: String) : Screen
 
     /**
      * The `DesignerProfile` behind every report's cover page.
@@ -4040,6 +4042,7 @@ private fun HomeScreen(
             // only route in, so it is the only route out. An admin auditing a workshop is auditing a
             // workshop, not browsing the list.
             is Screen.DesignWorkshopProvenance -> workshopIndex(s.workshopId)
+            is Screen.DesignWorkshopAiLayers -> workshopIndex(s.workshopId)
             // An admin who opened somebody else's profile came from the roster and goes back to it;
             // a designer looking at their own came from the menu and goes back to the dashboard.
             // Sending both to the dashboard would make an admin re-find the row in a list they may
@@ -4136,6 +4139,7 @@ private fun HomeScreen(
         // is the web's `<PageHeader title=…>` word for word. A shared header above it would state the
         // section twice and spend the page's first line saying less than the line under it.
         is Screen.DesignWorkshopProvenance -> null
+        is Screen.DesignWorkshopAiLayers -> null
         // Null on both for the same reason as the four above: each screen draws its own heading,
         // and the profile's additionally says WHOSE profile it is, which a shared header cannot.
         is Screen.SketchesAndPrototypes -> null
@@ -4240,6 +4244,7 @@ private fun HomeScreen(
         // admin chrome, but it is still a screen INSIDE one design workshop and the row opens the
         // list the admin is already in.
         is Screen.DesignWorkshopProvenance -> NavDestination.DESIGN_WORKSHOPS
+        is Screen.DesignWorkshopAiLayers -> NavDestination.DESIGN_WORKSHOPS
         // Same reasoning at all three depths: the row opens the list the designer is already inside.
         is Screen.Questionnaires,
         is Screen.QuestionnaireDetail,
@@ -5137,6 +5142,7 @@ private fun HomeScreen(
                 // Ungated HERE for the same reason as the row above it, and the index HIDES this one
                 // from a non-admin rather than explaining it — see the comment on that control.
                 onOpenProvenance = { message = null; screen = Screen.DesignWorkshopProvenance(s.workshopId) },
+                onOpenAiLayers = { message = null; screen = Screen.DesignWorkshopAiLayers(s.workshopId) },
                 onError = { showError(it) },
                 canDelete = canDelete,
                 onDeleted = { message = "Design workshop deleted"; screen = Screen.DesignWorkshops() },
@@ -5269,6 +5275,11 @@ private fun HomeScreen(
             // cached account before it issues a single request. A third check in the router would be
             // the copy nobody updates.
             is Screen.DesignWorkshopProvenance -> DwProvenanceScreen(
+                repository = repository,
+                workshopId = s.workshopId
+            )
+
+            is Screen.DesignWorkshopAiLayers -> DwAiLayersScreen(
                 repository = repository,
                 workshopId = s.workshopId
             )
@@ -15738,7 +15749,8 @@ private fun MediaWithTranscript(
                 TranscriptInsightsCard(
                     mediaId = media.id,
                     load = { id -> repository.transcriptInsight(id) },
-                    formatDate = ::formatIsoDate
+                    formatDate = ::formatIsoDate,
+                    actions = if (readOnly) null else repository.transcriptInsightActions
                 )
             }
             // AI refinement controls under the transcript (only where a repository is available, i.e.
@@ -15985,7 +15997,7 @@ private fun TranscriptRefineControls(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        "Refining" + (if (mode) " and translating" else "") + " uses an AI model (gpt-4o-mini) at a small cost. Continue?"
+                        "Refining" + (if (mode) " and translating" else "") + " uses an AI model at a small cost. Continue?"
                     )
                     AppToggle(
                         label = "Do not remind me again",
