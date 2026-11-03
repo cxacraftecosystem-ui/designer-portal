@@ -1,110 +1,5 @@
 "use client";
 
-/**
- * The report: choose the template, set what it contains, read it as PAGES, download the file.
- *
- * THE PREVIEW IS NOT A FIFTH RENDERER. `GET /report/preview` builds the SAME `ReportDocument` the
- * .docx writer, the server .pdf writer and the two on-device Kotlin writers consume, and
- * serialises its blocks; this page draws those blocks and reconstructs nothing. A preview that
- * walked the workshop data itself would be one more traversal of the same record and would be the
- * first of the five to drift — silently, because the person reading the preview is reading it
- * precisely so they do not have to open the file. If a block type appears that cannot be drawn,
- * that is a bug in `ReportBlock.tsx`, never a reason to rebuild the block from the stage data.
- *
- * IT IS DRAWN AS PAPER, and that is the whole shape of this screen. A scrolling column of cards
- * cannot answer the question a designer is actually asking here, which is "is this the document?"
- * Whether the cover's info table has crowded the hero photograph off the page, whether the
- * signature block has landed under a heading with nothing between them, whether a photo grid fits
- * beside its caption — every one of those is a question about a PAGE. So `ReportSheets` lays the
- * blocks onto A4 (or Letter) sheets at their real millimetre dimensions, with the cover on its own
- * page, a running head and foot on every page after it, and a visible mark at every break the
- * template declares. Approximately right is the failure mode this screen exists to avoid: the file
- * goes to a ministry.
- *
- * WHAT THE PAGINATION CAN AND CANNOT KNOW is stated on screen rather than guessed at, and the
- * line between the two MOVED. A `PAGEBREAK` is a break the template asked for and both writers
- * honour it exactly; where the OTHER breaks fall is decided by measuring wrapped text against the
- * remaining height of a page, which Word does on open and ReportLab does by laying the body out
- * twice. This screen used to do neither — it cut only at declared breaks and drew a `min-height`
- * sheet, so a long section rendered as one "page" several times taller than A4 and the count was
- * a FLOOR. It measures now: `ReportSheets` lays every block out once off-screen at exactly the
- * page's content width and `reportPagination.packPages` flows the measurements into fixed pages
- * under `report_pdf.py`'s own splitting rules.
- *
- * SO THE COUNT IS A CLOSE ESTIMATE RATHER THAN A FLOOR, and that is a harder thing to say
- * honestly, not an easier one. The preview measures with THIS BROWSER's fonts; the .pdf is laid
- * out by ReportLab in whichever face `report_pdf` resolved and the .docx by Word when the file is
- * opened, and three engines that disagree about one line can disagree about one page. A preview
- * that looks authoritative RAISES the cost of overclaiming rather than removing it, so the strip
- * above the sheets says exactly what the number is.
- *
- * THE RUNNING FOOT PRINTS "Page N of M" ANYWAY. All four FILE renderers print that shape — both
- * .docx writers off `NUMPAGES`, both .pdf writers off their measuring pass — and a designer who
- * proofs "Page 3" on this screen and then hands over a document reading "Page 3 of 12" is holding
- * two differently-shaped numbers for one page, which is the same divergence the file-side fix
- * existed to close. The worry it raises — an invented "Page 7 of 26" quoted into a covering email
- * — is answered where it actually bites, which is PRINT rather than the screen: `Ctrl+P` drops the
- * qualifying strip with the rest of the chrome, so `ReportSheet`'s print rules drop the "of M"
- * with it and the handed-over file carries the ordinal alone, with no total it cannot stand behind.
- *
- * THE FIGURES ARE DRAWN LIVE. The map is the repository's own `IndiaMap`, over the same projection
- * and the same boundary assets `/map` uses, so the report's map and the app's map cannot disagree
- * about where a place is; the charts are SVG drawn by `ReportChart`, which copies
- * `report_chart.py`'s axis, rounding, slice order and colour ramp. Both exist because a preview is
- * a screen: a designer changes a cost head and the bar moves, with no round trip to re-rasterise a
- * PNG between one keystroke and the next. The rasterised figure remains the AUTHORITY — it is what
- * the ministry receives — and where the payload carries one it is what printing uses.
- *
- * THE COLOUR IS CHOSEN HERE BECAUSE THIS IS THE ONLY PLACE THE CHOICE CAN BE SEEN. Twelve named
- * accents and a colour well sit above the sheets, and picking one redraws every sheet below it in
- * the same frame — the headings, the rules, the table headers, the zebra stripes and the live
- * figures. That is the whole justification for offering the choice at all: `lib/reportTheme` is a
- * port of the server's `report_theme.py` rather than an approximation of it, so what the pages show
- * is what the .docx will carry, and a designer never has to generate a file to find out that they
- * dislike the colour. One accent is chosen and the other seven colours are derived from it, which
- * is what makes every reachable choice a legible one — see that module. Like the transcript
- * override beside it, the value is a per-FILE choice: it is sent on the download and is not
- * written to stage 20, so trying three colours before submitting does not mean three saves.
- *
- * WITH ONE EXPLICIT EXIT, added because the override alone was a dead end. A designer could try a
- * custom colour but had no way to KEEP one — they picked it, generated the report, came back the
- * next morning and found the old colour, with nothing on screen having said the choice was
- * temporary. So the picker also offers "Save as the workshop's colour", which writes
- * `themeAccent` AND `themePreset` to stage 20 and then drops the override, because once the saved
- * colour IS the colour there is nothing left to override.
- *
- * WARNINGS ARE PART OF THE PRODUCT, not a debug aid. A missing required field or a photograph that
- * could not be embedded produces a warning, and the file is generated anyway — which is right,
- * because a designer in the field needs the twenty-six pages that ARE ready. But the warnings do
- * not travel inside the document (an officer opening the .docx next month must not find a note
- * about what was missing on the day), so this screen and the download banner are the only two
- * places they can be read. Hiding them here would mean shipping a report with four empty stages
- * while telling the designer it worked.
- *
- * SNAKE_CASE. The block payload is `dataclasses.asdict()` output and is the one part of this API
- * that is not camelCase — `width_pct`, `info_rows`, `total_row`, `height_px`. See the header of
- * `lib/designWorkshops.ts`.
- *
- * WITH NO CONNECTION THE REPORT IS BUILT ON THIS DEVICE (since 2026-10-10). `lib/offlineReport` is
- * a port of the server's builder (`report_builder.py` and the modules around it) that builds the same
- * blocks from the draft this browser holds, plus the sources `GET /report/sources` handed it the last
- * time this screen was open with a connection (`lib/offlineReport/reportCache`); the .docx and the
- * .pdf are then written here by `docx` and pdfmake. `offline-report-parity-unit.spec.ts` holds the
- * port to the server's output for a fixture workshop, block for block. It is used when the device is
- * offline, when the server cannot be reached, and for a workshop that has never been uploaded.
- *
- * WHICH FILE IS AUTHORITATIVE: the server's, whenever there is a connection — it is built from the
- * record the office holds, carries native Word charts, and is the one recorded in the report history.
- * The device's copy exists so a designer with no signal is never without their report; it includes
- * stages not yet uploaded, which the server's cannot. `docs/DESIGN_WORKSHOP.md` says this for
- * readers; the screen does not lecture designers about it.
- *
- * ⚠ THERE IS ONE THING A BROWSER CAN STILL PRINT, and the sheet stylesheet exists for it: Ctrl+P
- * on this page produces a real document rather than a screenshot of a web page — physical units,
- * `@page` at the document's own size, the app chrome switched off, tables and figures kept off
- * page boundaries.
- */
-
 import { Toggle } from "@/components/ui/Toggle";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -160,21 +55,9 @@ import { warmReportAssets } from "@/lib/offlineReport/offlineAssets";
 import { getSources, putSources } from "@/lib/offlineReport/reportCache";
 import { TEMPLATES } from "@/lib/offlineReport/templates";
 import { isUnreachable } from "@/lib/offline";
-// The route param is not always a server id and the header column is not the template — both rules,
-// and what they cost when they are skipped, are written out in that module. Shared with the history
-// view beside this one, which had the first defect in exactly the same shape.
 import { reportServerId, reportTemplateId } from "./reportTarget";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * What this file asks for on top of the saved settings, for ONE download.
- *
- * `""` means "whatever stage 20 says", which is what the server reads when the request is silent —
- * see `wants_transcripts`. The two explicit answers override it for this file only, so a designer
- * can produce a short copy to read out in a meeting and a full copy for the file from one set of
- * saved settings, without editing those settings twice and without the second edit being the one
- * they forget.
- */
 type TranscriptOverride = "" | "YES" | "NO";
 
 const TRANSCRIPT_OPTIONS = [
@@ -183,20 +66,6 @@ const TRANSCRIPT_OPTIONS = [
   { value: "NO", label: "Leave the transcripts out" }
 ];
 
-/**
- * The running head and foot the file will carry.
- *
- * MIRRORS `design_workshops.report_meta` DELIBERATELY, because the preview payload does not carry
- * them: `meta` is title, subtitle, template and page size and stops there. The server derives the
- * head from the craft and the cluster and the foot from the template name and the workshop code,
- * and a preview that drew its own furniture — the workshop's title, say — would show a designer a
- * page header that no generated file has ever had.
- *
- * Stage 20's own `headerText`/`footerText` win where they are filled in, and the page then SENDS
- * them on the download. That order is not cosmetic: `report_meta` does not read the stage entry,
- * so those two answers reach a file only through `ReportGenerateIn`. Previewing with them and
- * generating without them would put a different header on the paper than on the screen.
- */
 function runningFurniture(detail: DwDetail | null, settings: DwEntryData, templateName: string) {
   const derivedHead = [detail?.craftName, detail?.clusterName].filter(Boolean).join(" — ");
   const derivedFoot = `${templateName || detail?.templateId || ""} · ${detail?.workshopCode || detail?.id || ""}`.trim();
@@ -206,187 +75,52 @@ function runningFurniture(detail: DwDetail | null, settings: DwEntryData, templa
   };
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The page
- * ──────────────────────────────────────────────────────────────────────────── */
-
 const EMPTY_SETTINGS: DwEntryData = {};
 
 export default function DesignWorkshopReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
 
-  /**
-   * The id the SERVER knows this workshop by — null until the local draft has been read, and null
-   * for good while the workshop exists only on this device.
-   *
-   * NOTHING ON THIS PAGE MAY BE ASKED OF THE SERVER UNDER THE ROUTE PARAM. A workshop created with
-   * no signal lives at `/design-workshops/dwlocal-…`, which is a URL this application navigates to
-   * itself; every server call made with that param 404s with "Record not found" over a workshop the
-   * stage index, the 22 forms, readiness and the codes screen all open perfectly well from the same
-   * URL, because each of those resolves `remoteId` first. See `reportTarget.ts` for the rule and for
-   * why the `<Link>`s below still carry `id`.
-   *
-   * Every fetch on this page is therefore keyed on `remoteId` and refuses to run while it is null,
-   * which is also what stops a request going out under the wrong id in the frame before the draft
-   * read lands.
-   */
   const [remoteId, setRemoteId] = useState<string | null>(null);
-  /** True once the draft has been read and there is no server record to generate a report from. */
   const [localOnly, setLocalOnly] = useState(false);
-  /**
-   * Why this reader may generate the report and not change what it is built from, or null — a post
-   * they hold on the workshop. Generating is not refused to whoever inspects or supervises a workshop;
-   * stage 20, which the settings panel and the colour's Save write, is. So only those two writes are
-   * held, each where it is offered. See `HeldPostNotice`.
-   */
   const postRefusal = useHeldPostRefusal(remoteId);
 
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [detail, setDetail] = useState<DwDetail | null>(null);
   const [templates, setTemplates] = useState<DwTemplate[]>([]);
   const [templateId, setTemplateId] = useState<string>("");
-  /**
-   * Whether the DESIGNER picked the template on this screen, as opposed to the page having seeded it.
-   *
-   * THE PAGE'S SEED IS NOT AN INSTRUCTION AND MUST NOT BE SENT AS ONE. `resolve_template_id` reads
-   * the request first, stage 20 second and the header column last; a screen that echoes its own
-   * resolution back as `requested` short-circuits that loop on its first rung and makes this
-   * browser's copy of the precedence — rather than the server's — decide what a ministry receives.
-   * Untouched, the request stays silent and the server resolves the workshop it holds; touched, the
-   * choice is sent because it IS a choice, for this file only, exactly like `themeAccent` below.
-   *
-   * It is also what makes the re-seed in {@link refreshWorkshop} safe: re-reading the workshop after
-   * a save must correct a dropdown nobody has touched and must never overwrite a selection the
-   * designer is standing in front of.
-   */
   const [templateTouched, setTemplateTouched] = useState(false);
   const [settings, setSettings] = useState<DwEntryData>(EMPTY_SETTINGS);
-  /**
-   * The settings panel's boxes while they differ from what is saved — so the running head, the
-   * running foot and the paper size on the sheets follow the typing rather than the Save. Only those
-   * three are drawn from it: everything else on the sheets is the built document, which changes when
-   * the settings are saved and the preview is rebuilt.
-   */
   const [settingsDraft, setSettingsDraft] = useState<DwEntryData | null>(null);
   const drawnSettings = settingsDraft ?? settings;
   const [preview, setPreview] = useState<DwPreview | null>(null);
   const [previewing, setPreviewing] = useState(true);
-  /**
-   * Whether there is no preview because something FAILED, as opposed to because there is nothing to
-   * show.
-   *
-   * The panel at the foot of this page had two states for three situations, and the missing one is
-   * the one that stranded people. `previewing` was cleared in exactly two places — the local-only
-   * branch above, and the preview loader's `finally` — and the loader is gated on `templateId`,
-   * which only the SUCCESSFUL workshop read ever sets. So a failed first load left the flag true
-   * with nothing left running that could ever clear it: "Building the preview…" for the life of the
-   * tab, over a red banner naming the failure, with the template dropdown empty (the list is read by
-   * the same request) so there was not even a selection change to retrigger the loader with. The
-   * only way out was a manual page reload, which is precisely the action a spinner tells somebody
-   * not to take.
-   *
-   * A separate flag rather than reading `error`: that banner is shared with the download handler and
-   * the settings panel, so a failed .docx would otherwise repaint the preview panel as broken while
-   * the sheets it is holding are perfectly good.
-   */
   const [previewFailed, setPreviewFailed] = useState(false);
-  /**
-   * Bumped by "Try again" to re-run the workshop read, which has no other trigger — `remoteId` is
-   * resolved once from the draft and does not change, so the effect below would never fire a second
-   * time on its own.
-   */
   const [retryToken, setRetryToken] = useState(0);
   const [transcripts, setTranscripts] = useState<DwTranscriptList | null>(null);
   const [transcriptOverride, setTranscriptOverride] = useState<TranscriptOverride>("");
-  /**
-   * Whether THIS file carries the annexure of accepted machine-assisted text.
-   *
-   * A PLAIN BOOLEAN, NOT A {@link TranscriptOverride}, and the asymmetry is the point. The
-   * transcript control is tri-state because it OVERRIDES a saved stage-20 answer and `undefined`
-   * has to mean "leave that answer alone". This one overrides nothing: no template declares the
-   * section, no stage-20 field backs it, and the server splices it in on an explicit `true` alone.
-   * A third value here would be a state that means the same as `false` and invite somebody to
-   * store it in stage 20 later, which is where the tri-state's real complexity comes from.
-   *
-   * ALWAYS OFF AT FIRST DRAW, AND DELIBERATELY NOT REMEMBERED. Putting a machine's words into a
-   * document that goes to a ministry officer is a decision, and a decision that persists silently
-   * across exports is one nobody makes twice — they make it once and then stop seeing it.
-   */
   const [includeAiLayers, setIncludeAiLayers] = useState(false);
-  /**
-   * How many accepted layers the annexure would print, or null while unknown.
-   *
-   * WHY A COUNT AND NOT A PREVIEW. `TranscriptAnnexurePanel` beside this exists because "generating
-   * sixty pages to find out what is in it is not a preview", and the same argument applies here with
-   * one difference: a transcript annexure's contents are unread by anybody, while every layer this
-   * would print has ALREADY been read and signed for on the AI-layers screen. So the open question
-   * is not "what does it say" but "is there anything there at all" — which a number answers and a
-   * panel would only repeat.
-   *
-   * NULL IS AN HONEST STATE AND IS RENDERED AS ONE. The read can fail — offline, or a colleague with
-   * workshop access but not media access — and a zero would then say "nothing has been accepted",
-   * which is a claim, not an absence. It is fetched only when the box is ticked: a designer who
-   * never uses this must not pay a request for it on every visit to the report screen, which is the
-   * same rule the transcript list follows two effects below.
-   */
   const [acceptedLayerCount, setAcceptedLayerCount] = useState<number | null>(null);
   const [acceptedLayersUnknown, setAcceptedLayersUnknown] = useState(false);
-  /**
-   * The accent colour for the NEXT file, empty for "whatever stage 20 and the template say".
-   *
-   * Per-export exactly like {@link TranscriptOverride} and for the same reason: a designer trying
-   * three colours before submitting must not have to save the stage three times, and the third
-   * save is the one that gets left behind on somebody else's record.
-   */
   const [accentOverride, setAccentOverride] = useState("");
   const [savingAccent, setSavingAccent] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [downloadWarnings, setDownloadWarnings] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /**
-   * Whether this device believes it has a connection.
-   *
-   * `navigator.onLine` is optimistic — a captive portal reports true while nothing routes — so it
-   * is only ever used to disable a control EARLY and to explain why. A false negative would hide a
-   * working button, which is why the failed request below also has to say the same thing.
-   */
   const [online, setOnline] = useState(true);
   const [unsentStages, setUnsentStages] = useState(0);
   const [stage20Pending, setStage20Pending] = useState(false);
-  /**
-   * Which preview request is the current one.
-   *
-   * A counter rather than a `cancelled` flag because this fetch REFIRES on a changed selection
-   * (`templateId`) rather than running once on mount — the same reason every list page in this app
-   * counts generations. What matters is ignoring the late answer, not cancelling the request.
-   */
   const previewGeneration = useRef(0);
   const { user } = useAuth();
   const userId = user?.id ?? null;
-  /**
-   * Whether the sheets on screen, and the last file downloaded, were built on this device rather
-   * than by the server — so the banners can say which copy of the workshop they were built from.
-   */
   const [builtHere, setBuiltHere] = useState(false);
   const [fileBuiltHere, setFileBuiltHere] = useState(false);
-  /** Completeness scored from the draft, for when the workshop cannot be read from the server. */
   const [deviceScores, setDeviceScores] = useState<Record<string, DwStageCompleteness> | null>(null);
 
-  /**
-   * The report built on this device: the draft this browser holds, the registry it last read, and
-   * the sources kept the last time this screen was open with a connection. Returns null when the
-   * draft or the registry is not on this device, which is the one case nothing can be built.
-   */
   const buildHere = useCallback(
     (template: string): Promise<DwPreview | null> => buildPreviewOnDevice(id, userId, template),
     [id, userId]
   );
 
-  /**
-   * What the page needs from the workshop when it cannot ask the server for it: the template list
-   * (the six templates are compiled into `lib/offlineReport/templates`), stage 20's answers and the
-   * template they name — all from the draft. Seeding `templateId` is what starts the preview.
-   */
   const adoptDraftForReport = useCallback(async () => {
     setTemplates((current) =>
       current.length ? current : TEMPLATES.map((t) => ({ id: t.id, name: t.name, description: t.description }))
@@ -401,7 +135,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
       setRegistry((current) => current ?? loaded);
       setDeviceScores(localCompleteness(loaded, draft));
     } catch {
-      // No registry on this device: the stage list and the scores stay empty, and the preview says why.
     }
     const stage20 = draft.stages[REPORT_STAGE_KEY];
     const nextSettings: DwEntryData = stage20 ? Object.assign({}, ...Object.values(stage20.singletons)) : EMPTY_SETTINGS;
@@ -422,37 +155,13 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     };
   }, []);
 
-  /**
-   * WHICH WORKSHOP THIS IS ON THE SERVER, how much of it the server has not seen yet, and whether
-   * stage 20 is part of that.
-   *
-   * THE ID RESOLUTION IS THE FIRST THING THIS PAGE DOES AND EVERY FETCH WAITS ON IT. The draft was
-   * already being read here for the two counts below and its `remoteId` was thrown away, which is
-   * how the whole screen came to 404 on a workshop reached by its local id. Resolving it in this
-   * effect rather than in a second one keeps the one read serving all three purposes.
-   *
-   * A report is generated from the SERVER's copy, so a stage captured this morning and not yet
-   * synced is simply absent from the .docx — and nothing in the file would admit it. Counting it
-   * here is what turns a mysteriously thin report into a sentence a designer can act on.
-   *
-   * Stage 20 is singled out because the settings panel writes to it: a save made here while the
-   * device holds unsynced edits to the same stage would be silently overwritten minutes later by
-   * the sync pass, with the designer looking at the value they chose.
-   */
   useEffect(() => {
     let cancelled = false;
     void loadDraft(id).then((draft) => {
       if (cancelled) return;
-      // `loadDraft` matches EITHER id (see `matchesId`) and a missing draft is ordinary — a
-      // colleague's workshop opened on this laptop for the first time has none — so the resolution
-      // runs whether or not one came back. `null` here means "no server record yet", which the page
-      // renders as a state with a date on it instead of firing a request that 404s.
       const target = reportServerId(id, draft);
       setRemoteId(target);
       setLocalOnly(target === null);
-      // Nothing below can arrive, so the "Refreshing…" the page mounts in would otherwise spin for
-      // ever over a preview that is never going to be requested.
-      // A workshop that has never been uploaded is built here from the draft, which holds all of it.
       if (target === null) void adoptDraftForReport();
       if (!draft) return;
       setUnsentStages(
@@ -466,10 +175,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     };
   }, [id, adoptDraftForReport]);
 
-  /**
-   * THE WORKSHOP, ITS REGISTRY AND THE TEMPLATE LIST — the read every other thing on this page
-   * waits behind, and the one whose failure used to leave the page spinning for ever.
-   */
   useEffect(() => {
     if (!remoteId) return;
     let cancelled = false;
@@ -481,52 +186,22 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           listReportTemplates()
         ]);
         if (cancelled) return;
-        // This read owns the banner it writes in its own catch, so a run that succeeds takes it
-        // down. Without this, "Try again" on a workshop that names no template lands on the
-        // "No preview available." panel with the previous attempt's red "could not be loaded"
-        // still at the top of the page — two contradictory verdicts on one load that worked.
         setError(null);
         setRegistry(nextRegistry);
         setDetail(nextDetail);
         setTemplates(nextTemplates);
-        // The whole workshop arrives with its stages, so the settings need no second request.
         const nextSettings = nextDetail.stages?.[REPORT_STAGE_KEY]?.singleton ?? EMPTY_SETTINGS;
         setSettings(nextSettings);
-        // STAGE 20 FIRST, THE HEADER COLUMN SECOND — the order `resolve_template_id` reads them in.
-        //
-        // This used to be `nextDetail.templateId` alone, which is the workshop ROW's column: the
-        // value the create form defaulted to `DCH_STANDARD` on the day the workshop was made, and
-        // the LAST rung the server falls back to. Nothing promotes stage 20's answer into it
-        // (`PROMOTED_COLUMNS` maps `workshopSetup.*` only), so a designer who answered the required
-        // 'Report template' question with the photo catalogue opened this screen on the DCH format,
-        // previewed the DCH document and downloaded a DCH file — while the handset, reading the
-        // stage answer, produced the catalogue from the same record. One record, two documents, and
-        // the required answer the form insisted on inert on this surface. Every other stage-20
-        // setting on this page is already read off the stage entry; `templateId` was the exception.
         const seeded = reportTemplateId(settingText(nextSettings, "templateId"), nextDetail.templateId);
         setTemplateId(seeded);
-        // `reportTemplateId` answers "" when neither stage 20 nor the header column names one, and
-        // the preview loader below refuses to run without an id — so nothing would clear the flag
-        // this page mounts with. Rare, but it is the same eternal spinner as the catch, reached from
-        // a workshop that simply has no template on it.
         if (!seeded) setPreviewing(false);
       } catch (err) {
         if (cancelled) return;
         if (isUnreachable(err)) {
-          // No connection: everything this page reads is on the device, so it reads it there.
           void adoptDraftForReport();
           return;
         }
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
-        /*
-          AND STOP CLAIMING A PREVIEW IS BEING BUILT.
-
-          Cleared HERE, after the cancelled guard, and deliberately not in a `finally`: the success
-          path sets `templateId`, which fires the preview effect below on a LATER commit, so a
-          `finally` would drop the flag in between and flash "No preview available." across every
-          healthy load. Guarded by `cancelled` for the same reason every setter in this effect is —
-          a late failure from a superseded read must not repaint the screen the current one owns.
-        */
         setPreviewing(false);
         setPreviewFailed(true);
       }
@@ -536,12 +211,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     };
   }, [remoteId, retryToken, adoptDraftForReport]);
 
-  /**
-   * KEEP WHAT AN OFFLINE REPORT NEEDS, while there is a connection to fetch it with: the report's
-   * sources for this workshop, and the fonts and borders a file written on the device uses. Best
-   * effort and silent — nothing on this screen depends on it now; it is for the next time there is
-   * no signal.
-   */
   useEffect(() => {
     if (!remoteId || !online || !userId) return;
     void fetchReportSources(remoteId)
@@ -550,32 +219,10 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     void warmReportAssets();
   }, [remoteId, online, userId]);
 
-  /**
-   * Rebuild the sheets. `template` is what the DESIGNER asked for and is empty for "the server
-   * resolves it", which is not the same as "the template on screen" — see {@link templateTouched}.
-   */
   const loadPreview = useCallback(
     async (template: string) => {
-      /*
-        THE GENERATION GUARD, WITHOUT WHICH THE SCREEN CAN SHOW ONE TEMPLATE AND NAME ANOTHER.
-
-        This is the house convention for a fetch that refires on a changed selection — a counter,
-        not a `cancelled` flag (that is for a one-shot mount effect) and not an AbortSignal (this
-        call takes none). It was missing, and the failure is precisely the one this page exists to
-        prevent: pick "Photo catalogue", then pick "Compact summary" before the first response
-        lands, and the older answer arrives second and replaces the newer one. "Refreshing…" is
-        already gone, so the dropdown, its description and both download buttons all say Compact
-        summary while the A4 sheets on screen are the Photo catalogue document. A designer reads
-        this preview INSTEAD of opening the generated file; approving a preview of a different
-        template than the one about to be generated is the whole failure mode.
-
-        Every setter below is guarded, including the one in `finally`: a late failure clearing
-        `previewing` would take the "Refreshing…" state off a request that is still in flight.
-      */
       const mine = ++previewGeneration.current;
       setPreviewing(true);
-      // A fresh attempt is not a failed one. Unguarded on purpose — this is the newest request by
-      // construction, so there is no older generation whose verdict it could be overwriting.
       setPreviewFailed(false);
       const fromDevice = async (): Promise<boolean> => {
         const built = await buildHere(template).catch(() => null);
@@ -588,8 +235,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         return true;
       };
       try {
-        // No server record, or no connection: the report is built here. A preview requested under
-        // a local id would 404, so the route param is never sent.
         if (!remoteId || !online) {
           if (!(await fromDevice()) && mine === previewGeneration.current) setPreviewFailed(true);
           return;
@@ -603,15 +248,10 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           setError(null);
         } catch (err) {
           if (mine !== previewGeneration.current) return;
-          // `isUnreachable`, not `isTransient`: a 5xx means the server WAS reached and then failed,
-          // and that is reported as the failure it is. A request that never arrived is the offline
-          // case, and the report is built on the device instead.
           if (isUnreachable(err) && (await fromDevice())) return;
           if (mine !== previewGeneration.current) return;
           setPreviewFailed(true);
           setError(err instanceof Error ? err.message : "Unable to build the report preview");
-          // The previous preview is deliberately kept on screen. Blanking it on a failed refresh
-          // replaces a document the designer can still read with nothing.
         }
       } finally {
         if (mine === previewGeneration.current) setPreviewing(false);
@@ -625,18 +265,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     loadPreview(templateTouched ? templateId : "");
   }, [templateId, templateTouched, loadPreview]);
 
-  /**
-   * "Try again", offered by the preview panel — and it has to re-run whichever half failed.
-   *
-   * With a template on screen the workshop read succeeded and only the preview call is worth
-   * repeating. With none, the workshop read is what failed, and it is the read that has to be
-   * re-fired — not because `loadPreview` would refuse (it would not: its only early return is on
-   * `remoteId`, which is necessarily set here, and `previewDesignWorkshopReport(remoteId, undefined)`
-   * is a call the server answers). Because it would repaint the SHEETS while leaving everything the
-   * failed read owns still empty: `detail`, so the header has no workshop, `registry`, and
-   * `templates`, so the selector has nothing in it. Bumping `retryToken` re-runs the effect above,
-   * which is the only thing that fills those.
-   */
   const retryPreview = useCallback(() => {
     if (templateId) {
       void loadPreview(templateTouched ? templateId : "");
@@ -647,18 +275,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     setRetryToken((token) => token + 1);
   }, [templateId, templateTouched, loadPreview]);
 
-  /**
-   * Re-read the workshop after the settings have been written.
-   *
-   * THE SERVER'S COPY, NOT THE ONE THAT WAS POSTED. `coerce_value` normalises on the way in — a
-   * number typed into a text box, a date, a tag list with an empty member — so the entry that
-   * comes back is not always the entry that went out, and seeding the form from what was sent
-   * would leave a designer looking at a value the record does not hold. It also refreshes the
-   * completeness figures, which stage 20 contributes to.
-   *
-   * A failure here is deliberately silent: the save itself succeeded and said so, and a banner
-   * reporting that the re-read failed would read as the save having failed.
-   */
   const refreshWorkshop = useCallback(async (): Promise<boolean> => {
     if (!remoteId) return false;
     try {
@@ -666,35 +282,13 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
       setDetail(next);
       const nextSettings = next.stages?.[REPORT_STAGE_KEY]?.singleton ?? EMPTY_SETTINGS;
       setSettings(nextSettings);
-      // AND THE TEMPLATE, WHICH THIS RE-READ USED TO IGNORE. `templateId` was seeded once, in the
-      // mount effect, so changing 'Report template' inside the settings panel and pressing Save
-      // wrote the new answer, printed "Saved. The preview below has been rebuilt from them." and
-      // then rebuilt the preview from the template that had just been replaced — with the dropdown
-      // above it still naming it. Re-seeded in the server's own order, and only while the dropdown
-      // is untouched: a designer who has picked a template for THIS file must not have it snatched
-      // back by a re-read fired by an unrelated save (the accent picker calls this too).
       if (!templateTouched) setTemplateId(reportTemplateId(settingText(nextSettings, "templateId"), next.templateId));
       return true;
     } catch {
-      /*
-        STILL SILENT, AND NOW ANSWERABLE. The silence is right — the save succeeded and said so, and a
-        banner reporting that the RE-READ failed reads as the save having failed. What was wrong was
-        that callers could not tell, so the accent handler below cleared the override that was the
-        only thing holding the new colour on screen and repainted the whole preview in the OLD one
-        under a success message. Audit 2026-08-15 (LOW, frontend).
-      */
       return false;
     }
   }, [remoteId, templateTouched]);
 
-  /**
-   * The recordings, fetched only when the annexure is actually in play.
-   *
-   * A workshop can hold forty recordings and the join that resolves them is not free, so a report
-   * nobody is appending transcripts to must not pay for the list. Both the saved answer and the
-   * per-file override arm it, because "Include the transcripts" is exactly the moment somebody
-   * wants to know what they are about to include.
-   */
   const annexureWanted = transcriptOverride === "YES" || (transcriptOverride === "" && wantsTranscripts(settings));
 
   useEffect(() => {
@@ -704,25 +298,12 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
       .then((next) => {
         if (!cancelled) setTranscripts(next);
       })
-      // Silent: the annexure is a supporting panel, and an error banner over a list nobody asked
-      // to see would be louder than the thing it is reporting. The download's own warnings are
-      // where a genuinely missing transcript is named.
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [remoteId, annexureWanted]);
 
-  /**
-   * How many accepted layers the machine-assisted annexure would carry — read only once the box is
-   * ticked, exactly as the transcript list above is read only once that annexure is in play.
-   *
-   * THE FAILURE IS NOT SILENT HERE, and that is the difference from the effect above. A transcript
-   * list that fails to load costs a supporting panel nobody asked for. This number stands next to a
-   * decision about whether model prose enters a submitted document, and a silent failure would
-   * leave the sentence beside the checkbox reading as though it had counted and found nothing. So a
-   * failed read is recorded as UNKNOWN and said in those words.
-   */
   useEffect(() => {
     if (!remoteId || !includeAiLayers) return;
     let cancelled = false;
@@ -733,17 +314,12 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         setAcceptedLayerCount(next.accepted);
       })
       .catch(async () => {
-        // With no connection the count is read from the sources kept on this device, which is
-        // exactly what a file written here would print.
         const kept = await getSources(remoteId, userId);
         if (cancelled) return;
         if (kept) {
           setAcceptedLayerCount(kept.sources.aiLayers.filter((layer) => layer.accepted).length);
           return;
         }
-        // NOT setAcceptedLayerCount(0). Zero is a claim that nothing has been accepted; this is the
-        // absence of an answer, and the two send a designer to different places — one to the AI
-        // layers screen to accept something, the other to their connection.
         setAcceptedLayerCount(null);
         setAcceptedLayersUnknown(true);
       });
@@ -758,21 +334,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     [detail, drawnSettings, templateName]
   );
 
-  /**
-   * The paper. Stage 20's answer wins over the template's, because that is the order the file will
-   * resolve it in once the page sends `pageSize` on the download — and a preview laid out on A4
-   * beside a Letter file is a preview of a different document.
-   */
   const pageSize = settingText(drawnSettings, "pageSize") || preview?.meta.pageSize || "A4";
 
-  /**
-   * The colour the report is written in, resolved the way the server resolves it.
-   *
-   * `report_theme.resolve_accent` reads the request first and the saved stage-20 answer second, so
-   * this does too — a preview resolved in a different order is a preview of a document nobody will
-   * receive. `themeAccent` is the authority on the stage and `themePreset` is read only when it is
-   * blank, which is what lets a designer store the NAME they chose and still have the hex win.
-   */
   const savedAccent = useMemo(() => {
     const hex = settingText(settings, "themeAccent");
     if (hex) return hex;
@@ -786,23 +349,10 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     chosen: accentChosen
   } = useMemo(() => resolvePreviewPalette(accentOverride, savedAccent), [accentOverride, savedAccent]);
 
-  /**
-   * The blocks, widened to the union this page can draw.
-   *
-   * `DwBlock` is the shared client's union and predates `MapBlock` and `ChartBlock`;
-   * `PreviewBlock` widens it with those two and with the resolved rich-text form. The assignment
-   * needs no cast in that direction, and every renderer still switches exhaustively.
-   */
-  // A rebuilt preview keeps the block objects that did not change, so a settings save or a colour
-  // save re-renders and re-measures what changed and leaves every other page exactly as it was.
   const blocks: PreviewBlock[] = useStableBlocks(useMemo(() => (preview?.blocks ?? []) as PreviewBlock[], [preview]));
   const mediaUrls = useReportMediaUrls(blocks);
   const codeSpans = useMemo(() => countCodeSpans(blocks), [blocks]);
 
-  /**
-   * The choices this file is made with, the same set the server's request carries — see the notes
-   * on each field in `downloadDesignWorkshopReport`'s call below.
-   */
   const fileOptions: ReportOptions = {
     templateId: templateTouched ? templateId || null : null,
     pageSize: settingText(settings, "pageSize") || null,
@@ -813,7 +363,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     includeAiLayers
   };
 
-  /** Write the file on this device, from the draft and the sources it holds. */
   async function writeHere(format: "DOCX" | "PDF") {
     const draft = await loadDraft(id);
     if (!draft) throw new Error("This workshop isn't on this device.");
@@ -836,40 +385,25 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     setError(null);
     setDownloadWarnings(null);
     try {
-      // No server record yet, or no connection: the file is written here.
       if (!remoteId || !online) {
         await writeHere(format);
         return;
       }
       try {
         const file = await downloadDesignWorkshopReport(remoteId, {
-          // ONLY WHAT THE DESIGNER ASKED FOR. Untouched, this is silent and `resolve_template_id`
-          // reads stage 20's answer and then the header column — the same order the dropdown above is
-          // seeded in, so the file matches the screen.
           templateId: fileOptions.templateId ?? null,
           formats: [format],
-          // The stage-20 answers only, and only where they were filled in: where the designer left
-          // them blank the server's own derivation must stand.
           pageSize: fileOptions.pageSize || undefined,
           headerText: fileOptions.headerText || undefined,
           footerText: fileOptions.footerText || undefined,
-          // Sent only when this page is overriding; omitted, stage 20 and the template decide.
           themeAccent: fileOptions.themeAccent || undefined,
-          // `undefined` means "whatever stage 20 says"; sending `false` for it would strip an
-          // annexure the designer had already asked for and saved.
           includeTranscripts: fileOptions.includeTranscripts ?? undefined,
-          // Sent unconditionally, so the request says what the designer chose rather than leaving
-          // the server to infer it from silence. See the note on `includeAiLayers` above.
           includeAiLayers
         });
         saveBlobToDisk(file.blob, file.fileName);
         setFileBuiltHere(false);
-        // Shown whether or not there were any: "generated with no warnings" is information.
         setDownloadWarnings(file.warnings);
       } catch (err) {
-        // NOT `isTransient` here, deliberately — see `e2e/report-download.spec.ts`. An ApiError means
-        // the request arrived and was answered: say what the answer was. Anything else is a request
-        // that never completed, which is the offline case — and the file is then written here.
         if (err instanceof ApiError) {
           setError(
             `Couldn't generate the ${format}: ${err.message} Your workshop is unaffected.`
@@ -888,15 +422,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     }
   }
 
-  /**
-   * The stages that are not finished, named.
-   *
-   * The preview's own `warnings` are the authority on what the DOCUMENT is missing; this is the
-   * complementary view — which of the 22 stages still has unfilled Basic-tier fields — because a
-   * designer looking at a thin report wants to know which stage to go and open, and a warning that
-   * says "Cost sheet: Unit cost is required" does not say where that lives.
-   */
-  /** The server's scores, or — when the workshop could not be read from it — the draft's own. */
   const completeness = detail?.completeness ?? deviceScores ?? undefined;
   const incomplete = useMemo(() => {
     if (!registry || !completeness) return [];
@@ -911,12 +436,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
     <>
       <PageHeader
         title="Report"
-        /*
-          "Loading…" WAS ALSO PERMANENT, and for the same reason as the panel at the foot of the
-          page: `detail` is only ever set by the one read, so a read that failed — or a workshop the
-          server has no copy of, which never issues the read at all — left the header describing a
-          fetch that had stopped hours ago. Both of those are states with something to say.
-        */
         description={
           detail
             ? `Generated from “${detail.title}” — the same document the .docx and .pdf are written from.`
@@ -940,28 +459,16 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
 
       <section className="panel mb-5 grid gap-4 p-4">
         <div className="grid gap-3 md:grid-cols-[minmax(0,22rem)_1fr] md:items-end">
-          {/* FieldBlock, not Field: a <label> around a themed dropdown forwards a stray click into
-              the menu and closes it after one pick. */}
           <FieldBlock label="Report template">
             <Dropdown
               value={templateId}
-              // Recorded as a CHOICE, which is what puts it on the wire — see `templateTouched`.
-              // Set even when the value is unchanged: picking the template that was already
-              // selected is still a designer deciding this file's template, and treating it as a
-              // no-op would leave the next re-read free to move the dropdown under them.
               onChange={(value) => {
                 setTemplateTouched(true);
                 setTemplateId(value);
               }}
               options={templates.map((template) => ({ value: template.id, label: template.name }))}
               ariaLabel="Report template"
-              // This dropdown reconfigures the screen it sits on, so focus must stay on it rather
-              // than jumping to whatever control happens to follow.
               advanceOnSelect={false}
-              // Templates are rows fetched from the server, so their number is a fact about the
-              // deployment. Left to the option count this control would grow a filter box on the
-              // cluster that has uploaded eight templates and not on the one that has uploaded
-              // seven, for the same designer moving between the two.
               searchable
             />
           </FieldBlock>
@@ -979,12 +486,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
               options={TRANSCRIPT_OPTIONS}
               ariaLabel="Transcripts in this file"
               advanceOnSelect={false}
-              // NO `searchable`, deliberately, and it is not an oversight next to the template
-              // picker above. TRANSCRIPT_OPTIONS is three constants declared in this file and will
-              // not grow: a filter box over it is an extra tab stop, a "No matches" state and a
-              // thing to read, in exchange for saving nobody a scroll. The option-count rule in
-              // SearchableSelect gets this right on its own — this comment exists so the next
-              // reader knows the asymmetry with the control above it was a decision.
             />
           </FieldBlock>
           <p className="text-sm leading-6 text-ink-muted">
@@ -998,17 +499,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           </p>
         </div>
 
-        {/*
-          THE MACHINE-ASSISTED-TEXT ANNEXURE. A checkbox rather than a dropdown, because unlike the
-          transcript control above it overrides no saved answer — there is no "leave stage 20 alone"
-          state for it to carry, so three options would be two that mean the same thing.
-
-          THE SENTENCE UNDER IT IS THE CONTROL. What is being agreed to is that prose a model wrote
-          enters a document somebody signs, and the one protection against that being done
-          absent-mindedly is that nothing unaccepted can print: a person has already read each
-          passage against its source and put their name to it on the AI-layers screen. Saying so
-          here is what makes this tick a confirmation rather than a preference.
-        */}
         <div className="grid gap-3 md:grid-cols-[minmax(0,22rem)_1fr] md:items-start">
           <Toggle label="Include machine-assisted text" checked={includeAiLayers} onChange={setIncludeAiLayers} />
           <div className="grid gap-1.5 text-sm leading-6 text-ink-muted">
@@ -1017,14 +507,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                 ? "Adds accepted AI text, labelled with its model and who accepted it."
                 : "Off. AI text is left out."}
             </p>
-            {/*
-              WHAT THE TICK WILL ACTUALLY DO, said before the sixty pages rather than after them.
-              Three states and not two: a number, an honest unknown, and nothing at all while the box
-              is unticked. The unknown matters more than the number — a read can fail because the
-              designer is offline or because they hold the workshop but not the recordings, and a
-              "0" in either case would tell them nobody has accepted anything, which is a claim
-              rather than an absence and sends them to the wrong screen.
-            */}
             {includeAiLayers ? (
               <p aria-live="polite" className="font-medium text-ink-700">
                 {acceptedLayersUnknown ? (
@@ -1038,13 +520,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                 ) : acceptedLayerCount === null ? (
                   "Counting what has been accepted…"
                 ) : acceptedLayerCount === 0 ? (
-                  // SAYS "NO ANNEXURE" AND DOES NOT PROMISE A NOTE. An earlier draft of this line
-                  // said the file would come back "with a note beside the download saying why", and
-                  // that is only true when layers EXIST and are unaccepted — `annexure_warnings`
-                  // counts unaccepted and empty items, so a workshop with no layers at all hands it
-                  // an empty list and it returns nothing. Promising a note that does not arrive is
-                  // how a designer concludes the tick did nothing at all, which is the failure this
-                  // whole count exists to prevent. The count is already on screen and is the answer.
                   <>
                     Nothing accepted yet. Accept items on{" "}
                     <Link href={`/design-workshops/${id}/ai-layers`} className="underline">
@@ -1066,8 +541,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           </div>
         </div>
 
-        {/* Between the two dropdowns and the download buttons, because it is the last decision
-            taken before the file is generated and the first one visible in the pages below. */}
         <div className="border-t border-line-200 pt-4">
           <ReportAccentPicker
             value={accentOverride}
@@ -1075,49 +548,8 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             palette={palette}
             savedAccent={savedAccent}
             saving={savingAccent}
-            /*
-              KEEPING a colour, as opposed to trying one. The twelve swatches are a per-file
-              override by design — three colours before submitting must not mean three saves — but
-              there was no way to make one stick, so a designer who chose a custom colour found the
-              old one again the next morning with nothing having said the choice was temporary.
-
-              This is also where the colour panel's own commit lands, confirmed or dismissed: a
-              designer only opens that panel because they have been handed a brand colour and mean
-              to keep it, and "backing out of the panel loses the colour" was the report that
-              rebuilt it. See the picker's header.
-
-              Writes BOTH keys, because `resolve_accent` reads the hex first and the preset only
-              when the hex is missing: writing the name alone would resolve to nothing for "Custom
-              colour", which is not in `PRESETS_BY_KEY`, and writing the hex alone would lose the
-              name the designer recognises when they come back to the screen.
-            */
             onSave={async (accent) => {
-              /*
-                EVERY REFUSAL LIVES IN THIS HANDLER, NOT ON THE BUTTON. `commit()` routes Escape,
-                click-away, blur and `AnchoredPopover.onClose` through here as well as the Save
-                press, so a `disabled` attribute guards exactly one of five doors into the same
-                write. The picker's own button is `disabled={saving}` alone and that is deliberate;
-                this is where the conditions are checked.
-
-                THE OTHER TWO CONDITIONS WERE MISSING AND EACH COST THE COLOUR. Audit 2026-08-15
-                (MAJOR, frontend). `ReportSettingsPanel` beside this control refuses the identical
-                write to the identical entity of the identical stage when stage 20 has unsent local
-                changes — `disabled={saving || !dirty || !online || draftPending}` — and prints
-                "Saving from here would be undone the moment those changes sync". It is the same
-                fact here: `buildStageEntries` sends a READ stage's singleton with no `merge` flag
-                and `save_stage` then replaces that singleton's `data` wholesale, so the sync pass
-                writes the draft's stage-20 copy — which has no `themeAccent` — straight over the
-                colour that was just saved. A designer chose a brand colour, was told it was saved,
-                and found the old one the next morning with nothing having said why.
-
-                Offline is refused for the plainer reason: this write does not queue. Without the
-                check the picker reported a saved colour that had never left the laptop.
-              */
               if (!remoteId) return;
-              // A post held on this workshop: keeping the colour is a stage-20 write the server
-              // refuses them, so it is refused here in the server's own words — and held, with its
-              // own sentence, while that is still being asked. The colour still applies to whatever
-              // is downloaded from this page — generating is theirs to do.
               const heldReason = heldPostReason(postRefusal);
               if (heldReason) {
                 setError(
@@ -1153,24 +585,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                     }
                   ]
                 });
-                // RE-READ FIRST, THEN DROP THE OVERRIDE, and not the other way round. The saved
-                // colour IS the colour now, so keeping the override would show "overriding the
-                // saved colour" against an identical value — but clearing it before `savedAccent`
-                // has caught up leaves the page resolving to the PREVIOUS colour for the length of
-                // a network round trip, which the sheets below repaint in and then repaint out of.
-                // Every commit out of the colour panel comes through here, so that flash would be
-                // the ordinary experience of choosing a colour rather than a rare one.
-                /*
-                  AND ONLY DROP THE OVERRIDE IF THE RE-READ ACTUALLY HAPPENED. Audit 2026-08-15 (LOW).
-
-                  The comment above reasons about the ORDER of these two lines and not about the
-                  re-read failing, which is the one case where the chosen order is wrong. On a failed
-                  re-read `settings` still holds the PREVIOUS entry and `savedAccent` still resolves
-                  to the previous hex, so clearing the override — the only thing holding the new
-                  colour on screen — repainted the whole preview in the old colour under a successful
-                  save message. The screen showed the opposite of what had happened, and a download
-                  taken from that state built the file from a colour the preview was not showing.
-                */
                 const reread = await refreshWorkshop();
                 if (reread) setAccentOverride("");
                 if (templateId) void loadPreview(templateTouched ? templateId : "");
@@ -1184,14 +598,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         </div>
 
         {localOnly || !online || builtHere ? (
-          /*
-            THE REPORT IS BUILT ON THIS DEVICE, and this says so in the designer's terms: what it was
-            built from, and what to expect of the photographs. It used to say the opposite — that the
-            report needed a connection and that the browser had no renderer of its own —
-            which was true of the code and was a missing feature narrated to the person who needed it.
-            Which copy is authoritative is written down for maintainers (docs/DESIGN_WORKSHOP.md), not
-            argued on this screen.
-          */
           <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">
             <p className="flex items-start gap-1.5 font-semibold text-ink-900">
               <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
@@ -1233,8 +639,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             <Download className="h-4 w-4" aria-hidden />
             {downloading === "PDF" ? "Generating…" : "Download .pdf"}
           </button>
-          {/* Prints the sheets below through the browser's own engine. Named as what it is — a
-              stand-in — because it is laid out by this page and not by the server's writers. */}
           <button type="button" className="field-button-secondary" onClick={() => window.print()}>
             Print these pages
           </button>
@@ -1258,9 +662,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                   <li key={index}>{warning}</li>
                 ))}
               </ul>
-              {/* Stated because the header is capped at 900 characters server-side, and a list that
-                  quietly stops is indistinguishable from a list that ended. A file written on this
-                  device hands over its whole list, so the note is not shown for one. */}
               {fileBuiltHere ? null : (
                 <p className="mt-1 text-xs">Shortened — see the full list below.</p>
               )}
@@ -1273,14 +674,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
         ) : null}
       </section>
 
-      {/*
-        THE PANEL IS A SERVER WRITE AND IS WITHHELD UNTIL THERE IS SOMETHING TO WRITE TO. Its Save
-        posts stage 20 under the id it is handed, so handing it the route param put a `dwlocal-…` id
-        on a PUT that 404s. Hidden rather than disabled: with no server record the settings are not
-        "temporarily unavailable", they have nowhere to go, and the banner above says so in the one
-        place a designer is already looking. It comes back by itself the moment the sync creates the
-        workshop, because `remoteId` is what gates it.
-      */}
       {remoteId ? (
         <ReportSettingsPanel
           workshopId={remoteId}
@@ -1291,11 +684,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           readOnlyReason={heldPostReason(postRefusal)}
           onDraftChange={setSettingsDraft}
           onSaved={() => {
-            // The document the server builds has just changed, so the pages below are stale until
-            // they are rebuilt. Two round trips is cheap next to a designer approving a preview of
-            // the settings they replaced a moment ago. `refreshWorkshop` is also what moves the
-            // template dropdown when the template is what was saved — the preview alone rebuilding
-            // is how this screen came to assert "rebuilt from them" over the previous template.
             void refreshWorkshop();
             if (templateId) void loadPreview(templateTouched ? templateId : "");
           }}
@@ -1304,7 +692,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
 
       {annexureWanted ? <TranscriptAnnexurePanel transcripts={transcripts} /> : null}
 
-      {/* Completeness next, because it is what decides whether the preview below is worth reading. */}
       <section className="panel mb-5 grid gap-3 p-4">
         <div>
           <div className="flex items-center justify-between text-sm">
@@ -1332,7 +719,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
                     {" "}
                     — {score?.requiredFilled} of {score?.requiredTotal}
                     {score?.missing.length ? `: ${score.missing.slice(0, 4).join(", ")}` : ""}
-                    {/* Every truncation says so. */}
                     {score && score.missing.length > 4 ? ` and ${score.missing.length - 4} more` : ""}
                   </span>
                 </li>
@@ -1343,28 +729,6 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
           <p className="text-sm text-ink-700">All required fields are filled in.</p>
         )}
 
-        {/*
-          A WAY BACK INTO A STAGE THAT IS FILLED IN AND WRONG.
-
-          Until this block the ONLY link out of this screen into a stage was the list above, and that
-          list is rendered inside the `incomplete.length ?` branch — so it names stages with a
-          MISSING answer and nothing else. The case a designer reads a preview to catch is the
-          opposite one: the participant table prints the wrong village for Kamla Devi, every required
-          box on that stage is filled, and the screen whose whole job is "is this the document?"
-          could not answer "and how do I change this?". They had to remember which of the
-          twenty-two stages owns the participant table and find it from the index.
-
-          A LIST OF STAGES AND NOT AN EDITABLE SHEET, and that is a rule rather than an economy. An
-          edit has to land on the STAGE ENTRY so `merge_entry_provenance` moves authorship to the
-          designer and the printed value stays the entry's own frozen copy. A preview that wrote
-          through to the repository record behind a reference would re-resolve a document that may
-          already be in an officer's hands, which is the one thing this application must never do.
-          Where a value came from a reference, the route in is the same picker and inline dialog the
-          stage already has.
-
-          Collapsed, because twenty-two links between the completeness bar and the sheet would push
-          the thing this page exists to show below the fold.
-        */}
         <details className="border-t border-line-200 pt-3">
           <summary className="cursor-pointer text-sm font-medium text-purple-700 dark:text-purple-300">
             Open a stage to correct something the preview shows
@@ -1402,32 +766,13 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
       ) : null}
 
       {codeSpans ? (
-        // A mark the screen can show and the file cannot. `report_model.Run` has no monospace flag,
-        // so `_runs_for` cannot carry CODE into the .docx or the .pdf — the words survive, the face
-        // does not. Drawing it without saying so would be the preview lying about the file.
         <section className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           {codeSpans} passage{codeSpans === 1 ? " is" : "s are"} marked as code — printed as plain text.
         </section>
       ) : null}
 
-      {/* `rp-host` is what the sheet stylesheet's print block puts back after it hides every other
-          child of <main>, and what it strips the panel chrome off. Renaming it silently prints a
-          blank page. */}
       <section className="panel rp-host p-4 sm:p-6">
         {preview === null ? (
-          /*
-            THREE STATES, BECAUSE THERE ARE THREE SITUATIONS.
-
-            This was a single ternary on `previewing`, and the flag it read could only ever be
-            cleared by the very code path that had just failed — see the note on `previewFailed`. So
-            a workshop whose first read failed sat under "Building the preview…" until the tab was
-            closed, and every other route to an empty preview said "No preview available.", which
-            reads as a settled fact about the record rather than as a request that did not arrive.
-
-            The retry is the part that matters. Without it there is no control anywhere on this page
-            that can re-issue the failed read: the template dropdown is populated by the same
-            response, so on a failed load it is empty and cannot be changed.
-          */
           previewing ? (
             <p className="text-sm text-ink-700">Building the preview…</p>
           ) : previewFailed ? (
@@ -1447,21 +792,11 @@ export default function DesignWorkshopReportPage({ params }: { params: Promise<{
             <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b border-line-200 pb-3" data-rp-noprint>
               <h2 className="font-display text-lg font-bold text-ink-900">{preview.meta.title}</h2>
               {preview.meta.subtitle ? <p className="text-sm text-ink-muted">{preview.meta.subtitle}</p> : null}
-              {/* Says out loud that the preview is stale while a new template is being fetched,
-                  rather than leaving the old document on screen under a new template's name. */}
               {previewing ? <span className="text-xs text-ink-500">Refreshing…</span> : null}
             </div>
             <ReportSheets
               blocks={blocks}
               pageSize={pageSize}
-              // ON THE WIRE SINCE 2026-08-28, and still read defensively. `preview_report` in
-              // `design_workshops.py` now sends `marginMm` beside `pageSize`, which is what
-              // `report_pdf.py` sizes its text column from — and the text column is what decides
-              // where every line wraps and therefore where every page breaks. It is still read
-              // through `PreviewMeta` and `pageGeometry` still falls back to 25, because the
-              // sender is not the only thing between here and the value: an older server, or a
-              // response cached before that deploy, carries `meta` without the key. Where that
-              // happens the sheet says on screen that it assumed one.
               marginMm={(preview.meta as PreviewMeta).marginMm}
               headerText={headerText}
               footerText={footerText}

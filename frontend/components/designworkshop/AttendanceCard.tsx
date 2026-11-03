@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * Daily attendance — one tick-list per workshop day, starting "All present" (owner, C7, 2026-10-17).
- *
- * Writes `participant.absentDays` and nothing else; days attended, the completion count and the
- * certificates' days are counted from it (`lib/stageComputed`, stored by the save). An untouched
- * roster is everybody present every day, so a designer only ticks the exceptions off.
- */
-
 import { useState } from "react";
 import { CalendarCheck } from "lucide-react";
 
@@ -51,7 +43,6 @@ export function AttendanceCard({
         </p>
       </div>
 
-      {/* A choice between named days, not an action row. */}
       <div className="flex flex-wrap gap-2" role="group" aria-label="Workshop day">
         {days.map((n) => {
           const when = dateOfDay(startDate, n);

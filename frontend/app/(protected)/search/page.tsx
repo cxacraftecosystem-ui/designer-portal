@@ -53,49 +53,15 @@ type SearchResult = {
   products: ProductDocumentation[];
   tools: ToolDocumentation[];
   media: MediaFile[];
-  /**
-   * The SIXTH bucket — the twenty-two-stage record this product is named after. The `workshops`
-   * bucket above is the LEGACY `Workshop` table, a different model entirely, so before this key
-   * existed no design workshop was reachable from the screen labelled "Search".
-   *
-   * Optional, like every other additive key on this payload: a server that predates it simply does
-   * not send it, and the section renders nothing rather than throwing.
-   */
   designWorkshops?: DwSummary[];
-  /** Rows matching the query in each bucket, ignoring the page window. */
   totals?: Partial<Record<SearchRecordType, number>>;
-  /** Every bucket added together — what "N results" means to a researcher. */
   total?: number;
-  /** Pages needed by the LONGEST bucket, since one pager walks all six at once. */
   pageCount?: number;
-  /**
-   * Buckets this account asked for and may not read. The server drops them from the selection and
-   * NAMES them here rather than answering 0, because a bucket that comes back empty is
-   * indistinguishable from a repository with nothing in it — and that is the sentence a researcher
-   * would otherwise carry away.
-   */
   typesRefused?: string[];
-  /** What a design-workshop text query actually matched. Present only when that bucket was read. */
   designWorkshopSearchScope?: string;
-  /**
-   * Which stages a workshop matched IN, keyed by workshop id — `{ "dw_1": ["Stage 5: …"] }`.
-   *
-   * The bucket matches the workshop's own columns OR any answer inside its 22 stages, so a row can
-   * come back for a reason that is nowhere on the row: the title says nothing about indigo and a
-   * dye-bath answer in stage 5 does. Without this the reader would have to open twenty-two stages
-   * to account for the hit.
-   *
-   * A workshop found by its title alone is simply ABSENT from the map, and the row then prints no
-   * matched-in line. An empty array beside it would read as "we looked and found none".
-   */
   designWorkshopStageMatches?: Record<string, string[]>;
 };
 
-/**
- * One row in a result bucket. `href` is the SAME destination the matching list page's rows open: the
- * record's READ-ONLY page (`lib/recordView.ts`, owner ruling 2026-10-16), from which "Update" reaches
- * the form. The whole result card is the click target (`OpenableCard`).
- */
 type ResultItem = {
   id: string;
   title: string;
@@ -103,67 +69,23 @@ type ResultItem = {
   status: string;
   date: string;
   href: string;
-  /** true when `href` leaves the app (an S3 object), so it opens in a new tab. */
   external?: boolean;
-  /** Row-action label; defaults to "Open". */
   actionLabel?: string;
-  /**
-   * WHERE INSIDE THE RECORD THE QUERY MATCHED, when the match was not on anything printed above.
-   * Only the design-workshop bucket sets it today (the stage names the server resolved), and the
-   * line is drawn only when it has members: a row whose title carries the word needs no explanation.
-   */
   matchedIn?: string[];
 };
 
-/**
- * How many "matched in" entries a row prints before the rest are counted.
- *
- * A workshop can legitimately answer one word in a dozen of its twenty-two stages, and twelve stage
- * titles on a search row is a paragraph where a subtitle should be. Three is what fits a phone-width
- * row on one line. THE REMAINDER IS COUNTED AND NEVER DROPPED — non-negotiable 10: a list that
- * quietly stops is indistinguishable from a list that ended there, and here it would understate how
- * much of a fortnight's fieldwork the researcher's word actually appears in.
- */
 const MATCHED_IN_SHOWN = 3;
 
-/**
- * Rows per bucket per page. `GET /search` caps pageSize at 50 and applies ONE shared skip/take to
- * all five buckets, so this is the page size of every bucket at once.
- */
 const PAGE_SIZE = 20;
 
-/** One answer: unified (`/search/unified`) or legacy (`/search`), never both. */
 type SearchAnswer = { unified: UnifiedResponse | null; legacy: SearchResult | null };
 
-/** Filters as they were when Search was pressed — the pager must not drift with the live inputs. */
 type AppliedFilters = { q: string; filters: SearchFilters };
 
 export default function SearchPage() {
-  /**
-   * The URL SEEDS the filters, it does not own them.
-   *
-   * `?type=` narrows the page to one bucket and is how the dashboard's repository totals open — a
-   * total is a question ("which 74 tools?") and the honest answer is the list of those tools, not a
-   * page of five headings where four are empty. Reading it once on arrival keeps every link that
-   * exists today working, while leaving the filters themselves in React state: they now include a
-   * place, a date range and a multi-select, and if a chip click were a navigation it would remount
-   * the page and quietly throw the other three away.
-   *
-   * The type filter is also still applied to the RENDER, not only to the request, so it keeps
-   * working against an API that does not know `types` yet.
-   */
   const searchParams = useSearchParams();
   const { user } = useAuth();
 
-  /**
-   * WHICH BUCKETS THIS READER IS OFFERED, and it is five or six rather than always six.
-   *
-   * Design-workshop data is readable by Professor, Admin and Master Admin
-   * (`canViewDesignWorkshopData`, mirroring `deps.can_view_design_workshop_data`). `GET /search`
-   * drops the bucket for anybody else and says so in `typesRefused`; offering the chip here would be
-   * the UI advertising what the API refuses, which is the one thing `lib/permissions.ts` exists to
-   * stop. The other five are unchanged for everybody.
-   */
   const offeredTypes = useMemo<readonly SearchRecordType[]>(
     () => (canViewDesignWorkshopData(user) ? SEARCH_RECORD_TYPES : RECORD_TYPES),
     [user]
@@ -176,42 +98,20 @@ export default function SearchPage() {
   const [result, setResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** The unified answer (`GET /search/unified`) when the question went there; null on the legacy path. */
   const [unified, setUnified] = useState<UnifiedResponse | null>(null);
-  /** "Show all" on one unified group: that type, paged. */
   const [unifiedFocus, setUnifiedFocus] = useState<{ type: UnifiedType; page: number } | null>(null);
 
-  /**
-   * THE WORKSHOP SCOPE, and why this page has to have it.
-   *
-   * The map links here — "Browse as a list" — carrying its own workshop scope, and the two screens
-   * share one filter vocabulary precisely so that link means the same set of records on both sides. A
-   * search page that read the `workshopIds` in the URL and then ignored it would answer a scoped
-   * question with the whole repository, silently, which is worse than not offering the link.
-   *
-   * `defaultToMostRecent` is FALSE here. `/search` is the general way in to the corpus and its default
-   * has always been "everything"; quietly narrowing it to last week's workshop would change what every
-   * existing bookmark to this page means. The map and the completion matrix default the other way
-   * because they are read DURING a workshop.
-   */
   const scope = useWorkshopScope({
     defaultToMostRecent: false,
     initialWorkshopIds: workshopScopeFromSearchParams(new URLSearchParams(searchParams.toString()))
   });
 
-  // Arriving from a dashboard total (or any /search?type=… link, including the map's "Browse as a
-  // list") must SHOW the list, not an empty form: the click already said what it wanted. An empty q is
-  // a valid search here — it means "everything of this type" — which is exactly what a total is asking
-  // for, and what a bare workshop scope is asking for too.
   const arrived = useRef(false);
   useEffect(() => {
     if (arrived.current) return;
     const seeded = filtersFromSearchParams(new URLSearchParams(searchParams.toString()), offeredTypes);
     const q = (searchParams.get("q") ?? "").trim();
     const scoped = workshopScopeFromSearchParams(new URLSearchParams(searchParams.toString()));
-    // The three filters added on 2026-08-31 count as a reason to search on arrival, exactly as a
-    // place or a type does: a link that carried `?craftId=…` and then showed a blank form would be
-    // the filter looking broken on the one path that proves it works.
     const narrowed =
       seeded.types.length > 0 ||
       Boolean(seeded.place) ||
@@ -222,7 +122,6 @@ export default function SearchPage() {
     if (!q && !narrowed && !scoped.length) return;
     arrived.current = true;
     setFilters(seeded);
-    // Back from a record: the page and the "Show all" group the reader was on (written below).
     const seededPage = Number(searchParams.get("page") ?? "1");
     if (Number.isInteger(seededPage) && seededPage > 1) setPage(seededPage);
     const [focusType, focusPage] = (searchParams.get("focus") ?? "").split(":");
@@ -232,16 +131,6 @@ export default function SearchPage() {
     setApplied({ q, filters: seeded });
   }, [searchParams, offeredTypes]);
 
-  /**
-   * THE CRAFT AND ARTISAN LISTS THE TWO NEW PICKERS NEED — loaded once, and a convenience rather
-   * than a dependency: if either lookup fails the picker simply stays hidden and the text, place,
-   * type, date and media-type filters still work. That is `SearchScreen.kt`'s rule, in its words.
-   *
-   * `LIST_PAGE_CEILING` and `listCut`, like `FunnelFilters` — the corpus is larger than one page
-   * (178 crafts, 749 artisans when last counted) and a picker that quietly showed the first hundred
-   * would be a filter offering a subset of the repository while claiming to offer all of it. What is
-   * cut is SAID under the controls, which is the only thing that makes the cap honest.
-   */
   const [artisans, setArtisans] = useState<Artisan[]>([]);
   const [cuts, setCuts] = useState<{ artisans: ListCut | null }>({ artisans: null });
 
@@ -259,17 +148,11 @@ export default function SearchPage() {
     };
   }, []);
 
-  // Runs on submit (new `applied` object, even for the same text), on every filter change, on every
-  // workshop-scope change and on every page step. Every active filter goes into ONE query —
-  // buildQuery drops the keys that resolved to nothing, so an untouched filter costs nothing.
   useEffect(() => {
     if (!applied) return;
     let cancelled = false;
     setLoading(true);
     const params = searchFilterParams(applied.filters);
-    // A typed question goes to the unified route (both portals, ranked); a 404 there means it is
-    // switched off, and the legacy browse below answers instead. Browsing (no text) and the artisan
-    // and media-type filters stay on the legacy route.
     const unifiedQuestion = unifiedApplies(applied.q, applied.filters)
       ? fetchUnified({
           q: applied.q,
@@ -315,35 +198,13 @@ export default function SearchPage() {
     };
   }, [applied, page, scope.queryValue, unifiedFocus]);
 
-  /**
-   * A WORKSHOP PICK IS A SEARCH IN ITS OWN RIGHT, and without this it was a control that did nothing.
-   *
-   * Everything on this page hangs off `applied`, which starts null and is only set by the arrival
-   * effect, Search, or a filter chip. So on a bare `/search` — no query, no type, no place — choosing a
-   * workshop left `applied` null, both effects returned at their guard, and no request was made: the
-   * picker moved, the list did not, and nothing said why. "Everything from this workshop" is a complete
-   * question with an empty text box, exactly as "everything of this type" is, so it has to be able to
-   * start a search on its own.
-   */
   useEffect(() => {
     if (applied || !scope.workshopIds.length) return;
     setApplied({ q: "", filters: EMPTY_SEARCH_FILTERS });
   }, [applied, scope.workshopIds.length]);
 
-  // The chips used to be links, so a narrowed search was a URL you could send someone or reload.
-  // They are buttons now — a navigation would remount the page and take the other filters with it —
-  // so the address bar is written back by hand instead. history.replaceState rather than the router:
-  // this records where the researcher already is, it does not navigate anywhere.
-  //
-  // The workshop scope is written back too, so the link a researcher copies out of the address bar
-  // reproduces the list they are actually looking at — and can be pasted into /map, which reads the
-  // same key.
   useEffect(() => {
     if (!applied) return;
-    // FROM THE FIRST WRITE-BACK ON, THE ADDRESS BAR IS THIS PAGE'S OUTPUT, not its input. The arrival
-    // effect is a one-shot seed guarded by `arrived`, and it now also seeds from `workshopIds` — so
-    // without claiming the shot here, this write could hand the seeder a URL the page itself had just
-    // written and have it re-seed the filters from a value the user had since changed.
     arrived.current = true;
     window.history.replaceState(
       null,
@@ -358,7 +219,6 @@ export default function SearchPage() {
     );
   }, [applied, scope.queryValue, page, unifiedFocus]);
 
-  // The scroll position, under this exact URL, put back once the results are on screen.
   useUrlScrollMemory(Boolean(result || unified));
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -368,12 +228,6 @@ export default function SearchPage() {
     setApplied({ q: query.trim(), filters });
   }
 
-  /**
-   * A chip, a date or a type tick re-runs at once — it narrows the question already asked rather
-   * than asking a new one, so it carries the query text that is IN EFFECT rather than whatever is
-   * half-typed in the box. That is the same bargain the box has always made on this page: text is
-   * applied when Search is pressed, everything else the moment it changes.
-   */
   function changeFilters(next: SearchFilters) {
     setFilters(next);
     setPage(1);
@@ -382,9 +236,6 @@ export default function SearchPage() {
   }
 
   const show = (id: SearchRecordType) => typeVisible(filters, id);
-  // The sixth bucket is dropped from the RENDER as well as from the request whenever this reader is
-  // not offered it, so a stale `applied` from a link cannot put a section on screen that the chips
-  // above it cannot express or clear.
   const showDesignWorkshops = offeredTypes.includes(DESIGN_WORKSHOP_TYPE) && show(DESIGN_WORKSHOP_TYPE);
   const designWorkshops = showDesignWorkshops ? (result?.designWorkshops ?? []) : [];
   const buckets = result
@@ -398,14 +249,6 @@ export default function SearchPage() {
       ]
     : [];
   const shown = buckets.reduce((sum, bucket) => sum + bucket.length, 0);
-  // /search returns a real `pageCount` (the page count of its longest bucket), so "Next" is exact.
-  // The old heuristic — "some bucket exactly filled the page" — walked one page too far whenever a
-  // bucket's total happened to be a multiple of PAGE_SIZE, landing the researcher on an empty page.
-  //
-  // Recomputed from the SELECTED buckets' totals when they are there, because `pageCount` is the
-  // longest of all five: an API that ignored `types` would otherwise offer pages that exist only in
-  // a bucket this search is not showing. The two fallbacks keep the page working against an API
-  // that predates either key.
   const selectedTotals = result?.totals
     ? offeredTypes.filter(show).map((type) => result.totals?.[type] ?? 0)
     : [];
@@ -425,9 +268,6 @@ export default function SearchPage() {
         }
         icon={<Search className="h-5 w-5" aria-hidden />}
       />
-      {/* Above the search box on purpose: a scan is a search whose query is exact, so when a designer
-          has the tag in their hand there is nothing to type and nothing to narrow. It reads every
-          record type this app prints a code for and opens the record it names. */}
       <RecordCodeScanPanel />
       <form onSubmit={submit} className="panel mb-5 grid gap-3 p-4 md:grid-cols-[1fr_220px_auto]">
         <input className="field-input" placeholder="Search repository" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -443,30 +283,13 @@ export default function SearchPage() {
         </button>
       </form>
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
-      {/*
-        Place stays in the form row where it has always been, and the advanced panel therefore does
-        not repeat it: one value with two boxes on screen at once is the same confusion the chips and
-        the multi-select are carefully avoiding. It is applied with the text, on Search, because it
-        is typed — the panel's filters are clicked, so they apply immediately.
-      */}
       <SearchFilterBar
         value={filters}
         onChange={changeFilters}
         showPlace={false}
         offeredTypes={offeredTypes}
-        // Craft, artisan and media type are this screen's own — the shared filters above them are
-        // one implementation, and an addition declared here cannot quietly become a second copy that
-        // drifts. `advanceOnSelect={false}` on all three because they NARROW THE LIST BELOW rather
-        // than fill a form field, and `searchable` because every option is a record: the count is a
-        // fact about this deployment's corpus, not about the control.
         extraFilters={
           <>
-            {/* `FieldBlock` and NOT `Field`, and not a bare span with an `ariaLabel` either. A themed
-                dropdown is a `<button>`, so its accessible name comes from its own contents — the
-                VALUE, and never the question. `FieldBlock` publishes its label's id through context
-                and the trigger composes `aria-labelledby="<label> <self>"`, which announces "Craft,
-                Bamboo". An explicit `ariaLabel` would win and drop the value; a wrapping `<label>`
-                would slam the menu shut on the first pick. */}
             <div className="grid gap-3 sm:grid-cols-3">
               <FieldBlock label="Craft">
                 <CraftSelect
@@ -494,9 +317,6 @@ export default function SearchPage() {
                 </FieldBlock>
               ) : null}
               <FieldBlock label="Media type">
-                {/* No `searchable`: six members of a constant vocabulary, so the option count is a
-                    fact about the control rather than about this deployment's corpus. The two above
-                    are records and pass it for exactly the opposite reason. */}
                 <Dropdown
                   value={filters.mediaType}
                   onChange={(mediaType) => changeFilters({ ...filters, mediaType })}
@@ -508,16 +328,9 @@ export default function SearchPage() {
                 />
               </FieldBlock>
             </div>
-            {/* Android says exactly this under the same three controls. It matters because two of
-                them narrow only some of the buckets: a craft reaches artisans, products and tools,
-                a media type reaches media alone, and without the sentence a researcher reads an
-                unchanged Workshops list as the filter not working. */}
             <p className="text-xs text-ink-500">
               Craft, artisan and media type narrow only the result types that have them.
             </p>
-            {/* One line per picker that is not offering everything it claims to filter by. Nothing
-                at all when both are whole — rule 10: a list that quietly stops is indistinguishable
-                from a place with no records. */}
             {[cuts.artisans].map((cut, index) =>
               cut ? (
                 <p key={index} className="text-xs text-ink-500">
@@ -529,27 +342,13 @@ export default function SearchPage() {
         }
       />
 
-      {/* WHAT THE SERVER REFUSED. A bucket that comes back empty is indistinguishable from a
-          repository with nothing in it, so a bucket this account may not read has to be NAMED — it
-          is the difference between "no design workshops matched" and "design workshops were not
-          looked at". The list is the server's; the sentence is this client's, because it names the
-          NEXT MOVE and the API has no business writing a web page's copy. (The other server
-          sentence, `designWorkshopSearchScope`, is printed by the bucket it describes, not here.) */}
       {result?.typesRefused?.length || unified?.typesRefused?.length ? (
         <p className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">
           Design workshops are not searched at your access level. Ask an admin.
         </p>
       ) : null}
 
-      {/* The workshop scope applies IMMEDIATELY, like the panel filters and unlike the typed boxes
-          above: it is a picker, and a picker that needed a second button press to take effect reads
-          as broken. */}
       <div className="mb-4 max-w-xl">
-        {/* THE PAGE GOES BACK TO 1, as it does for `submit` and every filter chip. The workshop scope
-            was the one filter on this page that left pagination standing, so narrowing from four pages
-            of results to one, while sitting on page 4, produced five empty buckets and an
-            "No more results" message — for a scope that plainly has records in it. `setPage` and
-            `setWorkshopIds` are batched in one handler, so exactly one request goes out. */}
         <WorkshopScopeSelect
           scope={{
             ...scope,
@@ -592,11 +391,6 @@ export default function SearchPage() {
             items={result.artisans.map((item) => ({
               id: item.id,
               title: item.name,
-              // Place alone unless the craft really came back. `GET /search` reads artisans with no
-              // `include`, so `craft` is never populated here and the old "No craft" fallback
-              // labelled EVERY artisan hit as craftless — a statement about the API's include list
-              // dressed up as a fact about the artisan. The join is kept for the day the endpoint
-              // does include it.
               subtitle: [item.place, item.craft?.name].filter(Boolean).join(" · "),
               status: item.status,
               date: item.createdAt,
@@ -652,8 +446,6 @@ export default function SearchPage() {
               subtitle: `${item.mediaType} · ${item.mimeType}`,
               status: item.status,
               date: item.createdAt,
-              // The file's own read-only page: preview, transcript and Download in one place, and
-              // the same page whether or not this account is entitled to the bytes.
               href: RECORD_VIEW_HREF.media(item.id)
             }))}
           />
@@ -665,9 +457,6 @@ export default function SearchPage() {
               items={designWorkshops.map((item) => ({
                 id: item.id,
                 title: item.title,
-                // The promoted columns, which are the axes a researcher filters on — and which are
-                // null until stage 1 has been saved, so a freshly opened workshop legitimately shows
-                // a title and nothing else rather than a row of the word "null".
                 subtitle: [item.workshopCode, item.craftName, item.clusterName ?? item.district, item.state]
                   .filter(Boolean)
                   .join(" · "),
@@ -675,10 +464,6 @@ export default function SearchPage() {
                 date: item.startDate ?? "",
                 href: `/design-workshops/${item.id}`,
                 actionLabel: "Open workshop",
-                // The stage names come from the SERVER, resolved from its own registry. Deriving
-                // them here would be a second copy of the twenty-two titles in a client that has no
-                // reason to hold them, and the two would disagree the first time a stage was
-                // retitled — on the one line whose whole job is to say where to look.
                 matchedIn: result.designWorkshopStageMatches?.[item.id]
               }))}
             />
@@ -695,7 +480,6 @@ export default function SearchPage() {
   );
 }
 
-/** A result title / row action: an in-app `<Link>`, or a new-tab `<a>` for an S3 object. */
 function ResultLink({ item, className, children }: { item: ResultItem; className: string; children: ReactNode }) {
   if (item.external) {
     return (
@@ -717,14 +501,10 @@ function ResultSection({ title, items, note }: { title: string; items: ResultIte
     <section className="panel overflow-hidden">
       <div className="border-b border-line-200 px-4 py-3">
         <h2 className="font-semibold text-ink-900">{title}</h2>
-        {/* The server's own sentence about what this bucket's text query matched, printed where the
-            matches are. Nothing invents it here: a client that wrote its own would be a second
-            description of one rule, able to drift from the server that enforces it. */}
         {note ? <p className="mt-1 text-xs text-ink-500">{note}</p> : null}
       </div>
       <div className="divide-y divide-line-200">
         {items.map((item) => (
-          // The whole card opens the result; the title is the same act as a real link.
           <OpenableCard
             key={item.id}
             href={item.href}
@@ -736,11 +516,6 @@ function ResultSection({ title, items, note }: { title: string; items: ResultIte
                 {item.title}
               </ResultLink>
               <div className="text-sm text-ink-700">{item.subtitle}</div>
-              {/* WHY THIS ROW CAME BACK, when nothing above it says so. The design-workshop bucket
-                  matches stage answers as well as the workshop's own columns, so a hit whose word
-                  appears in neither the title nor the subtitle is otherwise unaccountable — the
-                  researcher would have to open twenty-two stages to find it. Drawn only when the
-                  server named a stage. */}
               {item.matchedIn?.length ? (
                 <div className="mt-0.5 text-xs text-ink-500">
                   Matched in {item.matchedIn.slice(0, MATCHED_IN_SHOWN).join(" · ")}
@@ -766,13 +541,6 @@ function ResultSection({ title, items, note }: { title: string; items: ResultIte
   );
 }
 
-/**
- * Prev/Next footer for the search results, styled like the shared `<Pagination>` but NOT it: that
- * component prints "Page x of y · n records", and `GET /search` returns neither a page count nor a
- * total — it pages all six buckets with one shared skip/take. So this pager states only what the
- * contract really knows: the page number, how many rows this page holds, and whether another page
- * may exist (some bucket came back full).
- */
 function SearchPager({
   page,
   shown,

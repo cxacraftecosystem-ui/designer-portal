@@ -48,40 +48,18 @@ export default function ToolsPage() {
   const skipFirstDebounce = useRef(true);
   const assignmentRef = useRef<HTMLDivElement | null>(null);
 
-  // Deep link from the dashboard/menu: /tools?assign=1 lands on the assignment section.
-  // Read from window.location so the page needs no Suspense boundary for useSearchParams.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (new URLSearchParams(window.location.search).get("assign") !== "1") return;
     assignmentRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  /**
-   * Which fetch is the current one — the counter /artisans, /questionnaires and /design-workshops
-   * already carry. The search box debounces the APPLIED TERM, not the request, and the pager and
-   * the funnel fire the same effect, so several requests are routinely in flight together and the
-   * answer to an abandoned question can land LAST and win.
-   *
-   * The reason that is worse than a stale table here: `<Pagination>` is rendered with
-   * `page={data.page}` — the ANSWERED page — while the refetch effect depends on `page`, the
-   * REQUESTED one. Let page 1's slow answer land after page 2's fast one and `data.page` is 1 while
-   * `page` is 2; Next then calls `setPage(data.page + 1)` = `setPage(2)`, React bails on the
-   * identical scalar, no dependency changes, no request goes out, and the control is dead until
-   * Previous is pressed. Audit 2026-08-15 filed that against this file, /products, /processes and
-   * /media.
-   *
-   * Counted rather than aborted because `listResource` takes no `AbortSignal`; ignoring the late
-   * answer is the part that matters. Any new `setData`/`setError` in `load()` needs the same guard
-   * in front of it — one unguarded write brings the dead pager back.
-   */
   const currentLoad = useRef(0);
-  /** Search, page, funnel and scroll, so Back from a tool's page lands on the same rows. */
   const memory = useListMemory("tools", { query, applied, page, funnel, filters: { completeness } }, data !== null);
 
   async function load() {
     const generation = (currentLoad.current += 1);
     try {
-      // /tools supports all three funnel params directly.
       const result = await listResource<ToolDocumentation>("/tools", {
         search: applied || undefined,
         workshopId: funnel.workshopId || undefined,
@@ -100,14 +78,12 @@ export default function ToolsPage() {
     }
   }
 
-  // Waits for the funnel's initial onChange (default = most recent workshop) before the first fetch.
   useEffect(() => {
     if (!funnelReady) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [funnelReady, page, applied, funnel, completeness]);
 
-  // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
   useEffect(() => {
     if (skipFirstDebounce.current) {
       skipFirstDebounce.current = false;
@@ -121,8 +97,6 @@ export default function ToolsPage() {
   }, [query]);
 
   function onFunnelChange(next: FunnelValue, _workshop: FunnelWorkshop | null) {
-    // The funnel's FIRST answer is when this page learns its defaults — and so when a remembered
-    // place (Back from a record's page) replaces them. See `useListMemory`.
     const remembered = funnelReady ? null : memory.recall();
     if (remembered) {
       if ((remembered.query ?? "") !== query) skipFirstDebounce.current = true;
@@ -165,9 +139,6 @@ export default function ToolsPage() {
         actions={
           <>
             {canDownloadDataset(user) ? <DownloadCsvButton path="/export/tools.csv" filename={exportFilename("Tool", "Export", "csv")} /> : null}
-            {/* Gated, not merely locked: an ungated "New …" invited every tier to press a
-                button that lands on the route guard's refusal. Below researcher the honest UI is
-                no button, matching `require_record_creator` on the server. */}
             {canCreateRecords(user) ? (
               <Link className="field-button" href="/tools/new">
                 <Plus className="h-4 w-4" aria-hidden />
@@ -224,8 +195,6 @@ export default function ToolsPage() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((tool) => (
-                  // The whole row opens the record read-only; its name is the same act as a real link.
-                  // Update, Discuss, Delete and the preview tiles keep their own clicks (`OpenableRow`).
                   <OpenableRow key={tool.id} href={RECORD_VIEW_HREF.tool(tool.id)}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">

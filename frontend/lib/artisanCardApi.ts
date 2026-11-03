@@ -1,7 +1,3 @@
-/**
- * The artisan QR card routes (`backend/app/api/routes/artisan_cards.py`). Nothing is drawn until
- * `GET /artisan-cards/status` says cards are on; while off every other route answers 404.
- */
 import { apiFetch } from "@/lib/api";
 import { downloadFile, fetchFile, saveBlobToDisk } from "@/lib/fileDownload";
 import type { CrossPortalMatch } from "@/lib/crossPortal";
@@ -46,7 +42,6 @@ export type CardResolution =
 
 let statusPromise: Promise<{ enabled: boolean; issuer: string }> | null = null;
 
-/** Whether cards are on here. Asked once per page load; a failure reads as "off". */
 export function artisanCardStatus(): Promise<{ enabled: boolean; issuer: string }> {
   if (!statusPromise) {
     statusPromise = apiFetch<{ enabled?: boolean; issuer?: string }>("/artisan-cards/status", {}, { redirectOn401: false })
@@ -70,7 +65,6 @@ export function reissueArtisanCard(artisanId: string, reason: ReissueReason): Pr
   });
 }
 
-/** The card PDF path, for one artisan. */
 export function artisanCardPdfPath(artisanId: string, size: CardSize, photo: boolean): string {
   return `/artisans/${encodeURIComponent(artisanId)}/card.pdf?size=${size}&photo=${photo ? 1 : 0}&source=WEB`;
 }
@@ -83,7 +77,6 @@ export type CardSheetRequest =
   | { artisanIds: string[]; designWorkshopId?: undefined }
   | { designWorkshopId: string; artisanIds?: undefined };
 
-/** A sheet of cards: A4 2×5 ID-1 cards, or one A6 card per page. */
 export async function downloadArtisanCardSheet(
   source: CardSheetRequest,
   size: CardSize = "id1",
@@ -108,24 +101,20 @@ export function resolveArtisanCard(input: string, consent = false): Promise<Card
   });
 }
 
-/** The reasons a card is reissued, as the server takes them. */
 export const REISSUE_REASONS: { value: ReissueReason; label: string }[] = [
   { value: "LOST", label: "Lost" },
   { value: "DAMAGED", label: "Damaged" },
   { value: "OTHER", label: "Other" }
 ];
 
-/** The server's QR SVG as an `<img>` source, so no markup from the wire is put into the page. */
 export function qrImageSrc(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-/** "XXXX XXXX 9012", or null when the last four are unknown. */
 export function maskedLast4(last4: string | null | undefined): string | null {
   return last4 ? `XXXX XXXX ${last4}` : null;
 }
 
-/** The new-artisan page, filled from a Field Repository card after the consent tick. */
 export function newArtisanFromCardHref(shortCodeOrPayload: string): string {
   return `/artisans/new?card=${encodeURIComponent(shortCodeOrPayload)}`;
 }

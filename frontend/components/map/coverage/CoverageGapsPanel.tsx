@@ -5,10 +5,6 @@ import { ChevronDown } from "lucide-react";
 
 import type { CoverageGaps } from "@/components/map/coverage/coverageTypes";
 
-/**
- * What is missing: shared crafts nobody has documented, and districts with no workshop, by state.
- * `peerIncluded` (designer portal) says the craft gap counts the Field Repository's records too.
- */
 export function CoverageGapsPanel({ gaps, peerIncluded = false }: { gaps: CoverageGaps; peerIncluded?: boolean }) {
   const [open, setOpen] = useState<ReadonlySet<number>>(() => new Set());
   const toggle = (lgd: number) =>

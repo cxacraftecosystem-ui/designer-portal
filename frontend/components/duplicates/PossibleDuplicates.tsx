@@ -7,13 +7,6 @@ import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { candidateLine, type DuplicateCandidate } from "@/lib/duplicates";
 
-/**
- * "Already recorded?" — the artisans the server thinks this may be, as the form is filled.
- *
- * Shown, never blocking: the person in the room decides. "Open" goes to the existing record (handed
- * back to the host inside a design-workshop dialog); "Different person" sets every shown row aside,
- * and the create then tells the server they were looked at (`duplicateAcknowledged`).
- */
 export function PossibleDuplicates({
   candidates,
   onOpen,
@@ -82,10 +75,6 @@ function CandidateRows({
   );
 }
 
-/**
- * The same rows as a question, when the server held a save (409 `artisan_possible_duplicate`).
- * Escape and the backdrop mean "Keep editing", the choice that loses nothing.
- */
 export function PossibleDuplicateDialog({
   open,
   message,

@@ -1,38 +1,5 @@
 "use client";
 
-/**
- * `FieldDialog` — the one modal primitive every dialog in this app is built on.
- *
- * Before this existed each dialog re-implemented its own overlay, and the destructive paths did not
- * even get that far: they called `window.confirm()`, which is unthemed, unstyleable, blocks the whole
- * renderer, and on the Android app has no counterpart at all (there every delete opens a real
- * `AlertDialog`). This component is the web half of that parity.
- *
- * What it guarantees, because a modal that gets any of these wrong is worse than no modal:
- *
- * - **Focus is trapped.** Tab and Shift+Tab cycle inside the panel and cannot reach the page behind
- *   it. A stray `focusin` (browser chrome round-trip, a click on the backdrop) is pulled back in.
- * - **Focus is restored.** Whatever was focused when the dialog opened — nearly always the row button
- *   that triggered it — is focused again on close, so a keyboard user resumes where they were.
- * - **Escape closes**, unless the dialog is non-dismissable (`dismissible={false}`, used by the
- *   required-update prompt) or an action is in flight (`busy`).
- * - **Backdrop click closes only when it is safe to.** Destructive dialogs opt out: a misplaced click
- *   must never be the thing that answers "delete this permanently?". Defaults to false for
- *   `role="alertdialog"` and for the danger tone.
- * - **`aria-modal` + a labelled title**, `aria-describedby` on the body when one is supplied, and
- *   `role="alertdialog"` for anything demanding a decision.
- * - **Reduced motion is respected** — `useAppReducedMotion` is the OR of the OS setting and the app's
- *   own Settings toggle, and collapses the enter/exit to a plain fade with zero movement. It has to
- *   be that hook and not framer's `useReducedMotion`, which subscribes to the OS media query and
- *   nothing else: this header used to claim both switches while reading only one, so a designer with
- *   vestibular sensitivity who turned Reduce motion on in Settings still had every confirm, every
- *   unsaved-changes prompt and every delete dialog spring in with a scale and a 10px rise.
- * - **The page behind cannot scroll**, and nested dialogs unwind that lock in the right order. The
- *   lock itself is `lib/scrollLock.ts`, shared with the navigation sheet and the full-screen
- *   editor: it freezes <html> rather than <body> (iOS Safari ignores the latter) and pays the
- *   vanished scrollbar's width back as padding, so the centred panel does not jump as it opens.
- */
-
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import {
@@ -55,7 +22,6 @@ import { cn } from "@/lib/utils";
 
 export type DialogTone = "neutral" | "danger" | "warning";
 
-/** Everything the browser will let a user Tab to, in DOM order. */
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "area[href]",
@@ -70,26 +36,8 @@ const FOCUSABLE_SELECTOR = [
   "[tabindex]:not([tabindex='-1'])"
 ].join(",");
 
-/**
- * Open dialogs, innermost last. Only the topmost may act on Escape or reclaim stray focus, otherwise
- * a confirm opened on top of a form dialog would close both with one key press.
- */
 const dialogStack: string[] = [];
 
-/**
- * The last element outside any dialog that genuinely held focus.
- *
- * `document.activeElement` at open time is not good enough on its own. A trigger very often disables
- * itself in the same handler that opens the dialog — "Save artisan" flips to "Checking…" while the
- * duplicate lookup runs — and the browser answers a disabled element by dropping focus to `<body>`.
- * By the time the dialog mounts there is nothing left to remember, and closing it strands the
- * keyboard user at the top of the document.
- *
- * So one passive document listener, refcounted across every mounted `FieldDialog`, keeps the last
- * real target. `<body>` and anything inside a dialog are ignored, which is exactly what makes the
- * disabled-trigger case recover: the button is still the last thing we saw focused, and by the time
- * the dialog closes it has been re-enabled.
- */
 let lastFocusedOutsideDialog: HTMLElement | null = null;
 let focusTrackerRefs = 0;
 
@@ -130,45 +78,21 @@ const TONE_CHIP: Record<DialogTone, string> = {
 
 export type FieldDialogProps = {
   open: boolean;
-  /** Called for Escape, the close button and a permitted backdrop click. */
   onClose: () => void;
   title: ReactNode;
-  /** Sub-heading under the title; also becomes the accessible description. */
   description?: ReactNode;
   children?: ReactNode;
-  /** Action row, right-aligned at the foot of the panel. */
   footer?: ReactNode;
-  /** `alertdialog` for anything the user must answer before continuing. */
   role?: "dialog" | "alertdialog";
   tone?: DialogTone;
-  /** Small icon rendered in a tinted tile beside the title. */
   icon?: ReactNode;
-  /** False removes Escape, the close button and the backdrop escape hatch entirely. */
   dismissible?: boolean;
-  /** Override the tone-derived default for "does clicking the backdrop close this?". */
   dismissOnBackdrop?: boolean;
-  /** An action is running: every dismissal path is suspended until it finishes. */
   busy?: boolean;
-  /** Focused when the dialog opens; falls back to the first focusable node in the panel. */
   initialFocusRef?: RefObject<HTMLElement | null>;
-  /**
-   * Extra classes for the panel (width, padding overrides).
-   *
-   * A `max-w-*` here REPLACES the panel's default `max-w-md` rather than sitting beside it — see
-   * `callerSetsMaxWidth` below for the cascade trap that made a width passed here do nothing.
-   */
   className?: string;
-  /**
-   * Replaces the panel's default background + tone border outright. For the one dialog whose colour
-   * IS its message (the amber duplicate-artisan prompt); everything else should use `tone`.
-   */
   surfaceClassName?: string;
-  /**
-   * Corner close button. Defaults to on wherever the dialog is dismissable, but a dialog offering
-   * three different ways forward turns it off — an X is only unambiguous when there is one way out.
-   */
   showClose?: boolean;
-  /** Stacking order. 100 is the app's dialog layer; toasts sit at 110. */
   zIndex?: number;
 };
 
@@ -197,43 +121,19 @@ export function FieldDialog({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const reduce = useAppReducedMotion();
-  /* Which surface raised this dialog — see the note on the overlay's `data-surface` below. Read
-     unconditionally, like every other hook here: the early `if (!mounted) return null` sits below. */
   const pathname = usePathname();
 
-  // Portals need a DOM; the first client render is what makes one available.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  // Runs whether or not the dialog is open: the element to restore has to be known BEFORE it opens.
   useEffect(() => {
     installFocusTracker();
     return releaseFocusTracker;
   }, []);
 
-  /**
-   * True when the caller has named the panel's width, in which case the default one is dropped
-   * rather than merely listed first.
-   *
-   * WHY THIS IS NOT REDUNDANT. `cn` is a plain `join(" ")` (lib/utils.ts) — it is NOT
-   * tailwind-merge — so `cn("max-w-md", "max-w-lg")` puts both utilities on the element and leaves
-   * the winner to the cascade. Tailwind writes its max-width utilities ALPHABETICALLY, so the
-   * built stylesheet reads `…max-w-full{…}.max-w-lg{max-width:32rem}.max-w-md{max-width:28rem}…`:
-   * `.max-w-md` comes LAST and wins at equal specificity. Measured in Chromium against the built
-   * CSS, a panel carrying the exact string this component produced for `className="max-w-lg"`
-   * computed `max-width: 448px` — the DEFAULT — where the hand-rolled overlay it replaced measured
-   * 512px. The prop documented as the width override silently did nothing, and both rebuilt
-   * dialogs (Discuss, Assign researchers) came out 64px narrower than before.
-   *
-   * `surfaceClassName` is deliberately NOT consulted here: it replaces the background and tone
-   * ring, and one caller passes a width through it (`InlineRecordDialog`), so honouring it would
-   * change that dialog's size as a side effect of this fix.
-   */
   const callerSetsMaxWidth = /(?:^|\s)!?max-w-/.test(className ?? "");
 
-  // A dismissal is only honoured when the dialog allows it and nothing is in flight.
   const canDismiss = dismissible && !busy;
-  // Destructive decisions never close on a stray backdrop click unless a caller insists.
   const backdropCloses = dismissOnBackdrop ?? (role !== "alertdialog" && tone !== "danger");
 
   const focusableNodes = useCallback(() => {
@@ -244,32 +144,18 @@ export function FieldDialog({
     );
   }, []);
 
-  // Stack registration + scroll lock + focus save/restore, all tied to the same open/close edge.
   useEffect(() => {
     if (!open) return;
     const active = document.activeElement;
     restoreFocusRef.current =
       active instanceof HTMLElement && active !== document.body ? active : lastFocusedOutsideDialog;
     dialogStack.push(instanceId);
-    /*
-      The SHARED lock, not `document.body.style.overflow = "hidden"` this component used to set for
-      itself. Two things were wrong with owning it here. `overflow: hidden` on the body is precisely
-      what iOS Safari ignores — `globals.css` says so beside the rule that puts the lock on <html>
-      instead — so on an iPhone the page went on panning under every confirm and every delete
-      prompt, while the header above promised "the page behind cannot scroll". And nothing paid back
-      the scrollbar the lock removes, so on a desktop the dialog this component centres slid sideways
-      by half the scrollbar's width in the frame it opened. The refcount now spans all three surfaces
-      that freeze the page, so a globally-mounted dialog closing can no longer unfreeze the document
-      under an open navigation sheet or a full-screen editor.
-    */
     lockPageScroll();
 
     return () => {
       const index = dialogStack.lastIndexOf(instanceId);
       if (index >= 0) dialogStack.splice(index, 1);
       unlockPageScroll();
-      // Restore on the next frame: React has already torn the panel out, and focusing while the
-      // browser is still settling the removal is what makes focus land on <body> instead.
       const target = restoreFocusRef.current;
       restoreFocusRef.current = null;
       if (target && document.contains(target)) {
@@ -278,8 +164,6 @@ export function FieldDialog({
     };
   }, [open, instanceId]);
 
-  // Initial focus. Destructive dialogs pass their Cancel button, so the dangerous button is never
-  // the one sitting under a reflex Enter press.
   useEffect(() => {
     if (!open) return;
     const frame = requestAnimationFrame(() => {
@@ -294,14 +178,12 @@ export function FieldDialog({
     return () => cancelAnimationFrame(frame);
   }, [open, initialFocusRef, focusableNodes]);
 
-  // Escape, at the document level so it works even if focus briefly slipped out of the panel.
   useEffect(() => {
     if (!open) return;
     function onKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (dialogStack[dialogStack.length - 1] !== instanceId) return;
       if (!canDismiss) {
-        // A non-dismissable dialog still swallows Escape, so it cannot reach a parent dialog.
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -314,7 +196,6 @@ export function FieldDialog({
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [open, canDismiss, onClose, instanceId]);
 
-  // Focus that escapes the panel — by any route Tab handling does not see — is pulled straight back.
   useEffect(() => {
     if (!open) return;
     function onFocusIn(event: FocusEvent) {
@@ -330,7 +211,6 @@ export function FieldDialog({
     return () => document.removeEventListener("focusin", onFocusIn);
   }, [open, instanceId, focusableNodes]);
 
-  /** Tab / Shift+Tab wrap-around: the trap proper. */
   function onPanelKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Tab") return;
     const nodes = focusableNodes();
@@ -359,40 +239,8 @@ export function FieldDialog({
         <motion.div
           key="field-dialog-overlay"
           data-field-dialog-overlay=""
-          /*
-            THE SURFACE TRAVELS WITH THE DIALOG, AND WITHOUT THIS LINE IT COULD NOT.
-
-            `globals.css`'s scoped ministry block hangs off `data-surface="ministry"`, which
-            `AppShell` stamps on <main>. This overlay is `createPortal`'d to `document.body` — OUTSIDE
-            <main> by construction — so no ancestor scope can reach it, and the block's own header
-            records that as deliberate for dropdown panels and toasts: those are APP chrome that
-            happens to have been raised from a ministry page.
-
-            A DIALOG IS NOT THAT. `/annual-plan` opens "Upload the annual plan" and `/sanction-orders`
-            opens its import review, and the confirming button INSIDE each is the second half of the
-            act whose trigger the reader just pressed on the page. Left unstamped, the ministry
-            surfaces would ship an orange trigger on the page and a purple primary in the dialog it
-            opens — one action in two accent colours, which is worse than either colour alone.
-
-            IT IS DERIVED FROM THE PATHNAME AND NOT PASSED IN, so every existing call site is correct
-            without being edited and the next one cannot forget. `AppShell` guards its own stamp with
-            `!blocked`; no guard is owed here, because a dialog can only be opened by a page that is
-            already being served.
-          */
           data-surface={ministrySurface(pathname) ? "ministry" : undefined}
           className="fixed inset-0 grid place-items-center overflow-y-auto bg-ink-900/45 p-4 backdrop-blur-[2px]"
-          /*
-            THE GUTTER, REPAID — the standing obligation on anything `position: fixed` and
-            horizontally centred, and the reason the shared lock could not simply be dropped in.
-
-            The lock freezes <html> and hands the vanished scrollbar's width back as padding on
-            <body>, which is what keeps the page BEHIND from sliding sideways as this opens. A fixed
-            element cannot inherit that padding: this overlay spans the full viewport, scrollbar
-            space included, so without the same repayment its centred panel would sit half a
-            scrollbar to the right of the content it is centred over — visibly off on a desktop, and
-            worst on the confirm dialogs that are meant to look anchored to the row that opened
-            them. `.nav-island-frame` and the full-screen editor carry the identical line.
-          */
           style={{ zIndex, paddingRight: "calc(1rem + var(--nav-scroll-gutter, 0px))" }}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -420,8 +268,6 @@ export function FieldDialog({
             className={cn(
               "relative w-full rounded-xl border p-5 shadow-lg outline-hidden",
               callerSetsMaxWidth ? null : "max-w-md",
-              // One or the other, never both: two competing `bg-*` utilities resolve by stylesheet
-              // order, not by the order they appear in this string.
               surfaceClassName ?? cn("bg-card", TONE_RING[tone]),
               className
             )}
@@ -443,8 +289,6 @@ export function FieldDialog({
                 ) : null}
                 {children}
               </div>
-              {/* No close affordance on a dialog that cannot be dismissed — offering one that does
-                  nothing is worse than offering none. */}
               {(showClose ?? true) && dismissible ? (
                 <button
                   type="button"
@@ -466,6 +310,5 @@ export function FieldDialog({
   );
 }
 
-/** Solid destructive button — the confirming action inside a danger dialog. */
 export const DANGER_BUTTON_CLASS =
   "inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-error-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-line-200 disabled:text-ink-500";

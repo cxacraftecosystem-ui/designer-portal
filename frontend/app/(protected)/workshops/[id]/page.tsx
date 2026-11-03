@@ -9,10 +9,6 @@ import { workshopFields } from "@/components/records/recordFields";
 import type { Workshop } from "@/lib/types";
 import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
-/**
- * One crafts workshop, read-only. Update is drawn for Professor and above
- * (`require_workshop_manager`) and opens the inline form on /workshops with this workshop loaded.
- */
 export default function WorkshopViewPage() {
   const { id } = useParams<{ id: string }>();
   return (

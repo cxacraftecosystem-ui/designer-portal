@@ -28,33 +28,6 @@ import {
 } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
-/**
- * THE THREE DIRECTORATE TIERS ON THE WEB — ASSISTANT_DIRECTOR (42), REGIONAL_DIRECTOR (45) and
- * MINISTRY_ADMIN (48), added 2026-09-13.
- *
- * WHY A FILE OF ITS OWN, WHEN EVERY OTHER SPEC IN THIS FOLDER ALREADY WALKS `ALL_ROLES`. Those
- * specs assert the rule each was written for over whatever their tuple happens to hold, so adding
- * three tokens widens their coverage and states nothing NEW. What needed stating is the pair of
- * facts a reader of `lib/permissions.ts` will get wrong about these three, because no line in that
- * file names any of them:
- *
- *   1. A RANK ABOVE 40 CLEARS EVERY `hasRank(user, "PROFESSOR")` PREDICATE IN THIS CLIENT AT ONCE —
- *      `canManageUsers`, `canManageCrafts`, `canManageWorkshops`, `canManageQuestionnaire`,
- *      `canDownloadDataset`, `canSeeDataTile`. All three acquired those the moment the numbers
- *      existed, through code that names no tier and with no test going red. That is the owner's
- *      decision of 2026-09-13 and this file is where it is recorded.
- *
- *   2. `MINISTRY_ADMIN` IS NOT AN ADMIN. `isAdmin` is `role === "MASTER_ADMIN" || role === "ADMIN"`
- *      — set membership, not a rank test — so no number reaches it and 48 is not close. It is the
- *      one token in this product whose English reading and its meaning in the code point in
- *      opposite directions, which makes it the cell a reviewer should read twice rather than a
- *      comment somebody might believe.
- *
- * `backend/tests/test_directorate_tiers.py` is the server-side twin, and
- * `backend/tests/test_role_ladder_parity.py` registers this file so it cannot fall behind the
- * ladder it enumerates.
- */
-
 const user = (role: UserRole): User => ({ id: `u-${role}`, email: "a@b.c", name: role, role } as User);
 
 const ALL_ROLES: UserRole[] = [
@@ -84,45 +57,19 @@ test("a ministry admin is not an admin, and neither are the other two directorat
   for (const role of DIRECTORATE) {
     expect(isAdmin(user(role)), role).toBe(false);
     expect(isMasterAdmin(user(role)), role).toBe(false);
-    // `canAssignTasks` is the content-admin SET since 2026-10-20, so the Ministry Admin assigns and
-    // the two director tiers do not.
     expect(canAssignTasks(user(role)), role).toBe(role === "MINISTRY_ADMIN");
     expect(canAccessRoute(user(role), "/admin"), role).toBe(false);
   }
 });
 
 test("the three tiers run a workshop and reach no other design-workshop set, because each is its own set", () => {
-  // ⚠ THE FIRST EXPECTATION IS THE INVERSION OF WHAT THIS TEST ASSERTED UNTIL 2026-09-14, and the
-  // cause is a ruling rather than a bug. It read "no directorate tier reaches any design-workshop
-  // set" — true when written, made false by the owner's decision that these three may WRITE inside a
-  // workshop. The gap that forced it: a MINISTRY_ADMIN could promote an annual-plan row into a
-  // design workshop and then not save a stage in the workshop they had just created.
-  //
-  // THE POINT THE OLD NAME WAS MAKING SURVIVES AND IS NOW SHARPER. Each of these is its own SET, so
-  // gaining one buys nothing in the others: the three RUN a workshop, and still cannot OPEN a bare
-  // one or EXPORT its rows. Under a rank ladder all of them would have moved together, which is the
-  // drift a set exists to prevent.
-  //
-  // INSPECTING MOVED FOR ONE OF THE THREE ON 2026-10-09, AND ONLY BY APPOINTMENT. The owner's ruling
-  // lets a Ministry Admin be appointed — by somebody else — to inspect a workshop, so the inspection
-  // surface opens for that tier; the Assistant Director and Regional Director may not be appointed to
-  // inspect and are refused it as before. It is still a set and still not a floor: the tier between
-  // them, at 45, stays out while 48 is in.
   for (const role of DIRECTORATE) {
     expect(canRunDesignWorkshops(user(role)), role).toBe(true);
-    // The Ministry Admin starts one since 2026-10-20 (a content admin); the director tiers do not.
     expect(canCreateDesignWorkshops(user(role)), role).toBe(role === "MINISTRY_ADMIN");
     expect(canInspectDesignWorkshops(user(role)), role).toBe(role === "MINISTRY_ADMIN");
-    // EXPORT is the half that did NOT move on 2026-09-13, and it is the half that takes rows out of
-    // the product. A professor has read-without-export since 2026-08-30; these three inherit that
-    // exact shape rather than a wider one.
     expect(canExportDesignWorkshopData(user(role)), role).toBe(false);
   }
 
-  // AND THE TWO TIERS BETWEEN THEM AND A DESIGNER ARE STILL REFUSED, which is what stops the first
-  // expectation being read as "a floor moved". PROFESSOR and INSPECTOR are both outranked by all
-  // three above and both write nothing — an inspector especially, since it would otherwise author
-  // the stages it later reviews.
   for (const role of ["PROFESSOR", "INSPECTOR"] as const) {
     expect(canRunDesignWorkshops(user(role)), role).toBe(false);
   }
@@ -133,9 +80,6 @@ test("reading design-workshop stage data on screen IS the one set the 2026-09-13
     expect(canViewDesignWorkshopData(user(role)), role).toBe(true);
   }
   expect(canViewDesignWorkshopData(user("PROFESSOR"))).toBe(true);
-  // The tier just BELOW the floor, and the reason the gate is a set and not `hasRank(…, "PROFESSOR")`:
-  // an inspector reaches ONE workshop under a grant an admin wrote, and must never acquire every
-  // workshop in the repository because a number moved.
   expect(canViewDesignWorkshopData(user("INSPECTOR"))).toBe(false);
   expect(canViewDesignWorkshopData(user("DESIGNER"))).toBe(false);
 });
@@ -155,9 +99,6 @@ test("every professor floor in this client opens for all three, which is inherit
 });
 
 test("the minting ceiling is inclusive of the caller's own tier and stops below admin", () => {
-  // `users.assert_role` on the server compares with `>` (backend/app/api/routes/users.py), so a tier
-  // may mint ITSELF. `assignableRoles` is the same comparison spelled `<=`; if the two ever drift,
-  // the picker offers a role the API refuses.
   const ministry = assignableRoles(user("MINISTRY_ADMIN"));
   expect(ministry).toContain("MINISTRY_ADMIN");
   expect(ministry).toContain("REGIONAL_DIRECTOR");
@@ -172,25 +113,18 @@ test("the minting ceiling is inclusive of the caller's own tier and stops below 
 });
 
 test("account provisioning is a set: the ministry admin and both admin tiers, and nobody else", () => {
-  // The owner's ruling of 2026-10-09: MINISTRY_ADMIN creates password accounts and looks after their
-  // passwords on /users, BESIDE `isAdmin` rather than inside it — so the second assertion in this
-  // loop is the first test's, restated where the new power sits next to it.
   const PROVISIONERS: UserRole[] = ["MASTER_ADMIN", "ADMIN", "MINISTRY_ADMIN"];
   for (const role of ALL_ROLES) {
     expect(canProvisionAccounts(user(role)), role).toBe(PROVISIONERS.includes(role));
   }
   expect(isAdmin(user("MINISTRY_ADMIN"))).toBe(false);
 
-  // The two directorate posts below it, and Professor, keep promotion rights only.
   for (const role of ["REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR", "PROFESSOR"] as const) {
     expect(canProvisionAccounts(user(role)), role).toBe(false);
     expect(provisionableRoles(user(role)), role).toEqual([]);
     expect(canManageUsers(user(role)), role).toBe(true);
   }
 
-  // The create ceiling is STRICTLY below one's own tier (owner's decision, 2026-10-16): a ministry
-  // admin creates up to Regional Director, an admin up to Ministry Admin, and only the master admin
-  // creates an Admin.
   const ministry = provisionableRoles(user("MINISTRY_ADMIN"));
   expect(ministry).toEqual(assignableRoles(user("MINISTRY_ADMIN")).filter((role) => role !== "MINISTRY_ADMIN"));
   expect(ministry).not.toContain("MINISTRY_ADMIN");
@@ -202,12 +136,6 @@ test("account provisioning is a set: the ministry admin and both admin tiers, an
 });
 
 test("the review queue's Edit is the server's can_edit_others_record: Professor and above, over a creator below", () => {
-  /*
-    `review.edit_reviewed_record` refuses an edit of somebody else's record unless
-    `can_edit_others_record` holds — `has_rank(user, "PROFESSOR") and can_review_record(...)`. The
-    queue used to draw Edit for every reviewer, so an inspector pressed it and met a 403. Reviewing
-    reaches further down than editing: an inspector reviews a designer's record and may not edit it.
-  */
   expect(canEditOthersRecord(user("INSPECTOR"), "DESIGNER")).toBe(false);
   expect(canEditOthersRecord(user("RESEARCHER"), "FIELD_CONTRIBUTOR")).toBe(false);
   expect(canEditOthersRecord(user("DESIGNER"), "RESEARCHER")).toBe(false);
@@ -219,12 +147,10 @@ test("the review queue's Edit is the server's can_edit_others_record: Professor 
   expect(canEditOthersRecord(user("ASSISTANT_DIRECTOR"), "REGIONAL_DIRECTOR")).toBe(false);
   expect(canEditOthersRecord(user("ADMIN"), "ADMIN")).toBe(false);
   expect(canEditOthersRecord(user("MASTER_ADMIN"), "MASTER_ADMIN")).toBe(true);
-  // No creator role on file reads as a Researcher's, as `can_review_record` defaults it.
   expect(canEditOthersRecord(user("PROFESSOR"), null)).toBe(true);
   expect(canEditOthersRecord(user("PROFESSOR"), "NOT_A_ROLE")).toBe(true);
   expect(canEditOthersRecord(null, "DESIGNER")).toBe(false);
 
-  // And the queue asks it before it draws Edit or opens the editor.
   const page = readFileSync(join(__dirname, "..", "app", "(protected)", "review", "page.tsx"), "utf8");
   expect(page).toContain("canEditOthersRecord(user, item.createdBy?.role)");
   expect(page).toContain("{!offersEdit(item) ? null : (");

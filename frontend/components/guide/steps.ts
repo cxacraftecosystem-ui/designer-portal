@@ -22,413 +22,24 @@ import {
   type LucideIcon
 } from "lucide-react";
 
-/*
- * ═══════════════════════════════════════════════════════════════════════════════════════════════
- * A GUIDED (COACH-MARK) TOUR WAS EVALUATED AND DECLINED — 2026-08-29, requirement 4.
- * ═══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The ask was to evaluate a guided tour: the pattern where a spotlight dims the screen, a bubble
- * points at one control, and Next walks a reader through a real page. The answer is NO, and it is
- * written HERE rather than in a ticket because the next reader has to be able to CHECK it. Every
- * claim below names a file you can open, and if one of them stops being true the decision is worth
- * re-opening. A decision nobody can check is re-litigated from scratch by whoever arrives next.
- *
- * ── WHAT A TOUR WOULD GENUINELY BUY ────────────────────────────────────────────────────────────
- *
- * Said first, so this does not read as a refusal hunting for reasons. A card teaches a screen from
- * a page the reader then leaves; a coach-mark points at the actual control on the actual screen,
- * which is the only way to teach a SPATIAL fact — "the artisan dropdown stays disabled until a
- * craft is chosen" is one sentence on a card and one glance in situ. And the 22-stage form is the
- * one screen this file admits it cannot describe (see THREE CARDS IN THE SECOND ARC below): that
- * form is built from a registry the SERVER publishes, so its boxes are not this file's to
- * enumerate, while a tour anchored to live DOM would not have that problem at all.
- *
- * ── WHAT IT WOULD COST ─────────────────────────────────────────────────────────────────────────
- *
- *  1. A NEW DEPENDENCY, OR A DRIVER WRITTEN HERE. `frontend/package.json` carries no tour library —
- *     `grep -iE "joyride|shepherd|driver\.js|intro\.js|reactour" frontend/package.json` matches
- *     nothing — and "build on radix" overstates what radix is in this repository: the only radix
- *     packages installed are `react-scroll-area`, `react-separator` and `react-slot`. No popover,
- *     no popper, no dialog, no tooltip. There is no positioner to build on except the house's own,
- *     `components/ui/AnchoredPopover.tsx`, which is buildable-on and is somebody else's invariants.
- *  2. A BUNDLE COST ON EVERY PROTECTED PAGE. A driver mounted in `AppShell` is paid for by every
- *     screen in the app — the objection that already forced GSAP behind a dynamic import
- *     (`useGsapHeadline.ts`: ~70 KB "must not sit in the bundle every protected page loads").
- *     Behind an explicit "start the tour" button it could be imported lazily, which also means it
- *     cannot auto-start on first sign-in, which is most of what a tour is wanted for.
- *  3. THREE REDUCED-MOTION BRANCHES PER STEP. A coach-mark is a spotlight, a scroll and a popover.
- *     There is no `MotionConfig reducedMotion="user"` anywhere in this app, so each one has to
- *     branch in JS on `useAppReducedMotion()`; and the scroll half is the trap, because
- *     `scrollToStep` already treats smooth scrolling as motion, so every hop between two targets
- *     owes the same gate. A spotlight under `prefers-reduced-motion` also has no good degraded
- *     form: the ring has to persist without the pulse.
- *  4. A FOCUS AND ESCAPE NEGOTIATION WITH TWO CAPTURE-PHASE LISTENERS THAT ALREADY EXIST. A tour
- *     overlaying a live form must not steal focus from the control it is describing, must not
- *     fight `FieldDialog`'s document-capture Escape or `AnchoredPopover`'s window-capture one, must
- *     re-pay `var(--nav-scroll-gutter, 0px)` if it is fixed, and must sit in the z-ladder without
- *     covering the island it is telling people to use.
- *  5. AND THE ONE NO AMOUNT OF ENGINEERING REMOVES: FOR MOST OF ITS AUDIENCE THERE WOULD BE NO DOM
- *     TO POINT AT. `/guide` is deliberately ungated (`DynamicIslandNav`), and the reason is written
- *     out below — the guide teaches the process to people who have not earned the capability yet.
- *     But `AppShell` renders a `RouteLocked` panel INSTEAD of the page for every screen in the
- *     second arc, and the inspection surface is narrower still (`INSPECTION_ROLES` is a one-member
- *     set). So the tour would either refuse to run for exactly the readers this page exists to
- *     serve, or need a per-role script — a second, hand-kept copy of `ROUTE_GUARDS`, which is the
- *     failure `.claude/skills/field-repo-frontend/SKILL.md` records as twenty-two hand-kept copies
- *     of the ladder all needing correction when INSPECTOR landed.
- *
- * ── THE CHEAPER THING THAT BUYS MOST OF IT, AND IS NOT BUILT EITHER ────────────────────────────
- *
- * `GuideJourney` already reads `location.hash`, VALIDATES it against the deck it is rendering, opens
- * that card and scrolls to it. The machinery is used by nothing: nothing anywhere in the app links
- * to `/guide#<id>`. Every one of them goes to the bare route — `grep -rn '"/guide"' frontend/app
- * frontend/components` is the list, minus the one hit that is this sentence. (It said "the nine
- * entry points" when this block was written, which was wrong on the day, and then "eleven sites
- * today", which was right on ITS day and was falsified on 2026-09-15 by one ministry-desk card
- * adding a twelfth. Twice now. The COUNT was never the argument — the absence of a single `#` in any
- * of them is — so the number is gone and the grep is the answer, which is what the parenthesis it
- * replaces said should have happened the first time.)
- *
- * ⚠ 2026-09-16: THE RULE THIS PARAGRAPH RECOMMENDED THE WORK UNDER REVERSED, AND THE OLD CLAUSE IS
- * KEPT HERE RATHER THAN DELETED. It read: "and since 2026-09-15 `guideTrackForAnchor` (`tracks.ts`)
- * resolves the DECK from the same anchor first, so a link to a card in another deck selects that
- * deck rather than being silently discarded. The machinery is therefore more complete than it was".
- * `guideTrackForAnchor` is unchanged and still resolves every anchor of every deck — but the PAGE
- * now intersects its answer with `guideTracksFor(user)` (OQ-5, arm b): THE ROLE OUTRANKS THE ANCHOR,
- * and an anchor into a deck this account may not read is SILENTLY DISCARDED, no note and no
- * redirect, for every tier except ADMIN and MASTER_ADMIN. `GuideJourney`'s own check then finds the
- * id is not in the deck it was handed and returns before opening anything, so such a link lands the
- * reader at the top of a walkthrough that never mentions it, with the hash still in the URL.
- *
- * SO THE RECOMMENDATION BELOW IS NOW CONDITIONAL, AND FOR A LOCK PANEL THE CONDITION IS USUALLY
- * FALSE. Pointing each lock panel and each screen's help at its own step anchor lands a designer on
- * the paragraph about the screen they were just refused — still true, but only where the panel's
- * AUDIENCE is inside `guideTracksFor` for the deck that OWNS that step. Deck assignment is by ROLE
- * FALLBACK and not by route access, so that is not a small set: RESEARCHER (30), FIELD_CONTRIBUTOR
- * (20), CROWDSOURCE_VOLUNTEER (10) and PROFESSOR (40) are every one of them refused the designer
- * arc's `canRunDesignWorkshops` routes and every one of them lands on `DESIGNER_TRACK`, so a
- * `/design-workshops` lock panel pointing at `/guide#design-workshop-stages` works for all four.
- *
- * IT BREAKS WHERE REFUSAL AND DECK-SCOPING COINCIDE, which is most of the ministry and inspection
- * surface: the directorate deck's routes for every tier outside the three officer posts, the
- * inspector deck's routes for everybody but INSPECTOR, and the designer arc for INSPECTOR and those
- * three officer posts. (ADMIN and MASTER_ADMIN read all three decks, so nothing is ever discarded
- * for them.) There the href is the "appears to work and goes nowhere" failure `guideTrackForAnchor`
- * was written to remove, reintroduced by hand and one site at a time.
- *
- * SO: BEFORE ANY LANE ADDS A `/guide#<step>` HREF, check the deck that owns the step against the
- * audience that will see the link. Where the two do not intersect the href is not owed a fix in this
- * file — it needs OQ-5 arm (c) first (open the reader's own deck and say in one line which deck the
- * link belonged to), which was costed and not taken. Where they do intersect it is still one href
- * per site and still degrades to a plain link under any preference. Those files belong to other
- * lanes; this is the note recording that the machinery is here, what it now does, and what it no
- * longer promises.
- *
- * DO NOT ADD A TOUR LIBRARY on a later re-reading of this comment. What would change the decision
- * is cost 5 going away — the second arc becoming READABLE by every signed-in account — and not a
- * lighter library appearing.
- *
- * ── 2026-09-15: A PER-ROLE SCRIPT WAS BUILT, AND THIS DECISION IS UNCHANGED ─────────────────────
- *
- * `/guide` now carries three decks — this one, `directorateSteps.ts` and `inspectorSteps.ts` — and
- * `components/guide/tracks.ts` chooses which one opens from the reader's role. That is the phrase
- * cost 5 uses, so it is answered here rather than left for a reader to notice the contradiction and
- * conclude the paragraph above is stale.
- *
- * COST 5 IS ABOUT A TOUR'S SCRIPT AND IT SURVIVES INTACT. What made a per-role script expensive
- * there is that a coach-mark tour must know, per account, WHICH SCREENS WILL ACTUALLY RENDER: it
- * anchors to live DOM, so a step whose page answers with a lock panel has nothing to point at and
- * the sequence dead-ends mid-flight. That forces a hand-kept second copy of `ROUTE_GUARDS`, and a
- * copy that drifts strands a reader.
- *
- * WHAT WAS BUILT COPIES NO GATE AND CANNOT DEAD-END. It is three arrays of prose, one card renderer,
- * and two short selections over three predicates `lib/permissions.ts` already exports — no
- * anchoring, no sequence, no live DOM, nothing fetched. The role decides which deck opens, and a
- * wrong answer shows somebody the wrong prose, which is exactly why a heuristic is allowed to make
- * it and exactly what a tour's script could not afford: a spotlight that guesses wrong points at a
- * control that is not on the screen.
- *
- * ⚠ 2026-09-16: THE DECKS ARE NOW SCOPED, AND THIS PARAGRAPH SAID THEY WERE NOT. It read "the
- * switcher on the page reaches all three for everybody, so nothing is hidden from anybody and the
- * ungated-page argument two paragraphs up is honoured three times over instead of once." The owner
- * ruled that every tier except ADMIN and MASTER_ADMIN is shown only the walkthrough its own role
- * owns (`guideTracksFor` in `tracks.ts`), so that sentence is false and is replaced rather than
- * quietly dropped.
- *
- * WHAT THE SCOPING DOES NOT TOUCH IS THE UNGATED PAGE, which is the thing the paragraphs above
- * actually rest on. `/guide` is still absent from `ROUTE_GUARDS`, its nav entry is still
- * `can: everyone`, and every signed-in account still opens the page and reads a complete walkthrough
- * end to end. What no longer happens is one reader browsing another tier's deck. The teaching
- * argument in this header is therefore narrower than it was and is not withdrawn: a card in the deck
- * you ARE given may still name a screen you cannot open, every such card says so in its own `watch`,
- * and that is still why this file refuses to be a second copy of `ROUTE_GUARDS`.
- *
- * SO THE REFUSAL ABOVE STILL BINDS, and what would change it is still cost 5 going away. Three decks
- * do not make a spotlight cheaper; scoping them makes it worse again, because a reader is now shown
- * exactly one deck and a tour of it would have to dead-end at every card whose screen their tier is
- * refused — with no other deck to send them to.
- * ═══════════════════════════════════════════════════════════════════════════════════════════════
- */
-
-/**
- * The steps of the process, in the order a designer actually performs them in the field: first the
- * ones that build the repository records, then the ones that run the design & prototype development
- * workshop those records feed.
- *
- * ⚠ THE COUNT IS NOT WRITTEN IN THIS COMMENT ANY MORE, and the deletion is the point. This sentence
- * opened "The nineteen steps of the process" and was correct on the day it was typed; the page
- * header had already said "Ten steps" over an array of sixteen for exactly the same reason, which
- * is why every count a READER sees is derived from `GUIDE_STEPS.length`. A count in a comment goes
- * stale as silently as one in copy, and it is worse, because the next agent reads it as a fact
- * about the file rather than as a sentence somebody wrote once.
- *   grep -c '^    id: "' frontend/components/guide/steps.ts
- * is the answer and is always current.
- *
- * THE SECOND ARC WAS MISSING FOR AS LONG AS THIS FILE EXISTED, and it is the one the fortnight is
- * for. The steps below were the repository RECORD forms and nothing else; nothing here mentioned
- * the 22-stage workshop, the readiness check, the code cards or generating the report handed to a
- * ministry officer. A designer who opened the in-app Walkthrough looking for the deliverable found
- * ten ways to file a record and no path to the document. The workshop arc comes AFTER the record
- * steps and not before, because that is the order the work happens in: the records exist first, and
- * the stage form points at them.
- *
- * THE THIRD PASS WAS 2026-08-29, and it was a CURRENCY pass rather than a structural one: two waves
- * of shipped work had landed since anything in this file was last checked against a form. What that
- * cost is worth naming, because it is the failure this file is most exposed to. `steps.ts` had not
- * been touched since before the wave that put a "Design & prototype workshop" picker on six record
- * forms, a microphone on every prose box, a deterministic photo-measuring panel above the vision
- * model, a repository media picker and a photograph gate inside the stage form, five trace export
- * formats on the sketches screen, a designer TEAM on a workshop create, and two whole destinations
- * (Scan a code, Workshops to inspect). None of that was WRONG on a card — it was absent, which is
- * the quieter defect: a designer reading a complete-looking list concludes the control they are
- * looking at is not part of the process. One card WAS wrong, and that is the loud one: the
- * questionnaire card listed a "Date" field the interview form has never had and says in its own
- * comment it will never have.
- *
- * THE DESIGNER'S OWN SCREENS WERE THE SECOND OMISSION, and it lasted until 2026-08-26. The arc
- * taught the workshop and the report and said nothing about the person running them: the profile a
- * workshop's stage 1 and stage 3 start pre-filled from, the sketch and prototype work that stages 11
- * and 13 exist for, or the review round that ranks it. Three steps were added — `designer-profile`,
- * `design-workshop-sketches`, `design-review` — and the `Cards & tags` step moved AHEAD of the
- * stages, because printing the codes and getting the team onto one workshop happen on the first
- * afternoon and filling the stages takes the fortnight.
- *
- * ONE CLAIM FROM THE BRIEFING WAS CHECKED AGAINST THE CODE AND IS NOT WRITTEN ON ANY CARD: "a 3D
- * prototype model" viewer. `upload/PrototypeModelField.tsx` states in capitals that nothing in the
- * frontend can render one — the file is stored and downloadable and prints as "1 document
- * attached". A card asserting it would be the failure mode this file's own labels rule exists to
- * prevent, one level up: not a name the product does not use, but a feature it does not have.
- *
- * ⚠ A SECOND CLAIM WAS WITHHELD ON THIS SAME REASONING AND THE REASONING WAS WRONG. "Plate
- * straightening from a photographed sketch" was refused here, and in `docs/WALKTHROUGH.md`'s "What
- * the app does not do" row, on the evidence that `lib/trace/imageEdit.ts` is a crop and an unsharp
- * mask with no deskew anywhere under `lib/trace/`. That search was true and the conclusion drawn
- * from it was not: `lib/trace/` is the TRACING panel, and the straightening ships in a different
- * file for a different registry field. `lib/sketchRectify.ts` is "perspective correction, then
- * line-art extraction by local thresholding" over `solveHomography`/`applyHomography` from
- * `lib/photoMeasure`; `components/designworkshop/SketchRectifyField.tsx` is its panel, mounted from
- * `FieldInput.tsx` wherever `stageFieldRoles.offersSketchRectify` matches — stage 11's
- * `sketch.lineArtFile` is the field it was written for; and `ui/designworkshop/
- * DwSketchRectifyField.kt` is the handset twin. So the `design-workshop-sketches` card DESCRIBES it,
- * and the doc's row has gone.
- *
- * The general lesson is worth more than the correction: absence proved inside one directory is not
- * absence from the product, and a "does not do" row is the one kind of claim that instructs the
- * next reader not to look. Prove a negative over the tree or do not write it.
- *
- * EVERY STEP IN THE SECOND ARC LANDS A NON-DESIGNER ON A LOCK PANEL, which is a thing §9 of the
- * frontend skill says a card must not do quietly. `/designers/profile`, `/design-workshops`,
- * `/design-review`, `/sketches-and-prototypes` and `/questionnaires` all carry a `ROUTE_GUARDS` row
- * on `canRunDesignWorkshops` (`lib/permissions.ts`), while `/guide` itself is deliberately ungated —
- * so a researcher reading this page can open the record steps and none of the workshop ones. That
- * cannot be fixed from inside this file: the guide teaches the process to people who have not
- * earned the capability yet, and withholding the arc would hide the deliverable the fortnight
- * exists for. What IS in this file's power is to make the padlock expected rather than a surprise,
- * so every card whose route a reader can arrive at first carries the same sentence in `watch` — one
- * wording, deliberately repeated, so it reads as a rule and not as an apology.
- *
- * ⚠ ONE CARD IN THE ARC MUST NOT BORROW THAT SENTENCE, AND COPYING IT THERE WOULD BE A REGRESSION
- * DRESSED AS CONSISTENCY. `design-workshop-inspection` is gated on `INSPECTION_ROLES`, which is a
- * frozen set of exactly one member — INSPECTOR — so an admin and the master admin are refused it
- * just as a professor is. "Designers, admins and the master admin" is the true sentence for the
- * five routes above and is false in both directions for that one. Its `watch` says so in its own
- * words, and its card comment records why. The repeated wording is a rule about ONE predicate, not
- * a house style for padlocks.
- *
- * ONE CLAIM IN THE SECOND ARC IS NOT A SCREEN DESCRIPTION and must not be softened: choosing a
- * record in a stage COPIES its values onto the stage entry, and the report prints the copy. Never
- * write that a picker shows the linked record, or that the report reads it — that is the opposite of
- * what the system does, and the difference is a document already in an officer’s hands changing
- * under him. Its authority is `REFERENCE_HYDRATION` in `backend/app/services/stage_schema.py`.
- *
- * THE FOURTH PASS WAS 2026-08-31 AND IT WAS AN AUDIT OF `fields[]` ITSELF, prompted by a docs lane
- * that could not act on what it found: the REGISTER was wrong, not merely the doc rendering it. Every
- * card's list was read label-for-label against the component named above it. What that turned up is
- * worth stating as a class rather than as a list of nine edits, because the class is what will happen
- * again: the two failures were FIELDS ADDED TO A FORM AFTER THIS FILE LAST READ IT (the artisan's two
- * identity numbers and three date-derived boxes, the questionnaire's capture controls and its audio
- * and location blocks, the craft form's workshop select, "Type of workshop" on a design workshop,
- * "Kind" on a designer's own questionnaire) and LABELS RENAMED UNDER A LIST THAT KEPT THE OLD WORD
- * ("Address" → "Address line"; the process card's two invented per-step rows; "Start and end date"
- * for a control headed "Workshop duration"). Both are invisible to every test in the repository: the
- * parity guard holds three copies of this register to each other and none of them to a form.
- *
- * THE ARTISAN CARD IS WHY THIS MATTERED MORE THAN A STALE DOC. It omitted the Aadhaar number and the
- * Artisan Pehchan Card pair — the two fields in the product with the strictest handling rules, and
- * the only ones on that form a researcher cannot improvise once the artisan has gone home. A list
- * that looks complete and leaves them out does not read as "incomplete"; it reads as "this form does
- * not ask for those", which is a designer arriving at a sitting without the one document they needed.
- *
- * WHAT THE PASS DELIBERATELY DID NOT DO, so the next reader does not take the silence for agreement:
- * "Location (GPS fix or map pin)" is a COMPRESSION and stays one. The card's real heading is
- * "Location of the artisan", it contains a State box that is required on a create, and it opens a
- * map panel with six more labelled boxes behind it. Enumerating that on seven cards would swamp
- * every one of them and would fight the printed guide, which renders the same control as a sentence
- * about the two things it collects and carries a table explaining why they differ (that sentence is
- * licensed by name in `PROSE_PARAPHRASES`). It is one control, named once. If it is ever expanded,
- * expand it on all seven cards, in the doc and in the paraphrase table in one commit.
- *
- * Every `label` here is the Android-parity feature name (see
- * `.claude/skills/field-repo-frontend/SKILL.md` → "Naming"): the walkthrough must call a
- * screen exactly what the dashboard tile and the Android menu call it, or the guide teaches
- * a vocabulary the product does not use. `fields` mirrors the real form labels one-for-one,
- * so a researcher reading the guide recognises the screen when they open it.
- *
- * The labels are copied from the forms themselves — `components/forms/ArtisanForm`,
- * `ProductForm`, `ToolForm`, `ProcessForm`, the inline forms on the workshops / crafts /
- * questionnaire / media pages — plus the three shared sections a record form mounts:
- * `<WorkshopSelect>` (label "Workshop"), `<DesignWorkshopSelect>` (label "Design & prototype
- * workshop") and `<LocationFields>` (heading "Location"). Rename a field on a form and it must be
- * renamed here and in `docs/WALKTHROUGH.md`, which carries the same lists in prose.
- *
- * FOUR CARDS CANNOT OBEY THAT RULE AND THEIR `fields` ARE DESCRIPTIONS INSTEAD.
- * `design-workshop-codes` and `design-workshop-readiness` render no labelled field at all — grep
- * either page for `field-label` and the count is zero; they are a print sheet and a list of links.
- * `design-workshop-stages` cannot enumerate labels even in principle: the stage form is built from
- * the registry the server publishes, so its boxes are hundreds of labels across 22 stages and are
- * not this file's to copy. `design-workshop-inspection` is the fourth, added 2026-08-29, and it is
- * named HERE rather than left to be noticed: an inspection read draws the values of a workshop it
- * did not author, so it has no form and no labels of its own — its four rows are the two page
- * headings, the authorship line under every value, and the completeness figure. Their `fields` name
- * the sections of the screen, which is the only honest content available, and each row is still a
- * thing a reader can point at. EVERY OTHER CARD OBEYS THE RULE and was read off the components
- * named in the comment above its list — do not let a fifth quietly join the exception by being
- * easier to paraphrase than to read. (`design-workshop-questionnaires` was the most recent
- * candidate and did not need to be one: "Download the pro-forma", "Title", "Section title", "Code",
- * "Question", "Help text" and "Reuse at another workshop" are all real controls on that screen.)
- */
 export type GuideStep = {
-  /** Stable anchor id — the rail scrolls to `#${id}` and the URL hash survives a reload. */
   id: string;
-  /** Android-parity feature name. Never invent a new one. */
   label: string;
-  /** The dashboard tile's verb for this action ("Record artisan", "Take interview", …). */
   action: string;
   icon: LucideIcon;
-  /** The real screen this step is teaching. */
   href: string;
-  /** One sentence: what you are doing at this point in the field. */
   summary: string;
-  /** Why the dataset needs it — the reason the step is not optional. */
   why: string;
-  /** The fields the screen actually asks for, in screen order. Required ones are marked. */
   fields: string[];
-  /** Field-tested cautions: the things that trip people up on their first workshop. */
   watch: string[];
 };
 
-/**
- * ONE WORDING FOR THE WORKSHOP QUESTION ON THE FIVE RECORD FORMS, AND NOT FIVE PARAPHRASES.
- *
- * ── IT DESCRIBED THREE CONTROLS UNTIL 2026-09-16, AND IT IS THE SENTENCE THAT HAD TO MOVE ─────
- *
- * It read: ““Design & prototype workshop” is a second, separate question from “Workshop” above it,
- * and a record may carry either, both or neither.” Every clause of that was true of the form it
- * described and none of it is true now. The owner's ruling is two dropdowns and never three: a
- * “Type of workshop” box, and under it one “Workshop” box listing the workshops of that type. One
- * control gives ONE answer, and the type decides which of the record's two columns it is saved in —
- * so “either, both or neither” became “one, or neither”, and the reader who went looking for a
- * second workshop box on the strength of this sentence would not find one.
- *
- * WHAT STAYS TRUE AND IS WORTH KEEPING: the prefill. A new record still opens on the most recent
- * workshop the account can reach and still prints one line underneath saying why it filled itself
- * in, and “Not linked to a workshop” is still a real answer (R5).
- *
- * `DesignWorkshopSelect` is still mounted on the five record forms — through
- * `forms/WorkshopPicker.tsx`, as the second box, whenever the chosen type routes at a
- * `DesignWorkshop` — and directly on the media page, which has its own sentence below because that
- * form genuinely draws one box and no type box at all. A designer meets this control on six screens
- * in a fortnight, so it has to read as one rule; five near-misses of one sentence read as five
- * unrelated warnings and the reader stops trusting any of them.
- *
- * WHAT IT DELIBERATELY DOES NOT SAY: that the picker narrows who may READ the record. It does not.
- * `lib/designWorkshopDefault.ts` is explicit that the answer is a SUGGESTION and never a scope —
- * every write is still checked server-side — and a guide sentence implying otherwise would teach a
- * client-side permission the API does not have. It also does not say the type box narrows a list
- * WITHIN a table: it chooses which table the box below reads from, and nothing else.
- */
 const DESIGN_WORKSHOP_FIELD =
   "Choose “Type of workshop”, then the workshop. New records start on your latest workshop — change it if needed, or choose “Not linked to a workshop”.";
 
-/**
- * THE MEDIA FORM'S OWN SENTENCE, because that form is the one place this control stands alone.
- *
- * A loose upload can be filed under a design and prototype workshop and under nothing else:
- * `MediaCompleteRequest` (backend/app/schemas/media.py) declares `designWorkshopId` and no
- * `workshopId`, and so do the web and Android request bodies. So there is no type box above it, no
- * second list to choose between, and the record-form sentence above — which is entirely about
- * choosing between two lists — would send a reader hunting for a box this screen does not draw.
- * Both clients draw exactly one box here, which is why this is a second wording rather than a
- * second screen's worth of drift.
- */
 const MEDIA_DESIGN_WORKSHOP_FIELD =
   "New uploads start on your latest design workshop. Change it if needed, or choose “Not filed under a design workshop”.";
 
-/**
- * THE MICROPHONE SENTENCE, likewise one wording rather than one paraphrase per card.
- *
- * The two claims in it are the two a designer actually needs and both are checkable:
- * `OnDeviceDictationButton` has no `MediaRecorder`, no `fetch` and no code path that can produce a
- * network request — `e2e/record-form-dictation-unit.spec.ts` asserts that by reading the source,
- * because "it happens not to call fetch today" is not a property a type can carry — and the boxes
- * that are left bare are left bare on purpose, which is the half a reader would otherwise report as
- * a missing feature.
- *
- * ⚠ THE INTERVIEW CARD IS DELIBERATELY NOT ONE OF ITS USERS, although `/questionnaire` grew the
- * same control. That screen already has a microphone doing a DIFFERENT job and the card already
- * teaches it: "Record this question" captures the artisan's voice as a file, uploads it, and has it
- * transcribed on the server. Putting a second microphone sentence beside that one would be two
- * microphones and one word for both — and the difference between them is exactly the thing a
- * researcher must not get wrong, because one of them is a recording of a person and the other is
- * nothing at all. Where two controls share a glyph, the card explains the one with consequences.
- *
- * NOT IN `fields[]` either, and that is the rule rather than a preference: a microphone is not a
- * labelled box, and `fields[]` on the record cards is the real form labels in screen order. The
- * stage card further down DOES carry it as a field, because that card's `fields` are section
- * descriptions for a form built from a server registry — the documented exception, which nothing
- * else may quietly join.
- *
- * ⚠ ITS USER LIST IS NOT `DESIGN_WORKSHOP_FIELD`'S, AND ASSUMING IT WAS IS HOW THIS SENTENCE CAME TO
- * BE MISSING FROM TWO CARDS. The two constants landed in the same pass and read as a matched pair,
- * so the second was mounted wherever the first was — the six forms that carried `DesignWorkshopSelect`
- * directly before `forms/WorkshopPicker.tsx` folded five of them behind it.
- * But they are answers to two different questions. `grep -rl "Design & prototype workshop"
- * "app/(protected)" components/forms` returns the five record forms (through `WorkshopPicker`) and
- * the media page, and does NOT return `crafts/page.tsx` or `workshops/page.tsx`, because neither
- * record has that column; `grep -rl DictatedTextInput` over the same tree DOES
- * return both, and their own comments say why they are dictated at all — five boxes on the craft
- * form (`Craft name`, `Local name`, `Category`, `Place`, `Description`) and three plus the notes on
- * the workshop one. Two forms in, two forms out, and one list borrowed for both.
- *
- * WHAT THE OMISSION COST IS NOT A MISSING FEATURE NOTE. It is the confusion the ⚠ above exists to
- * prevent, arriving on the two cards that had no sentence at all to prevent it with: a researcher
- * whose only microphone paragraph is on the interview card has been taught that the glyph means "a
- * recording of a person, uploaded and transcribed", and the first bare one they meet is under
- * `Craft name` on a form this guide describes as complete. The two readings of that button are "my
- * words become text here on this handset" and "the artisan's voice is leaving this device", and a
- * guide that names the second and not the first has taught the wrong one. The first card in the
- * array was one of the two, which is the worst place for it: it is open on arrival.
- */
 const DICTATION_ON_THIS_FORM =
   "Text boxes have a microphone. Speech becomes text on this device — nothing is recorded or uploaded, and it works offline.";
 
@@ -443,13 +54,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Open the workshop you are documenting, or create it, before you record anything else.",
     why:
       "Every record belongs to a workshop. New records start on your latest one, so set it up first.",
-    // TWO REAL CONTROLS WERE MISSING FROM THIS LIST SINCE THE FILE WAS FIRST WRITTEN, and the
-    // provenance is worth stating so the next reader does not go hunting for the wave that broke it:
-    // `git log -S'Kind of workshop'` returns one commit, the one that ADDED the control, and this
-    // card has never named it. It is drift from the initial commit rather than a recent regression.
-    // Read off `app/(protected)/workshops/page.tsx` in screen order: `Kind of workshop` is FIRST, at
-    // `:529`, above the title — and `Status` sits between the date range and the description at
-    // `:586`, drawn as a dropdown for a reviewer and as a locked "Pending" chip for everybody else.
     fields: [
       "Kind of workshop (required)",
       "Workshop title (required)",
@@ -467,34 +71,7 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Create the workshop before you leave for the field. Everything else you record is filed under it.",
       "“Kind of workshop” decides whether a design & prototype workshop can start from this record. Only workshops of that kind appear in the “Start from a recorded workshop” list.",
       "Records made outside the workshop's dates are flagged and need a reviewer's approval.",
-      // THE SILENT-EMPTINESS BULLET, AND IT IS ON THIS CARD BECAUSE THIS IS THE ONE PLACE A READER
-      // IS STILL EARLY ENOUGH TO ACT ON IT.
-      //
-      // Every record form offers "Not linked to a workshop" (`WorkshopSelect`'s `NO_WORKSHOP_LABEL`)
-      // and its own empty state says a record can be saved without one — so this is a state an
-      // ordinary researcher can reach on their first afternoon, by pressing nothing unusual. The
-      // consequence is the one this repository's most repeated bug class is named after, and
-      // `WorkshopMappingPanel`'s header states it as fact rather than as a risk: a record with an
-      // empty `workshopId` counts towards NO workshop scope while staying perfectly visible under
-      // "All records", and since the app opens scoped to the most recent workshop, the screen reads
-      // as "nothing was documented here" instead of as a filter hiding data that is sitting right
-      // there. It has already happened at this repository's scale — twenty-five questionnaire
-      // interviews and nine hundred and twenty-four media files, all recorded at the one workshop
-      // that existed, none of them carrying its id.
-      //
-      // NAMED, NOT LINKED, AND THE ASYMMETRY IS THE POINT. The remedy is an admin's: the panel is
-      // rendered on `/workshops` behind `isAdmin` and its endpoints are `require_admin`, so a `watch`
-      // bullet sending a researcher to press it would send them to a control that is not on their
-      // screen. What a researcher can do is notice the state and say so, which is why the bullet
-      // gives them the panel's exact on-screen heading — "Records not filed under a workshop" — to
-      // say it with. A caution the reader cannot act on is worth writing only when it tells them who
-      // can.
       "Records “Not linked to a workshop” won't show under any workshop. Choose one on the form; an admin can file them later.",
-      // NO `DESIGN_WORKSHOP_FIELD` HERE, and its absence is a fact about the schema rather than an
-      // oversight: a Workshop has no `designWorkshopId` column and `DesignWorkshopSelect` is not
-      // mounted on this page. A workshop is not filed under a design workshop — it is CHOSEN BY one,
-      // through the "Kind of workshop" box the bullet above this one describes. Adding the sentence
-      // here would tell a designer to look for a picker this form does not draw.
       DICTATION_ON_THIS_FORM
     ]
   },
@@ -507,14 +84,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Add the craft you are documenting so artisans, products and tools can be linked to it.",
     why:
       "Artisans link to a craft, and products and tools take their craft name from it. Adding it once keeps the spelling the same in everyone's records.",
-    // Read off `app/(protected)/crafts/page.tsx` in screen order. `Workshop` WAS MISSING and it is
-    // the FIRST control on the form (`:411`), above the craft name — the page's own comment says
-    // why it leads: "the workshop leads every other dropdown: it is the context the record belongs
-    // to". A card that starts at "Craft name" teaches a researcher to skip the box that files the
-    // record, which is the silent-emptiness failure the workshop card above spends a paragraph on.
-    // NO `Design & prototype workshop` HERE, and its absence is a fact about the schema rather than
-    // an oversight: `DesignWorkshopSelect` is not mounted on this page, because a Craft has no such
-    // column. There is no Status and no Location on this form either.
     fields: [
       "Workshop",
       "Craft name (required)",
@@ -530,14 +99,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     watch: [
       "Check the list first. If the craft is already there, use it rather than adding a second spelling.",
       "The local name matters as much as the English one. Record what the community calls it.",
-      // THE MICROPHONE UNDER "Local name" IS THE REASON THIS CARD NEEDS THE SENTENCE MORE THAN MOST,
-      // and the reason is in the box's own comment on `crafts/page.tsx`: that field is Devanagari or
-      // Gujarati, it is deliberately NOT title-cased because capitalising means nothing there, and
-      // it still gets a microphone because the recogniser takes whichever language it is set to and
-      // Hindi, Odia and Gujarati are all in `DICTATION_LANGUAGES`. A researcher who does not know
-      // that types a transliteration, which is the one thing the bullet above asks them not to do.
-      // The sentence below does not name the languages — that list is the component's to change —
-      // but it is what puts the reader in front of the button that has them.
       DICTATION_ON_THIS_FORM
     ]
   },
@@ -550,39 +111,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Record the person: who they are, where they work, how to reach them, and what they have learnt.",
     why:
       "Products, processes, tools and interviews all link back to the artisan. The Do's and Don'ts are the artisan's own craft knowledge, and they can't be recovered once you have left.",
-    // ⚠ SIX REAL BOXES WERE MISSING FROM THIS LIST AND TWO OF THEM ARE THE REGULATED ONES, which is
-    // the worst shape this card could have taken. `fields[]` is declared as the real form labels in
-    // screen order, so a designer plans a sitting from it — and it named neither identity number.
-    // Aadhaar and the Artisan Pehchan Card carry the strictest handling rules in the product (masked
-    // storage, never rendered in a list or an export, a mask posted back verbatim for one and omitted
-    // entirely for the other), and they are the one part of this form nobody can improvise in front
-    // of an artisan: you either brought the card to the sitting or you did not. A list that looks
-    // complete and omits them sends somebody to a village unprepared for exactly the questions that
-    // cannot be answered later over the phone. `Date of birth`, `Craft start date` and `Experience`
-    // were missing on the same reading — they arrived with the workshop's participant table, which is
-    // what the report prints an age and years of experience from.
-    //
-    // AND THE WORKSHOP PAIR WAS IN THE WRONG PLACE, not merely absent: this list opened on "Name"
-    // while the form opens on the workshop, whose own comment says why — "the workshop opens the
-    // form, because it is the context every other answer belongs to". Screen order is half of what
-    // this array promises; a list read with the form open beside it is the use it was written for.
-    //
-    // Re-read off `components/forms/ArtisanForm.tsx` in screen order 2026-08-31: workshop (`:1183`),
-    // design & prototype workshop (`:1194`), name (`:1207`), local name (`:1219`), craft (`:1227`),
-    // or new craft name (`:1256`), place (`:1268`), gender (`:1278`), date of birth (`:1316`),
-    // practising since (`:1366`), experience (`:1414`), phone (`:1501`), email (`:1504`), address
-    // (`:1537`), notes (`:1559`), the Identity group — Aadhaar (`:1588`) and the Pehchan pair
-    // (`:1602`) — do's (`:1608`), don'ts (`:1614`), status (`:1620`), media (`:1623`), location
-    // (`:1638`).
-    //
-    // THE TWO CONDITIONAL MARKS ARE MARKED AS CONDITIONAL RATHER THAN FLATLY, because the rule is
-    // "check the control" and both controls answer "it depends". `AadhaarField` is mounted
-    // `required={aadhaarRequired}`, and `aadhaarRequired` is `!initial || …` — so it is required on
-    // every NEW artisan, which is the screen this card links to, and stands down only on an old
-    // record that predates the rule. `PehchanFields` sets `required={available}` on the number, so
-    // the Yes/No box directly above it decides: answering No disables the number and clears it.
-    // Since 2026-10-17 the form is the documentation portal's: both dates required, and experience
-    // two boxes, "Experience (years)" and "Experience (months)" (`shared/artisan-form-contract.json`).
     fields: [
       "Type of workshop",
       "Workshop",
@@ -612,12 +140,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Do's and Don'ts are required. Press Enter for each new point, one lesson per line.",
       "Choose an existing craft or type a new craft name. The form can't be saved without one.",
       "Camera details from your photos are added to the notes automatically, so you don't need to copy them.",
-      // ── THE FOUR BULLETS THE SIX NEW FIELDS OWE THE READER ────────────────────────────────────
-      // A field named on a card and left unexplained is worse than one omitted where the field has
-      // rules a researcher cannot infer from the box: they meet the mask, or the disabled number, and
-      // read it as the form being broken. Every clause below is `ArtisanForm.tsx`, `AadhaarField.tsx`
-      // or `PehchanFields`, not the printed guide — the doc says most of this and copy written from
-      // copy is the failure this whole file exists to prevent.
       "Aadhaar prevents duplicate artisans. If the person exists, you're shown their record to add to. Required for new artisans.",
       "Shared and exported numbers are masked (“XXXX XXXX 9012”). Leave a masked box as it is.",
       "Answer “Artisan Pehchan Card available” first. Yes makes the card number required; No clears and locks the number box.",
@@ -636,12 +158,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Record one thing this artisan makes, with its measurements, economics and photographs.",
     why:
       "Dimensions, costs, price and demand are compared across regions. Link the product to its artisan and craft.",
-    // Read off `components/forms/ProductForm.tsx` in screen order. THE WORKSHOP PAIR WAS LISTED
-    // THIRD AND FOURTH AND IS DRAWN FIRST AND SECOND (`:849`, `:855`) — the same drift the artisan
-    // card carried, from the same wave that put the workshop at the head of every record form. No
-    // label is missing here; the two measuring panels between "Height (inches)" and "Cost of making"
-    // are instruments rather than boxes — they PROPOSE a number into the three dimension fields
-    // already listed, and the watch bullets below name both.
     fields: [
       "Type of workshop",
       "Workshop",
@@ -670,19 +186,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     ],
     watch: [
       "Choose the linked craft first. The artisan list opens once a craft is chosen and shows only that craft's artisans.",
-      // ⚠ ONE BULLET DESCRIBED THE FALLBACK AS IF IT WERE THE ONLY ROUTE, AND IT NAMED THE WRONG
-      // ONE. It read: 'Use "Document using grid" to photograph the piece against the measuring grid:
-      // it fills length, breadth and height for you and stores the photo as evidence.' Two things in
-      // that sentence stopped being true on 2026-08-27. "Document using grid" is now the SECOND
-      // panel on the form — `GridMeasurement`, which posts the photograph to a vision model that
-      // ESTIMATES the inches, needs a connection it has no queue or retry behind, and cannot say how
-      // it reached a number. And "fills … for you" is the verb `ProductForm` itself struck out:
-      // NOTHING auto-fills any more, on either route, because `records.merge_field_provenance`
-      // stamps a changed field with the name of whoever pressed Save, so a number that filled itself
-      // in would be stored asserting that a named human measured it. Both routes PROPOSE and a
-      // person accepts. Teaching the estimate as the primary path is the expensive half of the
-      // error: it sends a designer in a courtyard with no signal to the one control that cannot work
-      // there, past the one that can.
       "Use “Measure from a photograph”: lay the piece on the grid sheet and mark known squares. Works offline.",
       "Measurements are suggested; you choose to accept them. The photo is saved with the record.",
       "“Document using grid” gives an automatic estimate and needs a connection. Use it for a piece that won't lie flat or can't be marked.",
@@ -700,21 +203,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Walk through how the product is made, one step at a time, filming each step as it happens.",
     why:
       "A photo shows the result; the steps show the knowledge — sequence, hand movements and judgement.",
-    // Read off `components/forms/ProcessForm.tsx` in screen order. FOUR CONTROLS WERE MISSING and
-    // one of them is the field this whole card exists to feed: "What happens in this process"
-    // (`:1312`) is the box the design-workshop report prints under “What happens”, in the
-    // traditional-process table and above it. A card that lists the STEPS and not the paragraph the
-    // report is built from teaches a designer to leave the report's own text empty.
-    //
-    // ⚠ TWO OF THE PER-STEP ROWS THEN NAMED LABELS THE FORM DOES NOT DRAW, which is the same defect
-    // as the questionnaire card's invented "Date" one card down, only quieter because the words were
-    // plausible. It read "additional context notes (optional)" and "attached media"; the step card
-    // draws a CHECKBOX, "Record additional information" (`:1622`), and only once it is ticked does a
-    // notes control appear, headed "Additional context for this step" (`:1627`). The media card
-    // under it is titled "Attach media" (`:1636`). A researcher hunting the screen for either of the
-    // two old strings finds nothing, and the checkbox that gates the notes was named by neither — so
-    // the box the card promised was, for most readers, genuinely not on the screen. Three rows now,
-    // in the order the step draws them.
     fields: [
       "Type of workshop",
       "Workshop",
@@ -747,12 +235,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Record the toolkit the artisan uses: what it is made of, how big it is, who made it, what it costs to replace.",
     why:
       "Toolmakers often vanish before the craft does. Maker, tradition and replacement cost show whether tools can still be had.",
-    // Read off `components/forms/ToolForm.tsx` in screen order. Every label matched on a re-read of
-    // 2026-08-31 except the position of the workshop pair, which is drawn first and second (`:958`,
-    // `:964`) and was listed fourth and fifth — the artisan and product cards carried the same drift.
-    // The two measuring panels sit between "Radius" and "Maker" and are not listed, for the reason
-    // the product card gives: they propose into boxes already named here, and the watch bullets say
-    // which boxes (this form is the one with two of them called "Height").
     fields: [
       "Type of workshop",
       "Workshop",
@@ -786,19 +268,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     ],
     watch: [
       "Fill in only the dimensions that suit the tool: a blade has a length and thickness, a wheel has a radius.",
-      // The same pair of panels as the product form, and the same correction — see that card for
-      // what the sentence used to say. The one difference is worth its own clause and is not
-      // cosmetic, and it REVERSED in 0.0.12: this form used to have a plain “Height” box
-      // sitting beside “Height (inches)” as an unrelated column, and the measuring panels
-      // wrote only into the second. There is no plain “Height” box any more — it is
-      // labelled “Height (cm)” (`ToolForm.tsx`) — and the two are now ONE measurement
-      // in two units: `onPropose` and `GridMeasurement.onHeight` both end in
-      // `propagate(text, cmTextFromInches, setHeight)`, so an accepted inch reading fills the
-      // centimetre box by conversion. What did NOT change is which column carries provenance:
-      // `measurementMethods` names `heightInches` and only `heightInches`, because the inch box is
-      // the one the panel actually measured into. A card that still promised the plain box was the
-      // designer's alone would send them hunting for a control that no longer exists and then
-      // contradict the screen when its partner filled itself in.
       "Use “Measure from a photograph”: lay the tool on the grid sheet and mark known squares. Works offline and fills inches and centimetres.",
       "“Document using grid” estimates automatically and needs a connection. Either way, you choose whether to accept the number.",
       "\"Process stages\" keeps your photos in the order you take them, so photograph the stages in sequence.",
@@ -816,33 +285,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary: "Sit down with the artisan and work through the interview sections, recording each answer as audio.",
     why:
       "The artisan speaks in their own voice and language. Recordings are transcribed after upload, so you needn't type during the interview.",
-    // ⚠ THIS LIST INVENTED A CONTROL AND DROPPED FOUR REAL ONES, which is precisely the failure the
-    // labels rule at the top of this file exists to prevent, and the invented one is the worse half.
-    // There is NO "Date" box on the interview form and there never has been: `questionnaire/page.tsx`
-    // says so in its own comment where the field would sit (`:1010`) — the server derives
-    // `interviewDate` from `recordedAt`, which is when the interview was actually captured, and
-    // "asking a researcher to confirm today's date was a field to tab past that could only ever be
-    // wrong". A card naming it sends a designer hunting for a box, and the ones who find nothing
-    // conclude the screen is broken rather than that the guide is. Re-read in screen order
-    // 2026-08-29: title (`:1003`), place (`:1015`), language (`:1056`), workshop (`:1071`), design &
-    // prototype workshop (`:1076`), status (`:1077`), primary artisan (`:1094`), additional artisans
-    // (`:1133`), the per-question boxes, and interview notes (`:1359`).
-    //
-    // ⚠ FOUR MORE WERE ADDED 2026-08-31, and three of them are decisions a researcher makes BEFORE
-    // the artisan sits down, which is the worst kind of control to leave off a card somebody plans a
-    // sitting from. `<QuestionnaireCaptureControls>` draws two: "Recording mode", which is the choice
-    // between one take per question and one take for a whole section, and "Do not display answer text
-    // boxes", which `DEFAULT_CAPTURE_PREFS` has ON — so a reader who was never told it exists meets a
-    // screen with no typing boxes at all and concludes the form is broken. The "Interview audio"
-    // capture card under it is the take for the interview as a whole, distinct from the per-question
-    // ones and never hidden by that toggle, and `<LocationFields />` sits under that. Named rather
-    // than cited by line, unlike the boxes above: that page was being edited in a neighbouring lane
-    // as this was written, and a line number that is already wrong is worse than none at all.
-    //
-    // AND THEY SIT ABOVE THE QUESTIONS, NOT AT THE FOOT. `docs/WALKTHROUGH.md` said "at the foot",
-    // which is where the notes are; the audio and the location are between "Additional artisans" and
-    // the first section. Screen order is half of what this array promises, so the doc was corrected
-    // to match the form rather than this list to match the doc.
     fields: [
       "Interview title (required)",
       "Place",
@@ -862,10 +304,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "There is one interview for each group of artisans. If one already exists for the same artisans, saving adds your answers to it.",
       "The interview is dated automatically from when it was recorded.",
       "Choose the language from the list; Hindi and English are at the top. If an older interview has a language not on the list, it is kept and shown first.",
-      // THE DEFAULT THAT READS AS A BROKEN SCREEN. `DEFAULT_CAPTURE_PREFS` has `hideAnswers` ON, and
-      // the toggle's own hint says so — "On by default — show only the record button." A researcher
-      // who came to type finds no box to type in and no reason given, which is the one state on this
-      // form a card can spare somebody entirely.
       "“Do not display answer text boxes” starts on (record only). “Recording mode” sets one recording per question or per section. Set both first.",
       "Answer only the questions you asked. Empty questions stay open for whoever continues the interview.",
       "An answer given by someone else can be changed only by them or an admin.",
@@ -895,10 +333,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Choose a Linked record type before you upload. If the file doesn't belong to a particular record, choose \"Miscellaneous Media\" and leave the entry blank.",
       "Tick Transcribe and translate on a recording or video to get its text.",
       "If a file turns out to belong to a record, you can link it to that record later.",
-      // THE MEDIA FORM'S OWN WORDING AND NOT THE RECORD FORMS', since 2026-09-16. This screen draws
-      // ONE workshop box and no type box; the record-form sentence is entirely about choosing
-      // between two lists, and printing it here would send a reader hunting for a box that is not
-      // drawn. See both constants for the wire reason the two screens differ.
       MEDIA_DESIGN_WORKSHOP_FIELD,
       DICTATION_ON_THIS_FORM
     ]
@@ -947,11 +381,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     ]
   },
   {
-    // LAST OF THE RECORD STEPS AND NOT FIRST OF THE WORKSHOP ONES, although a card and a tag are
-    // things a design workshop prints. What decides it is who may open the screen: `/scan` is
-    // ungated, like `/search`, because every endpoint behind it scopes its answer per viewer on the
-    // server — so this is the last step in the arc a researcher without designer access can follow,
-    // and putting it after the padlock would hide a destination they can actually reach.
     id: "scan",
     label: "Scan a code",
     action: "Open",
@@ -976,47 +405,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     ]
   },
 
-  /* ──────────────────────────────────────────────────────────────────────────
-   * The design & prototype development workshop — what the record steps above are for.
-   *
-   * These mirror the section of the same name in `docs/WALKTHROUGH.md`. That file and this array are
-   * TWO RENDERINGS OF ONE THING and its maintenance rule says they move in the same commit: add a
-   * step here, add it there.
-   *
-   * ⚠ THEY ARE NOT ONE-FOR-ONE AS OF 2026-08-29, AND NO TEST WILL TELL YOU SO. Two steps were added
-   * to this arc — `design-workshop-questionnaires` and `design-workshop-inspection` — and the doc
-   * was not edited, because `docs/` sits outside the territory this pass was allowed to touch and a
-   * half-applied edit to a file another lane is holding open is worse than a debt written down.
-   * Closing it is THREE edits in one commit and not one:
-   *   1. a section per new step in `docs/WALKTHROUGH.md` naming its route, because
-   *      `e2e/guide-walkthrough-unit.spec.ts` reads that file for one route per arc id;
-   *   2. the same two ids appended to `WORKSHOP_ARC` in that spec — a THIRD copy of this order,
-   *      whose own comment says to update it in the same edit and never afterwards;
-   *   3. the doc's printed order matched to the order here.
-   * The build is GREEN today, and that is the reason this note is long rather than a comment. The
-   * spec's order assertion filters the ids down to the ones already named in `WORKSHOP_ARC`, so an
-   * id it has never heard of is invisible to it; the route check only walks `app/(protected)`, which
-   * both new hrefs satisfy. A pair-check that cannot see a new member reports green over the gap —
-   * the same failure that spec was written to end, arriving from the other side.
-   *
-   * FIVE OF THESE STEPS POINT AT A LIST AND NOT AT THE SCREEN THEY DESCRIBE, which is the one place
-   * this arc cannot keep the promise the record steps above make. Those five screens — Cards & tags,
-   * Stages, Readiness, Report, Report history — live under `/design-workshops/[id]/...` and a guide
-   * has no workshop id to put there; a link to a made-up one is a 404 delivered by the help. The
-   * list is the honest destination, it is one tap from all five, and each `summary` names the screen
-   * so a designer knows what they are looking for when they get there. (`Design workshops` is a
-   * sixth `/design-workshops` href and is not one of the five: the list IS the screen it teaches.)
-   *
-   * THE REST POINT AT THEIR REAL SCREENS, and it is worth saying why rather than leaving a reader to
-   * wonder whether some were done more carefully than others. `/designers/profile` belongs to the
-   * PERSON and never to a workshop, so no id was ever wanted. `/design-review`,
-   * `/sketches-and-prototypes`, `/questionnaires` and `/design-workshop-inspections` are top-level
-   * siblings of the workshop tree BECAUSE being reachable with no workshop chosen is the whole of
-   * what they are for — asking which workshop, or listing the ones you hold, is the first thing each
-   * page does. So the id problem does not arise for any of them, and a card that can open the actual
-   * screen should.
-   * ────────────────────────────────────────────────────────────────────────── */
-
   {
     id: "designer-profile",
     label: "My designer profile",
@@ -1028,29 +416,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     why:
       "New workshops copy your details into stages 1 and 3. Each workshop keeps its own copy.",
     fields: [
-      // FOUR OF THE TWENTY-ONE ARE MARKED, AS OF 2026-08-27, and the marks are not decoration on this
-      // card: `fields[]` is documented as the real form labels in screen order with "(required)"
-      // marked, and the `watch` bullet below used to tell the reader in as many words that NONE of
-      // them was. `DESIGNER_PROFILE_REQUIRED_FIELDS` in `designers/profileCopy.ts` is the register
-      // both profile screens and the server read; these four are it.
-      //
-      // ⚠ A FIFTH BOX CARRIES AN ASTERISK AND IS NOT IN THAT ARRAY, and reading the array alone is
-      // how this card came to say four. `DesignerProfileForm` mounts the empanelment number as
-      // `<Field label={…} required>` — unconditionally, with its own comment saying why ("the number
-      // is mandatory, and a designer reading this form should be told so whichever state their
-      // profile is in") — and the server refuses a CREATE without one in `_assert_empanelment_number`.
-      // The native attribute alone is dropped on the grace path, for a profile that already has
-      // content, so nobody is locked out of saving their biography; the mark stays either way.
-      //
-      // TWO OTHER CORRECTIONS FROM THE SAME RE-READ. "Address" is now "Address line", renamed in
-      // `profileCopy.ts` on 2026-08-30 to match Android and, in its own words, because "there are now
-      // two addresses on this screen and an unqualified word over one of two is the reading a person
-      // gets wrong" — this card kept the old word for a day. And the location card at the foot of the
-      // Postal address group (`DesignerProfileForm:906`) was never listed at all: it is a real
-      // control, it is where the district and the map point live, and the form itself warns that
-      // filling it in INSTEAD of the four boxes above produces a report with no address on it. It is
-      // not one of the twenty-one columns, which is why the count in the bullet below is stated of
-      // the columns rather than of this array.
       "Name (required)",
       "Name in the local script",
       "Designation",
@@ -1075,65 +440,10 @@ export const GUIDE_STEPS: GuideStep[] = [
       "CV"
     ],
     watch: [
-      // ⚠ THIS BULLET READ "Not one of the twenty-one is required, and none of them is guessed for
-      // you. Left blank, the report cover falls back to the name on your account — so the cost of
-      // skipping this page is a thin cover, not a refusal." Four of them became required on
-      // 2026-08-27 (owner's instruction: "Name, qualification, email, and phone number should be
-      // mandatory fields as well"), enforced by the web form's native `required`, by the read-only
-      // view's asterisks and by `DesignerProfileUpdate`'s own field validators — so the sentence had
-      // gone from true to the opposite of true on the one card a designer reads BEFORE opening the
-      // page. The fallback it described still exists for rows saved before the rule; what stopped
-      // being true is that skipping those four is free.
       "Name, qualification, phone, email and empanelment number are required. Everything else is optional.",
       "Fill in both the postal address (printed on reports) and the location card (district and map point).",
-      // ⚠ THIS BULLET ENDED "Either way it reaches your reports as an annexure." AND THAT WAS FALSE —
-      // the FIFTH surface to carry the sentence, and the fourth time it was written from a neighbour's
-      // copy rather than from the code. No branch of this codebase puts a FILE in a report annexure:
-      // `report_builder._images` filters IMAGE and IMAGE_LIST and is the only placement path there is,
-      // `ANNEXURE_MEDIA` gathers through it, `report_annexures` is transcripts only, and
-      // `report_templates` records that refusal as a DELIBERATE decision with its two reasons written
-      // out. What a report does is NAME the file — `format_value` prints "1 document attached" under
-      // the field's own label — and `build_report` then warns beside the download that the bytes are
-      // not inside it. The true sentence is also the useful one, because it tells the designer the one
-      // thing they have to do about it. Wording taken from `designers/profileCopy.ts`'s `cvMediaId`
-      // help so the guide and the box it teaches say the same thing.
       "PDF CVs preview here; other formats download. Reports name your CV but don't include it — send it with the report.",
-      // The mechanism deliberately not described — AND THE RESTRAINT HAS NOW PAID FOR ITSELF, which is
-      // worth recording because it is why this bullet needed no edit on 2026-08-26.
-      //
-      // When it was written, `seed_designer_prefill` copied THE CREATOR's profile and
-      // `DESIGN_WORKSHOP_CREATOR_ROLES` is `{ADMIN, MASTER_ADMIN}`, so for a designer "editing this
-      // page changes the next workshop you create" was a promise about an act they cannot perform.
-      // That is no longer the whole picture: a create may now NAME a designer (`designerUserId`), and
-      // then it is the NAMED designer's profile that is copied, into a workshop they did not create.
-      // Both outcomes are pinned against a real database in `tests/test_designer_roster.py` —
-      // `test_a_workshop_opened_for_a_NAMED_designer_carries_the_DESIGNERS_details` and
-      // `test_a_workshop_that_names_no_designer_still_carries_the_ADMINS_details`. (This comment used
-      // to cite `test_a_workshop_an_admin_opens_for_a_designer_carries_the_ADMINS_details`, which the
-      // same change renamed out of existence.)
-      //
-      // What IS true either way is the copy semantics, which is all this bullet claims, so the
-      // sentence below stands unchanged through a change that moved the mechanism under it.
-      // `hero/DesignerWorkbench.tsx`'s header sets the same restraint for the landing page ("ONE
-      // WORDING CHECKED AND DELIBERATELY LEFT VAGUE … Do not tighten it back") — same reason, and it
-      // is still the right instruction: whose profile is seeded has moved once and can move again.
       "Changes here don't reach workshops already under way. To correct one, edit its stage 1 and stage 3.",
-      // ⚠ THIS SENTENCE COUNTED THE CARDS BELOW IT — "This screen and the eight below it" — and it was
-      // wrong in BOTH directions at once by the time anybody read it back. There are ten cards below
-      // this one, not eight (`design-workshop-questionnaires` and `design-workshop-inspection` were
-      // inserted after the eight was typed), and the tenth is the one card in this arc for which the
-      // claim is FALSE: `design-workshop-inspection` is gated on who may be appointed to inspect —
-      // `INSPECTION_ROLES`, one member, until 2026-10-09, and `INSPECTION_HOLDER_ROLES` since — which
-      // refuses a designer whichever set it is. So a count written to reassure a reader had quietly
-      // grown to assert the opposite of the warning this file gives four paragraphs from the top —
-      // that copying this wording onto the inspection card "would be a REGRESSION DRESSED AS
-      // CONSISTENCY". Counting reached it anyway.
-      //
-      // THE FIX IS TO STOP DESCRIBING OTHER CARDS FROM THIS ONE. The sentence is now the same string
-      // `design-workshop-questionnaires`, `design-workshop-sketches` and `design-review` already
-      // carry, one per gated route, which is the arrangement the top of this file says the repeated
-      // wording IS: one predicate (`canRunDesignWorkshops`), stated on each card whose own route
-      // answers to it, and never a position or a tally that a later insertion silently invalidates.
       "Only designers, admins and the master admin can open this screen. Without that access, the link shows “Designer access required”."
     ]
   },
@@ -1146,44 +456,7 @@ export const GUIDE_STEPS: GuideStep[] = [
     summary:
       "Open the design & prototype development workshop you have been added to. The steps below all happen inside it.",
     why:
-      // ⚠ THIS SENTENCE NUMBERED TWO STEPS — "the Workshop record in step 1 … the records you made in
-      // steps 2–10" — and it was the last place in this file that did. The other two were struck out
-      // in the same pass that wrote this comment (`GuideHero` named a card by number; the stage card
-      // cited a correction as "two cards down"), and the argument given there applies here unchanged:
-      // an index in prose is a step count wearing a different hat, and `GUIDE_STEPS` is an array that
-      // has grown from ten to sixteen to twenty-two. It survived this long because the one insertion
-      // since — `scan` — happened to land at ELEVEN, after the range rather than inside it, so the
-      // numbers stayed accidentally right and nothing went red. The next insertion above `view-data`
-      // silently repoints both halves at the wrong cards, and no test in this repository reads copy.
-      //
-      // NAMING THE RECORDS IS ALSO MORE TRUE THAN THE RANGE WAS. "Steps 2–10" swept in Review and
-      // View Data, which are not records anybody makes; the six named below are `REFERENCE_MODELS`
-      // (`backend/app/services/design_workshops.py`) exactly — Artisan, Craft, ProductDocumentation,
-      // ToolDocumentation, Process and QuestionnaireInterview — which is the list a stage's reference
-      // pickers really offer, and the same six the stage card's own picker row names.
       "The 22-stage fortnight that ends in a report. It links to the records you made earlier. An admin creates it and adds you.",
-    // §9.9's rule — fields[] is the real labels in screen order — read off the only form on this
-    // screen, `design-workshops/page.tsx`'s "Start a design workshop" panel (`:715`–`:830`). It
-    // replaces a paraphrase that invented two rows and dropped two real ones: "Craft and place" is
-    // four separate boxes and none of them is called Place; "Who else may open it" is not on this form
-    // at all (a grant is made elsewhere); and "Report template" and "Notes" are controls the list
-    // never mentioned. The panel is gated on `allowCreate`, so a designer reading this card will not
-    // see it — which is why the note names whose form it is rather than leaving the reader hunting.
-    //
-    // ⚠ AND THEN IT DROPPED A REAL ONE AGAIN, which is worth recording under a comment that brags
-    // about not doing that. The create panel grew `WorkshopDesignerPicker` — "Designers this
-    // workshop is for" (`design-workshops/page.tsx:1039`), full width, between the date range and
-    // Notes — and this list did not move. Of everything that could have gone missing it is the worst
-    // one: it is the control that decides WHOSE designer profile is copied into stage 1 and stage 3,
-    // the mechanism the card above this one spends four bullets describing. One card explained the
-    // copy and the other omitted the control that drives it. Re-read in screen order 2026-08-29.
-    //
-    // "Type of workshop" JOINED IT ON 2026-08-31, out of the same audit: `FieldBlock label="Type of
-    // workshop"` sits between the template and the craft (`design-workshops/page.tsx:1489`) and this
-    // list stepped straight from one to the other. It is the second box on this screen carrying the
-    // word "workshop" in a different sense from the first — "Start from a recorded workshop" points
-    // at a Workshop RECORD, this one classifies the design workshop being opened — which is exactly
-    // the pair a reader needs named rather than left to be met cold.
     fields: [
       "Start from a recorded workshop — what narrows every reference picker inside the stages",
       "Workshop title (required)",
@@ -1204,22 +477,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "The lead designer's profile fills stages 1 and 3 and is named on the report.",
       "It opens and can be filled in without signal. Your work is kept on this device and uploads when you are back online.",
       "Each stage is saved on this device as you go, so you can pick up exactly where you left off.",
-      // ⚠ "THIS SCREEN AND THE ONES BELOW IT" REACHED ONE CARD TOO FAR, and the card it reached is
-      // the single one in this arc the claim is false for. Everything under this one answers to
-      // `canRunDesignWorkshops` — except `design-workshop-inspection`, which answers to who may be
-      // appointed to inspect and refuses every designer (it refused admins and the master admin too,
-      // until they became appointable on 2026-10-09). "The ones below it" is a position, and
-      // positions absorb whatever is appended: the inspection card was appended, and this sentence
-      // started making a promise about it without a character changing.
-      //
-      // IT STILL HAS TO COVER FIVE CARDS, WHICH IS WHY IT IS NOT SIMPLY SHORTENED TO "this screen".
-      // Cards & tags, Stages, Readiness, Report and Report history each carry `/design-workshops` as
-      // their `href` — they live under `/design-workshops/[id]/…` and a guide has no workshop id to
-      // put there — so none of them has a route of its own to hang the sentence on, and without this
-      // clause a reader would meet five padlocks this page never warned about. Naming them is stable
-      // where counting was not: the five are defined by sharing this card's href, so a step added
-      // anywhere in the arc changes nothing here, and a SIXTH screen joining that href is an edit
-      // somebody has to make on purpose rather than a number going quietly stale.
       "For designers, admins and the master admin."
     ]
   },
@@ -1230,13 +487,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     icon: QrCode,
     href: "/design-workshops",
     summary: "Print a code card for every artisan on the roster and a tag for every prototype, and tie each tag to its object.",
-    // ⚠ "a list of twenty-five" WAS HERE AND HAS NO SOURCE. `stage_definitions` declares prototypes
-    // as `many("prototype", "DwPrototype", …)` and `many()` takes no `max_items` at all, so the list
-    // is as long as the fortnight made it. The only twenty-five in the registry is on
-    // `photos()`'s docstring and is about PHOTOGRAPHS on a different field; the figure reached this
-    // card from the prose comment at the top of `codes/page.tsx`, which is where a plausible number
-    // in a neighbour's comment becomes a fact in help text. The point the sentence is making — that
-    // choosing from a long list is where the mistake happens — does not need a number to land.
     why:
       "Stages 14–16 start by choosing a prototype. Scanning its tag picks the right one.",
     fields: [
@@ -1254,19 +504,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     ]
   },
   {
-    // HERE RATHER THAN AS A BULLET ON THE `questionnaire` CARD ABOVE, AND THE PLACEMENT IS THE WHOLE
-    // ARGUMENT. `/questionnaire` and `/questionnaires` differ by one character and are two different
-    // instruments with two different models: the singular is the ONE global artisan questionnaire
-    // every signed-in researcher answers, the plural is a designer's own form, gated on
-    // `can_run_design_workshops`. `lib/permissions.ts` and `DynamicIslandNav` each carry a paragraph
-    // about keeping them apart — a route rule spelled with the singular would lock every researcher
-    // out of taking an interview. Hanging "Reuse at another workshop" off the singular card would
-    // have taught exactly the confusion both of those comments exist to prevent, in the one place a
-    // designer goes to learn the difference.
-    //
-    // AND IT SITS ON THE FIRST AFTERNOON, beside the code cards, because that is when the instrument
-    // is prepared: download the pro-forma, type the questions in Excel, upload it back. The stages
-    // take the fortnight; this and the cards do not.
     id: "design-workshop-questionnaires",
     label: "My questionnaires",
     action: "Build your own questionnaire",
@@ -1277,12 +514,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     why:
       "Unlike the shared interview, this questionnaire is yours and attached to your workshop. Reports print its answers as an annexure.",
     fields: [
-      // "Kind" WAS MISSING AND IT IS NOT A COSMETIC BOX. Added to the create form on 2026-08-30 at
-      // the owner's request ("they also do market survey interviews, so create that differentiation
-      // as well, so that we can map the questionnaires and the transcripts to the correct stage in
-      // the report"), it decides which stage of the report this questionnaire's answers are filed
-      // under — its own hint on `questionnaires/page.tsx:592` says so. A designer who leaves it on
-      // "Not stated" because no card mentioned it gets answers filed nowhere in particular.
       "Download the pro-forma",
       "Upload a filled-in pro-forma",
       "Or “Start an empty one” — Title, Attach to a design workshop, Kind, Description",
@@ -1312,29 +543,8 @@ export const GUIDE_STEPS: GuideStep[] = [
     why:
       "Each stage is a section of the report. The phone and web show the same form.",
     fields: [
-      // ⚠ THIS READ "the ones a submit is refused without", WHICH IS THE SENTENCE THIS FILE ALREADY
-      // CORRECTED ON THE `design-workshop-readiness` CARD and left standing here, so one page said
-      // both things. (That correction used to be cited as "two cards down". Counting cards is the
-      // same defect as counting steps: three have been inserted into this array since, and a reader
-      // who follows the count lands on the wrong card and concludes the note is stale.) Authority:
-      // `readiness/page.tsx`'s `WORKSHOP_STATUS_IS` — the workshop's own status buttons ("Mark
-      // complete", "Hand in for inspection"; this comment said "Submit" until the review loop
-      // renamed that control on 2026-09-14) consult no scorer and are "never refused for an empty
-      // field" — and its `STAGE_CHECK_IS`, which
-      // names the only act an empty required field does refuse: "Save and check required fields", the
-      // second button at the foot of ONE stage, which saves either way and then refuses that stage
-      // alone. Both constants are rendered verbatim on the readiness screen and the Submission card;
-      // this list is what that button asks about, and must name that button and no other act.
       "Basic fields — the ones “Save and check required fields” checks",
       "Standard and Advanced fields — depth, never a blocker",
-      // ⚠ THIS ROW READS AS AN EXHAUSTIVE LIST AND WAS SHORT BY TWO. `REFERENCE_MODELS`
-      // (`backend/app/services/design_workshops.py:1467`) has exactly six members — Artisan, Craft,
-      // ProductDocumentation, ToolDocumentation, Process and QuestionnaireInterview — and the last
-      // of them landed after this sentence was written. Naming four of six is not a small omission
-      // on THIS row, because the row's whole job is to tell a designer that the records they filed
-      // in the steps above are reachable from inside a stage: a reader who is told four does not go
-      // looking for the other two. The interview is also the one reference whose label is a TITLE
-      // rather than a name, which makes it the easiest to mistake for something else in a picker.
       "Reference pickers — choose the artisan, craft, product, tool, process or questionnaire sitting you documented in the steps above",
       "“Create a new …” inside a picker, when the record is missing and you are mid-stage",
       "Photographs, sketches and measurements per stage",
@@ -1381,15 +591,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     ],
     watch: [
       "Tracing happens on this device. Cropping and sharpening only affect the trace; your original photograph is kept unchanged.",
-      // ⚠ THE FEATURE THIS CARD OMITTED, and the omission was written in on purpose — see the ⚠ in
-      // this file's header for how a search scoped to `lib/trace/` became a claim about the product.
-      // IT IS DESCRIBED HERE AND ATTRIBUTED TO THE STAGE FORM, which is where it actually is:
-      // `offersSketchRectify` is consulted by `FieldInput.tsx` and by nothing under
-      // `components/sketches/`, so `UploadTabPanel` mounts `SketchTraceField` and never
-      // `SketchRectifyField`. Both write a derived file into the same `sketch.lineArtFile` slot from
-      // two different surfaces, which is exactly why naming the surface matters: a reader who looks
-      // for four draggable corners on THIS screen and does not find them concludes the guide lies.
-      // Do not move this bullet onto this screen's own controls without moving the mount first.
       "Straighten a photographed sheet on stage 11 by dragging its corners. It's saved as new line art; the photo is kept.",
       "3D models can be turned and downloaded. Reports print the “360° capture” photos and list the model.",
       "The comparison has four views: Drawing, Wipe, Photograph and Difference. Start with Wipe; use Difference when you need a closer check.",
@@ -1441,12 +642,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "A link straight into the stage that holds each gap"
     ],
     watch: [
-      // Kept in step with `WORKSHOP_STATUS_IS` BY HAND, and that is the whole hazard: this bullet is
-      // rendered prose on a screen with no Submission card in view, so a control named here that does
-      // not exist cannot be corrected by anything the reader can see. It said “Submit” until
-      // 2026-09-14, one release after that button became “Hand in for inspection”. Name the buttons as
-      // examples, never as a complete list — `actionsFor` offers a different pair from NEEDS_REVISION
-      // and one button alone from PRE_SUBMISSION.
       "Reports can be handed in with empty fields.",
       "“Save and check required fields” lists a stage's empty required fields.",
       "Use it on the first afternoon as well as the last, to plan the fortnight.",
@@ -1463,13 +658,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Choose the template, set what the document contains, read it back as real A4 or Letter pages, and download the .docx or .pdf.",
     why:
       "Choose a template and colour; the preview matches the .docx and .pdf.",
-    // Read off `report/page.tsx` in screen order: `FieldBlock label="Report template"` (`:799`),
-    // `label="Transcripts in this file"` (`:829`), the checkbox whose span is "Include
-    // machine-assisted text" (`:874`), then `ReportAccentPicker`, whose own heading is "Report
-    // colour" (`:408`) — NOT "Accent colour and cover details", which was a paraphrase whose second
-    // half named a control this screen does not have: there is no cover-details box anywhere on it.
-    // The third button was missing too. Page size is not a control here at all — it is read from
-    // stage 20 (`:639`), which is why it stays in `summary` and out of this list.
     fields: [
       "Report template",
       "Transcripts in this file",
@@ -1485,15 +673,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "The accent colours run from dark to light so they stay distinct when printed in black and white.",
       "Stage 20 holds these settings. It sets up the report and is not printed in it.",
       "To correct something in the preview, open the stage it came from and edit it there.",
-      // ⚠ THIS LISTED QUESTIONNAIRE ANSWERS AS FLATLY IMPOSSIBLE OFFLINE AND THEY ARE NOT.
-      // `report/ReportSettings.kt`'s `UNSUPPORTED_SECTIONS` keeps the ANNEXURE_QUESTIONNAIRES entry
-      // and says why in its own comment: `renderQuestionnaireAnnexure` draws it on the handset now, so
-      // the entry "survives because it stopped being universally true rather than because it stopped
-      // being true" — it is GUARDED by `unsupportedSectionsIn`, and the sentence the phone prints is
-      // conditional ("If a questionnaire is attached … This device has not yet read them"). The
-      // condition is the actionable half: one tap with a bar of signal fixes it for every export
-      // afterwards, and a designer told it was impossible waits for the office instead.
-      // `docs/WALKTHROUGH.md` has always stated the condition; this card had not.
       "You can also generate the report offline on the phone app."
     ]
   },
@@ -1507,11 +686,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "Every generated file, with its details, and a comparison between any two.",
     why:
       "See exactly what changed between versions.",
-    // The real labels, read off `report/history/page.tsx`: the per-file `<dl>` at `:421`–`:445`
-    // ("Template", "Pages", "Size", "Generated by", "SHA-256 of the file") and the two dropdowns of
-    // the comparison panel at `:549` and `:558` ("Compare", "With"). The previous list ran the five
-    // metadata labels together into one prose row, which reads well and is the thing §9.9 forbids:
-    // a reader scanning the screen for "Checksum" finds "SHA-256 of the file" instead.
     fields: [
       "Every generated file, newest first",
       "Template",
@@ -1527,21 +701,6 @@ export const GUIDE_STEPS: GuideStep[] = [
     ]
   },
   {
-    // LAST, BECAUSE AN INSPECTION READS A WORKSHOP THAT IS ALREADY FINISHED — the report has been
-    // generated and somebody who did not run the fortnight is now reading it back.
-    //
-    // ⚠ AND IT IS THE ONE CARD IN THIS ARC THE READER PROBABLY CANNOT OPEN, WHICH IS A DIFFERENT
-    // REFUSAL FROM THE OTHER FIVE AND MUST NOT BORROW THEIR SENTENCE. The other gated cards say
-    // "designers, admins and the master admin", because `canRunDesignWorkshops` is that set. This
-    // one is `canInspectDesignWorkshops` (`lib/permissions.ts`): the Inspector / Reviewer tier, plus
-    // — since the owner's ruling of 2026-10-09 — a Ministry Admin, an admin and the master admin,
-    // because any of those three may be APPOINTED to inspect a workshop by somebody else, and each
-    // then reads only the workshops they were appointed to. A designer, a professor and the two
-    // directorate posts are refused it — so writing "and above", or anything that reads as a rank
-    // threshold, would be wrong in both directions at once. INSPECTOR sits at rank 37, between
-    // DESIGNER and PROFESSOR, which is precisely the arrangement that misleads every threshold
-    // instinct a reader has. (Until that ruling the set had exactly one member and an admin was
-    // refused it by name; this comment and the card's first `watch` said so.)
     id: "design-workshop-inspection",
     label: "Workshops to inspect",
     action: "Read a finished workshop",
@@ -1561,20 +720,6 @@ export const GUIDE_STEPS: GuideStep[] = [
       "For inspectors and appointed admins. Each sees only their assigned workshops.",
       "A Ministry Admin, an admin or the master admin chooses who inspects each workshop, on Workshop oversight.",
       "If nothing is assigned to you, the page says so. If the list couldn't be loaded, it says that instead.",
-      // ⚠ THIS ROW ENDED "Nothing an inspector does can change a workshop" UNTIL 2026-09-15, AND
-      // THAT SENTENCE WAS TRUE WHEN IT WAS WRITTEN AND STOPPED BEING TRUE WITHOUT ANYTHING SAYING
-      // SO. The inspection surface grew two write routes —
-      // `POST /design-workshop-inspections/{id}/feedback` and `.../send-back` — and a "Correction
-      // suggestions" panel behind them, and a send-back moves the report to Needs revision. The
-      // detail page's own header comment records the change; this card did not, which is the exact
-      // shape of rot this file's header spends paragraphs on: a claim that is checkable, was
-      // checked once, and instructs the next reader not to look again.
-      //
-      // THE CORRECTION IS NARROWER THAN THE ORIGINAL AND THAT IS THE WHOLE POINT. What remains true
-      // is that nothing an inspector does changes a workshop's CONTENT — no stage value, no
-      // photograph, no completeness figure, no record — because `load_inspectable_workshop_or_404`
-      // has no edit path and its own docstring forbids one being added. Write that; never the
-      // shorter thing.
       "Read-only. Inspectors can suggest corrections or send the report back for revision.",
       "Photographs, recordings and attachments are shown here read-only, and each workshop's own questions are printed beside their answers."
     ]

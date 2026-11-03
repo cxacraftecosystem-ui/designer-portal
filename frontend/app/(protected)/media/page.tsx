@@ -68,11 +68,6 @@ import type {
   Workshop
 } from "@/lib/types";
 
-// ---------------------------------------------------------------------------
-// Android parity: mediaLinkModes — the EXACT list + labels of record types a
-// miscellaneous-media upload can be linked to (MainActivity `mediaLinkModes`).
-// ---------------------------------------------------------------------------
-
 const LINK_TYPES: Array<{ value: string; label: string }> = [
   { value: "artisan", label: "Artisan" },
   { value: "workshop", label: "Workshop" },
@@ -90,61 +85,20 @@ type ProcessListItem = {
   id: string;
   name: string;
   product?: { productName?: string | null } | null;
-  /** The design workshop the process is filed under — what a file attached to it would land in. */
   designWorkshopId?: string | null;
   createdAt?: string;
 };
 
 function sortRecent<T extends { createdAt?: string }>(items: T[]) {
-  // Most recent first, even if a backend list ever changes its default ordering.
   return [...items].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 
-/**
- * Android `loadViewEntries` parity: label each entry with its human name/title — AND say how much of
- * the type this page of them is.
- *
- * WHY THE RETURN TYPE GREW. This builds the second dropdown of the upload form, the one that decides
- * WHICH RECORD a file is attached to, and it did so from a single `pageSize: 100` request per type
- * with `total` discarded in all eight branches. 100 is the ceiling `normalize_pagination` clamps to,
- * the lists are ordered newest-first, and the tables behind them are far past it — 2530 media files,
- * 878 products, 749 artisans, 196 workshops, 178 crafts, 177 tools, 177 processes, counted against
- * this repository's Postgres on 2026-08-15. The ComboBox this feeds filters the array it is handed
- * (`components/ui/SearchableSelect`), so its "type to search" affordance searched the newest hundred
- * and nothing else, and the placeholder said "Select an entry" — never "showing 100 of 749".
- *
- * That makes this a WRITE defect rather than a read one. A designer uploading photographs of an
- * artisan entered months ago types the name, gets nothing, and the upload button only requires
- * `linkedType` — so the batch lands attached to the type and no record. It does not appear in that
- * artisan's "Previously uploaded media", does not travel with the record, and has to be repaired
- * later through the relink route.
- *
- * The cut is REPORTED rather than removed, and the difference matters: removing it needs the
- * server's `search=` (which all eight routes accept) threaded out of `SearchableSelect`'s own filter
- * box, and that is a shared primitive this change does not own. A stated cut is the difference
- * between a list that is short and a list that lies; it is not the whole fix, and the follow-up is
- * recorded with the audit.
- */
-/**
- * `DropdownOption` and not `{ value, label }`, because one of the eight branches now builds its rows
- * in a shared module that gives them a `hint` and a `group` as well — see the workshop branch. The
- * other seven pass the same two keys they always did; the type simply stops throwing the extra ones
- * away at the door.
- */
 type EntryOptions = {
   options: DropdownOption[];
   cut: ListCut | null;
-  /**
-   * Each entry's id, to the design workshops a file attached to it would BELONG to — the server's
-   * `link_filing`, read off rows this loader already holds: a record's `designWorkshopId`, or for a
-   * parent file the two links on its own row, one hop and no further. Absent for the types that are
-   * never filed under a design workshop (a crafts workshop, a craft). It is what holds the upload for
-   * somebody who inspects or supervises that workshop — see `uploadHold` on the page.
-   */
   filings?: ReadonlyMap<string, readonly string[]>;
 };
 
-/** Entry id → the design workshop each row is filed under, as `EntryOptions.filings` holds it. */
 function filedUnder(rows: ReadonlyArray<{ id: string; designWorkshopId?: string | null }>): Map<string, string[]> {
   return new Map(rows.map((row) => [row.id, row.designWorkshopId?.trim() ? [row.designWorkshopId.trim()] : []]));
 }
@@ -161,27 +115,6 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "workshop": {
-      /*
-        THE ONE BRANCH THAT NO LONGER BUILDS ITS OWN ROWS, and the reason is that this dropdown is
-        not the only workshop picker a designer meets. It shipped `title` alone, sorted by
-        `createdAt`, while the record forms drew `title · date` sorted by occurrence and the funnel
-        drew a third shape — so the same workshop read three ways on three screens, and the one
-        sorted by creation put a workshop entered last week from a backlog import above the one that
-        actually ran yesterday. `fieldWorkshopOptions` is that decision made once: the title in
-        `label`, the place and the day in `hint` (searched as well as drawn), the occurrence sort,
-        and "Ended" on a workshop whose window has closed — which on THIS screen is worth having,
-        because attaching a photograph to a workshop that ended eight months ago is ordinary and
-        attaching it to the wrong one of two similarly named visits is not.
-
-        `group: true` for that marking; `offPage: "refuse"` because this is an upload form with no
-        stored value to recover — nothing is being edited, so there is no row that is already true
-        of a record.
-
-        Its own page size, and not the shared `params`: one number governs the fetch and the render
-        for a workshop picker, so the cut this reports is the cut the panel actually draws. The other
-        seven branches keep `LIST_PAGE_CEILING` — they are other tables, with their own pass ahead of
-        them, and quietly narrowing them here would move seven cuts nobody had asked about.
-      */
       const page = await listResource<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE });
       return {
         options: fieldWorkshopOptions(
@@ -192,7 +125,6 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "craft": {
-      // A craft is picked through `CraftSelect`, which reads the whole catalogue itself (§2.4).
       return { options: [], cut: null };
     }
     case "tool": {
@@ -241,7 +173,6 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
           return { value: x.id, label: [name, x.mediaType, tag].filter(Boolean).join(" · ") };
         }),
         cut: listCut(page, "media files"),
-        // A parent FILE belongs to what its own row names — one hop, as the server reads it.
         filings: new Map(page.items.map((x) => [x.id, mediaWorkshopIds(x)]))
       };
     }
@@ -249,13 +180,6 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       return { options: [], cut: null };
   }
 }
-
-// ---------------------------------------------------------------------------
-// Android parity: WorkshopRepository.mediaFilename — the uploaded object name is
-// `PREFIX_NamePart_TYPECODE_index_ddMMyyyyHHmmss.ext` built from the linked
-// record type and the "Media title / object name" (falling back to caption,
-// then the original filename).
-// ---------------------------------------------------------------------------
 
 function safeToken(value: string) {
   const cleaned = value.trim().replace(/\s+/g, "").replace(/[^A-Za-z0-9]/g, "").slice(0, 60);
@@ -290,11 +214,6 @@ function buildObjectName(
   return extension ? `${base}.${extension}` : base;
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
-
-/** Section id this page's batch publishes under, so the page-level tray can aggregate it. */
 const MEDIA_SECTION = "misc-media";
 const MEDIA_SECTION_LABEL = "Miscellaneous Media";
 
@@ -316,68 +235,18 @@ function MediaPageBody() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [transcribingId, setTranscribingId] = useState<string | null>(null);
-  /**
-   * Which file has its code open, or null.
-   *
-   * ONE AT A TIME, and by id rather than a flag per row: a page of twenty codes is twenty QR symbols
-   * drawn at once for a screen where at most one is being scanned or printed, and the row somebody
-   * opened is the file they are working on.
-   */
   const [codeFor, setCodeFor] = useState<string | null>(null);
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  /*
-    ── THIS FORM CALLS `formElement.reset()`, AND THAT IS WHY THESE TWO EXIST ──────────────────────
-
-    `reset()` rewrites the DOM nodes and tells React NOTHING. A box whose value React is holding —
-    which is every dictated box, because dictation writes from outside the keyboard — is therefore
-    re-painted with the PREVIOUS upload's text on the next render, and the researcher's second
-    photograph arrives carrying the first one's caption. `DictatedTextInput`'s header states the
-    rule; this is the form it was written about.
-
-    TWO MECHANISMS BECAUSE THE TWO COMPONENTS HAVE TWO CONTRACTS, not because one was overlooked.
-    `DictatedTextInput` is controlled by its caller, so the title lives here and is cleared in the
-    same block as `reset()`. `DictatedTextArea` owns its value and re-seeds on remount, so the
-    caption is keyed on a nonce that the same block bumps — which is exactly the
-    `key={editing?.id ?? "new"}` shape that component's own doc calls the right one for it.
-  */
   const [mediaTitle, setMediaTitle] = useState("");
   const [resetNonce, setResetNonce] = useState(0);
   const [linkedType, setLinkedType] = useState("");
-  /*
-    THE DESIGN & PROTOTYPE WORKSHOP this loose upload is filed under — "Miscellaneous Media" is one
-    of the seven record types the owner named on 2026-08-28.
-
-    IT IS NOT THE SAME QUESTION AS "Linked record type" ABOVE, and the two must not be folded: that
-    pair says which RECORD a file is a picture OF, and is what `linkedRecordType` carries; this says
-    which workshop a designer FILED it under. A file may legitimately have one, both or neither, and
-    `records.media_relation_data` on the server carries the argument for why the column is not
-    derived from the tag.
-
-    `null` and not `undefined`: this form only ever uploads, so there is no stored value to protect
-    and the picker may always prefill.
-  */
   const designWorkshop = useDesignWorkshopSelection(null);
   const [linkedEntryId, setLinkedEntryId] = useState("");
   const [entryOptions, setEntryOptions] = useState<DropdownOption[]>([]);
-  /** How much of the chosen record type the entry dropdown holds — see `loadEntryOptions`. */
   const [entryCut, setEntryCut] = useState<ListCut | null>(null);
-  /** Which design workshop each of those entries is filed under — see `EntryOptions.filings`. */
   const [entryFilings, setEntryFilings] = useState<ReadonlyMap<string, readonly string[]> | null>(null);
   const [loadingEntries, setLoadingEntries] = useState(false);
-  /**
-   * THE READ FOR THIS TYPE DID NOT ANSWER — which is not the same fact as "there are none of them".
-   *
-   * The catch below already raised the banner at the top of the page, and this control went on
-   * reading "No entries for this type" underneath it: a claim about the repository produced by a
-   * request that never arrived, and on the workshop branch a claim about which workshops exist.
-   * Two sentences on one screen, one of them false, and the false one is the one at the control —
-   * which is where a reader looks and which is why the house rule puts the sentence on the control
-   * it is about. A banner three inches up does not repair a picker that is still lying.
-   *
-   * Cleared when the type changes and when an answer lands, so it only ever describes the read this
-   * dropdown is currently showing the result of.
-   */
   const [entriesFailed, setEntriesFailed] = useState(false);
 
   const [uploading, setUploading] = useState(false);
@@ -385,30 +254,8 @@ function MediaPageBody() {
   const [error, setError] = useState<string | null>(null);
   const [activePreview, setActivePreview] = useState<PreviewMedia | null>(null);
 
-  /**
-   * Which fetch is the current one — the counter /artisans, /questionnaires and /design-workshops
-   * already carry, now also on /products, /tools and /processes.
-   *
-   * The 300 ms debounce below is NOT this guard: `clearTimeout` cancels loads that have not fired
-   * yet, and does nothing at all to one already in flight. Type a term, wait past the debounce so
-   * request A goes out, then press Next — request B goes out beside it, and on a slow link A can
-   * answer last.
-   *
-   * That matters more than a stale table because `<Pagination>` is rendered with `page={data.page}`
-   * — the ANSWERED page — while the reload effect depends on `page`, the REQUESTED one. With
-   * `data.page === 1` and `page === 2`, Next calls `setPage(data.page + 1)` = `setPage(2)`, React
-   * bails on the identical scalar, no dependency changes, no request is issued, and the button is
-   * simply dead until Previous is pressed. Audit 2026-08-15 filed that against this file, /products,
-   * /tools and /processes.
-   *
-   * Counted rather than aborted because `listResource` takes no `AbortSignal`; ignoring the late
-   * answer is the part that matters. `useRef` is stable across renders, so `load`'s empty dependency
-   * array stays correct — do not add the ref to it. Any new `setData`/`setError` inside `load` needs
-   * the same guard in front of it.
-   */
   const currentLoad = useRef(0);
 
-  // The questionnaire filters (owner, 31 Oct 2026): a take by its form, section, artisans, workshop …
   const { filters: takeFilters, setFilters: setTakeFilters, ready: filtersReady } = useUrlFilters();
   const load = useCallback(
     async (pageToLoad: number, term: string, shared: Filters = {}) => {
@@ -431,10 +278,6 @@ function MediaPageBody() {
     []
   );
 
-  /**
-   * Search, page and scroll, so Back from a file's read-only page lands on the same rows. Recalled
-   * once before the first fetch — `placeRestored` holds that fetch until it has been.
-   */
   const memory = useListMemory("media", { query: search, page }, data !== null);
   const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
@@ -444,19 +287,15 @@ function MediaPageBody() {
       setPage(remembered.page ?? 1);
     }
     setPlaceRestored(true);
-    // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Live search: debounce keystrokes, reload most-recent-first from page 1.
   useEffect(() => {
     if (!placeRestored || !filtersReady) return;
     const timer = setTimeout(() => load(page, search, takeFilters), 300);
     return () => clearTimeout(timer);
   }, [page, search, load, placeRestored, filtersReady, takeFilters]);
 
-  // Android parity: when the linked record type changes, load that type's entries
-  // for the optional second dropdown.
   useEffect(() => {
     setLinkedEntryId("");
     setEntryOptions([]);
@@ -475,8 +314,6 @@ function MediaPageBody() {
       })
       .catch((err) => {
         if (cancelled) return;
-        // Both, and neither instead of the other: the banner says the page hit a problem, and the
-        // flag stops the picker below claiming the record type is empty on the strength of it.
         setEntriesFailed(true);
         setError(err instanceof Error ? err.message : `Unable to load ${LINK_TYPE_LABEL.get(linkedType) ?? linkedType} entries`);
       })
@@ -490,27 +327,6 @@ function MediaPageBody() {
 
   const canTranscribe = isContentAdmin(user);
 
-  /*
-    A FILE OF A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM (2026-10-09). The
-    server refuses a post holder — admin arm included — the delete and the re-run transcript of any
-    file that belongs to that workshop, so a row whose OWN columns name one (`mediaWorkshopIds`) has
-    both controls held, a word on the row, and the server's sentence once above the table. Only rows
-    that draw a write control are asked about, and only for an account that may appoint — which every
-    reader of these two controls is. A file that belongs to a workshop only through a stage that names
-    it, an AI layer or the record it hangs off is not pre-warned on this list (a read per row); its
-    403 prints as the server wrote it.
-
-    AND THE UPLOAD ADDS A FILE TO WHATEVER IT NAMES. `/media/complete` refuses a post holder a new
-    file filed under a workshop they hold a post on, tagged to it, or attached to a record filed under
-    it — and refuses it only AFTER every byte has been PUT. So Upload is held on the two things this
-    form names: the design workshop chosen in its own box (`uploadChosen`), and what the files hang
-    off (`uploadLinked` — the chosen entry's filing, read off the rows the entry picker already
-    holds, plus the workshop a `designWorkshop` link would name, which is the server's
-    `_upload_as_filed` exactly). Both pickers stay live: choosing another is the way forward.
-
-    ONE ASK PER DISTINCT WORKSHOP across the table's rows and the upload's two choices, so a workshop
-    named both ways costs one staffing read.
-  */
   const writable = (item: MediaFile) => adminMode || (canTranscribe && (item.mediaType === "AUDIO" || item.mediaType === "VIDEO"));
   const uploadChosen = designWorkshop.workshopId ? [designWorkshop.workshopId] : [];
   const uploadLinked = linkedType
@@ -529,11 +345,6 @@ function MediaPageBody() {
   const uploadHold = mediaUploadHold(heldFor(uploadChosen), heldFor(uploadLinked));
   const uploadNoticeId = useId();
 
-  /**
-   * Android parity: every uploaded object is renamed to `PREFIX_Name_TYPE_index_timestamp.ext`.
-   * Renaming the File itself (rather than keeping a parallel name) lets this page share the one
-   * resilient upload path in lib/media — per-byte progress, ETA, and a fresh presign per retry.
-   */
   function renameForUpload(form: FormData) {
     const title = textValue(form, "mediaTitle");
     const caption = textValue(form, "caption");
@@ -545,8 +356,6 @@ function MediaPageBody() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // A held Upload is disabled; this keeps the rule for any other way in — and asks it BEFORE a
-    // single byte goes up, which is the whole difference from the server's own refusal.
     if (writesHeld(uploadHold)) return;
     if (selectedFiles.length === 0) {
       setError("Choose or record at least one file first");
@@ -558,7 +367,6 @@ function MediaPageBody() {
     }
     setUploading(true);
     setError(null);
-    // React nulls event.currentTarget after the first await — capture it before any async work.
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     try {
@@ -572,19 +380,9 @@ function MediaPageBody() {
         onProgress: setProgress
       });
       setProgress(null);
-      // The uploaded files surface twice: as chips under this form and in the page-level tray.
       addCompleted(MEDIA_SECTION, MEDIA_SECTION_LABEL, uploaded);
-      // Anything that got through is already in the repository, so refresh the table either way and
-      // keep the form (and its selection) intact when part of the batch still needs another attempt.
       load(page, search, takeFilters);
       if (failed.length) {
-        // THE CAUSE, NOT ONLY THE CASUALTIES. This branch named the files and stopped, so a designer
-        // whose uploads were being refused by the bucket's CORS rule was told which photographs had
-        // not landed and nothing whatever about why — which reads as "try again", and trying again
-        // was the one thing that could not work. `BatchFailure.error` is the transport layer's own
-        // sentence (see `storageTransportSentence` in lib/media.ts); it already distinguishes a lost
-        // connection from a bucket refusing this site, so the only thing needed here is to show it.
-        // The first failure's reason is enough: a batch either met one refusal or lost the link.
         const reason = failed[0]?.error ? `${failed[0].error} ` : "";
         setError(
           `${failed.length} of ${countNoun(selectedFiles.length, "file")} failed to upload: ${failed.map((item) => item.name).join(", ")}. ` +
@@ -594,20 +392,12 @@ function MediaPageBody() {
         return;
       }
       formElement.reset();
-      // The two dictated boxes, which `reset()` alone cannot clear. See the note beside their state.
       setMediaTitle("");
       setResetNonce((nonce) => nonce + 1);
       setSelectedFiles([]);
       setLinkedType("");
       setLinkedEntryId("");
     } catch (err) {
-      // NOTHING LANDED, AND NOTHING IS DISCARDED EITHER. `selectedFiles` and the form are left exactly
-      // as they were — no `formElement.reset()`, no `setSelectedFiles([])` on this path — so the files
-      // are still attached and one more press of Upload retries them. That matters most for the case
-      // this message now names: a bucket refusing this site fails every file with the record it links
-      // to already saved, and clearing the picker here would have destroyed the only handle a designer
-      // has on the captures. `MediaBatchError`'s message already carries the reason and the advice
-      // clause chosen for that reason, so surfacing it whole is right.
       setError(err instanceof Error ? err.message : "Unable to upload media");
     } finally {
       setUploading(false);
@@ -616,13 +406,10 @@ function MediaPageBody() {
   }
 
   async function remove(item: MediaFile) {
-    // A held Delete is disabled; this keeps the rule for any other way in. See `holdOf`.
     if (writesHeld(holdOf(item))) return;
     const ok = await confirm({
       ...deleteConfirm(
         "Remove this media file?",
-        // Android's "Permanently delete recording?" says the same thing: the file leaves storage, so
-        // there is nothing left to re-link afterwards.
         "The file and its transcript are deleted.",
         "This can't be undone."
       ),
@@ -633,20 +420,10 @@ function MediaPageBody() {
       await apiFetch(`/media/${item.id}`, { method: "DELETE" });
       await load(page, search, takeFilters);
     } catch (err) {
-      // The server's sentence, as written — a post holder's 403 names the post.
       setError(err instanceof Error ? err.message : "Unable to remove media file");
     }
   }
 
-  /**
-   * Android parity (MainActivity `MediaWithTranscript` -> `TranscribeNowButton`): run this audio
-   * file's transcription on the spot, applying the settings-page mode and bypassing both the queue
-   * and the off-peak window. The row is patched from the response so the Transcript column updates
-   * without a reload.
-   *
-   * `POST /media/{id}/transcribe-now` is content admins' (`require_content_admin`) and refuses anything whose `mediaType` is
-   * not AUDIO, so the control below is offered on exactly that pair and nothing else.
-   */
   async function transcribeNow(item: MediaFile) {
     if (writesHeld(holdOf(item))) return;
     setTranscribingId(item.id);
@@ -669,7 +446,6 @@ function MediaPageBody() {
       ? "Choose a record type"
       : `Upload ${selectedFiles.length || ""} media file${selectedFiles.length === 1 ? "" : "s"}`;
 
-  /** The preview cell of one file — table row and phone card share it. */
   const mediaPreview = (item: MediaFile) =>
     item.url ? (
       <div className="w-36">
@@ -705,7 +481,6 @@ function MediaPageBody() {
       <span className="text-ink-500">No URL</span>
     );
 
-  /** One file's actions — Code, Transcribe, Delete, and the held word. Table and phone card share them. */
   const mediaActions = (item: MediaFile, hold: HeldPostRefusal) => (
     <RowActions>
       <button
@@ -746,8 +521,6 @@ function MediaPageBody() {
           Delete
         </button>
       ) : null}
-      {/* The word, so a held row is never told apart by greyed buttons alone. The
-          amber pair, not amber ink: the table's ground inverts and the pair does not. */}
       {typeof hold === "string" ? (
         <span className="self-center rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
           {MEDIA_HELD_LABEL}
@@ -773,11 +546,6 @@ function MediaPageBody() {
           description="Images, videos, audio and files."
         />
         <div className="grid gap-3 md:grid-cols-2">
-          {/* DICTATED, and Android has been since the `TextInput` default flipped: this is the
-              name of the object in the photograph — "Bagru indigo block, 4 inch" — spoken by
-              somebody holding both the phone and the object. `MainActivity.kt`'s
-              `TextInput("Media title / object name", mediaTitle)` takes no `dictate = false`, so it
-              carries a microphone; the web drew a bare box. */}
           <DictatedTextInput
             name="mediaTitle"
             label="Media title / object name"
@@ -786,23 +554,6 @@ function MediaPageBody() {
             placeholder="Names the uploaded object (optional)"
             explainWhenUnavailable={false}
           />
-          {/*
-            TWO THINGS WERE WRONG HERE AND ONLY ONE OF THEM WAS VISIBLE.
-
-            THE ASTERISK WAS TYPED INTO THE LABEL STRING — `label="Linked record type *"` — so it was
-            the one required mark in the web client that no shared primitive could reach. When the
-            ten `{required ? " *" : ""}` sites became `<RequiredMark />` and turned red on
-            2026-08-30, this one would have stayed grey, on a screen beside them, looking exactly
-            like a field whose mark had been forgotten. `required` on the wrapper is the same fact
-            said in a way a component can act on.
-
-            AND THE WRAPPER WAS `Field`, WHICH IS A `<label>`, AROUND A THEMED DROPDOWN. §12.3 of the
-            frontend reference forbids exactly this: a `<label>` forwards a stray click to the first
-            labelable control inside it, which for a themed dropdown is the trigger button — so a
-            click meant for an option also fires the toggle. `FieldBlock` is the `<div>` twin that
-            exists for this case, and it names the control through `role="group"` plus the label
-            context instead of through label-for.
-          */}
           <FieldBlock label="Linked record type" required>
             <Dropdown
               value={linkedType}
@@ -827,19 +578,11 @@ function MediaPageBody() {
                 loadingEntries
                   ? "Loading…"
                   : entriesFailed
-                    ? // WHICH KIND OF EMPTY THIS IS. "No entries for this type" is a claim about the
-                      // repository and its next move is to go and create the record; this one is a
-                      // claim about a request and its next move is to try again. Collapsing them is
-                      // how a timeout came to tell somebody a workshop they had just been added to
-                      // did not exist — and a file uploaded attached to nothing has to be repaired
-                      // through the relink route afterwards.
+                    ?
                       "Couldn't load this list"
                     : entryOptions.length === 0
                       ? "No entries for this type"
                       : entryCut
-                        // Naming the number in the placeholder is not decoration: it is the first
-                        // thing read by somebody about to type a name into this box, and it is what
-                        // stops an empty result being taken as proof the record does not exist.
                         ? `Select one of these ${entryOptions.length}`
                         : "Select an entry"
               }
@@ -848,60 +591,11 @@ function MediaPageBody() {
             <CappedListNotice cuts={[entryCut]} />
           </Field>
         ) : null}
-        {/*
-          Under the two link controls and above the caption — see the hook for why it is a separate
-          question from "Linked record type".
-
-          ── ONE BOX HERE, AND NOT THE RECORD FORMS' TWO ─────────────────────────────────
-
-          This mounted `<DesignWorkshopCascade>` until 2026-09-16 — a "Type of workshop" KIND box
-          that narrowed the list below it and saved nothing, plus this box. The owner's ruling
-          retired that control everywhere ("we do not need one separately for each of the type of
-          the workshops"), and the four record forms plus the questionnaire replaced it with
-          `<WorkshopPicker>`: a type box whose answer decides which TABLE the workshop box reads
-          from, and therefore which of the record's two columns the save writes.
-
-          THIS FORM CANNOT USE THAT PICKER, AND THE REASON IS THE WIRE RATHER THAN A PREFERENCE.
-          `MediaCompleteRequest` (backend/app/schemas/media.py) declares `designWorkshopId` and no
-          `workshopId`; so do `lib/media.ts`'s body and Android's `ApiModels.MediaCompleteRequest`.
-          A type box here would offer five types whose answer the upload physically cannot carry —
-          a control that changes nothing, which is the exact complaint the kind box earned. The
-          `MediaFile` model does have both columns, so this is a wire gap and not a data one; adding
-          `workshopId` to the three request shapes is what would have to come FIRST, and then this
-          becomes `<WorkshopPicker>` like the other six. Until then: one box, one destination.
-
-          ANDROID ALREADY DRAWS EXACTLY THIS — `AndroidMediaForm` kept one `DesignWorkshopField`
-          labelled "Design & prototype workshop" through the same sweep, for the same reason, and
-          said so at its own mount. This mount is what makes the two clients agree again; before it
-          the browser drew two boxes here and the handset one.
-        */}
-        {/*
-          NO `initial` PROP, and that is deliberate rather than an omission: `undefined` there means
-          "this is a new record, fill it in for me" and `null` means "this record is stored with no
-          workshop, leave it alone". This form only ever uploads, so the prefill is wanted — which
-          is exactly what the retired cascade mount passed down, byte for byte.
-        */}
         <DesignWorkshopSelect state={designWorkshop} saving={uploading} />
-        {/*
-          THE LAST BARE PROSE BOX ON A WEB RECORD PAGE, dictated 2026-08-28.
-
-          A caption is one sentence describing a photograph, written by somebody standing in front of
-          the thing photographed — the case dictation exists for. Android's own media form has had a
-          microphone here since the record-form sweep, so this was also the last place the two clients
-          disagreed about this control.
-
-          `DictatedTextArea` and not `DictatedTextInput`: a caption runs to a sentence or two, and it
-          is the multi-line box on the handset as well. Uncontrolled, exactly like the `<TextArea>` it
-          replaces, so `FormData` reads it unchanged.
-        */}
         <DictatedTextArea key={resetNonce} name="caption" label="Caption" explainWhenUnavailable={false} />
-        {/* Once for the form — two microphones, one grey paragraph where a browser has no
-            recogniser. Both boxes above pass `explainWhenUnavailable={false}`. */}
         <DictationUnavailableNotice />
         <LocationFields />
         <UploadProgress progress={progress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} files={selectedFiles} />
-        {/* Why Upload is held, beside it — mounted from the first paint, so the answer that arrives a
-            round trip after a workshop is chosen is announced. See `uploadHold`. */}
         <HeldPostNotice refusal={uploadHold} id={uploadNoticeId} className="" sayPending />
         <div>
           <button
@@ -915,10 +609,6 @@ function MediaPageBody() {
         </div>
       </form>
 
-      {/* Directly under the upload form, because it is the form's own promise being answered: the
-          card above says "Audio is queued for transcription after upload", and until this panel
-          existed nothing on any client said what became of that queue. Below the 20-row media table
-          it would need scrolling past to find a failure — which is how they stayed invisible. */}
       <MediaJobsPanel />
 
       <section className="panel overflow-hidden">
@@ -943,7 +633,6 @@ function MediaPageBody() {
               hide={["q", "dateFrom", "dateTo"]}
             />
           </div>
-          {/* Why some rows' Delete and Transcribe now are held — said once, the rows marked in words. */}
           <HeldPostNotice
             refusal={mediaListNotice((data?.items ?? []).map(holdOf), "deleted or re-transcribed")}
             id={heldNoticeId}
@@ -960,18 +649,11 @@ function MediaPageBody() {
           </div>
         ) : (
           <>
-          {/* PHONES: ONE CARD PER FILE (UX audit DW-07). The 1200px table put everything after the
-              preview off-screen at 390px. Below `md` each file is a card — preview, name, status, one
-              meta line and the actions; the transcript stays one tap away in its own disclosure. */}
           <ul className="divide-y divide-line-200 md:hidden">
             {data.items.map((item) => {
               const hold = holdOf(item);
               return (
                 <li key={item.id}>
-                  {/* The whole card opens the file's read-only page, as the table row does. The
-                      preview tile, the transcript disclosure and every button keep their own
-                      presses; the code card sits outside the surface. A stored file has no form,
-                      so there is no Update here — its page offers Download. */}
                   <OpenableCard href={RECORD_VIEW_HREF.media(item.id)} className="px-4 py-3">
                   <div className="flex items-start gap-3">
                     <div className="shrink-0">{mediaPreview(item)}</div>
@@ -998,7 +680,6 @@ function MediaPageBody() {
                       </p>
                       <TranscriptPreview preview={item.transcriptPreview} text={item.transcriptText} lines={2} className="mt-1" />
                       {item.transcriptText ? (
-                        // `data-row-ignore`: reading the open transcript is not a press on the card.
                         <details data-row-ignore="" className="mt-1 text-sm">
                           <summary className="cursor-pointer font-semibold text-field-700 dark:text-purple-300 pointer-coarse:py-2">
                             View transcript
@@ -1045,9 +726,6 @@ function MediaPageBody() {
                   const hold = holdOf(item);
                   return (
                     <Fragment key={item.id}>
-                      {/* The whole row opens the file's own read-only page — preview, transcript,
-                          Download. The preview tile, the transcript disclosure and every button keep
-                          their own clicks (`OpenableRow`). */}
                       <OpenableRow href={RECORD_VIEW_HREF.media(item.id)}>
                         <td className="px-4 py-3">
                           {mediaPreview(item)}
@@ -1067,7 +745,6 @@ function MediaPageBody() {
                         <td className="px-4 py-3 text-ink-700">
                           <TranscriptPreview preview={item.transcriptPreview} text={item.transcriptText} lines={2} className="mt-1" />
                           {item.transcriptText ? (
-                            // `data-row-ignore`: reading the open transcript is not a press on the row.
                             <details data-row-ignore="">
                               <summary className="cursor-pointer font-semibold text-field-700 dark:text-purple-300">View transcript</summary>
                               <div className="mt-2 max-h-64 min-w-64 overflow-auto rounded-md bg-field-100 p-3">
@@ -1077,9 +754,6 @@ function MediaPageBody() {
                           ) : (
                             <>
                               <div>{item.transcriptStatus ?? "-"}</div>
-                              {/* The status alone was the whole of what this cell said, so a transcript
-                                  that failed read as one word with no cause and no recourse. The reason
-                                  is stored on the row; print it. */}
                               {item.transcriptError ? (
                                 <div className="mt-1 max-w-xs text-xs text-red-700 dark:text-red-400">{item.transcriptError}</div>
                               ) : null}
@@ -1091,31 +765,10 @@ function MediaPageBody() {
                         </td>
                         <td className="px-4 py-3 text-ink-700">{formatDateTime(item.createdAt)}</td>
                         <td className="px-4 py-3 text-right">
-                          {/* THREE different gates, on purpose. Delete keeps the page's existing
-                              admin-VIEW gate; re-transcribing mirrors its route (`require_admin` +
-                              AUDIO) and is not ANDed with the toggle — it is a repair an admin needs
-                              whether or not admin chrome is switched on, and it destroys nothing. The
-                              code is gated on nothing at all: it shows an opaque reference to a row this
-                              person is already reading, and a designer who can see the file but not the
-                              tag that opens it is the exact gap the tag exists to close. The "Admin only"
-                              line this cell used to fall back to is gone with it — the cell is never
-                              empty now. */}
                           {mediaActions(item, hold)}
                         </td>
                       </OpenableRow>
                       {codeFor === item.id ? (
-                        /* An expanded row, kept beside the file's own read-only page (/media/[id],
-                           2026-10-16) because the code is what a designer prints for a row they are
-                           already looking at in the list. `lib/workshopCodeLookup.ts` still lands a
-                           scanned M code on the stored object or, when the caller is not entitled to the
-                           bytes, on this list. Android shows the same
-                           card on its own media detail (`RecordCodeSection(..., MEDIA, ...)` in
-                           MainActivity); until now the web showed none, and two clients disagreeing
-                           about which records have a code is a defect in itself.
-
-                           The title is the caption or, failing that, the filename — the SAME line
-                           `workshopCodeLookup` puts on a resolved media hit, so the card a designer
-                           prints and the row a scan reports name the file the same way. */
                         <tr className="bg-surface-50">
                           <td className="px-4 py-3" colSpan={9}>
                             <RecordCodeCard

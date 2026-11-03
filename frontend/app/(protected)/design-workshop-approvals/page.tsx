@@ -1,24 +1,5 @@
 "use client";
 
-/**
- * REPORTS TO APPROVE — every design & prototype workshop report that has been handed in, as the
- * Ministry Admin reads it: the ones waiting for a decision first, then the approved ones waiting to
- * be handed on, the ones handed on, and the ones with their designers for corrections.
- *
- * ── ONE LIST, FOUR TABS, AND THE SERVER DECIDES WHAT EACH HOLDS ─────────────────────────────────
- *
- * Each tab is the server's `state` (`GET /design-workshop-approvals?state=…`), ordered by the server:
- * the longest wait first on "Waiting for approval", the oldest approval first on "Approved, not yet
- * handed on". Nothing is filtered or re-sorted here, so a count on the tab and the rows under it come
- * from one answer.
- *
- * ── A FAILED READ IS NOT AN EMPTY QUEUE ─────────────────────────────────────────────────────────
- *
- * `null` is "not read yet" and `[]` is "the server answered with none", and an error keeps whatever
- * was on screen and says so — an empty list under an error banner reads as "nothing is waiting for
- * me", which is the one thing this screen must never say by accident.
- */
-
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Stamp } from "lucide-react";
@@ -51,9 +32,7 @@ import type { PageResult } from "@/lib/types";
 import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 const PAGE_SIZE = 20;
-/** 300 ms, this app's number. Clearing the box does not wait. */
 const SEARCH_DEBOUNCE_MS = 300;
-/** The server's `max_length` on `search`. */
 const SEARCH_MAX = 120;
 
 function describeFailure(error: unknown): string {
@@ -63,7 +42,6 @@ function describeFailure(error: unknown): string {
   return `${error.message} Couldn't load the list.`;
 }
 
-/** The one line under a row that says where its report stands, in this tab's terms. */
 function standingLine(row: DwApprovalRow, state: DwApprovalQueueState): string {
   if (state === "awaiting") {
     const round = row.submissionRound && row.submissionRound > 1 ? ` · handed in ${row.submissionRound} times` : "";
@@ -72,7 +50,6 @@ function standingLine(row: DwApprovalRow, state: DwApprovalQueueState): string {
   if (state === "returned") {
     return row.reviewedAt ? `Sent back on ${formatDate(row.reviewedAt)}` : "With its designers for corrections";
   }
-  // Approved and handed on: who signed it off, in the words every screen uses.
   return signOffLines(row).join(" ");
 }
 
@@ -83,16 +60,13 @@ export default function ReportsToApprovePage() {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
-  /** B4 / C5: the queue's order and the inspectors' verdict filter. Empty means the tab's own. */
   const [sort, setSort] = useState("");
   const [cleared, setCleared] = useState("");
   const [data, setData] = useState<PageResult<DwApprovalRow> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /** A generation counter rather than an abort: `apiFetch` takes no `AbortSignal`. */
   const generation = useRef(0);
 
-  // `?state=approved` (the Monday summary's "Approved, to hand on" row) opens on that tab, once.
   useEffect(() => {
     const asked = new URLSearchParams(window.location.search).get("state");
     const tab = APPROVAL_QUEUE_TABS.find((candidate) => candidate.value === asked);
@@ -158,8 +132,6 @@ export default function ReportsToApprovePage() {
             className={candidate.value === state ? "field-button" : "field-button-secondary"}
             onClick={() => {
               if (candidate.value === state) return;
-              // A different tab is a different list: back to page one, and "not read yet" until the
-              // new answer arrives rather than the previous tab's rows under the new tab's name.
               setState(candidate.value);
               setPage(1);
               setData(null);

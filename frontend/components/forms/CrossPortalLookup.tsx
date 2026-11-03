@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * C27 — "Find in the Field Repository" on the artisan form, and the link it leaves behind.
- *
- * Draws NOTHING until the server says the feature is on (`crossPortalEnabled`). New artisan: read
- * the Aadhaar or Pehchan number already typed above, ask the designer to confirm the artisan agreed
- * to share, look them up, and offer one "Fill the form" press. Saved artisan: show the link, and
- * offer Refresh (the Field Repository is the source of truth for the identity fields) and Unlink.
- * The consent tick is an AGREEMENT, not a setting, so it is a checkbox (§11.11), and it names every
- * item the lookup shares, from the server's list (`consentLabel`). Unlink asks first.
- */
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 
@@ -41,13 +31,11 @@ function message(error: unknown, fallback: string): string {
   return fallback;
 }
 
-/** "F-01234-56789-S5" for a scanned payload or a typed code. */
 function cardLabel(input: string): string {
   const parsed = parseArtisanCard(input);
   return parsed.ok ? cardShortCode(parsed.card.issuer, parsed.card.code) : input.trim().toUpperCase();
 }
 
-/** Whether the server has the feature on, and the consent tick's words. */
 export function useCrossPortal(): { enabled: boolean; consent: string } {
   const [status, setStatus] = useState({ enabled: false, consent: consentLabel(SHARED_FIELDS_FALLBACK) });
   useEffect(() => {
@@ -73,19 +61,15 @@ export const UNLINK_CONFIRM = {
   tone: "danger" as const
 };
 
-/** The new-artisan half: find, then fill. */
 export function CrossPortalFind({
   readNumbers,
   onFill,
   filled,
   cardInput = null
 }: {
-  /** A Field Repository card scanned or typed elsewhere: the lookup asks by the card, not the numbers. */
   cardInput?: string | null;
-  /** The Aadhaar digits and Pehchan number as typed on the form right now. */
   readNumbers: () => { aadhaarNumber: string | null; pehchanCardNumber: string | null };
   onFill: (match: CrossPortalMatch) => void;
-  /** The match already filled in, if any — the form then says where its values came from. */
   filled: CrossPortalMatch | null;
 }) {
   const { enabled, consent: consentText } = useCrossPortal();
@@ -199,16 +183,11 @@ export function CrossPortalFind({
   );
 }
 
-/** The saved-artisan half: the link, Refresh and Unlink — or Link, for an artisan saved before. */
 export function CrossPortalLinkPanel({
   artisanId,
   onRefreshed
 }: {
   artisanId: string;
-  /**
-   * After a refresh changed fields: the artisan as the server now holds it, and which identity
-   * fields moved. The form MUST take these values, or its next Save writes the old ones back.
-   */
   onRefreshed: (artisan: Artisan | null, changed: string[]) => void;
 }) {
   const { enabled, consent: consentText } = useCrossPortal();

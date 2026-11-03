@@ -40,44 +40,13 @@ import {
 } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
-/**
- * ADMINS SERVING AS DESIGNER, ASSISTANT DIRECTOR, REGIONAL DIRECTOR AND INSPECTOR — the web half of
- * the owner's ruling D3 of 2026-10-09.
- *
- * The three administering tiers — a Ministry Admin, an admin and the master admin — may be APPOINTED,
- * one workshop at a time, to any of the four posts, by somebody else. What this spec pins is the part
- * of that the browser decides:
- *
- *   1. The holder sets: who may be appointed to each post, held to the server's own sets read off
- *      disk, and the two read surfaces opening to every possible holder.
- *   2. The pickers: never the reader, every other row the server offered, and a disabled row's
- *      reason worked out per row.
- *   3. A post on a workshop makes that workshop read-only for its holder: which posts the reader
- *      holds, the sentence (the server's own `write_refusal`, word for word) and where to read it.
- *   4. An empty read surface is an ANSWER — "You do not hold any … posts" — and a refusal met by an
- *      administering tier is read as that, while a 409 from an appointment reaches the reader verbatim.
- *
- * ── WHY ONLY FOUR TIERS ARE NAMED HERE ──────────────────────────────────────────────────────────
- *
- * `backend/tests/test_role_ladder_parity.py` sweeps the client trees for files naming five or more
- * tiers and treats them as copies of the ladder. This file is not one: it asserts predicates. So the
- * two platform admin tiers are DERIVED — every rung of `ROLES_BY_RANK` that `isAdmin` admits — and
- * everybody else is the complement of what the ruling names, never a typed list.
- *
- * PURE NODE — no browser, no server, no database.
- * Run: `npx playwright test e2e/admin-serve-as-unit.spec.ts --reporter=line`
- */
-
 const user = (role: UserRole, id = "u-reader"): User =>
   ({ id, email: `${id}@example.org`, name: id, role }) as User;
 
-/** The two platform admin tiers, read off the ladder through `isAdmin` rather than typed. */
 const PLATFORM_ADMINS = ROLES_BY_RANK.filter((role) => isAdmin(user(role)));
 
-/** The ruling's three administering tiers: the Ministry Admin and the two platform admin tiers. */
 const ADMINISTERING: UserRole[] = ["MINISTRY_ADMIN", ...PLATFORM_ADMINS];
 
-/** Who may hold a post whose own tier is `tier`: that tier, and the three administering tiers. */
 const holders = (tier: UserRole): Set<UserRole> => new Set<UserRole>([tier, ...ADMINISTERING]);
 
 const MAY_INSPECT = holders("INSPECTOR");
@@ -85,12 +54,7 @@ const MAY_BE_ASSISTANT_DIRECTOR = holders("ASSISTANT_DIRECTOR");
 const MAY_BE_REGIONAL_DIRECTOR = holders("REGIONAL_DIRECTOR");
 const MAY_SUPERVISE = new Set<UserRole>([...MAY_BE_ASSISTANT_DIRECTOR, ...MAY_BE_REGIONAL_DIRECTOR]);
 
-/** The lowest rung of the ladder: a tier the ruling appoints to nothing, chosen by rank. */
 const NEVER_APPOINTED = ROLES_BY_RANK[ROLES_BY_RANK.length - 1];
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Reading the server's sets off disk
- * ──────────────────────────────────────────────────────────────────────────── */
 
 const SERVICES = join(__dirname, "..", "..", "backend", "app", "services");
 const MODULES = {
@@ -100,22 +64,15 @@ const MODULES = {
 } as const;
 type ServerModule = keyof typeof MODULES;
 
-/** Read lazily, so a renamed module fails the test that needs it rather than the whole file. */
 function source(owner: ServerModule): string {
   return readFileSync(join(SERVICES, MODULES[owner]), "utf8");
 }
 
-/** The right-hand side of one module-level assignment, comment stripped — or null. */
 function assignment(owner: ServerModule, name: string): string | null {
   const match = source(owner).match(new RegExp(`^${name}\\s*(?::[^=\\n]*)?=\\s*(.+)$`, "m"));
   return match ? match[1].replace(/\s+#.*$/, "").trim() : null;
 }
 
-/**
- * A frozenset expression evaluated the way Python would: literals, names (bare, or through the
- * `posts.` alias the services import `design_workshop_posts` under) and `|`. Anything else fails with
- * the text it could not read, which is the cue to widen this reader rather than to delete the test.
- */
 function evaluate(expression: string, home: ServerModule, depth = 0): Set<string> {
   if (depth > 6) throw new Error(`frozenset expression nests too deeply: ${expression}`);
   const members = new Set<string>();
@@ -141,11 +98,6 @@ function serverSet(owner: ServerModule, name: string): string[] {
   return [...evaluate(rhs!, owner)].sort();
 }
 
-/**
- * The server's own 403 sentence for a post holder's write, `design_workshop_posts.write_refusal`,
- * read off disk with its labels filled in — so the web's sentence is held to the words, not to a
- * copy of them typed into this file.
- */
 function serverWriteRefusal(labels: string): string {
   const body = source("posts").match(/def write_refusal\([\s\S]*?return \(([\s\S]*?)\n\s*\)/);
   expect(body, "design_workshop_posts.write_refusal could not be read").toBeTruthy();
@@ -155,17 +107,12 @@ function serverWriteRefusal(labels: string): string {
   return template.replace("{_labels(posts)}", labels);
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 1. Who may be appointed, and the two read surfaces
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test.describe("who may be appointed to a post", () => {
   test("each holder set is its own tier plus the three administering tiers, and nothing else", () => {
     expect(PLATFORM_ADMINS).toHaveLength(2);
     expect(new Set(INSPECTION_HOLDER_ROLES)).toEqual(MAY_INSPECT);
     expect(new Set(ASSISTANT_DIRECTOR_HOLDER_ROLES)).toEqual(MAY_BE_ASSISTANT_DIRECTOR);
     expect(new Set(REGIONAL_DIRECTOR_HOLDER_ROLES)).toEqual(MAY_BE_REGIONAL_DIRECTOR);
-    // The tiers who appoint are exactly the tiers who may be appointed beside each post's own tier.
     for (const role of ROLES_BY_RANK) {
       expect(canAssignWorkshopOversight(user(role)), role).toBe(ADMINISTERING.includes(role));
     }
@@ -182,7 +129,6 @@ test.describe("who may be appointed to a post", () => {
   });
 
   test("each post's slot takes its own tier and never the other post's", () => {
-    // Filed in the wrong slot, the right name prints beside the wrong post on a ministry document.
     expect(MAY_BE_ASSISTANT_DIRECTOR.has("REGIONAL_DIRECTOR")).toBe(false);
     expect(MAY_BE_REGIONAL_DIRECTOR.has("ASSISTANT_DIRECTOR")).toBe(false);
     for (const role of ROLES_BY_RANK) {
@@ -215,8 +161,6 @@ test.describe("the two read surfaces open to every possible holder", () => {
   });
 
   test("the TIER predicates stay the tiers: the walkthrough deck and the reading of a refusal", () => {
-    // Opening a surface is no longer the same question as being OF the tier whose work it is, and the
-    // two must not be read for each other: a platform admin may inspect and is not an inspector.
     for (const role of ROLES_BY_RANK) {
       expect(isInspectorTier(user(role)), role).toBe(role === "INSPECTOR");
       expect(isDirectorateTier(user(role)), role).toBe(
@@ -225,10 +169,6 @@ test.describe("the two read surfaces open to every possible holder", () => {
     }
   });
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 2. The appointment pickers
- * ──────────────────────────────────────────────────────────────────────────── */
 
 const officer = (id: string, role: UserRole, capacities: DwOfficer["capacities"]): DwOfficer => ({
   id,
@@ -250,7 +190,6 @@ test.describe("the Assistant Director and Regional Director pickers", () => {
     const values = rows.map((row) => row.value);
     expect(values).not.toContain(reader.id);
     expect(values).toEqual(expect.arrayContaining([colleague.id, regional.id, assistant.id]));
-    // An administering tier other than the reader is offered and choosable in either slot.
     expect(rows.find((row) => row.value === colleague.id)?.disabled).toBe(false);
     expect(officersOfferedTo(directory, reader.id)).toBe(3);
   });
@@ -260,11 +199,9 @@ test.describe("the Assistant Director and Regional Director pickers", () => {
     const wrongSlot = rows.find((row) => row.value === assistant.id);
     expect(wrongSlot?.disabled).toBe(true);
     expect(wrongSlot?.hint).toMatch(/may hold the Assistant Director post, not this one/);
-    // The old stock sentence about the scheme is gone: it was false of every row it was printed on.
     expect(wrongSlot?.hint).not.toMatch(/supervises the scheme/);
     expect(officerSlotRefusal({ capacities: [] }, "ASSISTANT_DIRECTOR")).toBe("cannot be named in either post");
     expect(officerSlotRefusal({ capacities: ["ASSISTANT_DIRECTOR"] }, "ASSISTANT_DIRECTOR")).toBeNull();
-    // Eligible rows come first, the greyed ones after them.
     const firstDisabled = rows.findIndex((row) => row.disabled);
     expect(rows.slice(firstDisabled).every((row) => row.disabled)).toBe(true);
   });
@@ -314,10 +251,6 @@ test.describe("an appointment refused by a separation-of-duties rule", () => {
   });
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 3. A post on a workshop makes it read-only for its holder
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test.describe("the posts the reader holds on one workshop", () => {
   const reader = user("MINISTRY_ADMIN");
   const row = (capacity: "ASSISTANT_DIRECTOR" | "REGIONAL_DIRECTOR", userId: string) => ({ capacity, userId });
@@ -328,7 +261,6 @@ test.describe("the posts the reader holds on one workshop", () => {
     ]);
     expect(workshopPostsHeldBy(reader, { oversight: [row("ASSISTANT_DIRECTOR", "u-other")] })).toEqual([]);
     expect(workshopPostsHeldBy(reader, { inspectors: [{ userId: reader.id }] })).toEqual(["INSPECTION"]);
-    // Two posts at once can only be data older than the rules; it is still read, in the server's order.
     expect(
       workshopPostsHeldBy(reader, {
         oversight: [row("ASSISTANT_DIRECTOR", reader.id)],
@@ -354,7 +286,6 @@ test.describe("the posts the reader holds on one workshop", () => {
     expect(inspecting).toContain(serverWriteRefusal("inspector"));
     expect(inspecting).toMatch(/Workshops to inspect/);
 
-    // The server names posts in one spoken order whatever order they were held in.
     const both = heldPostEditRefusal(["INSPECTION", "ASSISTANT_DIRECTOR"]);
     expect(both).toContain(serverWriteRefusal("Assistant Director and inspector"));
     expect(both).toMatch(/Workshops I monitor or Workshops to inspect/);
@@ -369,10 +300,6 @@ test.describe("the posts the reader holds on one workshop", () => {
   });
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 4. An empty read surface is an answer
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test.describe("holding no posts is said, not shown as an error", () => {
   const forbidden = new ApiError(403, "Refused.", { detail: "Refused." });
 
@@ -380,10 +307,8 @@ test.describe("holding no posts is said, not shown as an error", () => {
     for (const role of ADMINISTERING) {
       expect(inspectionRefusalMeansNoPosts(forbidden, user(role)), role).toBe(true);
     }
-    // The tier itself refused has met a fault, and so has anybody who may not inspect at all.
     expect(inspectionRefusalMeansNoPosts(forbidden, user("INSPECTOR"))).toBe(false);
     expect(inspectionRefusalMeansNoPosts(forbidden, user(NEVER_APPOINTED))).toBe(false);
-    // Only a refusal reads that way: a missing record or a broken server is not "no posts".
     expect(inspectionRefusalMeansNoPosts(new ApiError(404, "Record not found", null), user(PLATFORM_ADMINS[0]))).toBe(false);
     expect(inspectionRefusalMeansNoPosts(new ApiError(500, "Boom", null), user(PLATFORM_ADMINS[0]))).toBe(false);
     expect(inspectionRefusalMeansNoPosts(new Error("offline"), user(PLATFORM_ADMINS[0]))).toBe(false);
@@ -413,7 +338,6 @@ test.describe("holding no posts is said, not shown as an error", () => {
       "You do not hold any Regional Director posts"
     );
     expect(oversightEmptyState(true, user("MINISTRY_ADMIN")).title).toMatch(/search/);
-    // Both bodies say who appoints and where — an empty page is a next move, not a dead end.
     for (const body of [inspectionEmptyState(false).body, oversightEmptyState(false, user("MINISTRY_ADMIN")).body]) {
       expect(body).toMatch(/Workshop oversight/);
       expect(body).toMatch(/will appear here/);

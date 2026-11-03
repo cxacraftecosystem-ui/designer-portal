@@ -1,9 +1,3 @@
-/**
- * Interview summaries, key quotes and translations — the pure half of `lib/transcriptInsights.ts`
- * plus source assertions for what lives in JSX (there is no React renderer in devDependencies).
- * The same contract as the Field Repository's spec of the same name.
- */
-
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -136,12 +130,10 @@ test("@qf:H1 the confirm dialog shows only for edited insights", () => {
 });
 
 test("the section is drawn under a completed transcript and read-only in the lightbox", () => {
-  // Under a completed transcript; a record's read-only page passes readOnly down, so no Edit there.
   expect(read("components", "media", "TranscriptBlock.tsx")).toContain(
     '{status === "COMPLETED" ? <TranscriptInsights mediaId={current.id} readOnly={readOnly} /> : null}'
   );
   expect(read("components", "media", "MediaLightbox.tsx")).toContain("<TranscriptInsights mediaId={item.id} readOnly />");
-  // Buttons go through the shared row primitive.
   expect(read("components", "media", "TranscriptInsights.tsx")).toContain('from "@/components/ui/ActionGroup"');
   const component = read("components", "media", "TranscriptInsights.tsx");
   expect(component).toContain("Machine-generated ·");

@@ -1,15 +1,3 @@
-/**
- * The counts that replace typed boxes — the browser's port of `app/services/stage_computed.py`.
- *
- * Owner, 2026-10-17 (C7, C8). The server stores these on save; this port exists so the figure moves
- * while the designer ticks attendance or adds a participant. `null` means "nothing to count", and
- * then the stored value — typed on an older workshop — is what is shown.
- *
- * A LEGACY ROW (no `absentDays` list, a stored `attendedDays`) was typed before the tick-list and is
- * never read back as "All present": its days are not counted and the completion count is not formed
- * while one remains. A row the tick-list writes always carries `absentDays`, `[]` for all present.
- */
-
 import type { DwRow, DwValue } from "@/lib/designWorkshops";
 
 export const FEMALE_TOKENS: ReadonlySet<string> = new Set(["female", "f", "woman", "women", "girl", "महिला", "स्त्री"]);
@@ -23,7 +11,6 @@ function toInt(value: DwValue | undefined): number | null {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
-/** The day numbers a participant was absent on, as strings ("2"), the shape `absentDays` stores. */
 export function absentDays(row: DwRow): Set<string> {
   const raw = row.absentDays;
   if (!Array.isArray(raw)) return new Set();
@@ -34,7 +21,6 @@ function isBlankValue(value: DwValue | undefined): boolean {
   return value === null || value === undefined || (typeof value === "string" && !value.trim());
 }
 
-/** Days attended typed before the tick-list existed, and never ticked since. */
 export function isLegacyAttendance(row: DwRow): boolean {
   return !Array.isArray(row.absentDays) && !isBlankValue(row.attendedDays);
 }
@@ -45,7 +31,6 @@ export function attendedDays(row: DwRow, days: readonly number[]): number | null
   return days.filter((day) => !absent.has(String(day))).length;
 }
 
-/** Roster rows that are somebody — a name or a linked artisan. A blank added row is not. */
 export function namedParticipants(rows: readonly DwRow[]): DwRow[] {
   return rows.filter((row) => String(row.name ?? "").trim() || row.artisanRef);
 }
@@ -69,14 +54,12 @@ export function rosterValues(rows: readonly DwRow[], days: readonly number[]): R
   };
 }
 
-/** The day numbers attendance is taken on: the schedule's, else 1..duration. */
 export function workshopDays(schedule: readonly DwRow[], fallback: readonly number[] = []): number[] {
   const numbers = [...new Set(schedule.map((r) => toInt(r.dayNumber)).filter((n): n is number => n !== null && n > 0 && n <= 366))];
   numbers.sort((a, b) => a - b);
   return numbers.length ? numbers : [...fallback];
 }
 
-/** Mark `participant` absent (or present) on `day`, keeping the stored list sorted. */
 export function withAttendance(row: DwRow, day: number, present: boolean): DwRow {
   const absent = absentDays(row);
   if (present) absent.delete(String(day));

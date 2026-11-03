@@ -1,17 +1,5 @@
 "use client";
 
-/**
- * The code half of every two-step verification form: the six boxes (`OtpCodeInput`), and — where a
- * recovery code is also accepted — a SEPARATE text box for one, reached by "Use a recovery code
- * instead". Used by the sign-in's second step, turning two-step verification off, and setting a first
- * password on an account that has it on. Android's twin is `TwoStepCodeEntry` in
- * `ui/TwoStepVerification.kt`.
- *
- * Two boxes, not one box that takes either: a six-digit code is digits only and goes in six boxes
- * (owner's rule), and a recovery code is `xxxx-xxxx` letters and digits — no single control can be
- * honest about both. Switching kind empties the box: half a code of one kind is not half of the other.
- */
-
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 
 import { OtpCodeInput, type OtpCodeInputHandle } from "@/components/ui/OtpCodeInput";
@@ -27,9 +15,7 @@ export const TwoStepCodeEntry = forwardRef<
     onKindChange: (kind: TwoStepCodeKind) => void;
     value: string;
     onChange: (value: string) => void;
-    /** The six digits are in: submit without a button press. Not called for recovery codes. */
     onComplete?: (code: string) => void;
-    /** Offer "Use a recovery code instead". */
     allowRecovery: boolean;
     totpLabel?: string;
     totpHint?: string;
@@ -61,7 +47,6 @@ export const TwoStepCodeEntry = forwardRef<
   const recovery = useRef<HTMLInputElement | null>(null);
   const showRecovery = allowRecovery && kind === "recovery";
 
-  // Switching kind puts the caret in the box that just appeared — the next keystroke belongs there.
   const switched = useRef(false);
   useEffect(() => {
     if (!switched.current) {

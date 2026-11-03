@@ -1,23 +1,3 @@
-/**
- * THE 3D MODEL VIEWER — one framework-free module, drawn by BOTH clients.
- *
- * The web mounts it from `components/media/ModelViewer.tsx` through a dynamic import, so three.js is
- * fetched only by a page that is actually showing a model. The handset draws the SAME module: it is
- * bundled by `scripts/build-android-model-viewer.mjs` into
- * `android/app/src/main/assets/model-viewer/viewer.js`, which a WebView in `DwModelViewer.kt` loads
- * from the app's own assets. One source, two hosts — so a model that turns on a laptop turns the same
- * way on a phone, and a loader fixed here is fixed in both once the bundle is rebuilt.
- * `e2e/model-viewer-unit.spec.ts` holds the bundle to this file's hash, so a change here that is not
- * rebuilt for the handset fails the web unit run rather than drifting silently.
- *
- * WHAT IT DRAWS: every format in `MODEL_FORMATS`, each with the loader three.js ships for it. A glTF
- * whose meshes or textures sit in separate files cannot be drawn from a single stored file, and the
- * refusal says so and names the .glb export as the fix — the upload card already advises that format.
- *
- * WHAT IT DOES NOT DO: nothing here uploads, edits or converts a model. It reads the bytes it is
- * given and draws them; the stored file is untouched.
- */
-
 import {
   AmbientLight,
   Box3,
@@ -50,7 +30,6 @@ import { USDLoader } from "three/examples/jsm/loaders/USDLoader.js";
 
 import type { ModelFormat } from "./modelFormats";
 
-/** A refusal written for the person looking at the screen. */
 export class ModelViewerError extends Error {
   constructor(message: string) {
     super(message);
@@ -59,13 +38,10 @@ export class ModelViewerError extends Error {
 }
 
 export type ModelViewerHandle = {
-  /** Put the camera back where it started. */
   reset(): void;
-  /** Release the GPU context, the controls and every geometry and material. Safe to call twice. */
   dispose(): void;
 };
 
-/** The neutral grey a model is drawn in when its file carries no material of its own. */
 const PLAIN_MATERIAL_COLOUR = 0xb8b2a7;
 
 const BACKGROUND = 0xf4f2ee;
@@ -80,21 +56,15 @@ function plainMaterial(vertexColors: boolean): MeshStandardMaterial {
   });
 }
 
-/** A loose geometry as a mesh, lit by its own normals or by ones computed from its faces. */
 function objectFromGeometry(geometry: BufferGeometry): Object3D {
   if (!geometry.getAttribute("normal")) geometry.computeVertexNormals();
   return new Mesh(geometry, plainMaterial(Boolean(geometry.getAttribute("color"))));
 }
 
-/** The text a parser wants, from the bytes every format arrives as. */
 function asText(buffer: ArrayBuffer): string {
   return new TextDecoder().decode(buffer);
 }
 
-/**
- * Turn stored bytes into a scene object. Every refusal is a sentence a designer can act on; a
- * parser's own exception text is never shown, because it names internals and not the file.
- */
 export async function parseModel(buffer: ArrayBuffer, format: ModelFormat): Promise<Object3D> {
   try {
     switch (format) {
@@ -108,8 +78,6 @@ export async function parseModel(buffer: ArrayBuffer, format: ModelFormat): Prom
       case "ply": {
         const geometry = new PLYLoader().parse(buffer);
         if (!geometry.index && geometry.getAttribute("position") && !geometry.getAttribute("normal")) {
-          // A PLY with no faces is a photogrammetry point cloud, and it is drawn as points rather
-          // than as a mesh of nonsense triangles.
           return new Points(
             geometry,
             new PointsMaterial({ size: 2, vertexColors: Boolean(geometry.getAttribute("color")), sizeAttenuation: false })
@@ -139,7 +107,6 @@ export async function parseModel(buffer: ArrayBuffer, format: ModelFormat): Prom
   throw new ModelViewerError("This kind of file cannot be drawn as a 3D model.");
 }
 
-/** Draw both faces of every surface: scans and print files often have inward-facing normals. */
 function prepare(root: Object3D): void {
   root.traverse((node) => {
     const mesh = node as Mesh;
@@ -151,7 +118,6 @@ function prepare(root: Object3D): void {
   });
 }
 
-/** Everything a scene holds that owns GPU memory, released. */
 function disposeTree(root: Object3D): void {
   root.traverse((node) => {
     const drawable = node as Mesh;
@@ -166,10 +132,6 @@ function disposeTree(root: Object3D): void {
   });
 }
 
-/**
- * Draw `buffer` into `container` and hand back a handle. The container must already be laid out —
- * the canvas takes its size, and follows it as it changes.
- */
 export async function mountModelViewer(
   container: HTMLElement,
   buffer: ArrayBuffer,
@@ -212,8 +174,6 @@ export async function mountModelViewer(
   fill.position.set(-1.2, 0.4, -1);
   scene.add(fill);
 
-  // THE MODEL IS CENTRED AT THE ORIGIN AND THE CAMERA IS SET BACK BY ITS SIZE, so a scan in metres
-  // and a print file in millimetres both open filling the frame rather than as a speck or a wall.
   const holder = new Group();
   const centre = bounds.getCenter(new Vector3());
   model.position.sub(centre);
@@ -240,8 +200,6 @@ export async function mountModelViewer(
     frame = 0;
     if (!disposed) renderer.render(scene, camera);
   };
-  // RENDERED ON DEMAND, not every frame: a still model costs nothing while nobody is turning it, which
-  // matters on a phone's battery.
   const requestRender = () => {
     if (!frame && !disposed) frame = requestAnimationFrame(render);
   };

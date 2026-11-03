@@ -9,10 +9,6 @@ import { RecordingChips } from "@/components/questionnaire/RecordingChips";
 import { useChipNavigator } from "@/components/questionnaire/useUrlFilters";
 import type { MediaFile } from "@/lib/types";
 
-/**
- * One uploaded file, read-only: a preview, its transcript, the Download button and what it is
- * attached to. There is no Update — a stored file has no edit form — so the header draws none.
- */
 export default function MediaViewPage() {
   const { id } = useParams<{ id: string }>();
   const goChip = useChipNavigator();

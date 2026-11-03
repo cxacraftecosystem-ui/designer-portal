@@ -1,25 +1,3 @@
-/*
- * The service worker: what lets a page this browser has already opened open again with no
- * connection — the report screen first among them, which can now build a workshop's report on the
- * device (frontend/lib/offlineReport).
- *
- * IT CACHES THE APPLICATION, NEVER THE DATA. Workshop data lives in IndexedDB, written by the app
- * itself (lib/designWorkshopStore, lib/offlineReport/reportCache), stamped with the account that
- * fetched it and cleared on sign-out. Nothing here touches the API: every cross-origin request, and
- * every request that is not a GET, goes straight to the network as if this file did not exist.
- *
- * Four kinds of same-origin GET are answered:
- *   - /_next/static/…     content-hashed build output: cache first, kept until a new worker
- *                         replaces the cache, at most STATIC_LIMIT entries.
- *   - /report-fonts/, /boundaries/, /logos/
- *                         the fonts the browser's .pdf is set in, the map's borders and the
- *                         letterhead logos: cache first.
- *   - a page (a navigation) and its React Server Component payload: network first, and the last
- *     good answer for that path when the network fails, at most PAGE_LIMIT paths, oldest dropped.
- *
- * Bump VERSION whenever this file's caching rules change; `activate` deletes every older cache.
- */
-
 const VERSION = "v1";
 const STATIC_CACHE = `dw-static-${VERSION}`;
 const ASSET_CACHE = `dw-assets-${VERSION}`;
@@ -44,7 +22,6 @@ globalThis.addEventListener("activate", (event) => {
   );
 });
 
-/** Sign-out asks for the page cache to go, so the next account cannot reopen the last one's screens. */
 globalThis.addEventListener("message", (event) => {
   if (event.data && event.data.type === "dw-clear-pages") {
     event.waitUntil(caches.delete(PAGE_CACHE));
@@ -69,7 +46,6 @@ async function cacheFirst(request, cacheName, limit) {
   return response;
 }
 
-/** The key a page is cached under: its path, with the RSC payload kept apart from the HTML. */
 function pageKey(request, url) {
   const rsc = request.headers.get("RSC") === "1" || url.searchParams.has("_rsc");
   return new Request(`${url.origin}${url.pathname}${rsc ? "?__dw_rsc=1" : ""}`);
@@ -81,7 +57,6 @@ async function networkFirst(request, url) {
   try {
     const response = await fetch(request);
     if (response.ok && response.type === "basic" && !response.redirected) {
-      // Deleted and re-put, so the most recently used path is the last to be trimmed.
       await cache.delete(key);
       await cache.put(key, response.clone());
       void trim(PAGE_CACHE, PAGE_LIMIT);

@@ -2,14 +2,6 @@ import fs from "node:fs";
 
 import { expect, test, type Page } from "@playwright/test";
 
-/**
- * The coverage view of `/map`, end to end in a real browser over the real page, with every API call
- * answered from fixtures: the assertions are about exact counts and links, which cannot be exact
- * against a live corpus, and nothing here writes. No account is needed — the session is a fixture
- * token and `/me` a ministry account — so the spec runs wherever the web app runs. The server's own
- * gate is held by `backend/tests/test_map_coverage.py`.
- */
-
 const SHOTS = process.env.E2E_SHOT_DIR ?? "test-results/map-coverage";
 const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -79,7 +71,6 @@ async function stub(page: Page, options: { dark?: boolean } = {}) {
       JSON.stringify({ theme, reducedMotion: true, largerText: false, highContrast: false })
     );
   }, options.dark ? "dark" : "light");
-  // Anything not answered below is a 404 from a stub, never a request to a real server.
   await page.route((url) => url.href.startsWith(API), (route) =>
     route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "Not Found" }) })
   );
@@ -183,8 +174,6 @@ test("at 1440x900 the whole map is on screen with the side column beside it", as
   expect(mapBox && sideBox).toBeTruthy();
   expect(sideBox!.x).toBeGreaterThanOrEqual(mapBox!.x + mapBox!.width);
   expect(sideBox!.y).toBeLessThan(900);
-  // The panel is sticky under the header: once the page reaches it, the whole country is on screen,
-  // and the map is never cut off inside its own panel.
   await page.evaluate((top) => window.scrollTo(0, top), Math.max(0, mapBox!.y - 96));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   const svg = await page.getByTestId("coverage-map").boundingBox();

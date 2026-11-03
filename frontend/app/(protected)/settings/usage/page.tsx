@@ -1,55 +1,5 @@
 "use client";
 
-/**
- * /settings/usage — which screens are reached, how often, how fast, how often broken. NOT the
- * cross-workshop content comparison at /admin/analytics, and the name says so on purpose.
- *
- * **`/usage`, NOT `/analytics`, AND THE COLLISION IS THE REASON** — this page's own backing route,
- * `backend/app/api/routes/usage.py`, opens with the same sentence. `/admin/analytics` observes craft
- * outcomes and no person at all; this page observes people — which screens they reached, in what
- * order the platform recorded them arriving. Calling both "analytics" would leave every future
- * reader to work out which one a name meant, in a codebase where one of the two is a privacy
- * surface. So this one is titled, labelled and routed as "Usage" everywhere it appears.
- *
- * THREE RULES THIS COMPONENT FOLLOWS, copied from `/admin/analytics`'s own page because they are the
- * same three rules for the same reason:
- *
- * 1. **Nothing here computes.** Every figure comes off the wire — every count, every percentile,
- *    every rate, and every ranking. `isWithheldRoute` is the only branch a reader needs: a withheld
- *    row's numbers are `null`, and `null` becomes `0` through arithmetic and through `??`, so a page
- *    that fell back would publish a number the server explicitly refused to state. **The charts make
- *    that rule sharper rather than softer** — a table cell shows an em dash and a reader moves on,
- *    but a plotted point at zero is a confident claim, so every chart path draws a stated GAP where
- *    a figure is absent and never a mark on the baseline. The only arithmetic in this file's
- *    dependencies is axis geometry (`usageCharts.tsx`), which turns a figure into a coordinate and
- *    never into a different figure.
- * 2. **The consent and collection posture renders FIRST, above the figures**, because a number with
- *    no stated method is a number nobody can check. That posture CHANGED on 2026-08-30: there is now
- *    a consent flow, so the banner no longer says nobody has been asked. What it says instead is the
- *    two things that are still true and still qualify every figure below — a refusing account is not
- *    recorded at all, so these aggregates describe everyone who did not refuse; and every row
- *    written before the flow shipped carries `consentState` NULL, which means nobody was asked.
- * 3. **Two gates, both mirrored, neither invented here.** `require_usage_reader` (Admin and above) on
- *    the aggregate routes is the boundary; `ROUTE_GUARDS` mirrors it so the URL itself is refused for
- *    anyone below admin, not merely unlinked, and `permitted` below is the third copy for the case
- *    where this component is reached some other way. Admin view is mirrored by
- *    `ADMIN_CHROME_ROUTES`, so an admin browsing with admin view off never sees this card or this
- *    page — no request, no flash of figures about their colleagues' navigation.
- *
- * ── AND A FOURTH RULE THIS PAGE DID NOT NEED UNTIL NOW ─────────────────────────────────────────
- *
- * 4. **ONE NAMED PERSON'S TRAIL IS A DIFFERENT KIND OF THING FROM EVERYTHING ELSE ON THIS PAGE, AND
- *    IT IS GATED DIFFERENTLY.** Every other panel here is an aggregate that carries no user id at
- *    all. `AccountTrailPanel` at the bottom reads one colleague's request-by-request trail, and it
- *    is behind `isMasterAdmin` — a FOURTH gate on this page, mirroring the server's brand-new
- *    `deps.can_read_person_usage`, which is deliberately not a widened `can_read_usage`. It is
- *    additionally refused by the server unless that colleague's own consent is GRANTED, every read
- *    writes a line to the server log naming the reader and the subject, and there is no durable
- *    audit table — the panel says all three rather than implying otherwise. It sits last and behind
- *    its own heading because an admin who came here for "which screens are slow" should not
- *    encounter it on the way.
- */
-
 import { useCallback, useEffect, useState } from "react";
 import { Activity, CircleAlert, UserSearch } from "lucide-react";
 
@@ -109,9 +59,6 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
-/** A count, or the withheld dash — the two must not look alike, or a reader skims past a refusal as
- *  though it were a small number. Muted ink plus a tooltip carrying the reason, exactly like
- *  `RateFigure` on the cross-workshop comparison page. */
 function Metric({ value, reason }: { value: number | null; reason?: string }) {
   const withheld = value === null;
   return (
@@ -129,42 +76,6 @@ function Loading({ what }: { what: string }) {
   return <section className="panel p-4 text-sm text-ink-500">Loading {what}…</section>;
 }
 
-/**
- * The consent and collection posture, rendered above every figure on the page.
- *
- * This is requirement 26's machine-readable half — `docs/METHODOLOGY-usage-instrumentation.md` is
- * the prose version — and it is fetched separately from the routes table because it answers a
- * different question ("how was this made", not "what does it say") and does not vary with the date
- * range a reader picks below.
- *
- * ── WHAT CHANGED ON 2026-08-30, AND THE TWO SENTENCES THAT DID NOT ─────────────────────────────
- *
- * There is a consent flow now: a required question at sign-in on both clients, a settings card that
- * withdraws, four columns on `User` and an append-only decision log. `consent.flowExists` says so,
- * and this banner's headline follows it rather than continuing to tell admins that nobody has been
- * asked. **What has NOT changed is that the banner is still a caution**, and these two are why:
- *
- *   * a REFUSING account is not recorded at all — not even anonymously — so every figure below
- *     describes everyone who did not refuse, and anybody quoting one has to say so;
- *   * every row written before the flow shipped carries `consentState` NULL, which means nobody was
- *     asked. Nothing backfills them, and whether they are deleted is an open decision.
- *
- * ── `unaskedPolicy === "ATTRIBUTED"`, COMPARED DIRECTLY — NOT SNIFFED OUT OF A SENTENCE ─────────
- *
- * It used to read `unaskedPolicy !== "NOTHING" && collects.some(line => line.startsWith("The account
- * id"))`, on the assumption that only the ATTRIBUTED sentence in `usage.collects()` started that
- * way. It is not an assumption the backend keeps: BOTH of that function's account-id sentences share
- * the exact prefix "The account id" — one for ATTRIBUTED, one for ANONYMOUS — because both policies
- * record an account-id line and only the wording *after* the prefix says which. `.startsWith` cannot
- * tell them apart, so this read `true` under ANONYMOUS too, which is `DEFAULT_UNASKED_COLLECTION`
- * and today's actual live default. The result: an admin opening this page under the live default —
- * the one page whose stated purpose is telling them the truth about this exact fact — was told
- * "requests ARE attributed to an account id, without having asked" while every row's `userId` is
- * written NULL. `unaskedPolicy` is the policy's own enum value on the wire, so comparing it directly
- * cannot drift from whichever way `collects()` happens to word its sentence. **The same rule now
- * governs `flowExists`:** it is the boolean, never a sentence, and never a version-string comparison
- * done here.
- */
 function CollectionPosture({ method }: { method: UsageCollectionMethod }) {
   const attributed = method.consent.unaskedPolicy === "ATTRIBUTED";
   return (
@@ -178,8 +89,6 @@ function CollectionPosture({ method }: { method: UsageCollectionMethod }) {
               : `Requests from accounts that haven't answered are recorded ${attributed ? "with their name" : "without a name"}.`}
           </p>
 
-          {/* The server's own sentences, in the order it wrote them. Every one of these is a fact a
-              reader needs BEFORE the numbers, not a footnote to a figure they already believe. */}
           {method.consent.flowExists && method.consent.askedAt ? (
             <p className="mt-1">{method.consent.askedAt}</p>
           ) : null}
@@ -199,26 +108,6 @@ function CollectionPosture({ method }: { method: UsageCollectionMethod }) {
   );
 }
 
-/**
- * ONE NAMED COLLEAGUE'S TRAIL. Master admin only, and the most sensitive read on this page.
- *
- * **THE GATE HERE IS `isMasterAdmin` AND NOT `isAdmin`**, mirroring `deps.can_read_person_usage`,
- * which the backend deliberately created as a NEW predicate rather than widening `can_read_usage`.
- * Its argument, in one line: the aggregates sit at Admin because a record of what colleagues did is
- * more revealing than the roster, and a named person's minute-by-minute trail is strictly more
- * revealing again than that aggregate — so it cannot sit at the same rank.
- *
- * **THE THREE REFUSALS ARE RENDERED AS SENTENCES AND NEVER AS AN EMPTY TABLE.** A 404 is "no such
- * account"; a 409 is "that person refused" or "nobody has asked them yet", and those two carry
- * different words because the next moves differ — there is no remedy at all for the first, and
- * telling an administrator to go and ask again is how somebody learns that a refusal is negotiable.
- * An empty list in place of any of them would be read as "this person has never used the app".
- *
- * **NO SEARCH BOX, AND THAT IS DELIBERATE.** The field takes an account id that the reader already
- * has. A picker over the account list would turn "read one colleague's trail, having decided to"
- * into "browse colleagues and pick one", which is a different act; there is no route that lists
- * accounts for this purpose and this panel does not invent one.
- */
 function AccountTrailPanel({ from, to }: { from: string; to: string }) {
   const [subject, setSubject] = useState("");
   const [trail, setTrail] = useState<AccountUsageTrail | null>(null);
@@ -235,8 +124,6 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
     try {
       setTrail(await loadAccountUsageTrail(id, { from, to }));
     } catch (err) {
-      // The server's own sentence, verbatim. It is the only text that knows which of the three
-      // refusals this was, and nothing this bundle could write in its place would know it.
       setError(readableError(err, "That person's activity couldn't be loaded. Try again."));
     } finally {
       setBusy(false);
@@ -314,7 +201,6 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
                       <td className="py-2 pr-3 text-ink-700">{event.statusCode}</td>
                       <td className="py-2 pr-3 text-ink-700">{durationText(event.durationMs)}</td>
                       <td className="py-2 pr-3 text-ink-700">{event.clientApp}</td>
-                      {/* The answer THAT ROW was collected under — not the account's answer today. */}
                       <td className="py-2 text-ink-700">{event.consentState ? consentStateText(event.consentState) : "—"}</td>
                     </tr>
                   ))}
@@ -339,8 +225,6 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
 export default function UsagePage() {
   const { user, loading: authLoading } = useAuth();
   const permitted = isAdmin(user);
-  // The FOURTH gate on this page — see rule 4 in the module comment. A separate predicate, not a
-  // widened one, because the server's is a separate predicate for a written reason.
   const canReadOneAccount = isMasterAdmin(user);
 
   const [method, setMethod] = useState<UsageCollectionMethod | null>(null);
@@ -363,7 +247,6 @@ export default function UsagePage() {
   const [screens, setScreens] = useState<UsageScreens | null>(null);
   const [screensError, setScreensError] = useState<string | null>(null);
 
-  // The method loads once — it does not vary with the date range below.
   useEffect(() => {
     if (authLoading || !permitted) return;
     let cancelled = false;
@@ -379,8 +262,6 @@ export default function UsagePage() {
     };
   }, [authLoading, permitted]);
 
-  // The routes table refetches on the window or the page changing. `from`/`to` reset `page` to 1
-  // through the button handlers below, so this effect never has to guess which of the two moved.
   useEffect(() => {
     if (authLoading || !permitted) return;
     let cancelled = false;
@@ -396,21 +277,6 @@ export default function UsagePage() {
     };
   }, [authLoading, permitted, from, to, page]);
 
-  /*
-    THE FOUR NEW AGGREGATES, IN ONE EFFECT AND WITH FOUR SEPARATE ERROR SLOTS.
-
-    One effect because they share exactly one trigger — the window (and, for the timeline, the bucket
-    size). Four error slots because they can fail independently and for genuinely different reasons:
-    a 366-day window at hourly buckets is refused by `/usage/timeline` alone, on a cap
-    (`maxBuckets`) that does not exist on the other three. Collapsing them into one banner would
-    report a refusal about buckets as though the latency figures had failed too, and would hide three
-    working panels behind one message.
-
-    A single `cancelled` flag guards all four: this is a one-shot effect per window, not a list page,
-    so the `cancelled`-flag convention is the right one of the three and a generation counter would
-    be ceremony. Errors are cleared at the top of each run so a recovered window does not keep
-    showing the last window's refusal.
-  */
   useEffect(() => {
     if (authLoading || !permitted) return;
     let cancelled = false;
@@ -437,13 +303,6 @@ export default function UsagePage() {
     };
   }, [authLoading, permitted, from, to, bucket]);
 
-  /**
-   * The scope sentence every aggregate must carry.
-   *
-   * `notIncluded` is printed WHENEVER IT IS NON-ZERO and never rounded away. These routes answer
-   * about a named, capped set of screens and there is deliberately no route that answers about the
-   * platform — so a figure drawn without this sentence is a slice presented as the whole.
-   */
   const scopeText = useCallback(
     (scope: { count: number; notIncluded: number; maxPerRequest: number; source: string }) =>
       `Showing ${scope.count} screen${scope.count === 1 ? "" : "s"}${
@@ -497,10 +356,6 @@ export default function UsagePage() {
 
         <section className="panel p-4">
           <div className="flex flex-wrap items-end gap-4">
-            {/* The calendar field (owner's rule, 2026-10-17). The window is a UTC day pair, exactly
-                as it was with the native inputs: the picker hands back a yyyy-mm-dd and this page
-                pins it to that day's UTC start or end. Clearing is refused (an empty window means
-                nothing here), so neither field offers Clear. */}
             <CalendarField
               label="From"
               className="w-44"
@@ -523,9 +378,6 @@ export default function UsagePage() {
               clearable={false}
               onChange={(value) => {
                 if (!value) return;
-                // The END of the named day, so "To" is inclusive of the day a reader picks — the
-                // API's own window is half-open [from, to), and a bare midnight on the end date
-                // would silently drop everything that happened on it.
                 setTo(new Date(`${value}T23:59:59.999Z`).toISOString());
                 setPage(1);
               }}
@@ -534,34 +386,6 @@ export default function UsagePage() {
               <span id="usage-bucket-label" className="field-label">
                 Chart detail
               </span>
-              {/*
-                THE THEMED DROPDOWN. This was a native `<select>` until 2026-08-30, kept that way on
-                a reason that was half right: "the themed control cannot take the `id` this
-                `<label htmlFor>` relationship needs".
-
-                WHAT WAS RIGHT is that a `<label>` cannot name a `<button>` — HTML-AAM builds a
-                button's name from its own contents and the label association plays no part. A bare
-                swap here would have announced "One per day, combobox": the answer without the
-                question. (The `<label>` above wraps its control rather than using `htmlFor`, so the
-                association was implicit, but the conclusion is the same either way.)
-
-                WHAT WAS WRONG is that there is no way to give the trigger a name. `FieldLabelProvider`
-                publishes this `<span>`'s id, `SearchableSelect` reads it out of context and composes
-                `aria-labelledby="usage-bucket-label <trigger id>"`, and the accname algorithm
-                concatenates the two into "Buckets One per day" — the question AND the answer, which
-                is what the native control announced and what a bare `ariaLabel` would have lost.
-                `components/FormControls.Field` is the same mechanism; the `<label>` here is kept
-                rather than replaced by it so this control stays visually identical to the two date
-                fields beside it, which are not dropdowns and cannot use `Field` either.
-
-                WRAPPING A `<button>` IN A `<label>` IS SAFE HERE, which is worth saying because it
-                looks like a stray-click trap: `AnchoredPopover` portals the open panel to `<body>`,
-                so an option row is not a DOM descendant of this label and a click on it cannot be
-                forwarded anywhere. `Field` carries the same note.
-
-                NO `searchable`: two options from a constant vocabulary, which is far below §11.5's
-                threshold — this is the case that threshold was calibrated on.
-              */}
               <FieldLabelProvider value="usage-bucket-label">
                 <Dropdown
                   value={bucket}
@@ -570,8 +394,6 @@ export default function UsagePage() {
                     { value: "day", label: "One per day" },
                     { value: "hour", label: "One per hour" }
                   ]}
-                  // This control re-queries the screen in place; there is nothing to advance to, and
-                  // `focusNextField` would jump the reader into the pager below the chart.
                   advanceOnSelect={false}
                 />
               </FieldLabelProvider>
@@ -609,7 +431,6 @@ export default function UsagePage() {
               />
             </div>
 
-            {/* ── Traffic and error rate: TWO CHARTS, NEVER ONE WITH TWO AXES ─────────────── */}
             {timelineError ? (
               <SectionError message={timelineError} />
             ) : !timeline ? (
@@ -656,8 +477,6 @@ export default function UsagePage() {
                     points={timeline.series.map<LinePoint>((row) => ({
                       label: bucketTickText(row.bucket, timeline.bucket),
                       title: `${row.bucket} — ${errorRateText(row.errorRate)}`,
-                      // Read straight off the wire. `(rate ?? 0)` here would draw a confident 0%
-                      // for an empty hour and for a withheld one alike.
                       value: row.errorRate,
                       withheld: isWithheldRoute(row),
                       withheldBecause: row.withheldBecause
@@ -667,7 +486,6 @@ export default function UsagePage() {
               </div>
             )}
 
-            {/* ── Latency percentiles ─────────────────────────────────────────────────────── */}
             {latencyError ? (
               <SectionError message={latencyError} />
             ) : !latency ? (
@@ -707,15 +525,12 @@ export default function UsagePage() {
                     p99: row.p99Ms,
                     withheld: isWithheldRoute(row),
                     withheldBecause: row.withheldBecause,
-                    // The THIRD state: a screen with traffic of zero has no distribution, which is
-                    // not the same fact as one the server declined to show.
                     noTraffic: !isWithheldRoute(row) && (row.requests ?? 0) === 0
                   }))}
                 />
               </ChartFrame>
             )}
 
-            {/* ── Client split ────────────────────────────────────────────────────────────── */}
             {clientsError ? (
               <SectionError message={clientsError} />
             ) : !clients ? (
@@ -787,7 +602,6 @@ export default function UsagePage() {
               </ChartFrame>
             )}
 
-            {/* ── Busiest and slowest ─────────────────────────────────────────────────────── */}
             {screensError ? (
               <SectionError message={screensError} />
             ) : !screens ? (
@@ -887,13 +701,6 @@ export default function UsagePage() {
                       </tr>
                     ) : (
                       routes.items.map((row) => (
-                        // `border-line-200`, NOT `border-line-100`: there is no `line-100` rung in
-                        // `tailwind.config.ts` (`line: { 200: … }` is the whole scale), so the class
-                        // was purged and these rows fell back to `border-b`'s preflight default —
-                        // literal gray-200, which does not invert, so every row rule on this table
-                        // stayed light-grey in dark mode. §3.6 names exactly this trap. Every table
-                        // added to this page alongside the charts uses `line-200`; this one now
-                        // agrees with them.
                         <tr key={row.routeTemplate} className="border-b border-line-200 last:border-0">
                           <td className="px-4 py-2 font-mono text-xs text-ink-700">{row.routeTemplate}</td>
                           <td className="px-4 py-2">
@@ -958,7 +765,6 @@ export default function UsagePage() {
               ) : null}
             </section>
 
-            {/* LAST, AND BEHIND A GATE OF ITS OWN — see rule 4 in the module comment. */}
             {canReadOneAccount ? <AccountTrailPanel from={from} to={to} /> : null}
 
             <ul className="list-disc space-y-1 pl-5 text-xs leading-5 text-ink-500">

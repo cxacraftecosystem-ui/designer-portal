@@ -13,13 +13,11 @@ import type { PageResult, QuestionnaireInterview } from "@/lib/types";
 
 export const DELETED_INTERVIEWS_PAGE_SIZE = 20;
 
-/** The restore notice, named when the interview has a title. */
 export function restoredInterviewNotice(title: string | null | undefined): string {
   const named = (title ?? "").trim();
   return named ? `“${named}” is restored.` : "That interview is restored.";
 }
 
-/** The server's own sentence for a set another live interview now holds (`INTERVIEW_SET_TAKEN`). */
 export function interviewRestoreRefusal(payload: unknown): string | null {
   const detail = (payload as { detail?: unknown } | null)?.detail;
   if (!detail || typeof detail !== "object") return null;
@@ -41,11 +39,6 @@ export function restoreInterview(id: string) {
   return apiFetch<QuestionnaireInterview>(`/questionnaire/interviews/${id}/restore`, { method: "POST" });
 }
 
-/**
- * THE INTERVIEW TRASH (H5, 21 Oct 2026). `DELETE /questionnaire/interviews/{id}` is a soft delete,
- * so the answers, the artisan links and the recordings stay; a content admin brings it back here.
- * Same shape as `DeletedQuestionnairesCard`.
- */
 export function DeletedInterviewsCard({ onRestored }: { onRestored?: () => void }) {
   const [result, setResult] = useState<PageResult<QuestionnaireInterview> | null>(null);
   const [page, setPage] = useState(1);

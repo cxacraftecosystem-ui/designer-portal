@@ -1,12 +1,5 @@
 "use client";
 
-/**
- * The coverage filters: which crafts, which kind of workshop, which financial year, which state,
- * and what the map is coloured by — the Field Repository's markup, plus the designer portal's
- * "Field Repository" switch when cross-portal coverage is on. Every value lives in the URL
- * (`CoverageView`), so a filtered view can be linked.
- */
-
 import { SearchableMultiSelect, SearchableSelect } from "@/components/ui/SearchableSelect";
 import { Toggle } from "@/components/ui/Toggle";
 import { METRICS, type RegisterState } from "@/components/map/coverage/coverageMath";

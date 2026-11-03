@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * Bulk printing of artisan QR cards: one PDF from the server (`POST /artisan-cards/sheet.pdf`),
- * ID-1 cards ten to an A4 sheet with crop marks, or one A6 card per page. Used by the artisans list
- * (the ticked rows) and a design workshop's Cards & tags page (its roster).
- *
- * Draws nothing while cards are off here. All or nothing: the server refuses a request naming any
- * artisan this account can't print, and that sentence is shown as it comes.
- */
 import { useEffect, useState } from "react";
 
 import { ActionGroup } from "@/components/ui/ActionGroup";
@@ -15,10 +7,8 @@ import { Toggle } from "@/components/ui/Toggle";
 import { ApiError } from "@/lib/api";
 import { artisanCardStatus, downloadArtisanCardSheet, type CardSheetRequest, type CardSize } from "@/lib/artisanCardApi";
 
-/** The most cards one request prints (the server's SHEET_LIMIT). */
 export const CARD_SHEET_LIMIT = 200;
 
-/** Whether cards are on here: null until `GET /artisan-cards/status` answers. */
 export function useArtisanCardsStatus(): boolean | null {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   useEffect(() => {
@@ -42,10 +32,8 @@ export function ArtisanCardSheetActions({
   primaryLabel = "Print cards",
   count
 }: {
-  /** What to print; null while there is nothing chosen. */
   source: CardSheetRequest | null;
   primaryLabel?: string;
-  /** How many cards the source holds, when known: past the limit the buttons hold and say why. */
   count?: number;
 }) {
   const enabled = useArtisanCardsEnabled();

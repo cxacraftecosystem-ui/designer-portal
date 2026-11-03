@@ -9,11 +9,6 @@ import { ModelViewerError, parseModel } from "@/lib/modelViewerCore";
 // @ts-ignore — a plain .mjs helper shared with the bundling script
 import { modelViewerSourceHash } from "../scripts/model-viewer-source-hash.mjs";
 
-/**
- * THE 3D MODEL VIEWER — which files are models, that the loaders really draw them, and that the
- * handset's copy of the viewer is the web's.
- */
-
 const FRONTEND = join(__dirname, "..");
 const ANDROID_MAIN = join(FRONTEND, "..", "android", "app", "src", "main");
 

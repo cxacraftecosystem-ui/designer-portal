@@ -1,17 +1,5 @@
 "use client";
 
-/**
- * ONE STAGE, READ FOR A REVIEW — shared by the inspection, approval and supervision screens.
- *
- * Every answered field with who wrote it, the photographs inline (A23), the notes filed about each
- * field beside it, a "Flag" on each field that drafts a note about it (B2), and — when the reader
- * compares with an earlier round — what changed and what it was (C13).
- *
- * It renders values through the same interpreters the designer's form uses
- * (`inspectionFieldReading`), never the designer's controls: those would draw pickers and buttons
- * aimed at routes these readers are refused.
- */
-
 import { Flag } from "lucide-react";
 
 import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
@@ -37,7 +25,6 @@ import { plural } from "@/lib/sharingScope";
 
 export type FlagTarget = { stageKey: string; fieldKey: string | null };
 
-/** The small word chips the review read uses. Each carries its meaning in words. */
 export function ReviewChip({ tone, children }: { tone: "changed" | "fresh" | "stale" | "neutral"; children: string }) {
   const tones = {
     changed: "border-purple-300 bg-purple-50 text-purple-800 dark:border-purple-700 dark:bg-purple-950/50 dark:text-purple-200",
@@ -211,12 +198,9 @@ export function ReviewReadStage({
   registry: DwRegistry;
   stage: DwStage;
   data: DwStageData | undefined;
-  /** The workshop-level score for this stage — `DwStageData.completeness` is empty on these reads. */
   score: DwStageCompleteness | undefined;
   definition?: DwCustomDefinition | null;
-  /** Every note filed about this stage. */
   notes: DwReviewNote[];
-  /** What moved since the round being compared with, when one is. */
   changes?: StageChanges;
   onlyChanges?: boolean;
   onFlag?: (target: FlagTarget) => void;

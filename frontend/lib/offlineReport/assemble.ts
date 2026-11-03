@@ -1,13 +1,3 @@
-/**
- * Everything around the builder: what it is handed and in which order — `_report_inputs`,
- * `_build_only` (the preview) and `render_report` (the file) from
- * `backend/app/api/routes/design_workshops.py` and `backend/app/services/design_workshops.py`.
- *
- * THE INPUT IS ONE PLAIN OBJECT, `OfflineReportInput`, and it has exactly the shape of
- * `shared/report-parity/workshop.json`, so the parity spec feeds the fixture straight in and the
- * report screen feeds in what `draftReportInput` makes of the draft this browser already holds.
- */
-
 import {
   DEFAULT_THEME,
   makeMeta,
@@ -35,7 +25,6 @@ import {
 } from "@/lib/offlineReport/templates";
 import { ACCENT_PRESETS, normaliseHex, paletteFromAccent } from "@/lib/reportTheme";
 
-/** What `GET /design-workshops/{id}/report/sources` answers, kept on the device. */
 export type ReportSources = {
   workshopId: string;
   builtAt: string;
@@ -55,7 +44,6 @@ export type OfflineWorkshop = {
   workshopCode: string | null;
   craftName: string | null;
   clusterName: string | null;
-  /** For the file name only (NAMING 2.1): the server names the report from the same column. */
   district?: string | null;
   state: string | null;
   designerName: string | null;
@@ -69,11 +57,9 @@ export type OfflineReportInput = {
   workshop: OfflineWorkshop;
   stages: Record<string, OfflineStage>;
   customDefinition: CustomDefinitionInput;
-  /** Null when this device has never had the sources for this workshop. */
   sources: ReportSources | null;
 };
 
-/** The per-file choices the report screen offers, as `ReportGenerateIn` carries them. */
 export type ReportOptions = {
   templateId?: string | null;
   pageSize?: string | null;
@@ -98,7 +84,6 @@ const FONT_PRESETS: Record<string, [string, string]> = {
   GARAMOND: ["Garamond", "Garamond"]
 };
 
-/** `report_theme.resolve_font`. */
 function resolveFont(requested: unknown, settings: Row): [string, string] | null {
   for (const candidate of [requested, settings.fontPreset]) {
     const token = candidate === null || candidate === undefined || candidate === "" ? "" : String(candidate).trim().toUpperCase();
@@ -109,7 +94,6 @@ function resolveFont(requested: unknown, settings: Row): [string, string] | null
   return null;
 }
 
-/** `report_theme.resolve_accent`. */
 function resolveAccent(requested: unknown, settings: Row): string | null {
   const fromRequest = normaliseHex(requested);
   if (fromRequest) return fromRequest;
@@ -123,7 +107,6 @@ function resolveAccent(requested: unknown, settings: Row): string | null {
   return null;
 }
 
-/** `report_theme.theme_from_accent`, off the browser's port of the same derivation. */
 function themeFromAccent(accent: string, base: ReportTheme): ReportTheme {
   const palette = paletteFromAccent(accent);
   const bare = (hex: string) => hex.replace(/^#/, "").toUpperCase();
@@ -140,7 +123,6 @@ function themeFromAccent(accent: string, base: ReportTheme): ReportTheme {
   };
 }
 
-/** `design_workshops.report_meta`. */
 function reportMeta(workshop: OfflineWorkshop, templateId: string, settings: Row, generatedAt: string): ReportMeta {
   const template = templateById(templateId);
   const text = (key: string) => {
@@ -167,7 +149,6 @@ function reportMeta(workshop: OfflineWorkshop, templateId: string, settings: Row
   });
 }
 
-/** `workshop_transcripts.wants_transcripts`. */
 export function wantsTranscripts(option: boolean | null | undefined, settings: Row): boolean {
   if (option !== null && option !== undefined) return Boolean(option);
   return Boolean(settings.includeTranscripts);
@@ -175,11 +156,6 @@ export function wantsTranscripts(option: boolean | null | undefined, settings: R
 
 export type BuiltReport = { document: ReportDocument; warnings: string[]; templateId: string };
 
-/**
- * Build one report, as the server would: the preview the way `_build_only` builds it, a file the
- * way `render_report` does (the per-file choices apply only to a file — the preview endpoint takes a
- * template and nothing else).
- */
 export function buildOfflineReport(registry: Registry, input: OfflineReportInput, kase: ReportCase): BuiltReport {
   const options = kase.options ?? {};
   const isFile = kase.kind === "FILE";

@@ -23,26 +23,6 @@ import { readableError } from "@/components/review/reviewErrors";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * Fix a pending record's field values from inside the review queue, instead of bouncing it back to
- * its creator for what is often a misspelt village.
- *
- * The Android app has had this since the review card shipped (MainActivity `PendingReviewRow`); this
- * is the same editor for the web, against the same endpoint and with the same field list. Two rules
- * it must keep:
- *
- * 1. An edit is NOT an approval. `POST /review/{type}/{id}/edit` leaves the status alone unless
- *    `approve` is set, so "Save" keeps the record pending and "Save and approve" is the explicit,
- *    separately logged second action for the fix-the-typo-and-sign-it-off case.
- * 2. Only CHANGED keys travel. The server writes a RecordRevision from the payload, so posting an
- *    untouched value would put a no-op line in the record's edit history forever.
- *
- * And one rule the server added on 2026-10-09: a record filed under a design workshop, or a file one
- * holds, is that workshop's content, and whoever inspects or supervises the workshop does not edit
- * it — from this queue either (`review.edit_reviewed_record` asks the record forms' own gate). So the
- * editor asks, once the record has loaded, and holds its boxes and both Save buttons with the reason
- * beside them. Approve, Reject and Send for revision are the row's, not this panel's, and stay live.
- */
 export function ReviewEditPanel({
   recordType,
   recordId,
@@ -54,30 +34,19 @@ export function ReviewEditPanel({
   recordType: string;
   recordId: string;
   label: string;
-  /** Saved with the status untouched — the row stays in the queue; the message is the receipt. */
   onSaved: (message: string) => void;
-  /** Saved AND approved — the row leaves the queue, so the parent reloads and closes the panel. */
   onApproved: (message: string) => void;
   onClose: () => void;
 }) {
   const fields = reviewEditableFields(recordType);
-  /** The stored values the diff is taken against; null until the record has loaded. */
   const [baseline, setBaseline] = useState<Record<string, string> | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  /**
-   * The design workshops the loaded record or file names ITSELF — its `designWorkshopId`, or for a
-   * file the two links on its row (`reviewRecordWorkshopIds`). Read off the GET this panel makes
-   * anyway; a workshop it belongs to only some other way is left to the server's 403, printed as
-   * written in the error box above the buttons.
-   */
   const [filing, setFiling] = useState<string[]>([]);
 
-  // The queue can be long; the record is fetched when the reviewer actually opens the editor rather
-  // than a request per row for panels nobody opens.
   useEffect(() => {
     let cancelled = false;
     const endpoint = reviewRecordEndpoint(recordType, recordId);
@@ -100,7 +69,6 @@ export function ReviewEditPanel({
     return () => {
       cancelled = true;
     };
-    // `fields` is derived from recordType and is stable for a given row.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recordType, recordId]);
 
@@ -110,16 +78,8 @@ export function ReviewEditPanel({
         .map((field) => field.key)
         .filter((key) => (values[key] ?? "") !== (baseline[key] ?? ""))
     : [];
-  /** A column the schema declares `min_length=1` cannot be blanked — catch it before the 422. */
   const blanked = fields.filter((field) => field.required && changedKeys.includes(field.key) && !values[field.key]?.trim());
 
-  /*
-    THE WORKSHOP'S CONTENT IS NOT ITS POST HOLDERS' TO EDIT, FROM THIS QUEUE EITHER. The three states
-    of every hold (`HeldPostRefusal`): asked only for an account that may appoint, and only once the
-    record is here to say which workshop it belongs to; while the answer is out the boxes and both
-    Saves are held exactly as a save in flight holds them, so nothing is typed into an edit the server
-    will refuse. `null` is the one value that releases them.
-  */
   const heldFor = useHeldPostRefusals(filing);
   const hold = baseline ? heldFor(filing) : null;
   const heldNotice = reviewEditHold(hold, recordType);
@@ -127,7 +87,6 @@ export function ReviewEditPanel({
   const heldNoticeId = useId();
 
   async function submit(approve: boolean) {
-    // A held Save is disabled; this keeps the rule for any other way in.
     if (!baseline || changedKeys.length === 0 || blanked.length > 0 || writesHeld(hold)) return;
     setBusy(true);
     setError(null);
@@ -143,8 +102,6 @@ export function ReviewEditPanel({
         onApproved(`Edited ${count} and approved "${label}".`);
         return;
       }
-      // Re-read so the baseline matches what the server actually stored — it title-cases the
-      // name-like columns, so the box must show the normalised value or the next diff is wrong.
       const endpoint = reviewRecordEndpoint(recordType, recordId);
       if (endpoint) {
         const record = await apiFetch<unknown>(endpoint);
@@ -168,18 +125,7 @@ export function ReviewEditPanel({
     const dirty = baseline ? value !== (baseline[field.key] ?? "") : false;
     const empty = field.required && dirty && !value.trim();
     const inputClass = `field-input ${dirty ? "border-purple-300" : ""}`;
-    /*
-      A CLOSED VOCABULARY IS A DROPDOWN, AND A DROPDOWN MAY NOT LIVE IN A `<label>`.
-
-      Every other field here is an `<input>` or a `<textarea>`, which is exactly what a `<label>` is
-      for. A themed dropdown's trigger is a `<button>`, and §12.3 of the frontend contract states
-      both halves of why that cannot be wrapped: a stray click inside a `<label>` is forwarded to the
-      first labelable control, and a wrapping `<label>` folds every named descendant into the
-      control's accessible name. So this branch returns early with a `FieldBlock`, which names the
-      slot through `role="group"` instead — the same treatment the record forms give their pickers.
-    */
     if (field.readOnly) {
-      // Derived from the craft picked on the record's own form; never typed here.
       return (
         <label key={field.key} className="grid gap-1">
           <span className="field-label">{field.label}</span>
@@ -199,19 +145,11 @@ export function ReviewEditPanel({
         >
           <Dropdown
             value={value}
-            // WHATEVER IS STORED STAYS SELECTABLE. `interviewLanguageOptions` puts an unrecognised
-            // value at the front of the list rather than dropping it, so an interview recorded
-            // before this vocabulary existed does not silently lose its language the first time
-            // somebody fixes a typo in the notes beside it.
             options={interviewLanguageOptions(value)}
             placeholder={INTERVIEW_LANGUAGE_PLACEHOLDER}
             disabled={locked}
             onChange={(next) => setValues((prev) => ({ ...prev, [field.key]: next }))}
-            // A vocabulary written in this repository rather than a list of records, so no filter
-            // box — §11.5's rule is about where the options came from, not how many there are.
             searchable={false}
-            // It does not filter the screen it sits on, so advancing to the next field on select is
-            // the ordinary, wanted behaviour here.
           />
           {dirty ? <span className="text-xs font-semibold text-purple-700 dark:text-purple-300">changed</span> : null}
         </FieldBlock>
@@ -245,11 +183,6 @@ export function ReviewEditPanel({
     );
   }
 
-  /**
-   * Rendered immediately ABOVE the buttons, not at the top of the panel: the editor is a dozen boxes
-   * tall, so a reviewer who clicks Save at the bottom of a long record would never see a banner
-   * pinned to the top — a rejected 422 would look like a button that simply did nothing.
-   */
   const feedback = (
     <>
       {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
@@ -262,14 +195,9 @@ export function ReviewEditPanel({
   return (
     <div className="grid gap-3">
       <p className="text-xs text-ink-500">
-        {/* The explicit {" "} is load-bearing: the JSX transform drops the leading space of the text
-            node that follows an inline element, so without it this reads "does notapprove it". */}
         Fix values here instead of sending it back. Saving does <strong>not</strong>{" "}
         approve it; the edit is logged under your name.
       </p>
-      {/* ABOVE THE BOXES IT HOLDS, unlike the error below: a held field is greyed before anything is
-          typed, and the reason has to be where the eye lands on it. Mounted from the first paint, so
-          the refusal that arrives a round trip after the record is announced. */}
       <HeldPostNotice refusal={heldNotice} id={heldNoticeId} className="" sayPending />
       {!baseline ? (
         <>
@@ -290,7 +218,6 @@ export function ReviewEditPanel({
           </label>
           {feedback}
           <ActionGroup>
-            {/* Both Saves are held for a post holder, and name the reason while it is on screen. */}
             <button
               type="button"
               className="field-button h-9 min-h-0 px-3 text-xs"

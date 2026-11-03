@@ -3,18 +3,6 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-/**
- * The responsive navigation, pinned as source (REQUIREMENTS_2026-10-20 §4). PURE NODE.
- *
- * One breakpoint decides the mode — `lg`, 1024 CSS px — and it is decided by CSS alone: the desktop
- * island carries `max-lg:hidden`, the search header and the bottom island carry `lg:hidden`, and no
- * navigation component reads the window's width. The live twin, `nav-responsive.spec.ts`, drives the
- * same rules in a browser at 390, 820 and 1440 px.
- *
- * It also pins the desktop island's ORIGINAL expanded size — the pill, the logo, the name and the
- * strip — so the island cannot be shrunk again without this file being changed on purpose.
- */
-
 const ROOT = join(__dirname, "..");
 const read = (...parts: string[]) => readFileSync(join(ROOT, ...parts), "utf8");
 
@@ -55,7 +43,6 @@ test("the admin-view control is back to its pill, still a switch, with the bell 
   expect(NAV.slice(pill, bell)).toContain('label="Admin view"');
   expect(bell).toBeGreaterThan(pill);
   expect(menu).toBeGreaterThan(bell);
-  // Offered to every account the provider says has the control (perms adds `available`).
   expect(NAV).toContain("(adminView as { available?: boolean }).available ?? canAdmin");
 });
 
@@ -67,7 +54,6 @@ test("the bottom island is Android's: five slots at most, More, a divider and th
   expect(BAR).toContain('aria-current={active ? "page" : undefined}');
   expect(BAR).toContain("min-h-12");
   expect(BAR).toContain('style={{ bottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}');
-  // It hides for the keyboard and for open search, never on scroll.
   expect(BAR).toContain("const visible = !hidden && !keyboardOpen;");
   expect(BAR).not.toMatch(/addEventListener\("scroll"/);
 });
@@ -83,20 +69,15 @@ test("the More sheet is a modal bottom sheet titled More", () => {
 });
 
 test("Back closes the More sheet without leaving a step behind", () => {
-  // Opening stands the sheet on its own history entry, carrying the router's state with it.
   expect(SHEET).toContain("window.history.pushState({ ...(window.history.state ?? {}), [ISLAND_MORE_HISTORY_KEY]: true }, \"\")");
-  // Back (popstate) closes it; a pop onto another sheet entry does not.
   expect(SHEET).toContain("window.addEventListener(\"popstate\", onPopState)");
   expect(SHEET).toMatch(/if \(\(event\.state as Record<string, unknown> \| null\)\?\.\[ISLAND_MORE_HISTORY_KEY\]\) return;\s*popped = true;\s*closeRef\.current\(\);/);
-  // Escape or the scrim take the entry off again; a row replaces it with the page it opens.
   expect(SHEET).toContain("if (!popped && !leavingByLink.current && onSheetEntry) window.history.back();");
   expect(SHEET).toMatch(/href=\{href\}\s*replace\s*onClick=\{onNavigate\}/);
   expect(SHEET.match(/onNavigate=\{navigateFromSheet\}/g)?.length).toBe(2);
 });
 
 test("the header's scroll delta is taken before the state update, never inside it", () => {
-  // Read inside the updater, `now - last` ran after `last = now` whenever React deferred it: every
-  // move was zero and the header stayed hidden on the way back up.
   expect(HEADER).toContain("const delta = now - last;");
   expect(HEADER).toContain("setStep((state) => quickReturnStep(state, delta, now, height, pinned));");
   expect(HEADER).not.toContain("quickReturnStep(state, now - last");
@@ -113,7 +94,6 @@ test("the search header carries the scan button, the name and the search glyph",
 
 test("the scan button keeps the frozen signature", () => {
   expect(SCAN).toContain("export function TopBarScanButton({ className }: { className?: string })");
-  // The qr stream's button opens the scanner in place rather than linking to a page.
   expect(SCAN).toContain("<ScanSheet");
   expect(SCAN).toContain('aria-label="Scan a code"');
 });

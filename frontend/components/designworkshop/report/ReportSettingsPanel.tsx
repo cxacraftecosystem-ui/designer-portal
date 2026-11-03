@@ -1,39 +1,5 @@
 "use client";
 
-/**
- * Stage 20's report settings, edited where the report is read.
- *
- * WHY THE SETTINGS LIVE ON THE REPORT SCREEN AS WELL AS ON THEIR OWN STAGE. Every one of these
- * answers is a question about the document beside it — does it carry a contents page, are the
- * headings numbered, does the transcript annexure go in — and there is exactly one place where
- * those questions can be answered with the evidence in view. Answering them on stage 20 and then
- * navigating here to see what happened is a round trip per decision, and the decision that gets
- * skipped is the transcript toggle, which is the one that changes the document most.
- *
- * IT IS THE SAME FORM, NOT A COPY OF IT. The fields are rendered by walking
- * `registry.stages[REPORT_GENERATION].entities.reportSettings` through {@link EntityForm}, which is
- * the one component that draws any registry entity. There is no per-stage form code anywhere in
- * this feature and this file adds none: add a field to `stage_definitions.STAGE_20` and it appears
- * here, with its help text, its tier and its enum options, without a line changing on this side.
- * A hand-built panel of "the settings that matter" would have frozen the field list on the day it
- * was written, and the next toggle the backend grew would be invisible in the one screen it
- * belongs on.
- *
- * WHAT THE SERVER DOES WITH THEM, HONESTLY. `wants_transcripts` reads `includeTranscripts` off the
- * saved stage-20 entry, so that toggle governs the preview and the file with no help from this
- * page. `pageSize`, `headerText` and `footerText` are NOT read from the entry by the report
- * pipeline — they reach a file only through `ReportGenerateIn`, which is why the page sends them
- * on the download. Everything else is a stored answer the templates will grow into. Saying which
- * is which is the caller's job and the page's copy does it; what must never happen is a control
- * that visibly moves and changes nothing anybody can see.
- *
- * A LOCAL DRAFT WINS, LATER. The stage editor banks unsynced edits in IndexedDB and pushes them
- * when there is a connection, so a save made here while stage 20 is dirty on this device would be
- * overwritten by that push — silently, minutes later, with the designer looking at the value they
- * chose. The panel refuses to save in that state and points at the stage instead, which is the
- * only place that can reconcile the two.
- */
-
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, ChevronDown, Mic, Settings2 } from "lucide-react";
@@ -51,22 +17,18 @@ import { isUnreachable } from "@/lib/offline";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { TranscriptPreview } from "@/components/transcript/TranscriptPreview";
 
-/** The stage and the entity these settings live in. Both are backend keys, not display strings. */
 export const REPORT_STAGE_KEY = "REPORT_GENERATION";
 export const REPORT_SETTINGS_ENTITY = "reportSettings";
 
-/** The stage-20 settings entity out of the registry, or null on a server that has not got one. */
 export function reportSettingsEntity(registry: DwRegistry | null): DwEntity | null {
   const stage = registry?.stages.find((entry) => entry.key === REPORT_STAGE_KEY);
   return stage?.entities.find((entity) => entity.key === REPORT_SETTINGS_ENTITY) ?? null;
 }
 
-/** True when the saved settings ask for the transcript annexure — `wants_transcripts`, exactly. */
 export function wantsTranscripts(settings: DwEntryData | undefined): boolean {
   return Boolean(settings?.includeTranscripts);
 }
 
-/** A settings value as a string, for the two the page forwards on the download. */
 export function settingText(settings: DwEntryData | undefined, key: string): string {
   const value = settings?.[key];
   return typeof value === "string" ? value.trim() : "";
@@ -84,25 +46,11 @@ export function ReportSettingsPanel({
 }: {
   workshopId: string;
   registry: DwRegistry | null;
-  /** The SERVER's copy. Re-seeding on a new object identity is what makes a save stick. */
   settings: DwEntryData;
-  /** Fired after the write lands. The caller re-reads the workshop and rebuilds the preview. */
   onSaved: () => void;
   online: boolean;
-  /** Stage 20 has edits on this device that have not reached the server yet. */
   draftPending: boolean;
-  /**
-   * Why this reader may generate the report and not change its settings, or null — today a post they
-   * hold on the workshop (`useHeldPostRefusal`). The settings ARE stage 20, a stage write the server
-   * refuses whoever inspects or supervises the workshop; generating the report is not refused, so
-   * only this panel's boxes and Save are held, and the sentence is drawn where the Save would be.
-   */
   readOnlyReason?: string | null;
-  /**
-   * The boxes as they stand, unsaved — so the sheets below can draw a running head, a running foot
-   * or a paper size while it is being typed, before anything is written. Null when they match the
-   * saved settings.
-   */
   onDraftChange?: (values: DwEntryData | null) => void;
 }) {
   const entity = useMemo(() => reportSettingsEntity(registry), [registry]);
@@ -112,20 +60,6 @@ export function ReportSettingsPanel({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Re-seed when the server's copy changes identity.
-   *
-   * The page re-reads the workshop after every successful save, so this runs exactly when there is
-   * a new truth to show. It deliberately does NOT merge with what is on screen: a merge would keep
-   * a value the server rejected and coerced, and the designer would then be looking at a number
-   * that is not in the record.
-   *
-   * ⚠ It must NOT clear `saved`. The confirmation is set by the save and the re-read arrives a
-   * moment later, so clearing it here would flash the tick and take it away again — and the one
-   * thing this panel has to be unambiguous about is whether the settings the preview below was
-   * rebuilt from are the ones on screen. `change` and `patch` clear it, which is the only event
-   * that actually invalidates it.
-   */
   useEffect(() => {
     setValues(settings);
   }, [settings]);
@@ -151,15 +85,6 @@ export function ReportSettingsPanel({
     setSaving(true);
     setError(null);
     try {
-      // Only the registry's own live keys are sent. `values` starts life as the server's entry,
-      // which carries nothing else today — but a future payload key that is not a field would be
-      // rejected by `save_stage` and take the whole save with it, and losing a designer's report
-      // settings to a key they never typed is not a risk worth taking to save one filter.
-      //
-      // `formFields` is deliberately NOT used here: it drops caption fields, which belong to their
-      // media field on screen but are ordinary stored answers, and a save built from it would
-      // blank a photograph's caption every time the settings were touched. Deprecated fields are
-      // dropped, because writing null over one erases a value the registry can no longer show.
       const payload: DwEntryData = {};
       for (const field of entity.fields) {
         if (field.deprecated) continue;
@@ -172,10 +97,6 @@ export function ReportSettingsPanel({
       onSaved();
     } catch (err) {
       setError(
-        // `isUnreachable`, not `isTransient`: the latter counts every 5xx as "try again later", so a
-        // settings save the server ANSWERED and refused was reported as a missing connection —
-        // exactly the sentence the download handler on this page's parent was written to stop
-        // telling people. A server that spoke gets its own words shown.
         isUnreachable(err)
           ? "Needs a connection to save. Your entries are kept."
           : err instanceof Error
@@ -188,11 +109,6 @@ export function ReportSettingsPanel({
   }
 
   if (!entity) {
-    // Either the registry has not arrived yet or the server is older than stage 20. Nothing is
-    // drawn in both cases, and that is right for both: the panel is an editor for a thing that
-    // does not exist here, and everything else on the page — the preview, the download, the
-    // warnings — works without it. A placeholder saying "settings unavailable" would be a
-    // permanent apology on a page that is not actually missing anything a designer needs.
     return null;
   }
 
@@ -258,8 +174,6 @@ export function ReportSettingsPanel({
             >
               {saving ? "Saving…" : "Save settings"}
             </button>
-            {/* Said BEFORE the click. A disabled button with the reason beside it is a fact about
-                the world; a button that fails when pressed is an app that looks broken. */}
             {readOnlyReason ? (
               <span className="text-sm text-ink-muted">{readOnlyReason}</span>
             ) : !online ? (
@@ -287,24 +201,6 @@ export function ReportSettingsPanel({
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * What the transcript annexure would contain
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * The recordings the annexure would carry, listed before it is committed to.
- *
- * WHY THIS IS NOT OPTIONAL FURNITURE. A transcript annexure is the one part of a report whose
- * contents nobody has read: the text was produced by the media queue from audio a designer
- * recorded and moved on from, it can double the document's length, and generating sixty pages to
- * find out what is in it is not a preview. `GET /design-workshops/{id}/transcripts` serialises the
- * very `TranscriptItem` objects `append_transcript_annexure` consumes, so this list cannot claim a
- * recording the annexure then omits.
- *
- * RECORDINGS WITH NO TRANSCRIPT YET ARE LISTED, marked as not included. Hiding them would mean a
- * designer who made six recordings and sees four concludes that two were lost, when in fact two
- * are still in the queue — which is the silent-emptiness failure this repository keeps hitting.
- */
 export function TranscriptAnnexurePanel({ transcripts }: { transcripts: DwTranscriptList | null }) {
   if (!transcripts) return null;
 
@@ -358,8 +254,6 @@ export function TranscriptAnnexurePanel({ transcripts }: { transcripts: DwTransc
       )}
 
       {pending.length ? (
-        // Every gap is stated. An annexure a designer explicitly asked for that is quietly two
-        // recordings short is the failure the whole panel exists to prevent.
         <p className="text-sm leading-6 text-ink-muted">
           {pending.length} recording{pending.length === 1 ? " is" : "s are"} still transcribing and would be missing now.
         </p>

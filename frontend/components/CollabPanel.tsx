@@ -11,25 +11,17 @@ import { formatDateTime } from "@/lib/format";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import type { EntryComment, RecordRevision } from "@/lib/types";
 
-/**
- * Comments + edit history for a single record, powered by the data-access API.
- * - Anyone who can see the record can read comments; posting requires COMMENT-tier access (or owner/admin).
- * - Edit history is visible to the record's owner and admins (the API returns 403 otherwise, which we hide).
- */
 export function CollabPanel({ recordType, recordId }: { recordType: string; recordId: string }) {
   const [comments, setComments] = useState<EntryComment[]>([]);
   const [revisions, setRevisions] = useState<RecordRevision[] | null>(null);
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  /** Which comment is being withdrawn, so only its own control goes quiet. */
   const [removingId, setRemovingId] = useState<string | null>(null);
-  /** The comment being edited by its author, and the draft in the box. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const { user } = useAuth();
-  // Deleting is the content admins' alone, admin view or not (owner, 2026-10-21).
   const { canDeleteRecords } = useAdminView();
   const confirm = useConfirm();
 
@@ -40,7 +32,6 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load comments");
     }
-    // Edit history is owner/admin-only; silently skip if not permitted.
     try {
       const r = await apiFetch<RecordRevision[]>(`/data-access/revisions?recordType=${recordType}&recordId=${recordId}`);
       setRevisions(r);
@@ -68,22 +59,6 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
     }
   }
 
-  /**
-   * WITHDRAW A COMMENT — the third of the three comment routes, which had no surface on either client.
-   *
-   * `DELETE /data-access/comments/{id}` has existed alongside the GET and the POST all along and
-   * nothing anywhere called it. So a reviewer who typed a note onto the wrong artisan, or wrote
-   * something that should not stand on a record other researchers read, had no way to remove it on
-   * the web or on the handset: the comment was permanent.
-   *
-   * WHO IS OFFERED IT MIRRORS THE HANDLER, read rather than assumed: since 2026-10-20 it 403s unless
-   * the caller is a content admin (`isContentAdmin`), so it is drawn for them alone (`canDeleteRecords`).
-   * The author edits instead — see `saveEdit`.
-   *
-   * Confirmed first, and in the danger tone, because there is no undo — the row is deleted outright
-   * rather than tombstoned. A double press is harmless either way: the handler returns 204 in
-   * silence for a comment that is already gone.
-   */
   async function removeComment(comment: EntryComment) {
     const ok = await confirm(
       deleteConfirm(
@@ -97,8 +72,6 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
     setError(null);
     try {
       await apiFetch(`/data-access/comments/${comment.id}`, { method: "DELETE" });
-      // Refetched rather than spliced out of local state, so what is on screen is what the server
-      // holds — including a comment somebody else withdrew while this panel was open.
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to delete comment");
@@ -107,7 +80,6 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
     }
   }
 
-  /** The author's edit — `PATCH /data-access/comments/{id}`, which 403s for anybody else. */
   async function saveEdit(comment: EntryComment) {
     const next = draft.trim();
     if (!next || next === comment.body) {
@@ -174,7 +146,6 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
                     Edit
                   </button>
                 ) : null}
-                {/* Only where the server would allow it — see `removeComment`. */}
                 {user && canDeleteRecords ? (
                   <button
                     type="button"
@@ -209,11 +180,6 @@ export function CollabPanel({ recordType, recordId }: { recordType: string; reco
       {revisions ? (
         <div>
           <h3 className="font-display font-bold text-base text-ink">Edit history</h3>
-          {/* The caption has to match what the API actually returns. Identity and contact columns
-              (Aadhaar, Pehchan card, phone, email, address) are logged by the server WITHOUT their
-              value — see access.REVISION_REDACTED_FIELDS — so they render as "(value recorded) →
-              (cleared)". Saying "original values are the first before" without that exception told
-              an admin the left-hand column was the old number when it never is for those fields. */}
           <p className="text-xs text-ink-muted">
             Identity and contact fields (Aadhaar, Pehchan card, phone, email, address) record only that they
             changed, never the value. Visible to the owner and admins.

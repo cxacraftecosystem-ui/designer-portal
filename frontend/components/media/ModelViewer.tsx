@@ -1,14 +1,5 @@
 "use client";
 
-/**
- * A stored 3D model, turned in the page. The drawing is `lib/modelViewerCore.ts`, the same module
- * the handset's viewer is built from; this component only fetches the bytes and hosts the canvas.
- *
- * NOTHING IS DOWNLOADED UNTIL SOMEBODY ASKS. A model can be hundreds of megabytes, and opening a
- * stage must not spend that on a field connection by itself — so the first state is a button that
- * says how big the file is, and three.js itself is only fetched when it is pressed.
- */
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Loader2, RotateCcw } from "lucide-react";
 
@@ -24,11 +15,9 @@ export function ModelViewer({
   sizeLabel,
   className = "h-96"
 }: {
-  /** Where the stored bytes can be read from. */
   url: string;
   format: ModelFormat;
   fileName: string;
-  /** The file's size as a person reads it, when known — shown on the button that starts the download. */
   sizeLabel?: string;
   className?: string;
 }) {
@@ -36,7 +25,6 @@ export function ModelViewer({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<ModelViewerHandle | null>(null);
 
-  // A different file is a fresh start, and the old canvas must give its GPU context back.
   useEffect(() => {
     setPhase({ state: "idle" });
     return () => {
@@ -78,7 +66,6 @@ export function ModelViewer({
       <div
         className={`relative overflow-hidden rounded-md border border-line-200 bg-surface-50 ${className}`}
       >
-        {/* The canvas is appended here by the viewer; the overlays below sit on top of it. */}
         <div ref={hostRef} className="absolute inset-0" role="img" aria-label={`3D model: ${fileName}`} />
         {phase.state !== "ready" ? (
           <div className="absolute inset-0 grid place-items-center p-4 text-center text-xs leading-5 text-ink-500">

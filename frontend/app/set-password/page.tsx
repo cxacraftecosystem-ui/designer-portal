@@ -1,49 +1,5 @@
 "use client";
 
-/**
- * THE SCREEN AT THE END OF AN ADMINISTRATOR'S PASSWORD LINK.
- *
- * ── WHY IT IS PUBLIC, AND WHAT THAT COSTS ─────────────────────────────────────────────────────
- *
- * It sits OUTSIDE `app/(protected)/` because the whole point of holding a link is that you cannot
- * sign in — a route guard here would send every reader to the one page they are locked out of. So
- * there is no `AppShell`, no `PageHeader` and no back arrow: this page renders its own frame, and
- * it is deliberately the login card's frame so that somebody who arrives here from a message
- * recognises where they are.
- *
- * The token in the link IS the entire authority, and it is checked server-side four ways
- * (signature, shape, expiry, and the credential fingerprint that makes it single-use). Nothing here
- * decides anything; this screen's only jobs are to ask before drawing a password box, and to say
- * WHICH refusal it got — expired, withdrawn, already used — because each one has a different next
- * action and "invalid link" leaves a person with none of them.
- *
- * ── THE TOKEN LEAVES THE ADDRESS BAR BEFORE ANYTHING ELSE HAPPENS (2026-10-09) ──────────────────
- *
- * It is read from the fragment (`#token=`) first and the query (`?token=`) second —
- * `takeLinkTokenFromAddress` in `lib/signIn.ts` says why both — kept in this component's state, and
- * taken out of the address with `history.replaceState` (one microtask after the effect that reads it;
- * the effect says why) before the link is checked. So it is not in the address bar, a copied address,
- * a bookmark or the entry Back returns to, and every request this page makes from then on carries an
- * address without it. The check sends it in a POST body (`checkPasswordLink`), never on a request
- * line. What this page cannot undo is what happened before its script ran: a link opened with
- * `?token=` has already sent the token to the web host — in the request for the page, and as the
- * `Referer` of every stylesheet, script and font the page loaded first. A `#token=` link sends it
- * nowhere. Either way the browser has already put the address it was opened with, token and all, in
- * its history, and rewriting the bar does not take that visit back out (docs/OPEN_FINDINGS.md).
- *
- * ── WHAT THE SERVER DELIBERATELY DOES NOT TELL US ─────────────────────────────────────────────
- *
- * Whose account this is. No email, no name, no role. This route is reachable by anybody with a
- * guess, and a body that named the account would turn a forged-token probe into an account lookup.
- * The person knows whose password they are setting; the screen does not need to.
- *
- * ── NO `useSearchParams`, SO NO SUSPENSE BOUNDARY ─────────────────────────────────────────────
- *
- * The token is read from `window.location` inside an effect, because `useSearchParams` cannot see a
- * fragment and the address has to be rewritten anyway. That also means the server and the first
- * client render agree: both draw "Checking this link…" until the effect has run.
- */
-
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -62,15 +18,6 @@ import {
   setPasswordWithLink,
   takeLinkTokenFromAddress
 } from "@/lib/signIn";
-
-/*
-  THE LENGTH FLOOR AND THE SENTENCE UNDER THE BOXES NOW COME FROM `lib/signIn.ts`.
-
-  They were declared here while this was the only screen in the client that asked anybody for a
-  password. The first-login gate on `/login` asks for one too, and two screens each holding their
-  own copy of one server rule is how the pair comes to state different rules on the day somebody
-  changes the server's. The constant moved; nothing about what this screen enforces did.
-*/
 
 function AuthCard({ children }: { children: React.ReactNode }) {
   return (
@@ -98,9 +45,7 @@ function SetPasswordForm() {
   const router = useRouter();
   const { clearSession } = useAuth();
 
-  /** The link's token; `null` until the address has been read, `""` when it carried none. */
   const [token, setToken] = useState<string | null>(null);
-  /** `null` while the check is in flight — "Checking…" and an empty page are different answers. */
   const [linkValid, setLinkValid] = useState<boolean | null>(null);
   const [linkReason, setLinkReason] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -111,24 +56,11 @@ function SetPasswordForm() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    // FIRST, before the check: take the token, then take it out of the address bar.
     const taken = takeLinkTokenFromAddress(window.location.href);
     const address = taken.address;
     if (address !== null) {
-      /*
-        ONE MICROTASK LATER, AND THAT IS NOT STYLE. Next's app router patches
-        `history.replaceState` in an effect of its own, and React runs a child's effects before its
-        parent's, so a call made right here would reach the browser's own method. That would wipe the
-        router's state off this history entry — Back would then land on an entry the router ignores —
-        and leave the router believing the address still carries the token, which it writes back into
-        the address bar the next time its state changes. A microtask runs after every effect of this
-        commit, the router's included. `null` is what the patched method expects of a hand-made call:
-        it carries the router's own state over and moves the router's idea of the URL with the bar.
-      */
       queueMicrotask(() => window.history.replaceState(null, "", address));
     }
-    // KEEP THE FIRST TOKEN SEEN. Strict Mode runs this effect twice in development; a plain
-    // `setToken` from a run that found no token would call a good link incomplete.
     setToken((previous) => previous || taken.token);
   }, []);
 
@@ -148,9 +80,6 @@ function SetPasswordForm() {
       })
       .catch(() => {
         if (cancelled) return;
-        // A FAILED CHECK IS NOT A DEAD LINK. The network may simply be down, and telling somebody
-        // their link is invalid when it has not been examined sends them back to an administrator
-        // for nothing. The form is drawn; the redemption is the authority either way.
         setLinkValid(true);
         setLinkReason(null);
       });
@@ -162,7 +91,6 @@ function SetPasswordForm() {
   const submit = useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      // The form is drawn only once a token was read and passed the check; this narrows the type.
       if (!token) return;
       if (password !== confirm) {
         setError("The two passwords do not match.");
@@ -172,24 +100,6 @@ function SetPasswordForm() {
       setError(null);
       try {
         await setPasswordWithLink(token, password);
-        /*
-          THE SERVER HAS JUST ENDED EVERY SESSION THIS ACCOUNT HAD, SO THIS TAB'S IS DROPPED HERE.
-
-          Redemption stamps `sessionsValidFrom`, which revokes every earlier token, and clears
-          `mustChangePassword`. `AuthProvider` sits in the root layout and was still holding the
-          account it read when this page loaded — so "Go to sign in" used to land a person who had
-          been locked at the gate straight back in front of it, asking for a current password, and
-          the one they had just set was then refused with "This session is no longer valid". Now
-          /login opens on its form, and the password just chosen is the one it asks for.
-
-          Local only, and never `logout()`: there is no session left to end, and the link may be
-          somebody else's, in which case the session in this tab is alive and simply not the one
-          the next sign-in is for. Done BEFORE the confirmation is drawn, so no path out of this
-          screen — the button, the address bar, Back — reaches a page holding the stale account.
-          Every other tab of this browser shares the token and loses it too — until reloaded they
-          still draw the account, send unsigned requests that fail, and hold what they queue in the
-          outbox as an expired sign-in, which is the state a sign-out in another tab already leaves.
-        */
         clearSession();
         setDone(true);
       } catch (err) {
@@ -273,12 +183,6 @@ function SetPasswordForm() {
               onChange={(event) => setPassword(event.target.value)}
               className="field-input h-[52px] pl-10 pr-11"
             />
-            {/*
-              ONE TOGGLE FOR BOTH BOXES, not one each. The pair is typed in sequence by one person
-              checking one password against itself; two independent eyes would let them be revealed
-              separately, which is the one arrangement in which "they do not match" is still a
-              mystery. `aria-pressed` because it is a toggle, not an action.
-            */}
             <button
               type="button"
               aria-label={showPassword ? "Hide password" : "Show password"}
@@ -321,12 +225,6 @@ function SetPasswordForm() {
   );
 }
 
-/**
- * One sentence per refusal, because each has a different next action.
- *
- * The keys are the server's own reason words (`app/services/credential_links.py`), never the
- * server's sentences — matching on prose is what breaks the first time somebody fixes a comma.
- */
 const LINK_REFUSALS: Record<string, string> = {
   missing: "This link is incomplete. Open the whole link the administrator sent you.",
   malformed: "This is not a link this site issued. Ask the administrator for another.",

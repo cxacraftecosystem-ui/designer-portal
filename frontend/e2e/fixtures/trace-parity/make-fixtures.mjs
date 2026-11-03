@@ -1,51 +1,3 @@
-/**
- * Builds the parity fixture corpus. Run it by hand; nothing runs it at test time.
- *
- *     node e2e/fixtures/trace-parity/make-fixtures.mjs          (from frontend/)
- *
- * ────────────────────────────────────────────────────────────────────────────
- * WHY THE FIXTURES ARE RAW RGBA AND NOT PNG
- * ────────────────────────────────────────────────────────────────────────────
- *
- * A parity harness compares two runs of the same engine on two runtimes. It is only worth anything
- * if the two runs were handed the SAME BYTES, and a PNG is not the same bytes — it is an instruction
- * to a decoder, and the two runtimes have different decoders. The web reaches its pixels through
- * `createImageBitmap` (components/sketches/upload/decodeToPixels.ts); an Android host would reach
- * them through `BitmapFactory` or a canvas of its own. Those two disagree about chroma upsampling on
- * a JPEG, about colour management on a PNG carrying an `iCCP` or `gAMA` chunk, and about whether
- * alpha comes back premultiplied. Every one of those differences would land in the traced geometry
- * and be indistinguishable from an engine that had stopped computing the same thing.
- *
- * So the decoder is removed from the loop entirely: a fixture is `RGBA8 <w> <h>\n` followed by
- * `w*h*4` bytes in `ImageData` order, gzipped. `RgbaImage.fromImageData` takes exactly that, which
- * is the engine's own front door (`engine/buffers.ts:310`).
- *
- * Gzip is chosen over any image container for the same reason and one more: DEFLATE **decompression**
- * is exactly specified, so `zlib.gunzipSync` here and `java.util.zip.GZIPInputStream` on a JVM
- * produce identical bytes, while DEFLATE **compression** is not — `engine/pngEncoder.ts:19-22` makes
- * the same distinction about its own encoder and says what the fixtures compare: "the decoded image,
- * which is exact". MANIFEST.txt therefore records the SHA-256 of the DECOMPRESSED bytes, so the hash
- * is a statement about what the engine sees rather than about which compressor squeezed it.
- *
- * A second reason not to ship PNGs into an Android test-asset directory: AAPT crunches PNGs. A
- * `.rgba.gz` is opaque to it.
- *
- * ────────────────────────────────────────────────────────────────────────────
- * WHY THE CORPUS IS COMMITTED RATHER THAN DRAWN AT TEST TIME
- * ────────────────────────────────────────────────────────────────────────────
- *
- * `e2e/trace-engine-unit.spec.ts` draws its own disc, and it is right to: it asserts a property that
- * follows from the drawing. A PARITY spec cannot do that, because the drawing would then have two
- * implementations — one per runtime — and a bug in the second generator would read exactly like a
- * bug in the engine. That is the same argument this wave makes against porting the engine, and it
- * applies with equal force to forty lines of fixture generator.
- *
- * So the generator runs once, here, and the bytes are committed. The spec still ties the corpus back
- * to the existing oracle: `trace-parity-unit.spec.ts` asserts that the disc and blank fixtures are
- * byte-for-byte what `trace-engine-unit.spec.ts`'s own `disc()` and `blankSheet()` draw, so the two
- * files cannot drift into two different discs.
- */
-
 import { createHash } from "node:crypto";
 import { gzipSync, inflateSync } from "node:zlib";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -55,9 +7,6 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const E2E = join(HERE, "..", "..");
 
-/* ── the container ───────────────────────────────────────────────────────── */
-
-/** `RGBA8 <w> <h>\n` then `w*h*4` bytes. ASCII header so a `head -c 32` says what a file is. */
 function pack(width, height, rgba) {
   const header = Buffer.from(`RGBA8 ${width} ${height}\n`, "ascii");
   const body = Buffer.concat([header, Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength)]);
@@ -66,15 +15,6 @@ function pack(width, height, rgba) {
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 
-/* ── a PNG reader, for the one fixture that comes from a PNG ─────────────── */
-
-/**
- * Decodes an 8-bit, non-interlaced PNG of colour type 0 (grey) or 6 (RGBA) to RGBA.
- *
- * Deliberately narrow: it exists to read ONE committed file (`e2e/fixtures/sketch-on-table.png`) one
- * time, and a decoder that handles only what that file is cannot silently mis-handle something else.
- * It never runs at test time — its output is what gets committed.
- */
 function decodePng(bytes) {
   if (bytes.readUInt32BE(0) !== 0x89504e47) throw new Error("not a PNG");
   let pos = 8;
@@ -155,14 +95,6 @@ function decodePng(bytes) {
   return { width, height, data: out };
 }
 
-/**
- * Halves an image by averaging each 2x2 block with INTEGER arithmetic.
- *
- * `(a+b+c+d+2) >> 2` and not a float mean, and not a bilinear or Lanczos resampler: the result is
- * committed and never recomputed, but it still has to be a downscale whose every step a reader can
- * check by hand. A float filter here would bake a resampler's rounding into the fixture with nothing
- * recording which resampler it was.
- */
 function halve({ width, height, data }) {
   const w = width >> 1;
   const h = height >> 1;
@@ -182,9 +114,6 @@ function halve({ width, height, data }) {
   return { width: w, height: h, data: out };
 }
 
-/* ── the synthetic fixtures, drawn exactly as the existing oracle draws them ─ */
-
-/** Byte-for-byte `trace-engine-unit.spec.ts`'s `disc()`. Keep the two in step. */
 function disc(w, h) {
   const data = new Uint8ClampedArray(w * h * 4);
   data.fill(255);
@@ -206,14 +135,12 @@ function disc(w, h) {
   return { width: w, height: h, data };
 }
 
-/** Byte-for-byte `trace-engine-unit.spec.ts`'s `blankSheet()`. */
 function blankSheet(w, h) {
   const data = new Uint8ClampedArray(w * h * 4);
   data.fill(255);
   return { width: w, height: h, data };
 }
 
-/** Opaque black, every pixel. Nothing is background, so every threshold degenerates. */
 function allBlack(w, h) {
   const data = new Uint8ClampedArray(w * h * 4);
   for (let i = 0; i < data.length; i += 4) {
@@ -225,19 +152,10 @@ function allBlack(w, h) {
   return { width: w, height: h, data };
 }
 
-/** One mid-grey pixel: smaller than every kernel the pipeline convolves with. */
 function onePixel() {
   return { width: 1, height: 1, data: new Uint8ClampedArray([128, 128, 128, 255]) };
 }
 
-/**
- * 2048x3 — an aspect ratio of 682:1, with a one-pixel black rule down the middle row and two
- * one-pixel columns near the ends.
- *
- * The long edge is past `Limits.MIN_WORKING_EDGE` (256) while the short edge is three pixels, so the
- * working-resolution clamp and every 3x3 neighbourhood are simultaneously at their limits. Integer
- * writes only.
- */
 function hairline(w, h) {
   const data = new Uint8ClampedArray(w * h * 4);
   data.fill(255);
@@ -259,10 +177,8 @@ function hairline(w, h) {
   return { width: w, height: h, data };
 }
 
-/* ── build ───────────────────────────────────────────────────────────────── */
-
 const photoSrc = decodePng(readFileSync(join(E2E, "fixtures", "sketch-on-table.png")));
-const photo = halve(halve(photoSrc)); // 1600x1200 -> 400x300
+const photo = halve(halve(photoSrc));
 
 const CASES = [
   ["disc-256x192", disc(256, 192), "The oracle's own disc. One closed outline whose bounding box is arithmetic."],

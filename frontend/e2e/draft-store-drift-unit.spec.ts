@@ -20,28 +20,7 @@ import { MediaBatchError } from "@/lib/media";
 import { APP_RUN_ID, blocksRetry } from "@/lib/offline";
 import type { DwStage, DwStageData } from "@/lib/designWorkshops";
 
-/**
- * THE OFFLINE DRAFT STORE'S SIX WAYS OF LOSING WORK QUIETLY, EACH PINNED AT THE DECISION.
- *
- * Every case below is one finding from `docs/AUDIT-2026-08-15.md`, and every one of them was
- * reachable only through IndexedDB, a live API and a Postgres row — which is exactly why they
- * survived review. The decisions themselves are pure: what the payload carries, what the pass
- * rethrows, what a refused photograph is recorded as, what a completed pass says. So they are
- * asserted here, with no browser, no store and no server anywhere near them, in the style of
- * `stage-fold-unit.spec.ts` and `stage-sweep-authority-unit.spec.ts` next door.
- *
- * Where a fix could be satisfied by simply refusing to do anything, the case asserts BOTH halves —
- * what is now withheld AND what must still travel. A store that stopped sending would pass a
- * one-sided test and lose a fortnight of fieldwork.
- */
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Fixtures — the same shape as the fold and sweep specs, deliberately
- * ──────────────────────────────────────────────────────────────────────────── */
-
 function field(key: string) {
-  // Written out rather than cast so a field gaining a REQUIRED member fails here loudly instead of
-  // being silently absent. Same fixture as `stage-fold-unit.spec.ts`.
   return {
     key,
     label: key,
@@ -64,7 +43,6 @@ function field(key: string) {
   } as unknown as DwStage["entities"][number]["fields"][number];
 }
 
-/** Stage 3 as a browser holding a registry from BEFORE `designerExperience` was added sees it. */
 const STALE_STAGE: DwStage = {
   number: 3,
   key: "WORKSHOP_PLAN",
@@ -88,12 +66,10 @@ const STALE_STAGE: DwStage = {
   ]
 } as unknown as DwStage;
 
-/** What `GET /stages/WORKSHOP_PLAN` sends: the row verbatim, including the key this build lacks. */
 const FROM_SERVER: DwStageData = {
   singleton: {
     designerName: "R. Iyer",
     designerProfile: "Twenty years in the Kutch cluster.",
-    // The key this browser's stale registry does not declare. A colleague answered it in the office.
     designerExperience: "Led the 2024 Bhujodi revival."
   },
   collections: {}
@@ -109,16 +85,6 @@ function readStage(): DwDraftStage {
     updatedAt: 1_700_000_100_000
   };
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * A STALE REGISTRY MUST NOT DELETE A KEY IT CANNOT DRAW
- *
- * `splitSingletons` copied across only the keys this build declares and dropped the rest. Because
- * the stage HAS been read, `neverRead` is false, the singleton entry goes up with no `merge`, and
- * `save_stage` writes the payload's `data` over the row WHOLESALE with no `RecordRevision`. The
- * colleague's answer was gone in place, and `droppedKeys` could not report it because the server
- * derives that list from the keys the CLIENT SENT — and this client had removed them first.
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("splitSingletons still takes only what the registry declares — that half was never wrong", () => {
   expect(splitSingletons(STALE_STAGE, FROM_SERVER.singleton ?? {})).toEqual({
@@ -150,7 +116,6 @@ test("the fold carries the undeclared key through, so the draft stays a SUPERSET
     dirtyAt: 1_700_000_200_000
   };
   const fold = foldStageInto(STALE_STAGE, dirty, FROM_SERVER);
-  // Local wins for the declared key; the server fills the one this browser had no opinion about.
   expect(fold.stage.singletons.workshopPlan).toEqual({
     designerName: "Typed here",
     designerProfile: "Twenty years in the Kutch cluster."
@@ -158,8 +123,6 @@ test("the fold carries the undeclared key through, so the draft stays a SUPERSET
   expect(fold.stage.unknownSingleton).toEqual({
     workshopPlan: { designerExperience: "Led the 2024 Bhujodi revival." }
   });
-  // Not counted as an "answer that appeared": this build cannot draw a box for it, so announcing it
-  // would be a sentence the designer has no way to check.
   expect(fold.added).toEqual(["designerProfile"]);
 });
 
@@ -171,8 +134,6 @@ test("the payload carries the undeclared key back up, which is what stops the wh
     designerName: "R. Iyer",
     designerProfile: "Twenty years in the Kutch cluster."
   });
-  // WITHOUT the fix this was `{designerName, designerProfile}` and `save_stage` wrote exactly that
-  // over the row. The assertion that the key is PRESENT is the whole test.
   expect(Object.keys(singleton?.data ?? {})).toContain("designerExperience");
 });
 
@@ -183,15 +144,6 @@ test("what the designer typed still wins over a carried key of the same name", (
   const { entries } = buildStageEntries(STALE_STAGE, stage);
   expect(entries.find((entry) => entry.entityKey === "workshopPlan")?.data.designerExperience).toBe("Corrected here");
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * THE CREATE RETIRES A CLAIM THAT WAS TRUE WHEN IT WAS MADE
- *
- * `putDraftStage` stamps `serverLoadedAt` while `remoteId` is null, on the true premise that a
- * workshop the server has never heard of has nothing up there to overwrite. `POST
- * /design-workshops` then seeds `workshopSetup` and `workshopPlan` with the designer's profile, and
- * the very next PUT — built with `neverRead` false, so no `merge` — replaced both rows wholesale.
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("before the create, an offline stage is authoritative — nothing above it can be harmed", () => {
   const local: DwDraftStage = {
@@ -221,9 +173,6 @@ test("after the create it is not, so the first push merges and the prefill survi
 });
 
 test("and the pending sweep goes with it, because the create seeds no collection row anywhere", () => {
-  // `seed_designer_prefill` skips every entity whose cardinality is not SINGLETON, so a deletion
-  // recorded before the create can only ever have been of a row that never left this device. Left
-  // standing it would make `stageSweep` report `withheld` about rows that exist nowhere but here.
   const local: DwDraftStage = { ...emptyStage("WORKSHOP_PLAN"), removedFrom: ["session"], dirtyAt: 1 };
   const after = stagesUnreadAfterCreate({ WORKSHOP_PLAN: local }).WORKSHOP_PLAN;
   expect(after.removedFrom).toEqual([]);
@@ -250,13 +199,7 @@ test("everything else on the stage is left exactly as it was", () => {
   expect(after.dirtyAt).toBe(42);
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * A WORKSHOP THAT IS NO LONGER YOURS IS NOT TWENTY-TWO BAD ANSWERS
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("a 404 is a whole-workshop fact and is rethrown, not stamped on the stage", () => {
-  // `load_workshop_or_404` takes its non-admin deleted branch FIRST, so a designer — the only user
-  // whose stages sit in this store — always gets 404 and never the 409 the pass was written for.
   expect(stageRefusalIsPassLevel(new ApiError(404, "Record not found", null))).toBe(true);
   expect(stageRefusalIsPassLevel(new ApiError(409, "This workshop is deleted.", null))).toBe(true);
 });
@@ -273,21 +216,11 @@ test("a request the server never answered stops the pass, as it always did", () 
   expect(stageRefusalIsPassLevel(new ApiError(429, "slow down", null))).toBe(true);
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * A PHOTOGRAPH THE SERVER WILL NEVER ACCEPT
- *
- * The media loop's only skip test was `remoteMediaId || !blob`, neither of which a refusal sets, so
- * the same bytes went up on every pass for ever while the stage behind them was held back under
- * "It sends itself as soon as they upload".
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("a 415 is permanent, so the same video is not re-uploaded on every connectivity flap", () => {
   const refusal = mediaRefusal("loom.mkv", new ApiError(415, "Unsupported media type", null), 1);
   expect(refusal.permanent).toBe(true);
   expect(refusal.skewRun).toBeNull();
   expect(blocksRetry(refusal)).toBe(true);
-  // It has to NAME the file: the banner lists it, and "a file was refused" is not something anybody
-  // can act on when a stage carries eleven photographs.
   expect(refusal.message).toContain("loom.mkv");
 });
 
@@ -307,34 +240,11 @@ test("a dialect mismatch clears itself on the next app run instead of blaming th
   );
   expect(refusal.skewRun).toBe(APP_RUN_ID);
   expect(refusal.message).toContain("Reload the page to update the app");
-  // Recorded and shown exactly as a permanent one is, and skipped for the REST OF THIS RUN so the
-  // pass does not spin on it…
   expect(blocksRetry(refusal)).toBe(true);
-  // …and re-attempted by itself on the next one, which is the whole of `blocksRetry`'s policy and
-  // the reason `skewRun` is an app run rather than a build number. Without this the app could not
-  // recover from a skew after the skew had gone: the designer would be told to correct a file that
-  // was never wrong, for ever, with no button that would help.
   expect(blocksRetry({ ...refusal, skewRun: "a-previous-app-run" })).toBe(false);
 });
 
 test("a dialect mismatch met WHILE UPLOADING quotes the server's key, not the batch wrapper's advice", () => {
-  /*
-    THE SHAPE THIS ARM IS ACTUALLY HANDED, WHICH THE THREE TESTS ABOVE NEVER WERE. `runSync` uploads
-    ONE file per `uploadMediaBatch` call, so every failure it catches is a `MediaBatchError` and the
-    bare `ApiError`s above are a shape this function does not meet in production.
-
-    It matters because the classifier follows `cause` and the SENTENCE used not to. Reached that way,
-    the drift branch quoted the wrapper and told the designer three contradictory things at once:
-
-        "The repository could not read what this copy of the app sent for “loom.jpg”: All 1 media
-         file(s) failed to upload (merge: Extra inputs are not permitted). Check your internet
-         connection and try again — the record was saved, so re-open it and re-attach the media.
-         Nothing is wrong with the file and nothing has been thrown away…"
-
-    Check a connection that is fine, re-attach a file that is not going anywhere, and also do nothing.
-    The 422's own message names the KEY the two builds disagree about, which is the one fact worth
-    printing, and it is what `schemaRefusalError` hands back.
-  */
   const answered = new ApiError(422, "merge: Extra inputs are not permitted", {
     detail: [{ type: "extra_forbidden", loc: ["body", "merge"], msg: "Extra inputs are not permitted" }]
   });
@@ -352,10 +262,6 @@ test("a dialect mismatch met WHILE UPLOADING quotes the server's key, not the ba
   expect(refusal.message, "and NOT the batch wrapper's connection advice").not.toContain("Check your internet");
   expect(refusal.message).not.toContain("re-attach the media");
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * WHAT THE BANNER SAYS
- * ──────────────────────────────────────────────────────────────────────────── */
 
 const IDLE = {
   workshopsCreated: 0,
@@ -397,9 +303,6 @@ function draftWith(stages: Record<string, DwDraftStage>): DwDraft {
       templateId: "DCH_STANDARD",
       status: "DRAFT",
       workshopKind: null,
-      // Create-only, and this draft is already on the server (`remoteId` above), so the honest
-      // value is null and an empty team — see `headerOf` for why an adopted workshop never carries
-      // either of them.
       designerUserId: null,
       designerUserIds: [],
       craftName: null,
@@ -445,10 +348,6 @@ test("a stage with no note, or a blank one, adds nothing — an unchanged re-rea
   );
   expect(state.folds).toEqual([]);
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * "THIS DEVICE CANNOT TELL YOU" IS NOT "THERE IS NOTHING HERE"
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("a store that has answered every time is reported as answering", () => {
   expect(storeIsAnswering({ readFailedAt: null, writeFailedAt: null })).toBe(true);

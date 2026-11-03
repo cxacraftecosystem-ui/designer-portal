@@ -31,27 +31,6 @@ import {
 import { formatDateTime } from "@/lib/format";
 import { readRequestableAnswer, requestableCeilingSentence } from "@/lib/requestableWorkshops";
 
-/**
- * "Request workshop access" — the ONE panel on /settings that everybody sees, whatever their role.
- *
- * Multi-select because that is how the need arrives: a researcher joining a project wants the same
- * access to a whole season of workshops, and filing them one at a time produces a queue nobody works
- * through. The backend is idempotent per workshop, so pressing this twice is safe — it reports back
- * per workshop whether the row was created, re-requested, already pending, or already granted, and
- * that summary is what the toast repeats.
- *
- * The picker is fed by `GET /workshops/requestable`, NOT by `GET /workshops`. That distinction is the
- * whole feature: the plain list is visibility-filtered and, below professor, returns only workshops
- * the caller CREATED — so for a newly onboarded researcher or volunteer, who has created none, this
- * panel showed "No workshops to ask about" and there was no way to ask for anything. The people the
- * panel exists for were the only people it did not work for. `requestable` is unfiltered but carries
- * only the identifying fields plus the caller's own standing, so naming a workshop never leaks what
- * is inside it.
- *
- * Below the form is the caller's own history — held, waiting, and refused in one place, which is the
- * difference between "ask again" and "stop asking".
- */
-
 const OUTCOME_TEXT: Record<WorkshopAccessRequestResult["outcomes"][number]["outcome"], string> = {
   CREATED: "requested",
   RE_REQUESTED: "requested again",
@@ -63,18 +42,8 @@ export function WorkshopAccessRequestPanel() {
   const { toast } = useToast();
   const levels = useWorkshopAccessLevels();
 
-  // null = still loading. Distinguished from [] so the picker can say "loading" rather than the far
-  // more discouraging "no workshops to ask about" while the fetch is in flight.
   const [workshops, setWorkshops] = useState<RequestableWorkshop[] | null>(null);
-  /**
-   * DID THAT READ FAIL? `workshops` alone cannot say: the catch below sets it to `[]` so the
-   * placeholder stops reading "Loading workshops...", and an empty array then drew "No workshops
-   * have been recorded yet" -- a claim about the repository produced by a request that never
-   * arrived. The error banner above says what went wrong; this is what stops the picker saying
-   * something else at the same time.
-   */
   const [workshopsFailed, setWorkshopsFailed] = useState(false);
-  /** The server read past its cap and found more: the picker states the ceiling under itself. */
   const [workshopsTruncated, setWorkshopsTruncated] = useState(false);
   const [mine, setMine] = useState<WorkshopAccessRow[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -94,15 +63,11 @@ export function WorkshopAccessRequestPanel() {
 
   const loadWorkshops = useCallback(async () => {
     try {
-      // An ENVELOPE, `{items, truncated}` — see `lib/requestableWorkshops.ts` for why every reader
-      // of this route goes through the one parser (this line used to sort the envelope itself).
       const answer = readRequestableAnswer<RequestableWorkshop>(await apiFetch<unknown>("/workshops/requestable"));
       setWorkshops(sortWorkshopsByOccurrence(answer.items));
       setWorkshopsTruncated(answer.truncated);
       setWorkshopsFailed(false);
     } catch (err) {
-      // Surfaced rather than swallowed: an empty picker that is empty because the call failed reads
-      // exactly like an empty picker that is empty because there is nothing to ask about.
       setError(err instanceof Error ? err.message : "Unable to load the workshops you can ask about");
       setWorkshops([]);
       setWorkshopsTruncated(false);
@@ -117,27 +82,12 @@ export function WorkshopAccessRequestPanel() {
 
   const options = useMemo(() => requestableOptions(workshops ?? []), [workshops]);
 
-  /*
-    WHICH OF THE FOUR EMPTY STATES THIS IS. `total: null` because `/workshops/requestable` does not
-    count -- it reads one row past its cap and answers `truncated`, a flag and no number, and
-    inventing a count from the rows in hand is how a truncation sentence comes to contradict itself.
-    `truncated` is that flag, carried on the state so the field hint below can say the list was cut.
-
-    `scoped: false`: this route answers "every workshop, with your standing on each" rather than
-    "the ones open to you", so an empty answer means the repository is empty -- which is what the
-    panel's existing wording already said, and it is now said only when it is true. `accessList` is
-    left at its default: these rows carry `accessStatus`, so a stored copy really would read a
-    revoked grant as a grant. `reassurance`: the shared clause is about saving a record and this
-    form files access requests, which cannot be filed at all without a workshop.
-  */
   const workshopList: WorkshopListState<RequestableWorkshop> =
     workshops === null
       ? { kind: "loading" }
       : workshopsFailed
         ? { kind: "failed" }
         : { kind: "ok", rows: workshops, total: null, truncated: workshopsTruncated };
-  // THE FLAG ARM, SAID ONCE UNDER THE PICKER. The panel's own footer cannot say it: this control's
-  // search is local, so `serverQuery` (whose `truncated` drives the in-panel sentence) does not apply.
   const ceilingNote =
     workshopList.kind === "ok" ? requestableCeilingSentence(options.length, Boolean(workshopList.truncated)) : "";
   const workshopVoice: WorkshopListVoice = {
@@ -147,8 +97,6 @@ export function WorkshopAccessRequestPanel() {
     reassurance: "Nothing you have typed is lost. The message above says what happened."
   };
 
-  // What is already settled, said once under the picker. Both counts are things a user would
-  // otherwise discover only by asking and being told nothing happened.
   const standingNote = useMemo(() => {
     const held = (workshops ?? []).filter((workshop) => workshop.accessStatus === "GRANTED").length;
     const open = (workshops ?? []).filter((workshop) => !workshop.restricted && !workshop.accessStatus).length;
@@ -172,8 +120,6 @@ export function WorkshopAccessRequestPanel() {
         method: "POST",
         body: JSON.stringify({ workshopIds: selected, accessLevel: level, note: note.trim() || null })
       });
-      // Group the per-workshop outcomes so the toast reads "2 requested, 1 already granted" rather
-      // than repeating a line per workshop.
       const tally = new Map<string, number>();
       result.outcomes.forEach((outcome) => tally.set(outcome.outcome, (tally.get(outcome.outcome) ?? 0) + 1));
       const summary = Array.from(tally.entries())
@@ -186,8 +132,6 @@ export function WorkshopAccessRequestPanel() {
       });
       setSelected([]);
       setNote("");
-      // Reload the picker too, not just the history: the rows just filed are now PENDING, and an
-      // option that still offers itself as un-asked invites the same request twice.
       await Promise.all([loadMine(), loadWorkshops()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to send the request");
@@ -222,21 +166,7 @@ export function WorkshopAccessRequestPanel() {
                 onChange={setSelected}
                 options={options}
                 placeholder={workshops === null ? "Loading workshops…" : "Select one or more workshops"}
-                // `searchable`: workshops are records, so their count describes the repository and
-                // not this control. A designer asking for access is looking for one workshop by
-                // name, which is what typing answers.
                 searchable
-                // `bulk={false}`: `/workshops/requestable` is one capped, unpaginated read whose cut
-                // is stated under this field (`ceilingNote`), so the server-truncation hazard
-                // `bulk`'s own doc warns about is already said out loud — but a "Select all N" button is still the wrong shape for
-                // THIS field. Submitting is not a display change to undo with another click; it
-                // files one `WorkshopAccessRow` per ticked workshop, and one press of a button that
-                // reads "Select all 196" turns "I need into one workshop" into a request against
-                // every workshop the repository holds, each of which then needs an admin's explicit
-                // denial to undo. `WorkshopScopeSelect`, a genuine filter over this same corpus,
-                // already passes `false` for the reason its own header gives; this control has no
-                // filter's excuse to keep the button and a request-generating control's reason not
-                // to.
                 bulk={false}
                 values={selected}
               />
@@ -245,7 +175,6 @@ export function WorkshopAccessRequestPanel() {
             {standingNote ? <p className="text-xs leading-5 text-ink-500">{standingNote}</p> : null}
           </div>
           <Field label="Access level you need">
-            {/* NO `searchable`: three rungs, declared by the server, and the same three forever. */}
             <Dropdown
               ariaLabel="Access level you need"
               onChange={(next) => setLevel(next as WorkshopAccessLevel)}

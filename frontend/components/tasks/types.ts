@@ -1,30 +1,18 @@
 import type { UserRole } from "@/lib/types";
 
-/**
- * The task-assignment API shapes, mirroring `backend/app/api/routes/tasks.py`.
- *
- * These live here rather than in `lib/types.ts` because the serialised task is much richer than the
- * stored row: the backend resolves the workshop title, the artisan and section rows, the record-type
- * labels and BOTH progress numbers into every item, so a whole board renders from one call. The
- * legacy `AssignedTask` in `lib/types.ts` describes the bare row and is deliberately left alone.
- */
-
 export type TaskStatus = "OPEN" | "IN_PROGRESS" | "DONE" | "CANCELLED";
 
-/** `user_brief()` — just enough to name a person on a board, never any privilege material. */
 export type TaskUserBrief = {
   id: string;
   name: string;
   email?: string;
   role: UserRole;
-  /** Present on the brief; absent when the row carries a full serialised User instead. */
   roleLabel?: string;
 };
 
 export type TaskArtisanRef = { id: string; name: string; place?: string | null };
 export type TaskSectionRef = { id: string; code: string; title: string; sortOrder: number };
 
-/** One assignee's task, as returned by `serialize_task()`. */
 export type FieldTask = {
   id: string;
   title: string;
@@ -32,7 +20,6 @@ export type FieldTask = {
   status: TaskStatus;
   dueAt?: string | null;
   completedAt?: string | null;
-  /** Legacy single-record link ("finish THIS product"), orthogonal to the scope block. */
   recordType?: string | null;
   recordId?: string | null;
   workshopId?: string | null;
@@ -48,48 +35,23 @@ export type FieldTask = {
   updatedAt: string;
   assignee?: TaskUserBrief | null;
   createdBy?: TaskUserBrief | null;
-  // --- resolved by the server so the UI never follows up per task ---
   workshopTitle?: string | null;
   artisans: TaskArtisanRef[];
   sections: TaskSectionRef[];
   recordTypeLabels: string[];
-  /** Self-reported completion 0-100; null when the task is open-ended and unfinished. */
   percentComplete: number | null;
   isOverdue: boolean;
-  /** What the repository can actually see this person having produced. Null = not counted. */
   derivedCount: number | null;
   derivedTarget: number | null;
   derivedBreakdown: Record<string, number>;
 };
 
-/** GET /tasks/options — every picker the assignment builder needs, in one call. */
 export type TaskOptions = {
   recordTypes: { value: string; label: string; pluralLabel: string }[];
   assignees: TaskUserBrief[];
   workshops: { id: string; title: string; place?: string | null; date?: string | null }[];
   artisans: TaskArtisanRef[];
   sections: TaskSectionRef[];
-  /*
-    ── THREE CAPS THAT USED TO ARRIVE UNANNOUNCED ─────────────────────────────────────────────────
-    Audit 2026-08-15 (MAJOR). `task_options` reads 500 users, 200 workshops and 500 artisans and
-    returns whatever fell inside; on this repository's own measured population (3632 accounts, 731
-    artisans — docs/OPEN_FINDINGS.md, 2026-08-13) two of those cuts are live TODAY. Until these
-    three fields existed the wire had no way to say so, and `AssignmentBuilder` builds every picker
-    purely from what arrived — so an admin hunting a colleague whose name sorts late in the alphabet
-    was shown the same nothing they would be shown for a colleague with no account at all. That is
-    the "hidden from you vs nobody matched" class this repository already paid for once in the
-    design-workshop viewer picker (353 invisible accounts, closed 2026-08-13).
-
-    OPTIONAL ON PURPOSE, AND IT MUST STAY OPTIONAL. `apiFetch` casts the body, it does not validate
-    it, so a browser held open across a rollback — or pointed at an older API — receives no field at
-    all. `flagCutNotice` reads `undefined` as "nothing to say", which is the only safe reading:
-    inventing a cut nobody can act on is as bad as hiding one. Do not make these required to "tidy
-    the type"; the compiler would be satisfied and the runtime would still hand you `undefined`.
-
-    They are booleans and not counts because the route trims a `take=CAP + 1` read. Counting the
-    whole table to print "of 3632" is a second query for a number nobody acts on — the actionable
-    fact is that the list is short and there is a search box. See `flagCutNotice`.
-  */
   assigneesTruncated?: boolean;
   workshopsTruncated?: boolean;
   artisansTruncated?: boolean;
@@ -105,11 +67,8 @@ export type TaskBatchAssignee = {
   completedAt?: string | null;
 };
 
-/** GET /tasks/batches — one assignment action rolled back up. */
 export type TaskBatch = {
-  /** Null for rows written before batching existed, and for single-assignee creates. */
   batchId: string | null;
-  /** Stable grouping key: the batchId, or `task:{id}` for the unbatched ones. */
   key: string;
   title: string;
   description?: string | null;
@@ -147,7 +106,6 @@ export type TaskProgressAssignee = {
   tasks: FieldTask[];
 };
 
-/** GET /tasks/progress — the accountability rollup. */
 export type TaskProgressReport = {
   workshopId: string | null;
   workshopTitle: string | null;
@@ -156,12 +114,10 @@ export type TaskProgressReport = {
   doneCount: number;
   openCount: number;
   overdueCount: number;
-  /** True when the 2000-row scan window was hit: the rollup is partial, say so. */
   truncated: boolean;
   assignees: TaskProgressAssignee[];
 };
 
-/** POST /tasks/batch response. */
 export type TaskBatchResult = {
   batchId: string;
   title: string;

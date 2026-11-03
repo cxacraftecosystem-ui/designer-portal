@@ -1,24 +1,5 @@
 "use client";
 
-/**
- * `CalendarField` — the ONE date control: a labelled field you can type into (dd/mm/yyyy) or open as a
- * calendar, with min/max and a Clear button. Android's twin is `CalendarField` (`ui/CalendarField.kt`).
- *
- * It is `DateField` (components/forms/DateTimeField.tsx) with the parts every call site kept
- * re-adding around it: a visible label wired to the box, an optional hint, and Clear. The date rules
- * are DateField's and are not restated here — above all, the value is a LOCAL `yyyy-mm-dd` built by
- * `toIsoDate`/`fromIsoDate`, never `new Date("2026-07-20")` (UTC midnight, the previous day west of
- * Greenwich; field-repo-frontend §12.7), and a typed date outside min/max is held and explained, not
- * silently reverted.
- *
- * Never `<input type="date">`: a native date input formats itself from the browser's locale, so the
- * same build reads 03/04 as two different months on two laptops.
- *
- * Controlled (`value` + `onChange`) or uncontrolled (`defaultValue`, and `name` for FormData — the
- * hidden input carries the `yyyy-mm-dd`). The label is a `<span>` tied by id, not a wrapping
- * `<label>`: a wrapping label folds the calendar button's name into the input's (§12.3).
- */
-
 import { useId, useState } from "react";
 import { X } from "lucide-react";
 
@@ -26,14 +7,11 @@ import { DateField } from "@/components/forms/DateTimeField";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 
 export type CalendarFieldProps = {
-  /** The visible label. Omit it only where the caller draws its own `<label htmlFor={id}>` or passes `ariaLabel`. */
   label?: string;
-  /** The accessible name when there is no visible label (the shared questionnaire screens). */
   ariaLabel?: string;
   value?: string;
   defaultValue?: string;
   onChange?: (iso: string) => void;
-  /** `yyyy-mm-dd`, local. */
   min?: string;
   max?: string;
   minLabel?: string;
@@ -42,7 +20,6 @@ export type CalendarFieldProps = {
   name?: string;
   required?: boolean;
   disabled?: boolean;
-  /** Offer Clear while a date is set. Default true; a required field still may be cleared and refused on save. */
   clearable?: boolean;
   invalid?: boolean;
   id?: string;
@@ -85,7 +62,6 @@ export function CalendarField({
       {label ? (
         <label htmlFor={fieldId} className="field-label">
           {label}
-          {/* The same asterisk `Field` draws, so a required date reads like every other required box. */}
           <RequiredMark when={required} />
         </label>
       ) : null}

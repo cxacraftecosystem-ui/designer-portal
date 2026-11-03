@@ -1,13 +1,3 @@
-/**
- * The plan/ministry stream's client rules (C1, C9, C15) — the pure halves called directly, and the
- * properties that have no other form asserted as source text (no React renderer in devDependencies).
- *
- *   - C9: `copyMarksBody`, `copiesAfterPush` (the marks leave the draft once a push is accepted, so
- *     one press of "Keep as is" confirms on the server), and the completeness-hiding rule.
- *   - C1: the planned-workshop picker's single-match auto-pick and its refusal rendering; the
- *     "stage 1 was not filled" notice.
- *   - C15: the export list polls only while a job is in flight.
- */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -40,7 +30,6 @@ test.describe("C9 copy marks", () => {
     expect(settled.copiedFrom).toEqual({});
     expect(settled.provenance?.singleton?.history?.source).toBe(DW_COPIED_SOURCE);
     expect(settled.provenance?.singleton?.history?.copiedFrom?.workshopId).toBe("w0");
-    // The next push carries no marks, so a second device cannot re-mark kept text.
     expect(copyMarksBody({ ...stage, ...settled })).toEqual({});
   });
 
@@ -59,18 +48,14 @@ test.describe("C9 copy marks", () => {
   });
 
   test("copy, sync, then one press of Keep as is confirms on the server and the box counts", () => {
-    // Copied on this device…
     let stage = stageWith({ history: "w0" });
     const singleton = { history: "Our history", craftIntroduction: "Typed" };
     expect([...pendingCopyKeys(stage.copiedFrom!, stage.provenance?.singleton, new Set())]).toEqual(["history"]);
-    // …synced…
     stage = { ...stage, ...copiesAfterPush(stage, copyMarksBody(stage).copiedFrom) };
     const hidden = pendingCopyKeys(stage.copiedFrom ?? {}, stage.provenance?.singleton, new Set());
     expect([...hidden]).toEqual(["history"]);
     expect(countedSingleton(singleton, hidden)).toEqual({ craftIntroduction: "Typed" });
-    // …and the press goes to the server, not merely to the local mark.
     expect(splitKeptCopies(["history"], stage.copiedFrom ?? {})).toEqual({ local: [], remote: ["history"] });
-    // The server's answer (source: designer) makes it count.
     const confirmed = { history: { source: "designer" } };
     const after = pendingCopyKeys(stage.copiedFrom ?? {}, confirmed, new Set());
     expect(after.size).toBe(0);

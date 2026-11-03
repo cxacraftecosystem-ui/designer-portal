@@ -1,16 +1,3 @@
-/**
- * `backend/app/services/report_builder.py`, ported: a workshop's data and a template become the
- * blocks of its report, in the browser, with no connection.
- *
- * READ THE SERVER'S MODULE FOR THE WHY. Every rule below — which fields a template's tier admits,
- * how a collection becomes a table or a run of cards, why an iteration is grouped under its
- * prototype, why a photograph cap is counted per gallery, why a REF prints its label and never an id
- * — is argued at length beside the Python it was ported from, and is not argued a second time here.
- * What this file promises is narrower and checkable: for the same inputs it produces the same blocks
- * and the same warnings, which `frontend/e2e/offline-report-parity-unit.spec.ts` asserts against the
- * server's own output for the shared fixture (`shared/report-parity/`).
- */
-
 import { byCount, countNoun } from "@/lib/format";
 import {
   DocumentBuilder,
@@ -57,10 +44,6 @@ import { canonicalState, geocode, type Located } from "@/lib/offlineReport/geoco
 import { isEmptyRich, plainRuns, toPlain, toReportBlocks } from "@/lib/offlineReport/richText";
 import { TIER_RANK, pyTruthy, sectionFor, type ReportTemplate, type TemplateSection, type Tier } from "@/lib/offlineReport/templates";
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The registry, as `GET /design-workshops/schema` serves it
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type RegistryField = {
   key: string;
   label: string;
@@ -100,13 +83,8 @@ const isFreeText = (f: RegistryField) => FREE_TEXT_TYPES.has(f.type);
 const fieldOf = (entity: RegistryEntity, key: string) => entity.fields.find((f) => f.key === key);
 const singletonOf = (stage: RegistryStage) => stage.entities.find((e) => e.cardinality === "SINGLETON");
 const collectionsOf = (stage: RegistryStage) => stage.entities.filter((e) => e.cardinality === "COLLECTION");
-/** The collections that can print anything — `report_builder.printable_collections`. */
 const printableCollectionsOf = (stage: RegistryStage) =>
   collectionsOf(stage).filter((e) => e.fields.some((f) => (f.reportRole ?? "KEY_VALUE") !== "HIDDEN"));
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The data the builder reads — `report_builder.WorkshopData`
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export type ReferencedRecord = { model: string; label: string; photo: string; place: string; district: string; state: string };
 export type Row = Record<string, unknown>;
@@ -114,7 +92,6 @@ export type Row = Record<string, unknown>;
 export type WorkshopData = {
   workshopId: string;
   title: string;
-  /** One singleton per stage, exactly as `assemble_workshop_data` keeps it. */
   singletons: Record<string, Row>;
   collections: Record<string, Record<string, Row[]>>;
   references: Record<string, ReferencedRecord>;
@@ -132,14 +109,9 @@ const referenceOf = (data: WorkshopData, id: unknown): ReferencedRecord | null =
 
 export type MediaResolver = (mediaId: string) => ImageRef | null;
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Value formatting — `format_value` and its helpers
- * ──────────────────────────────────────────────────────────────────────────── */
-
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const PY_INT = /^\s*[+-]?\d+(?:_\d+)*\s*$/;
 
-/** `_format_date`: "2026-07-06" -> "06 Jul 2026", and anything unparseable printed as it came. */
 export function formatDate(iso: string): string {
   const parts = pyStrip(iso).slice(0, 10).split("-");
   if (parts.length !== 3 || !parts.every((p) => PY_INT.test(p))) return cleanText(iso);
@@ -170,7 +142,6 @@ export function mediaIds(value: unknown): string[] {
   return [];
 }
 
-/** `report_builder.format_value`. */
 export function formatValue(registry: Registry, spec: Pick<RegistryField, "type" | "unit" | "enum" | "refModel">, value: unknown): string {
   if (value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) return "";
   const t = spec.type;
@@ -235,7 +206,6 @@ const looksLikeAnId = (text: string) => OPAQUE_ID.test(pyStrip(text));
 
 const HEADING_CHARS = 80;
 
-/** `_heading_summary`: the first sentence if it is short, else the text cut at a word. */
 function headingSummary(text: string): string {
   const collapsed = collapseSpace(text);
   if (!collapsed) return "";
@@ -272,7 +242,6 @@ function geoPoint(value: unknown): [number, number] | null {
   return [lat, lon];
 }
 
-/** Python's `round(x, n)`: the correctly rounded decimal, half to even, back as a number. */
 const pyRoundTo = (value: number, digits: number) => Number(pyFixed(value, digits));
 
 type MapFacts = { points: MapPoint[]; states: Set<string>; placed: number; total: number; approximate: number };
@@ -325,13 +294,8 @@ const FIGURES: Array<[string, string]> = [
 
 const COVER_INFO_ROWS = 10;
 
-/** `report_builder.COVER_PINNED_KEYS`: cover fields that always keep a row (owner decision C1). */
 export const COVER_PINNED_KEYS: ReadonlySet<string> = new Set(["sanctionAmount"]);
 
-/**
- * `report_builder.cover_rows`: the first rows in declared order, except that a pinned row is never
- * the one dropped — it takes the place of the last unpinned row that would otherwise have fitted.
- */
 export function coverRows(
   keyed: ReadonlyArray<[string, string, string]>
 ): { printed: Array<[string, string]>; overflow: Array<[string, string]> } {
@@ -359,10 +323,6 @@ const MAP_ROSTER_PIN_KEY = "subjectLocation";
 function chart(kind: ChartBlock["kind"], series: Array<[string, number]>, title: string, caption: string, unit = ""): ChartBlock {
   return { type: "CHART", kind, series, title, caption, unit, width_pct: 74, align: "CENTER" };
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Completeness — `stage_schema.stage_completeness`
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export type Completeness = {
   requiredTotal: number;
@@ -452,10 +412,6 @@ export function stageCompleteness(
     missing: deduped
   };
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The builder
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export class ReportBuilder {
   readonly doc: DocumentBuilder;
@@ -1242,7 +1198,6 @@ export class ReportBuilder {
     if (single) {
       for (const f of single.fields) {
         if (roleOf(f) !== "COVER_FIELD") continue;
-        // A pinned row prints whatever the template's tier — `report_builder._render_cover`.
         if (!(this.visible(f) || (COVER_PINNED_KEYS.has(f.key) && !f.deprecated))) continue;
         const text = formatValue(this.registry, f, setup[f.key]);
         if (text) keyed.push([f.key, f.label, text]);
@@ -1447,7 +1402,6 @@ export class ReportBuilder {
   }
 }
 
-/** `report_builder.build_report`: the document and the warnings that belong beside it. */
 export function buildReport(
   registry: Registry,
   data: WorkshopData,

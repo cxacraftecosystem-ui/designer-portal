@@ -1,45 +1,5 @@
 "use client";
 
-/**
- * RECORDING THE ANSWERS. The half of this feature the whole thing exists for.
- *
- * A designer downloads the pro-forma, types their questions into it, uploads it — and then answers
- * it here. THE UPLOADED SHEET MAY HAVE CARRIED NO ANSWERS AT ALL, and that is the ordinary case, not
- * the edge one: a designer who is about to run the interviews has an instrument, not data. So this
- * screen never assumes a sitting exists, never assumes a question has been answered before, and
- * starts a sitting from nothing in one press.
- *
- * WHAT A "SITTING" IS. One filled-in copy of the questionnaire — `QuestionnaireFormEntry` on the
- * server. Answers that arrived in the spreadsheet's answer columns are sittings too (`source:
- * "UPLOAD"`), stored in the same table as the ones typed here, which is why this screen needs no
- * special case for either and why a designer who typed six interviews into Excel can carry on with
- * the seventh in the app.
- *
- * SAVING IS BY SECTION, NOT BY FORM, and it is a PUT.
- *
- *   * By section because that is the unit a person finishes. A twelve-section instrument saved only
- *     at the end is a lost interview when the tab closes.
- *   * PUT because sending the same section twice must not produce two sets of answers.
- *     `@@unique([entryId, questionId])` makes that true at the database as well, and `save_answers`
- *     skips rows whose text did not change — so re-saving a section a designer merely walked back
- *     through writes nothing and does not re-stamp authorship on answers somebody else recorded.
- *
- * NOTHING LEAVES THIS SCREEN WITHOUT ASKING, and the reason is that three exits used to. "Each
- * section is saved as you move through it" was true of the two section buttons and of nothing else:
- * the round back arrow, the header's "Edit the questionnaire" link and — worst, because it does not
- * even navigate — the Sitting dropdown all discarded the section in progress without a word. So
- * every one of them now goes through `requestExit`, which is the only way to reach `leaveNow`, and
- * the tab-close path is covered by a `beforeunload` because no interceptor can see that one. If you
- * add a fourth exit, add it to `Exit` rather than wiring a handler of its own.
- *
- * RETIRED QUESTIONS ARE SHOWN AND NOT OFFERED. `save_answers` refuses them with a 422: a question
- * that was superseded or retired keeps the answers it already has and must never collect new ones,
- * or the wording a designer deliberately replaced quietly carries on gathering evidence. But the
- * answers it already has must still be READABLE here, or a sitting shows four answers to what was a
- * six-question form and looks like it lost two. So the form is loaded WITH retired questions, they
- * are drawn read-only, and they are excluded when the payload is built.
- */
-
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -54,8 +14,6 @@ import { EmptyState } from "@/components/EmptyState";
 import { Field, TextInput } from "@/components/FormControls";
 import { PageHeader } from "@/components/PageHeader";
 import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
-// `columnFullSentence` is deliberately NOT imported — see ANSWER_MAX for why its wording would be
-// false about this box.
 import { appendDictatedPhrase, clampToColumn } from "@/components/richtext/dictatedValue";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { InstrumentPicker, SHARED_INSTRUMENT } from "@/components/questionnaires/InstrumentPicker";
@@ -90,71 +48,16 @@ import {
   requiredBanner
 } from "@/lib/sittingAnswers";
 
-/**
- * ══ WHICH FIELDS ON THIS SCREEN GOT A MICROPHONE, AND WHICH DID NOT (req 13) ═══════════════════
- *
- * GOT ONE — every free-text box a person composes:
- *   · each answer box            — the longest typing here, and the reason the requirement names
- *                                  this workflow at all.
- *   · each per-answer note       — prose about the answer, behind a disclosure so the buttons never
- *                                  become a wall.
- *   · the new sitting's Notes    — dictated in the room being described.
- *
- * DID NOT, AND WHY:
- *   · "Who is answering" and "Label for this sitting" — NAMES. A recogniser returns the nearest
- *     dictionary word for a proper noun, and the respondent's name is the string a designer later
- *     searches the sittings by. Same split as `/artisans/new` (address and notes yes; name, phone,
- *     e-mail no); the call sites say it again where they are.
- *   · The "Sitting" dropdown — a closed list of existing sittings. Speech would have to be matched
- *     back to a row, and a near-miss switches the screen to somebody else's interview.
- *   · Retired questions — drawn read-only on purpose (`save_answers` refuses them with a 422), so
- *     there is no box to dictate into. A microphone there would offer to write where nothing can be
- *     written.
- *
- * Every button here passes `explainWhenUnavailable={false}` and `DictationUnavailableNotice` above
- * the question list says the sentence once for all of them.
- */
-
-/**
- * The ceiling on one answer, named rather than repeated as a literal.
- *
- * It was already the textarea's `maxLength={8000}` and nothing else, which was enough while typing
- * and pasting were the only ways in. Dictation writes into React state, where a DOM `maxLength` has
- * no opinion at all, so the same number is now needed in three places — the attribute, the clamp in
- * the commit handler and the sentence the full box says about itself — and three literals are three
- * chances for the box to refuse at one number while the notice on screen quotes another.
- *
- * ── THIS IS A SCREEN'S RULE, NOT A COLUMN'S, AND THE SENTENCE MUST NOT PRETEND OTHERWISE ────────
- *
- * Nothing on the server enforces it. `QuestionnaireFormAnswer.answerText` is `String?` — an
- * unbounded Postgres `text` — and `QuestionnaireFormAnswerIn.answerText` is a bare `str | None` with
- * no `max_length`. Checked 2026-08-28:
- *
- *   grep -n "answerText" backend/prisma/schema.prisma backend/app/schemas/questionnaire.py
- *
- * So `dictatedValue.columnFullSentence` is deliberately NOT used for this box: its wording ends
- * "which is what the column stores", which is true of the designer profile's bounded columns and
- * false here, and a notice that explains a limit with a reason that does not exist is worse than the
- * limit. The clamp stays anyway — it keeps a spoken answer and a typed one bounded the same way,
- * and silently letting the microphone past a ceiling the keyboard is held to is the kind of
- * difference nobody discovers until an export is ragged.
- */
 const ANSWER_MAX = 8000;
 
 export default function AnswerQuestionnairePage() {
   return (
-    // Next 16: `useSearchParams` must sit inside a Suspense boundary.
     <Suspense fallback={<div className="panel p-4 text-sm text-ink-500">Loading…</div>}>
       <AnswerOrSession />
     </Suspense>
   );
 }
 
-/**
- * With the shared questionnaire on (QUESTIONNAIRE_V2), answering a form is a session on it (UNIFY
- * 4.2): this old route opens the start sheet with the form picked. With it off, the sitting screen
- * below answers as before.
- */
 function AnswerOrSession() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -176,10 +79,6 @@ function AnswerPageBody() {
   const { user, loading: authLoading } = useAuth();
 
   const [form, setForm] = useState<QForm | null>(null);
-  /**
-   * Set only while the form on screen came out of this browser's storage because nothing could reach
-   * the server. Null again the moment a live read succeeds.
-   */
   const [cached, setCached] = useState<{ at: string | null; version: number } | null>(null);
   const [entryId, setEntryId] = useState<string>("");
   const [sectionIndex, setSectionIndex] = useState(0);
@@ -188,58 +87,15 @@ function AnswerPageBody() {
   const [starting, setStarting] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
 
-  /**
-   * The text in the boxes, keyed by question id.
-   *
-   * Held in React state rather than read off the DOM at save time, because the section the designer
-   * is leaving is the section being saved: by the time a "next" click has re-rendered, the inputs it
-   * would have been read from are gone. Seeded from the sitting's stored answers whenever the sitting
-   * changes, never on every render — retyping over somebody's answer as they type it is the failure
-   * that shape prevents.
-   */
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
-  /** M5: the server's per-answer refusals from the last save, shown under their own question. */
   const [rejections, setRejections] = useState<Record<string, string>>({});
-  /** L7: required questions left blank when the section was last saved or left. */
   const [missingRequired, setMissingRequired] = useState<Set<string>>(new Set());
-  /** L8: the sitting's details form, open or closed. */
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
-  /** Question ids whose box has been touched since the last successful save of their section. */
   const dirty = useRef<Set<string>>(new Set());
-  /**
-   * The size of that set, MIRRORED INTO STATE, and the mirror is not redundant.
-   *
-   * The ref is what `saveSection` reads, because it must see the very latest keystroke even when it
-   * was called from a handler that closed over an older render. But a ref changing re-renders
-   * nothing, so nothing derived from it can decide anything: `useLeaveGuard` takes a BOOLEAN and the
-   * `beforeunload` listener is installed by an effect, and both of those need a value that changes
-   * to notice that the first answer of a section has just been typed. Keeping the count in state is
-   * what makes "is there unsaved work" answerable by something other than the save button.
-   *
-   * EVERY WRITE TO `dirty.current` MUST BE PAIRED WITH `syncDirty()`, and the pairing is now
-   * enforced by a test rather than by this sentence, because the sentence alone did not hold.
-   *
-   * The first version of this mirror carried exactly this comment and still shipped broken: the two
-   * writes that happen while a designer is actually WORKING — the answer box's `onChange` and the
-   * note box's `onChange` — called `dirty.current.add(question.id)` and nothing else. The four
-   * `syncDirty()` calls in the file all sat beside writes that EMPTY the set (the two seeding
-   * branches, the post-save delete loop, Discard), so `dirtyCount` was 0 for the entire time a
-   * section was being typed. `useLeaveGuard` was registered with `false` and the `beforeunload`
-   * effect returned early, which meant the round back arrow and the tab close discarded a sitting's
-   * answers exactly as they had before the guard was added — two of the four exits this whole
-   * arrangement exists to close, unguarded behind a guard that looked present.
-   *
-   * `markAnswerDirty` is the answer to that: the per-question write and its mirror are ONE call, so
-   * a handler cannot do half of it. Do not inline it back into the handlers "because it is two
-   * lines" — the two lines coming apart is the defect. The bulk writes below still pair by hand
-   * because they genuinely live at different times (the ref inside a `for` loop over a server
-   * response, the state once at the end of it), which is why there is no single setter for those.
-   */
   const [dirtyCount, setDirtyCount] = useState(0);
   const syncDirty = useCallback(() => setDirtyCount(dirty.current.size), []);
-  /** Mark one question's box as touched — the ref for `saveSection`, the count for the guards. */
   const markAnswerDirty = useCallback(
     (questionId: string) => {
       dirty.current.add(questionId);
@@ -248,52 +104,13 @@ function AnswerPageBody() {
     [syncDirty]
   );
 
-  /**
-   * WHAT THE DESIGNER ASKED TO DO WHILE THERE WAS UNSAVED WORK — the thing the prompt is about.
-   *
-   * Every exit from this screen used to be its own decision about typed answers, and all but two of
-   * them decided the answers were expendable. The round back arrow navigated (nothing had registered
-   * an interceptor). The header's "Edit the questionnaire" link navigated. The SITTING dropdown was
-   * the worst of the three, because it did not even leave: it re-seeded the boxes from another
-   * sitting's stored answers and emptied `dirty.current` in the same commit, so the eleven answers
-   * typed in front of a respondent were gone AND the record of their having been typed was gone, and
-   * a later press of "Save this section" sent nothing and said nothing (`saveSection` returns early
-   * on an empty list, above the toast).
-   *
-   * So an exit is now a VALUE rather than a handler: the request is recorded here, the prompt goes
-   * up, and the exit is performed by `leaveNow` only after Save or Discard has answered the question
-   * the prompt asks. Null means no prompt is on screen.
-   */
   type Exit =
     | { kind: "back" }
-    /** Switch to another sitting — a move WITHIN this screen, which is why it needs its own kind. */
     | { kind: "sitting"; entryId: string }
-    /**
-     * Switch to a DIFFERENT QUESTIONNAIRE — added 2026-09-20 with the instrument picker.
-     *
-     * It is its own kind rather than a `back` in disguise because it discards strictly MORE than the
-     * sitting switch does: a new form invalidates every answer box, the dirty set, the cache key and
-     * the entry id at once. `target` is a `Questionnaire` id, or `SHARED_INSTRUMENT` for the one
-     * global artisan instrument, which lives on an entirely different screen.
-     */
     | { kind: "instrument"; target: string }
     | { kind: "edit" };
   const [pendingExit, setPendingExit] = useState<Exit | null>(null);
 
-  /**
-   * WITH retired questions — see the file header. The read-only rows they produce are the only place
-   * a previously-recorded answer to a retired question can still be seen.
-   *
-   * READ THROUGH THE CACHE. A designer standing in front of a respondent with no signal can now open
-   * this screen and READ the questions they are about to ask, and read what has already been
-   * recorded in this sitting. They still cannot SAVE — `saveSection` fails loudly and the banner
-   * says so before the first question is asked, not after a section has been typed — because
-   * whether a question may still be answered is a fact only the server holds.
-   *
-   * The stored copy is served only when nothing reached the server. A 403 (a revoked grant), a 404
-   * and a 5xx all still reach the error banner: each of those is the server answering, and a copy
-   * that contradicted it would be this screen inventing an entitlement.
-   */
   const viewerId = user?.id ?? null;
   const load = useCallback(async () => {
     try {
@@ -308,26 +125,11 @@ function AnswerPageBody() {
     }
   }, [id, viewerId]);
 
-  /**
-   * WAITS FOR THE SESSION. `load` depends on the viewer's id — the stored copy is stamped with whose
-   * it is and refused to any other account on a shared field laptop — and `AuthProvider` resolves
-   * `user` after mount, so without this guard the whole form, its sittings and every answer would be
-   * fetched twice on every open.
-   */
   useEffect(() => {
     if (authLoading) return;
     void load();
   }, [authLoading, load]);
 
-  /**
-   * Which sitting is open.
-   *
-   * `?entry=` wins when it names one that exists — that is the link from the detail page's list, and
-   * honouring it is what makes "Open" mean this sitting rather than whichever happens to be first.
-   * Otherwise nothing is auto-selected: picking a sitting for somebody would mean a designer who
-   * meant to start a new interview types it into the last one instead, over answers that were
-   * already there.
-   */
   useEffect(() => {
     if (!form || entryId) return;
     const wanted = search.get("entry");
@@ -339,15 +141,6 @@ function AnswerPageBody() {
     [form, entryId]
   );
 
-  /**
-   * Which sitting the boxes currently hold, so a re-read of the form does not retype them.
-   *
-   * `entry` is derived from `form`, so it is a NEW object every time the form is re-read — and every
-   * successful save re-reads it. Seeding on each of those would overwrite whatever the designer has
-   * typed into the next section while the save was in flight, which is a lost answer with nothing on
-   * screen to say so. Seeding is therefore keyed on the sitting's ID: switching sittings re-seeds,
-   * saving does not.
-   */
   const seededFor = useRef<string | null>(null);
 
   useEffect(() => {
@@ -373,10 +166,6 @@ function AnswerPageBody() {
     }
     setDraft(seededText);
     setNotes(seededNotes);
-    // Emptying the set here is correct ONLY because nothing reaches this effect with unsaved work
-    // any more: the sitting switch is gated by `requestExit` and every other route to a different
-    // `entry.id` (the `?entry=` link, a freshly started sitting) begins with an empty set. It used
-    // to be the line that destroyed the evidence — see `pendingExit`.
     dirty.current = new Set();
     syncDirty();
   }, [entry, syncDirty]);
@@ -385,7 +174,6 @@ function AnswerPageBody() {
   const section: QFormSection | null = sections[sectionIndex] ?? null;
   const progress = form && entry ? answeredCount(form, entry) : null;
   const contentAdmin = isContentAdmin(user);
-  // M5: the handset's locks — an answer with text that someone else recorded is read-only here.
   const locked = useMemo(
     () => lockedQuestionIds(entry?.answers ?? [], user?.id ?? null, contentAdmin),
     [entry, user?.id, contentAdmin]
@@ -400,7 +188,6 @@ function AnswerPageBody() {
       isContentAdmin: contentAdmin
     });
 
-  /** L8: correct who answered, the label or the notes of the open sitting. */
   async function saveSittingDetails(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -426,7 +213,6 @@ function AnswerPageBody() {
 
   async function startSitting(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // Built before any await: React nulls `currentTarget` across one.
     const data = new FormData(event.currentTarget);
     setStarting(true);
     setError(null);
@@ -436,14 +222,10 @@ function AnswerPageBody() {
         title: String(data.get("title") ?? "").trim() || undefined,
         notes: String(data.get("notes") ?? "").trim() || undefined
       });
-      // The create response is the raw row and carries no answers, so the form is re-read rather
-      // than patched locally — that is also what puts the new sitting into the picker.
       await load();
       setEntryId(made.id);
       setSectionIndex(0);
       setStartOpen(false);
-      // The URL is made to name the sitting so a reload, a bookmark or a back button all return to
-      // the interview in progress rather than to an unchosen picker.
       router.replace(`/questionnaires/${id}/answer?entry=${made.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to start a sitting");
@@ -452,23 +234,12 @@ function AnswerPageBody() {
     }
   }
 
-  /**
-   * Save the section on screen.
-   *
-   * ONLY THE QUESTIONS THAT WERE TOUCHED are sent. The endpoint is idempotent and would ignore
-   * unchanged rows anyway, but sending a whole section every time means a designer who opened a
-   * sitting to read it and moved on writes rows against every question in it — and a blank row is
-   * still a row, which changes nothing about what is answered but does put this user's id on
-   * answers they did not give.
-   */
   const saveSection = useCallback(
     async (
       target: QFormSection | null,
       options?: { silent?: boolean; requireComplete?: boolean }
     ): Promise<boolean> => {
       if (!target || !entryId) return true;
-      // L7: a required question left blank holds the section on Save, Next and Finish. Leaving through
-      // the unsaved-changes prompt still saves what was typed, so nothing is lost.
       if (options?.requireComplete) {
         const blank = blankRequiredIds(target.questions, draft);
         setMissingRequired(new Set(blank));
@@ -485,22 +256,6 @@ function AnswerPageBody() {
           notes: notes[question.id]?.trim() ? notes[question.id] : null
         }));
       if (!answers.length) {
-        /*
-          A NO-OP THAT SAYS SO, because the wordless version was indistinguishable from a broken one.
-          Audit 2026-08-15 (MINOR, frontend).
-
-          This early return sat above `setSaving`, above the request and above the success toast, so
-          pressing "Save this section" with nothing dirty produced NOTHING: no toast, no error, no
-          spinner, no state change. That control is the one a designer presses when she is unsure —
-          and "there was nothing to send" and "what you typed has already been discarded" looked
-          identical, which removed the last chance to notice a loss while the respondent was still in
-          the room.
-
-          The SILENT callers are left silent on purpose. `goToSection` and "Finish this sitting" pass
-          `{ silent: true }` and pass through here on every section a designer merely read; a toast
-          on each of those is a toast nobody reads by the fourth section. The defect was only ever
-          that the explicit button shared their wordless return.
-        */
         if (!options?.silent) {
           toast({
             tone: "info",
@@ -515,16 +270,12 @@ function AnswerPageBody() {
       setError(null);
       try {
         const result = await saveAnswers(id, entryId, answers);
-        // M5: the server saves per answer and names the ones it would not take. Those stay unsaved
-        // (still dirty) with their reason under the question; everything else is recorded.
         const refused = rejectionsByQuestion(result?.saved?.rejected);
         for (const answer of answers) {
           if (refused[answer.questionId]) continue;
           dirty.current.delete(answer.questionId);
           syncDirty();
         }
-        // Only what was SENT is cleared, and only after the server took it — a question typed into
-        // while the request was in flight is still unsaved, and the prompt must still know about it.
         syncDirty();
         setRejections((current) => {
           const next = { ...current };
@@ -537,8 +288,6 @@ function AnswerPageBody() {
           setError(rejectedBanner(refusedCount));
           return false;
         }
-        // Re-read so the progress counter and the detail page's "N of M answered" agree with what
-        // is stored rather than with what this tab believes it sent.
         await load();
         if (!options?.silent) {
           toast({
@@ -549,10 +298,6 @@ function AnswerPageBody() {
         }
         return true;
       } catch (err) {
-        // A 422 here is a real sentence written for the designer — "only the person who recorded
-        // this answer, or an admin, can change it", or a question that has since been retired. It is
-        // shown as a banner rather than a toast because it is something they must act on, and
-        // `aria-live="polite"` never interrupts.
         setError(err instanceof Error ? err.message : "Unable to save those answers");
         return false;
       } finally {
@@ -562,12 +307,6 @@ function AnswerPageBody() {
     [draft, notes, entryId, id, load, toast, syncDirty, locked]
   );
 
-  /**
-   * Perform an exit. Called only when there is nothing unsaved, or from the prompt's Save/Discard.
-   *
-   * The sitting arm does exactly what the dropdown's `onChange` used to do inline; moving it here is
-   * the whole fix, because it is now reachable ONLY through `requestExit`.
-   */
   const leaveNow = useCallback(
     (exit: Exit) => {
       if (exit.kind === "back") {
@@ -579,16 +318,6 @@ function AnswerPageBody() {
         return;
       }
       if (exit.kind === "instrument") {
-        /*
-          `push` AND NOT `replace`, unlike the sitting arm below. A sitting switch is a move within
-          one form and the Back button should return to the list rather than walking a chain of
-          sittings; changing the INSTRUMENT is a move between screens, and a reader who picked the
-          wrong form expects Back to bring the one they were in.
-
-          The shared artisan instrument is not a `Questionnaire` and has no id — it is the singular
-          `/questionnaire` route, and sending `/questionnaires/shared/answer` would 404 on a
-          plausible-looking URL.
-        */
         router.push(exit.target === SHARED_INSTRUMENT ? "/questionnaire" : `/questionnaires/${exit.target}/answer`);
         return;
       }
@@ -601,7 +330,6 @@ function AnswerPageBody() {
     [id, router]
   );
 
-  /** Every exit goes through here: straight out when nothing is unsaved, otherwise via the prompt. */
   const requestExit = useCallback(
     (exit: Exit) => {
       if (dirty.current.size === 0) {
@@ -613,20 +341,8 @@ function AnswerPageBody() {
     [leaveNow]
   );
 
-  /**
-   * Hands the prompt to the round back control in the page header, which is the same arrangement
-   * every record form in the app uses. The boolean must be `dirtyCount > 0` and not
-   * `dirty.current.size > 0`: the guard re-reads its inputs on every commit, and a ref that mutates
-   * without one would leave it holding `false` for the whole first section a designer types.
-   */
   useLeaveGuard(dirtyCount > 0, () => setPendingExit({ kind: "back" }));
 
-  /**
-   * The tab-close half, which no interceptor can cover — closing the tab never reaches React Router.
-   * Written inline rather than through `useUnsavedChanges` (lib/forms.ts) because that hook owns its
-   * own `dirty` state and this screen's dirty set is a ref maintained per question id; the same shape
-   * `ProcessForm` uses for the same reason.
-   */
   useEffect(() => {
     if (dirtyCount === 0) return;
     const warn = (event: BeforeUnloadEvent) => {
@@ -638,14 +354,9 @@ function AnswerPageBody() {
   }, [dirtyCount]);
 
   async function goToSection(nextIndex: number) {
-    // Saving BEFORE moving is what makes "next" safe. A designer who fills a section in and presses
-    // next has finished it; asking them to also press Save is how a section gets lost.
-    // Moving forward needs the required questions answered (L7); moving back does not.
     const ok = await saveSection(section, { silent: true, requireComplete: nextIndex > sectionIndex });
     if (!ok) return;
     setSectionIndex(nextIndex);
-    // The section heading is above the fold on arrival rather than wherever the previous section's
-    // scroll position left the page.
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -674,11 +385,6 @@ function AnswerPageBody() {
         description="Each section saves as you go."
         icon={<ClipboardList className="h-5 w-5" aria-hidden />}
         actions={
-          // STILL A LINK, deliberately: it keeps the URL in the status bar, and a middle-click or a
-          // ctrl-click still opens the questionnaire in a second tab, which leaves THIS tab and its
-          // unsaved answers exactly where they were. Only the plain left-click — the one that takes
-          // the answers with it — is held back for the prompt, and only while there is something to
-          // lose. `BackButton`'s interceptor cannot cover this: it is a different element entirely.
           <Link
             className="field-button-secondary"
             href={`/questionnaires/${id}`}
@@ -697,12 +403,6 @@ function AnswerPageBody() {
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
       ) : null}
-      {/*
-        BEFORE THE FIRST QUESTION IS ASKED, not after a section has been typed. This is the screen the
-        cache exists for — a designer sitting with a respondent, reading the next question off a copy
-        — and it is also the screen where the refusal to save offline costs the most, so the sentence
-        that says both is at the top of it and not tucked beside the Save button.
-      */}
       {cached ? (
         <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800 dark:bg-amber-500/15 dark:text-amber-100">
           {cachedQuestionnaireNotice(formatDateTime(cached.at), cached.version)}
@@ -715,17 +415,6 @@ function AnswerPageBody() {
       ) : null}
 
       <section className="panel mb-5 grid gap-3 p-4">
-        {/*
-          WHICH QUESTIONNAIRE, ABOVE WHICH SITTING — the order matters, because the sitting list is
-          a property of the form and choosing a form empties it. Every account that can reach this
-          screen has already passed `_require_designer`, so the picker's gate is satisfied by being
-          here at all; it is still passed explicitly rather than hardcoded, so the control carries
-          the same entitlement on both screens.
-
-          It routes through `requestExit` for the same reason the sitting dropdown does, one degree
-          harder: switching forms discards every answer box, the dirty set, the cache key and the
-          entry id together. See the `Exit` type for why it is its own kind.
-        */}
         <div className="mb-3 max-w-xl">
           <InstrumentPicker
             value={id}
@@ -742,19 +431,11 @@ function AnswerPageBody() {
           <FieldBlock label="Sitting">
             <Dropdown
               value={entryId}
-              // NOT `setEntryId` directly, and this is the finding this screen was reported for.
-              // Changing `entryId` changes `entry`, which fires the seeding effect, which overwrites
-              // every box from the OTHER sitting's stored answers and empties the dirty set — so a
-              // designer who opened this dropdown merely to check what a respondent said in an
-              // earlier interview lost the section she was in the middle of, silently. It is an exit
-              // from the current sitting even though the URL barely changes, so it asks like one.
               onChange={(next) => requestExit({ kind: "sitting", entryId: next })}
               options={[
                 { value: "", label: form.entries.length ? "Choose a sitting" : "No sittings recorded yet" },
                 ...form.entries.map((candidate) => ({
                   value: candidate.id,
-                  // Names the source, because a designer looking for the interview they typed in the
-                  // app has to tell it from the ones that arrived in the spreadsheet's columns.
                   label: `${candidate.respondentName || candidate.title}${
                     candidate.source === "UPLOAD" ? " · from the spreadsheet" : ""
                   }`
@@ -762,8 +443,6 @@ function AnswerPageBody() {
               ]}
               ariaLabel="Sitting"
               searchable
-              // This dropdown SWITCHES the screen it sits on rather than filling in a form field, so
-              // focus must not jump to the next control.
               advanceOnSelect={false}
             />
           </FieldBlock>
@@ -777,16 +456,6 @@ function AnswerPageBody() {
 
         {startOpen && form.isActive ? (
           <form onSubmit={startSitting} className="grid gap-3 rounded-md border border-line-200 bg-surface-50 p-3 md:grid-cols-2">
-            {/*
-              ── NO MICROPHONE ON THESE TWO, AND IT IS NOT AN OVERSIGHT (req 13) ─────────────────
-              Both are NAMES, and a recogniser is at its worst on a proper noun: it returns the
-              nearest dictionary word, and the respondent's name is the one string on this screen a
-              designer will later search the sittings by. The sitting's label defaults to that same
-              name, so it inherits the same argument. This is the split `/artisans/new` already
-              makes — the address and the notes get a microphone, the name, phone and e-mail do not
-              (`components/forms/ArtisanForm.tsx`, and `DesignerProfileForm`'s `DictatedField` doc
-              states the rule) — and this page follows it rather than inventing a second one.
-            */}
             <Field label="Who is answering">
               <TextInput name="respondentName" maxLength={220} placeholder="Ramesh Kumar" />
             </Field>
@@ -794,27 +463,6 @@ function AnswerPageBody() {
               <TextInput name="title" maxLength={220} placeholder="Defaults to the name above" />
             </Field>
             <div className="md:col-span-2">
-              {/*
-                THE ONE PROSE BOX ON THIS SUB-FORM, so it is the one that gets a microphone. It is
-                dictated at the START of a sitting, standing in the room being described, which is
-                exactly the moment typing is most awkward.
-
-                `DictatedTextArea` rather than a bare button beside a `TextArea`: it writes its own
-                `<label htmlFor>` instead of the `Field` wrapper it replaces, because `Field` is a
-                `<label>` and a `<label>` forwards a stray click to its first labelable control —
-                pressing "Dictate" would then also focus the box and throw the on-screen keyboard up
-                over the interim readout being watched (SKILL.md §12.3).
-
-                The prompt moved from `placeholder` to `helper` in the same move, and that is an
-                improvement rather than a translation loss: a placeholder is erased by the first
-                word — spoken or typed — so the guidance disappears precisely when a long dictated
-                answer is being checked against it.
-
-                SELF-CONTROLLED IS SAFE HERE, unlike on `/questionnaire`: this sub-form is mounted
-                only while `startOpen` is true and `startSitting` sets it false, so the component
-                unmounts and its state goes with it. There is no `form.reset()` on a still-mounted
-                box to disagree with.
-              */}
               <DictatedTextArea
                 name="notes"
                 label="Notes"
@@ -904,22 +552,12 @@ function AnswerPageBody() {
             <p className="text-xs text-ink-500">Saved automatically when you move to another section.</p>
           </header>
 
-          {/*
-            The "this browser cannot dictate" sentence, ONCE for the section. Every answer box and
-            every answer note below passes `explainWhenUnavailable={false}`: a twelve-question
-            section would otherwise print the same grey paragraph twenty-four times, which is how a
-            reader learns to skip it. This component self-detects, so nothing on this page holds a
-            second opinion about what the browser can do. It renders nothing at all where dictation
-            works, and the buttons are never drawn dead.
-          */}
           <DictationUnavailableNotice />
 
           <ol className="grid gap-4">
             {section.questions.map((question, index) => {
               const stored = answersByQuestion(entry).get(question.id);
               if (!question.isActive) {
-                // READ-ONLY, and drawn rather than hidden. The recorded answer is still evidence; the
-                // question simply may not gather any more of it.
                 return (
                   <li key={question.id} className="rounded-md border border-dashed border-line-200 bg-surface-50 p-3">
                     <div className="flex items-start gap-2">
@@ -971,30 +609,11 @@ function AnswerPageBody() {
                           .join(" ") || undefined
                       }
                       onChange={(event) => {
-                        // THE KEYSTROKE THAT ARMS THE GUARDS. `markAnswerDirty`, never a bare
-                        // `dirty.current.add(...)`: the ref alone re-renders nothing, so the back
-                        // arrow and the tab close would both stay unguarded through the whole
-                        // section being typed. See the note on `markAnswerDirty`.
                         markAnswerDirty(question.id);
                         setDraft((prev) => ({ ...prev, [question.id]: event.target.value }));
                       }}
                     />
                   </label>
-                  {/*
-                    ── THE MICROPHONE SITS OUTSIDE THE `<label>`, AND THAT IS LOAD-BEARING ───────
-                    A `<label>` forwards a stray click to the first labelable control inside it
-                    (SKILL.md §12.3), so a "Dictate" button in there would ALSO focus the textarea —
-                    which on a phone throws the on-screen keyboard up over the very interim readout
-                    the person is watching. The `<li>` is a grid, so a sibling here lines up under
-                    the box with no extra wrapper.
-
-                    A QUESTIONNAIRE ANSWER IS THE LONGEST TYPING ON THIS SCREEN and the reason the
-                    dictation requirement names this workflow: it is prose, spoken by a respondent,
-                    typed by a designer holding a phone. `fieldLabel` names the question by its
-                    NUMBER — the accessible label reads "Dictate answer 3 in English (India)" —
-                    because a prompt may run to two thousand characters and an aria-label that long
-                    is spoken in full before the reader learns what the button does.
-                  */}
                   {isLocked ? (
                     <p id={`${question.id}-locked`} className="text-xs leading-5 text-ink-500">
                       {LOCKED_ANSWER_NOTE}
@@ -1011,12 +630,6 @@ function AnswerPageBody() {
                     explainWhenUnavailable={false}
                     onCommit={(phrase) => {
                       markAnswerDirty(question.id);
-                      // Functional updater and the two shared rules: APPEND (a long answer arrives
-                      // as many phrases, and replacing the box would empty it at the first pause
-                      // for breath) and CLAMP (a DOM `maxLength` bounds typing and pasting and has
-                      // no opinion at all about a value written into React state, so dictation is
-                      // the one path that could carry an answer past the ceiling this screen holds
-                      // typing to — see ANSWER_MAX, and note the server holds none).
                       setDraft((prev) => ({
                         ...prev,
                         [question.id]: clampToColumn(appendDictatedPhrase(prev[question.id] ?? "", phrase), ANSWER_MAX)
@@ -1024,19 +637,8 @@ function AnswerPageBody() {
                     }}
                   />
                   )}
-                  {/*
-                    The ceiling, said on screen the moment it is reached — house rule 3. A box that
-                    quietly stops accepting words is indistinguishable from a microphone that
-                    stopped working, and those two need completely different next moves from the
-                    person holding the phone. `ink-500`, not `error-600`: nothing was lost, what is
-                    in the box is exactly what will be saved.
-                  */}
                   {(draft[question.id] ?? "").length >= ANSWER_MAX ? (
                     <p id={`${question.id}-full`} className="text-xs leading-5 text-ink-500">
-                      {/* No "carry on in the note below": that box is context ABOUT the answer, and
-                          inviting overflow into it would put answer text in a column no export
-                          reads as one. The cap is stated; where the rest goes is the designer's
-                          call. */}
                       Full — {ANSWER_MAX.toLocaleString("en-IN")} characters maximum.
                     </p>
                   ) : null}
@@ -1047,26 +649,12 @@ function AnswerPageBody() {
                       className="field-input mt-1"
                       value={notes[question.id] ?? ""}
                       placeholder="Context, uncertainty, who said it"
-                      // The `<summary>` above is the only thing naming this box and a `<summary>`
-                      // names nothing: the input had NO accessible name at all, so a screen reader
-                      // announced "edit text, blank" on every question. Fixed in passing while the
-                      // microphone below was added, because the button's own label names the field
-                      // and it would have been the only half of this pair that said what it was.
                       aria-label={`Note about answer ${index + 1}`}
                       onChange={(event) => {
-                        // A note is unsaved work too — it travels in the same payload as the answer
-                        // and is lost by the same exits. Same helper, same reason.
                         markAnswerDirty(question.id);
                         setNotes((prev) => ({ ...prev, [question.id]: event.target.value }));
                       }}
                     />
-                    {/*
-                      Prose about the answer — "who said it", "she hesitated here" — which is the
-                      kind of remark that is spoken naturally and typed grudgingly, and it is behind
-                      a disclosure so the buttons are never a wall. Inside the `<details>` and not
-                      inside a `<label>`, so the stray-click forwarding described above cannot
-                      happen here either.
-                    */}
                     <OnDeviceDictationButton
                       fieldLabel={`the note about answer ${index + 1}`}
                       explainWhenUnavailable={false}
@@ -1134,18 +722,6 @@ function AnswerPageBody() {
         </section>
       ) : null}
 
-      {/*
-        ONE PROMPT FOR ALL FOUR EXITS — the back arrow, the header link, the sitting dropdown and
-        (through `beforeunload`) the tab close. Four separate handlers is how three of them came to
-        decide, independently and wrongly, that typed answers were expendable.
-
-        Save runs the section save the "Save this section" button runs, NOT the silent one: if the
-        server refuses — a 422 saying only the person who recorded an answer may change it, or that a
-        question has since been retired — the banner is the whole point, and the exit is abandoned so
-        the designer is looking at the section the message is about. Discard empties the dirty set
-        first, because for the sitting switch the seeding effect is what runs next and it must not
-        find work it would silently carry into the other sitting's boxes.
-      */}
       <UnsavedChangesDialog
         open={pendingExit !== null}
         saving={saving}

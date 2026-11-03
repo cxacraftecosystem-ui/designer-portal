@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * "Log today" on each prototype (owner, A15, 2026-10-17).
- *
- * A daily log row used to mean re-picking the prototype and typing the date, across ten prototypes
- * for two weeks. One tap here adds the row with the prototype and today's date set, and a second
- * button reuses the stage name logged last for that prototype.
- */
-
 import { NotebookPen } from "lucide-react";
 
 import { ActionGroup } from "@/components/ui/ActionGroup";

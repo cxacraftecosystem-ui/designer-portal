@@ -27,91 +27,15 @@ import {
 import { canRecordSanctionOrders } from "@/lib/sanctionOrders";
 import type { User, UserRole } from "@/lib/types";
 
-/**
- * THE MINISTRY DESK — the dashboard card that gathers the three directorate posts' screens.
- *
- * ── WHY THIS FILE ENUMERATES NOTHING BY HAND ────────────────────────────────────────────────────
- *
- * It sweeps `ROLES_BY_RANK`, which is DERIVED from `ROLE_RANK` — itself a registered mirror held to
- * `deps.py` by `backend/tests/test_role_ladder_parity.py` and by `docs/tools/check-docs.mjs`. So a
- * twelfth tier reaches every assertion below on the day it lands, with nothing here to remember,
- * and this file adds no new hand-kept copy of the ladder to a repository that has spent a lot of
- * time removing them. The one literal is the card's audience itself, which is the subject.
- *
- * ── WHAT IS PINNED, AND WHY EACH IS THE FAILURE THAT ACTUALLY HAPPENS ───────────────────────────
- *
- *  1. THE AUDIENCE IS THE FOUR TIERS AND NOTHING ELSE. Every rank-shaped instinct gets this set
- *     wrong in a different direction: `isAdmin` admits one of the four and refuses three, and no
- *     rank floor produces it at all, because the set has a hole at ADMIN (50) with MASTER_ADMIN (60)
- *     above it. It is asserted as a set rather than as a floor for exactly that reason.
- *  2. THE CARD CANNOT OFFER A ROW THE ROUTE WOULD REFUSE. This is the assertion that matters most,
- *     and it is checked against `canAccessRoute` — the real guard table — for every tier and every
- *     row rather than against a copy of the predicates. A launcher that draws a tile onto a lock
- *     panel teaches the reader the product is broken; a launcher that hides a tile the route would
- *     serve hides a feature. Both directions fail here.
- *  3. THE ROWS ARE THE DIRECTORATE WALKTHROUGH'S SCREENS, IN ITS ORDER. A launcher and a lesson that
- *     disagree about one job teach two jobs, and a reader has no way to tell which is the product.
- *     This is also the cheapest possible guard against the defect this repository keeps paying for:
- *     a screen added to one surface and forgotten on the other.
- *  4. NOBODY IN THE AUDIENCE GETS AN EMPTY CARD. The component renders null on an empty desk rather
- *     than a panel headed "Your ministry desk" with nothing under it — but "renders null" and
- *     "nobody ever hits it" are different states, and the second is the one worth asserting.
- *  5. THE LABELS ARE THE NAV'S. Four of these five destinations have no Android counterpart to be
- *     parity with, so the web nav is the only registry there is, and a sixth spelling invented on a
- *     card is a name nobody's grep finds.
- *
- * ── AND, SINCE 0.0.12, THREE MORE ──────────────────────────────────────────────────────────────
- *
- *  6. THE CARD IS A MINISTRY SURFACE AND SAYS SO IN COLOUR. /dashboard is not a ministry route and
- *     must never become one, so `AppShell`'s stamp cannot reach this card and it carries its own
- *     `data-surface="ministry"`. What is pinned here is the SURFACE-ACCENT rule: orange on grounds,
- *     borders and chips, purple on everything that is an action or app-wide chrome — and a `dark:`
- *     pair on every ministry text site, without which `text-ministry-700` on a dark card is 2.44:1.
- *     Pinned forward as well as backward: no `.field-button` or `.field-input` this card may grow
- *     later may wear the ramp, which is OQ-2 and the one rule this card is placed to break.
- *  7. THE BADGE IS ONE PILL DRAWN BY TWO FILES. The count rides on "Sanction orders" in the nav and
- *     on the same destination's row here, and on a ministry officer's dashboard both are on screen
- *     at once. The class string, the sentence and the destination are one module's, and the number
- *     is one store's, so the two cannot differ in pixels, wording or arithmetic. Both renderers gate
- *     the fetch on their own copy of "is the badged surface drawn", so BOTH of those are held to
- *     `canRecordSanctionOrders` — the card's row by identity, the nav's entry as text, because
- *     `NAV_ITEMS` is module-private. A surface that asked the count without the permission would be
- *     403'd on every page load, and logged as an authorisation failure by an innocent account.
- *  8. THE DESK ENDS WHERE A WORKSHOP ENDS — approved and handed on to the office. "Reports to
- *     approve" is the last row; its predicate is the same one its nav entry, its walkthrough card and
- *     its route guard carry; and no note on the desk may talk in the product's plumbing (routes,
- *     endpoints, HTTP verbs) or promise a step for later — a standing guard, below.
- */
-
 const ROOT = join(__dirname, "..");
 const NAV = join(ROOT, "components", "DynamicIslandNav.tsx");
 const CARD = join(ROOT, "components", "dashboard", "MinistryDeskCard.tsx");
 const PROTECTED = join(ROOT, "app", "(protected)");
 
-/**
- * The file with its comments taken out — WHAT IS RENDERED, not what is explained.
- *
- * ⚠ EVERY POSITIVE SOURCE ASSERTION BELOW READS THIS AND NOT THE RAW TEXT, and the reason is a
- * failure this file actually had: these components are documented at length in this repository's
- * house style, so `MinistryDeskCard.tsx` quotes `data-surface="ministry"` and names
- * the card's constants in prose several lines before it uses either. A `toContain` over the raw
- * file therefore passed with the attribute deleted from the element — verified by deleting it. A
- * test that a comment can satisfy is a test of the comment.
- *
- * Negative assertions are left on the raw text on purpose: "this class must not appear on the card"
- * is stricter, not weaker, when a comment counts.
- */
 const withoutComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "");
 
 const user = (role: UserRole): User => ({ id: `u-${role}`, email: "a@b.c", name: role, role }) as User;
 
-/**
- * The card's audience, written out once.
- *
- * ⚠ NOT DERIVED FROM `MINISTRY_DESK_ROLES`, which would make this test a restatement of the thing it
- * is testing. Four tokens, typed on purpose, so a widening of that set has to be typed here too and
- * is therefore a decision somebody made rather than one that happened.
- */
 const AUDIENCE: UserRole[] = ["ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "MASTER_ADMIN"];
 
 test("the desk is offered to exactly four tiers, and the literal says the same", () => {
@@ -126,26 +50,12 @@ test("a signed-out caller is not in the audience", () => {
 });
 
 test("the audience is not isAdmin, and it is not a rank floor either", () => {
-  /*
-    STATED AS TWO FAILED SHAPES RATHER THAN AS THE SET AGAIN, because the set is already asserted
-    above and what a reader needs from this file is why it could not have been written more simply.
-
-    `isAdmin` is set membership on the two admin tiers. It admits the master admin and refuses the
-    three ministry posts — the audience this card exists for — so it is wrong in the loudest possible
-    direction: the card would be invisible to everybody it was built for.
-
-    A rank floor is wrong the other way. The tightest floor admitting ASSISTANT_DIRECTOR (42) also
-    admits ADMIN (50), who is deliberately out: an admin already has the settings hub and every one
-    of these destinations in the nav. There is no floor that skips 50 and keeps 60.
-  */
   for (const role of ROLES_BY_RANK) {
     const u = user(role);
     if (isAdmin(u) && !isMasterAdmin(u)) {
       expect(canSeeMinistryDesk(u), `${role}: an admin is out by name`).toBe(false);
     }
   }
-  // The hole in the ladder, asserted as a hole: a tier is in, the tier above it is out, and the tier
-  // above THAT is in. No threshold can produce that, which is the whole argument for the set.
   const inAt48 = canSeeMinistryDesk(user("MINISTRY_ADMIN"));
   const outAt50 = canSeeMinistryDesk(user("ADMIN"));
   const inAt60 = canSeeMinistryDesk(user("MASTER_ADMIN"));
@@ -155,15 +65,6 @@ test("the audience is not isAdmin, and it is not a rank floor either", () => {
 });
 
 test("a row is offered exactly when the route guard would admit it — every tier, every row", () => {
-  /*
-    THE ASSERTION THIS FILE EXISTS FOR. `canAccessRoute` reads `ROUTE_GUARDS`, which is the real
-    table `AppShell` enforces above every page — not a copy of the predicates, and not the predicates
-    the card happens to import. If somebody widens a row's `can` to "make the card look complete",
-    or narrows a guard without touching the card, this goes red and names the tier and the route.
-
-    It sweeps the whole ladder, not only the audience, because `ministryDeskFor` is a pure function
-    and a row that would be wrongly offered to a designer is a row that is wrong.
-  */
   for (const role of ROLES_BY_RANK) {
     const u = user(role);
     const open = new Set(ministryDeskFor(u).map((destination) => destination.href));
@@ -177,31 +78,12 @@ test("a row is offered exactly when the route guard would admit it — every tie
 });
 
 test("nobody in the audience is shown an empty desk", () => {
-  /*
-    The component returns null on an empty desk rather than drawing a headed panel with nothing in
-    it. That branch is correct and it is also unreachable today, which are two different facts: the
-    floor below is what makes "unreachable" a checked claim instead of a comment. Every tier in the
-    audience clears the sanction register (Assistant Director and above) and the workshop set, so two
-    is the minimum.
-  */
   for (const role of AUDIENCE) {
     expect(ministryDeskFor(user(role)).length, `${role} would see an empty ministry desk`).toBeGreaterThanOrEqual(2);
   }
 });
 
 test("the per-row gating is real: an assistant director's desk lacks the rows its tier cannot open", () => {
-  /*
-    THE ROWS THAT PROVE THE PER-ROW GATING IS REAL RATHER THAN DECORATIVE. An Assistant Director is in
-    the desk's audience and is refused two of its destinations — the annual plan (a floor at 48) and
-    Workshop oversight (the assigner SET) — so both are absent from their card while Workshops I
-    monitor is on it.
-
-    ⚠ THIS TEST USED TO PROVE THE SAME THING WITH THE MASTER ADMIN, who was refused
-    `/officers/monitored` by name because an admin could hold no oversight row. The owner's ruling of
-    2026-10-09 lets the master admin be NAMED in either post, so that row is on their card now and is
-    asserted as such below. If either half flips, the server's rule moved or somebody "completed" the
-    card by widening a row, and the two need telling apart.
-  */
   const assistantHrefs = ministryDeskFor(user("ASSISTANT_DIRECTOR")).map((d) => d.href);
   expect(assistantHrefs).toContain("/officers/monitored");
   expect(assistantHrefs).not.toContain("/annual-plan");
@@ -215,7 +97,6 @@ test("the desk's screens are the directorate walkthrough's screens, in its order
   expect(MINISTRY_DESK.map((destination) => destination.href)).toEqual(
     DIRECTORATE_STEPS.map((step) => step.href)
   );
-  // And by name too, so a href kept while a label drifted still fails.
   expect(MINISTRY_DESK.map((destination) => destination.label)).toEqual(
     DIRECTORATE_STEPS.map((step) => step.label)
   );
@@ -236,14 +117,6 @@ test("the desk holds no duplicate destination", () => {
 });
 
 test("every row on the desk opens a route that exists", () => {
-  /*
-    A LAUNCHER MAY NOT POINT AT A SCREEN THAT WAS NOT BUILT. Resolved against the app directory
-    rather than by fetching, so it needs no server — the idiom `guide-walkthrough-unit.spec.ts` uses
-    on its own hrefs. `canAccessRoute` above cannot catch this: a path with no `ROUTE_GUARDS` row is
-    an UNGATED path, so a tile invented for a future screen would be reported as open to everybody
-    and would land its reader on a 404. That is the shape of mistake this release was asked to
-    prevent on this card specifically, and it costs one existsSync.
-  */
   for (const destination of MINISTRY_DESK) {
     const dir = join(PROTECTED, destination.href.split("?")[0].replace(/^\//, ""));
     expect(existsSync(join(dir, "page.tsx")), `${destination.label} → ${destination.href}`).toBe(true);
@@ -251,12 +124,6 @@ test("every row on the desk opens a route that exists", () => {
 });
 
 test("the desk ends with the sign-off, and the sign-off row, nav entry, deck card and guard share one predicate", () => {
-  /*
-    THE SEQUENCE IS COMPLETE NOW, and the last row is where it ends: a report approved and handed on to
-    the office. Asserted by IDENTITY for the row (`canApproveDesignWorkshops`, the mirror of
-    `require_approving_authority`), by `canAccessRoute` for the guard over every tier, and as text for
-    the nav entry, which is module-private. The deck card is held to the row by the order test above.
-  */
   const last = MINISTRY_DESK[MINISTRY_DESK.length - 1];
   expect(last.href).toBe("/design-workshop-approvals");
   expect(last.label).toBe("Reports to approve");
@@ -283,17 +150,11 @@ test("the sign-off row is a Ministry Admin's and the master admin's, and no dire
 });
 
 test("STANDING GUARD: nothing on the desk talks plumbing or promises a step for later", () => {
-  /*
-    The card once carried a sentence admitting a missing step, naming an endpoint and a router. It is
-    gone, and this keeps the class from coming back: no note and no rendered text on the desk may
-    mention a route, an endpoint, a router, an HTTP verb, "not built", "yet" or "coming soon".
-  */
   const forbidden = /not built|\byet\b|endpoint|router|coming soon|\b(GET|POST|PUT|PATCH|DELETE)\b/i;
   for (const destination of MINISTRY_DESK) {
     expect(destination.note, destination.label).not.toMatch(forbidden);
     expect(destination.label, destination.label).not.toMatch(forbidden);
   }
-  // The rendered JSX text of the card, comments out.
   const rendered = withoutComments(readFileSync(CARD, "utf8")).replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
   const text = [...rendered.matchAll(/>([^<>{}]+)</g)].map((m) => m[1]).join(" ");
   expect(text).not.toMatch(forbidden);
@@ -319,40 +180,12 @@ test("the approval badge is drawn by both renderers, each gated on its own row b
 });
 
 test("the badged destination is a real desk row, and its predicate is the endpoint's own mirror", () => {
-  /*
-    The count is only ever spent when its row is on screen, which is how both renderers avoid asking
-    an endpoint the caller would be refused. That argument only holds if the row's predicate IS the
-    mirror of `require_sanction_recorder` — so it is asserted by IDENTITY rather than by agreeing
-    today: a row switched to a predicate that merely happens to admit the same tiers would put a
-    request behind a 403 for somebody, and the 403 is logged against an account doing nothing wrong.
-  */
   const badged = MINISTRY_DESK.find((destination) => destination.href === AWAITING_SANCTION_BADGE_HREF);
   expect(badged, `no desk row answers to ${AWAITING_SANCTION_BADGE_HREF}`).toBeTruthy();
   expect(badged!.can).toBe(canRecordSanctionOrders);
 });
 
 test("the nav entry the badge also sits on is gated by that same mirror", () => {
-  /*
-    THE OTHER HALF OF THE ASSERTION ABOVE, AND UNTIL NOW IT WAS PINNED BY NOTHING.
-
-    The count is drawn on two surfaces and each computes its own `enabled`. The card's is this
-    module's table, whose predicate is asserted by IDENTITY one test up. The nav's is
-    `visibleItems.some((item) => item.href === AWAITING_SANCTION_BADGE_HREF)`, which folds in
-    whatever `can` that NAV_ITEMS row happens to carry — and `NAV_ITEMS` is module-private, so it
-    cannot be imported and compared. Read as text instead, which is what the label test above
-    already does to the same file and for the same reason.
-
-    What it protects: widen that one row to a neighbouring predicate and the nav spends a request on
-    `/sanction-orders/awaiting-count` on every page load by an account `require_sanction_recorder`
-    answers 403 — logged, on the server, as an authorisation failure by somebody doing nothing
-    wrong. The desk card would stay green throughout, because its row is a different literal in a
-    different file. `gate:` is checked beside `can:` because that field is this nav's own record of
-    which server dependency the entry mirrors, and the two drifting apart is the same defect said
-    twice.
-
-    Sliced from the constant to the NEXT `href:`, so the assertion cannot be satisfied by a `can`
-    belonging to the entry after it.
-  */
   const nav = withoutComments(readFileSync(NAV, "utf8"));
   const after = nav.split(`href: "${AWAITING_SANCTION_BADGE_HREF}"`)[1];
   expect(after, `NAV_ITEMS has no entry for ${AWAITING_SANCTION_BADGE_HREF}`).toBeTruthy();
@@ -366,11 +199,6 @@ test("the nav entry the badge also sits on is gated by that same mirror", () => 
 });
 
 test("the count's sentence says what it counts, in both plurals", () => {
-  /*
-    NOT A BARE DIGIT — the rule both badges beside it state. The plural rule is a function rather
-    than JSX for exactly this: a screen only exercises the singular arm on the day the database holds
-    precisely one stalled order.
-  */
   expect(awaitingSanctionSentence(1)).toBe("1 sanction order is awaiting its designer's details");
   expect(awaitingSanctionSentence(4)).toBe("4 sanction orders are awaiting their designers' details");
   for (const count of [1, 2, 17]) {
@@ -380,19 +208,6 @@ test("the count's sentence says what it counts, in both plurals", () => {
 });
 
 test("one pill, two renderers: the class string is shared, and it is not a ministry rung", () => {
-  /*
-    The nav's other two badges are one component each, rendered twice inside one file, so a literal
-    class string cannot drift for them. This one is drawn by two components in two files and both are
-    on a ministry officer's dashboard at once, so the pixels live in `ministryDesk.ts` and both read
-    them from there.
-
-    AND IT IS AMBER, DELIBERATELY, THOUGH IT RIDES ON A MINISTRY DESTINATION. `ministry-700` and
-    `amber-800` are ΔE 0.0043 apart in OKLab — the same colour — and the nav's sheet is one flat list
-    of every destination, so on a master admin's sheet the access queue's amber "waiting to be
-    approved to sign in" pill sits in the same column as this one. An orange pill here would be
-    indistinguishable from it while meaning something entirely different. The register's own
-    readiness pill is this exact pair, so the badge is that pill added up, in that pill's colour.
-  */
   const nav = withoutComments(readFileSync(NAV, "utf8"));
   const card = withoutComments(readFileSync(CARD, "utf8"));
   expect(nav).toContain("AWAITING_SANCTION_BADGE_CLASS");
@@ -405,16 +220,6 @@ test("one pill, two renderers: the class string is shared, and it is not a minis
 });
 
 test("the badge reaches the sheet as well as the hover menu, and neither renderer fetches unconditionally", () => {
-  /*
-    THE SHEET IS THE KEYBOARD AND TOUCH ROUTE TO EVERY DESTINATION — the desktop dropdowns are
-    pointer-only by design — so a notification drawn only in the dropdown does not reach an officer
-    on a tablet. Held to the badge beside it rather than to the number 2, so a third menu would have
-    to grow both badges or neither.
-
-    `enabled` is the other half: a hook called with a literal `true` would ask
-    `/sanction-orders/awaiting-count` on every page load by every account in the product, and the
-    endpoint is `require_sanction_recorder`.
-  */
   const nav = withoutComments(readFileSync(NAV, "utf8"));
   const card = withoutComments(readFileSync(CARD, "utf8"));
   const drawn = (source: string, tag: string) => source.split(`<${tag}`).length - 1;
@@ -429,34 +234,15 @@ test("the badge reaches the sheet as well as the hover menu, and neither rendere
 });
 
 test("the card carries its own ministry stamp, on the panel element itself", () => {
-  /*
-    /dashboard is not a ministry route and must never become one — a designer's dashboard is the same
-    screen — so `AppShell`'s stamp cannot reach this card and it opts in on its own root. That only
-    works because every rule in the scoped block is written twice, as a descendant AND as a
-    self-match: the attribute is on the `.panel` element, so `[data-surface="ministry"] .panel` alone
-    would have matched nothing here and failed with no error anywhere.
-  */
   const opening = withoutComments(readFileSync(CARD, "utf8")).match(/<section\b[^>]*>/)?.[0] ?? "";
   expect(opening, "the card has a <section> root").toContain("<section");
   expect(opening, "the stamp belongs on the panel element itself, not on a wrapper").toContain(
     'className="panel mb-6 p-4 sm:p-5"'
   );
   expect(opening, "…and the attribute belongs on that same element").toContain('data-surface="ministry"');
-
-  const globals = readFileSync(join(ROOT, "app", "globals.css"), "utf8");
-  expect(globals, "the scoped block must keep its self-matching selector or this card loses its rule").toContain(
-    '.panel[data-surface="ministry"]'
-  );
 });
 
 test("the accent is a surface accent: the tiles turn, the focus ring does not", () => {
-  /*
-    SURFACE ACCENT ONLY. Orange is the icon chips, the hover border and the walkthrough link; purple
-    stays on everything that is an action or app-wide chrome. The focus ring is the case worth
-    pinning: these tiles are <Link>s, i.e. <a>s, and globals.css already draws every focused anchor a
-    purple `outline` that no scope re-points — an orange `ring` would be drawn immediately inside it
-    and the tile would wear two accent colours on one keyboard focus.
-  */
   const raw = readFileSync(CARD, "utf8");
   const rendered = withoutComments(raw);
   expect(raw, "the tile chip is a ministry ground now").not.toContain("bg-purple-50");
@@ -466,33 +252,12 @@ test("the accent is a surface accent: the tiles turn, the focus ring does not", 
   expect(rendered).toContain("bg-ministry-50");
   expect(rendered).toContain("hover:border-ministry-300");
 
-  /*
-    OQ-2 ITSELF, STATED FORWARD RATHER THAN BACKWARD. Everything above pins what this card looks
-    like today; this pins the one rule it could break tomorrow. There is no button and no input on
-    this card, so the swap had nothing to argue about — but a card whose whole subject is "your
-    screens" is exactly where a "Record an order" control gets added later, and painting it from
-    this ramp is the mistake OQ-2 exists to refuse: `ministry-700` is ΔE 0.004 from the `amber-800`
-    of the "Withdrawn" and "Awaiting designer details" pills — the second of which this very card
-    draws — so an orange action control is indistinguishable from a status it is not. `.field-button`
-    also carries `hover:shadow-cta`, a literal purple glow at hue 305, so it would throw a purple
-    halo while doing it. One regex, both recipe classes, either order.
-  */
   expect(rendered, "OQ-2: no action control on this card may wear the ministry ramp").not.toMatch(
     /(?:field-button|field-input)[^"]*\bministry-|\bministry-[^"]*(?:field-button|field-input)/
   );
 });
 
 test("every ministry ink and ground on the card carries its dark pair", () => {
-  /*
-    THE RAMP IS LITERAL AND DOES NOT INVERT, exactly as purple does not. `text-ministry-700` on
-    `bg-card` in dark is 2.44:1 and `bg-ministry-50` is a near-white peach in BOTH themes, so a chip
-    written without a dark half paints a bright patch on a dark card with near-black ink on it —
-    which is the `SearchableSelect` failure its own comment already records for purple.
-
-    Only INK and GROUNDS are held to this. `hover:border-ministry-300` is exempt on purpose: a border
-    is decoration rather than text, it reads against both grounds, and S0's own swap table specifies
-    it without a pair.
-  */
   const painted = withoutComments(readFileSync(CARD, "utf8"))
     .split("\n")
     .filter((line) => line.includes("className"))

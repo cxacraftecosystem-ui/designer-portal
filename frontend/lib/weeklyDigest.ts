@@ -1,16 +1,3 @@
-/**
- * The Monday summary for reviewers and officials — types, requests and the pure decisions the
- * Settings card and the `/digest/[id]` page make, apart from React so
- * `e2e/weekly-digest-unit.spec.ts` can call them.
- *
- * The server builds and sends it (`backend/app/services/weekly_digest.py`); the routes are the same
- * on the documentation portal and on both handsets:
- *
- *   GET  /notifications/digest              -> DigestPreference
- *   PUT  /notifications/digest  { enabled } -> DigestPreference (403 when not eligible)
- *   GET  /notifications/digests/{id}        -> Digest (404 for anyone but its owner)
- */
-
 import { apiFetch } from "@/lib/api";
 import { safeLink } from "@/lib/inAppNotifications";
 
@@ -91,7 +78,6 @@ export async function fetchDigestPreference(): Promise<DigestPreference> {
   try {
     return readPreference(await apiFetch<Partial<DigestPreference>>(DIGEST_PREFERENCE_PATH));
   } catch {
-    // An older API or a failed read: draw no switch rather than one that cannot work.
     return { ...NOT_ELIGIBLE };
   }
 }
@@ -106,14 +92,11 @@ export async function fetchDigest(id: string): Promise<Digest> {
   return apiFetch<Digest>(digestPath(id));
 }
 
-// ── The Settings card ────────────────────────────────────────────────────────────────────────────
-
 export const DIGEST_LABEL = "Weekly summary";
 export const DIGEST_SWITCH = "Send it to me";
 export const DIGEST_DESCRIPTION = "Mondays at 08:00: what waits for you, what is overdue, what came in.";
 export const LATEST_LINK = "Open last Monday's summary";
 
-/** What the card draws, or null for an account the summary is not for. */
 export function digestCardView(state: DigestPreference | null): {
   description: string;
   channel: string;
@@ -127,7 +110,6 @@ export function digestCardView(state: DigestPreference | null): {
   };
 }
 
-/** The optimistic switch: show the choice at once, keep it on success, put the old one back on failure. */
 export function optimistic(state: DigestPreference, enabled: boolean): DigestPreference {
   return { ...state, enabled };
 }
@@ -144,11 +126,8 @@ export async function toggleDigest(
   }
 }
 
-// ── The page ─────────────────────────────────────────────────────────────────────────────────────
-
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** "Week of 19 Oct" from "2026-10-19", read as a calendar date (never through `new Date`). */
 export function weekTitle(weekStart: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(weekStart || "");
   if (!match) return "Weekly summary";
@@ -157,7 +136,6 @@ export function weekTitle(weekStart: string): string {
 
 export type DigestTile = { key: string; label: string; figure: string; note: string | null };
 
-/** The four tiles, in order: Waiting, Overdue, New, coverage. */
 export function digestTiles(digest: Pick<Digest, "sections" | "coverage">): DigestTile[] {
   const total = (key: string) => digest.sections.find((section) => section.key === key)?.total ?? 0;
   const coverage = digest.coverage;
@@ -179,7 +157,6 @@ export function digestTiles(digest: Pick<Digest, "sections" | "coverage">): Dige
   ];
 }
 
-/** A section's rows: lines with a count, then at most five items. Links are app paths only. */
 export function sectionRows(section: DigestSection): { lines: DigestLine[]; items: DigestItem[] } {
   const lines = (section.lines ?? []).filter((line) => line.count > 0 && safeLink(line.link) !== null);
   const items = (section.items ?? []).filter((item) => safeLink(item.link) !== null).slice(0, 5);

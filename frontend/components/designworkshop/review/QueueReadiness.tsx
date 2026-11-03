@@ -1,11 +1,5 @@
 "use client";
 
-/**
- * HOW READY A QUEUED REPORT IS, ON ITS ROW (B4): a completeness bar with its sentence, and word chips
- * for this round's notes, the inspectors' verdicts and how long it has waited — so a reader can
- * choose what to open without opening each one. The bar is decoration; the sentence is the signal.
- */
-
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import type { DwSummary } from "@/lib/designWorkshops";
 import { readinessChips, readinessSentence, type DwReadiness } from "@/lib/reviewAids";

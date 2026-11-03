@@ -1,26 +1,8 @@
 "use client";
 
-/**
- * The two light halves of the stage page's document preview: whether it is open, and the two-pane
- * layout it sits in.
- *
- * SPLIT OUT OF `StageDocumentPreview.tsx` SO THE STAGE FORM CAN DRAW WITHOUT THE PREVIEW'S WEIGHT. The
- * preview itself brings the report's page renderer, its chart and table blocks and the on-device
- * report builder — a large share of the script the stage form used to wait for on every open — and
- * it is closed by default. The stage page now imports these two from here and loads the preview only
- * once a designer opens it (or arrives with it remembered open). `StageDocumentPreview.tsx` re-exports
- * both, so nothing that imported them from there has to change.
- */
-
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, FileText } from "lucide-react";
 
-/**
- * The preview's one control while it is closed, and its heading while it is open.
- *
- * Shared by the preview itself and by {@link StagePreviewShell}, so the button a designer presses
- * before the preview's script has arrived is the very same button they press after.
- */
 export function PreviewDisclosureButton({
   open,
   onToggle,
@@ -28,7 +10,6 @@ export function PreviewDisclosureButton({
 }: {
   open: boolean;
   onToggle: () => void;
-  /** Called when the pointer arrives on the button or focus does — the moment to fetch what it opens. */
   onIntent?: () => void;
 }) {
   return (
@@ -54,14 +35,6 @@ export function PreviewDisclosureButton({
   );
 }
 
-/**
- * The preview panel drawn by the stage page before the preview's own script is loaded.
- *
- * Closed, it is exactly the closed preview — the same panel and the same button — so nothing moves
- * when the real one replaces it. Open (the script is on its way), it says the document is being
- * built, which is what the real panel says first anyway. With `failure`, the script could not be
- * fetched, and the panel says that instead — the close button still works either way.
- */
 export function StagePreviewShell({
   open,
   onOpenChange,
@@ -89,21 +62,14 @@ export function StagePreviewShell({
   );
 }
 
-/** Per-viewer convenience: whether the preview was left open. Never state anything depends on. */
 const OPEN_KEY = "dw_stage_preview_open";
 
-/**
- * Whether the preview is open, remembered in this browser — a designer who works with the paper
- * beside the form should not have to reopen it on every one of 22 stages. Closed by default: the
- * first open of every stage by every designer must not pay for building the whole document.
- */
 export function useStagePreviewOpen(): [boolean, (next: boolean) => void] {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     try {
       if (window.localStorage.getItem(OPEN_KEY) === "1") setOpen(true);
     } catch {
-      // Blocked storage: the panel simply starts closed.
     }
   }, []);
   const set = useCallback((next: boolean) => {
@@ -111,20 +77,11 @@ export function useStagePreviewOpen(): [boolean, (next: boolean) => void] {
     try {
       window.localStorage.setItem(OPEN_KEY, next ? "1" : "0");
     } catch {
-      // Not remembered; nothing else changes.
     }
   }, []);
   return [open, set];
 }
 
-/**
- * The stage form and the paper, side by side from `lg` up while the preview is open.
- *
- * Two independently scrolling panes, the house pattern for two views of one thing (the map page,
- * §10.3): the form scrolls with the page, the paper is `sticky` and scrolls inside itself with
- * `overscroll-contain`, so reaching the end of the paper never lurches the form. Below `lg` there is
- * no room for two panes and the preview sits above the form as before.
- */
 export function StagePreviewLayout({ open, preview, children }: { open: boolean; preview: ReactNode; children: ReactNode }) {
   return (
     <div
@@ -137,9 +94,7 @@ export function StagePreviewLayout({ open, preview, children }: { open: boolean;
       <div
         className={
           open
-            ? // A BOUNDED pane that does not itself scroll: the preview inside it pins its controls
-              // and scrolls only the paper (`ReportSheets`' `scrollPages`), so nothing a designer
-              // needs to reach — the page count, the zoom, "Show every page" — ever scrolls away.
+            ?
               "lg:sticky lg:top-24 lg:order-2 lg:flex lg:h-[calc(100dvh-7.5rem)] lg:flex-col"
             : undefined
         }

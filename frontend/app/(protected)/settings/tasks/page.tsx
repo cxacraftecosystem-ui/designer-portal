@@ -21,23 +21,6 @@ import { isAdmin } from "@/lib/permissions";
 import type { PageResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-/**
- * The task assignment board — hand work out, then hold it to account.
- *
- * Three views over one scope. The workshop dropdown at the top is that scope: it narrows the artisan
- * picker in the builder, the rollup in the accountability view and the assignments listed below,
- * because "who is behind" is a question you ask about a fieldwork trip, not about the whole archive.
- *
- * The accountability tab is the reason this page exists. `progressCount` is what a researcher says
- * they have done and `derivedCount` is what the repository can actually find them having produced;
- * an admin needs to see the two side by side, because a task marked done with nothing behind it is
- * exactly the failure this board is meant to catch.
- *
- * ASSIGNING is admin work, so this route is admin chrome (ADMIN_CHROME_ROUTES) and AppShell hides
- * it while admin view is off, offering /tasks instead. /tasks itself is never chrome: everybody can
- * be an assignee. The `isAdmin` guard below mirrors `require_admin` and the toggle never widens it.
- */
-
 type TabKey = "assign" | "progress" | "batches";
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -67,28 +50,6 @@ export default function TaskAssignmentBoardPage() {
   const [batchesError, setBatchesError] = useState<string | null>(null);
   const [batchPage, setBatchPage] = useState(1);
 
-  /**
-   * What the admin has typed into "Find a person, workshop or artisan", and the settled copy of it
-   * that actually goes on the wire.
-   *
-   * ── WHY THIS BOX EXISTS AT ALL ──────────────────────────────────────────────────────────────────
-   * Audit 2026-08-15 (MAJOR). `GET /tasks/options` reads the first 500 users, 200 workshops and 500
-   * artisans and returns whatever fell inside. On this repository's own measured population — 3632
-   * accounts and 731 artisans (docs/OPEN_FINDINGS.md, 2026-08-13) — two of those cuts are live
-   * today, so an admin looking for a colleague whose name sorts late in the alphabet was shown an
-   * empty picker and no explanation. `AssignmentBuilder` filters in the BROWSER over whatever
-   * arrived, which cannot reach past a cut by construction: there was no second request it could
-   * make. The route now takes `search` and folds it into the same WHERE as the `take`, which is the
-   * only placement that works — searching after the take searches the first 500 names of the
-   * alphabet and stops at exactly the ceiling the parameter exists to get past.
-   *
-   * ── WHY TWO PIECES OF STATE ─────────────────────────────────────────────────────────────────────
-   * One request per keystroke against three tables, one of which is the user table, is not a search
-   * box — it is a load generator. 350 ms is the interval `/artisans` already debounces its live
-   * search at, and using a second number here would make two screens in the same app feel
-   * differently responsive for no reason. `appliedSearch` is what `loadOptions` depends on, so an
-   * abandoned prefix never becomes a request.
-   */
   const [pickerSearch, setPickerSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   useEffect(() => {
@@ -96,8 +57,6 @@ export default function TaskAssignmentBoardPage() {
     return () => clearTimeout(timer);
   }, [pickerSearch]);
 
-  // The artisan picker narrows to the chosen workshop, so the options call is re-run on every change
-  // — and on every settled search term, which narrows all three capped lists at the server.
   const loadOptions = useCallback(async () => {
     if (!permitted) return;
     setOptionsLoading(true);
@@ -154,26 +113,10 @@ export default function TaskAssignmentBoardPage() {
     loadBatches();
   }, [loadBatches]);
 
-  // A new workshop scope invalidates the page the batch list was sitting on.
   useEffect(() => {
     setBatchPage(1);
   }, [workshopId]);
 
-  /**
-   * The workshop currently in scope, remembered ACROSS a search that no longer returns it.
-   *
-   * The search box narrows the workshop list too, and the scope is chosen from that list — so
-   * without this, typing an artisan's name after picking a workshop dropped the workshop out of
-   * `options.workshops`, the `Dropdown` found no option matching `workshopId` and fell back to its
-   * placeholder ("All workshops") while the page, the rollup and the batch list all stayed narrowed
-   * to a workshop the screen no longer named. A control showing "All workshops" over a filtered
-   * board is worse than the cut this search box was added to fix.
-   *
-   * This is `mergeById`'s rule (components/data/cappedList) in the one place a shared helper cannot
-   * be used, because the pinned row must survive a list it is genuinely absent from: additive, and
-   * a narrower list must never be allowed to look like a shorter world. Cleared when the scope is
-   * cleared, so it can never accumulate.
-   */
   const [pinnedWorkshop, setPinnedWorkshop] = useState<TaskOptions["workshops"][number] | null>(null);
   useEffect(() => {
     if (!workshopId) {
@@ -271,7 +214,6 @@ export default function TaskAssignmentBoardPage() {
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{optionsError}</div>
       ) : null}
 
-      {/* Step 1 — the scope every view below inherits. */}
       <section className="panel mb-4 grid gap-3 p-4 md:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] md:items-end">
         <div className="grid gap-1">
           <div className="flex items-center gap-3">
@@ -282,11 +224,6 @@ export default function TaskAssignmentBoardPage() {
           </div>
           <div className="pl-9">
             <FieldBlock label="Scope everything below to">
-              {/* Filters the whole page in place, so it must not jump focus into the builder.
-                  `searchable` because the options are workshops, i.e. records: the list is capped at
-                  200 just below this comment, which is not a length anybody scrolls to find one
-                  title, and leaving the filter box to the option count would withdraw it on a
-                  deployment that has filed seven workshops so far. */}
               <Dropdown
                 value={workshopId}
                 onChange={setWorkshopId}
@@ -297,13 +234,6 @@ export default function TaskAssignmentBoardPage() {
                 placeholder={optionsLoading ? "Loading workshops..." : "All workshops"}
               />
             </FieldBlock>
-            {/*
-              The workshop list is capped at 200 and this repository holds 196 measured on
-              2026-08-15 — four rows from the cut, on the list of every workshop ever run, which
-              only grows. Said HERE and not once at the top of the page, because a notice has to sit
-              at the control it is about: the reader who cannot find their workshop is looking at
-              this dropdown, not at a paragraph above the fold.
-            */}
             <CappedListNotice cuts={[flagCutNotice(options?.workshopsTruncated, "workshops", appliedSearch)]} />
           </div>
         </div>
@@ -312,16 +242,6 @@ export default function TaskAssignmentBoardPage() {
             label="Find a person, workshop or artisan"
             hint="Searches everyone, including names that are not on the lists below."
           >
-            {/*
-              ONE BOX FOR ALL THREE PICKERS, because it is one request. `GET /tasks/options` takes a
-              single `search` and applies it to the users (name OR email), the workshops (title OR
-              place) and the artisans (name OR place) in the same call — so a box per picker would be
-              three controls posting the same parameter and overwriting each other's terms.
-
-              It does NOT jump focus and it does not submit: this narrows the lists in place, exactly
-              like the workshop dropdown beside it, and stealing focus into the builder mid-search is
-              what `advanceOnSelect={false}` exists to prevent on that control.
-            */}
             <TextInput
               type="search"
               value={pickerSearch}
@@ -374,17 +294,9 @@ export default function TaskAssignmentBoardPage() {
         <AssignmentBuilder
           options={options}
           loading={optionsLoading}
-          // WHETHER THE READ FAILED, not just whether it is done. Without it the builder's three
-          // pickers turned a failed `/tasks/options` into "Nobody ranked below you", "No active
-          // questionnaire sections" and "No artisans yet" -- three confident claims about the
-          // repository produced by a request that never arrived. The banner above says what went
-          // wrong; the pickers have to stop saying something else.
           optionsFailed={Boolean(optionsError)}
           workshopId={workshopId}
           workshopTitle={workshopTitle}
-          // The settled term, not `pickerSearch`: the builder only uses it to word its truncation
-          // notices, and those describe the lists it is HOLDING — which came back for the term that
-          // was actually sent. Quoting a half-typed prefix would name a search nobody ran.
           pickerSearch={appliedSearch}
           onAssigned={onAssigned}
         />

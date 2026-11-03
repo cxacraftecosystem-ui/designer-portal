@@ -1,11 +1,3 @@
-/**
- * Likely-duplicate artisans: the form's check, the save-time hold, and the admin review and merge.
- *
- * The SERVER is the only scorer (`backend/app/services/artisan_duplicates.py`). This file asks it and
- * shapes the answers; nothing here scores a pair. The pure helpers at the bottom are what the unit
- * specs pin (`e2e/duplicates-form-unit.spec.ts`, `e2e/merge-table-unit.spec.ts`).
- */
-
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 
 export type DuplicateBand = "VERY_LIKELY" | "LIKELY" | "POSSIBLE";
@@ -47,7 +39,6 @@ export type DuplicateCheckRequest = {
   excludeArtisanId?: string | null;
 };
 
-/** 409 `artisan_possible_duplicate` from `POST /artisans`. */
 export type PossibleDuplicateHold = {
   code: "artisan_possible_duplicate";
   message: string;
@@ -96,7 +87,6 @@ export type MergeField = {
   b: string | null;
   default: MergeChoice;
   options: MergeChoice[];
-  /** The default for each possible survivor (an addition beside `default`). */
   defaults?: { A: MergeChoice; B: MergeChoice };
   locked?: boolean;
 };
@@ -173,8 +163,6 @@ export type UndoResult = {
   keptSurvivorEdits: string[];
 };
 
-// ── Requests ────────────────────────────────────────────────────────────────────────────────
-
 const post = (body: unknown) => ({ method: "POST", body: JSON.stringify(body) });
 
 export async function checkDuplicates(request: DuplicateCheckRequest): Promise<DuplicateCandidate[]> {
@@ -237,9 +225,6 @@ export function undoMerge(id: string): Promise<UndoResult> {
   return apiFetch<UndoResult>(`/artisan-merges/${encodeURIComponent(id)}/undo`, post({}));
 }
 
-// ── Pure helpers ────────────────────────────────────────────────────────────────────────────
-
-/** The fields a check depends on, as one comparable string: a blur re-checks only when it moved. */
 export function checkKey(request: DuplicateCheckRequest): string {
   const norm = (value: string | null | undefined) => (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
   return [
@@ -253,12 +238,10 @@ export function checkKey(request: DuplicateCheckRequest): string {
   ].join("|");
 }
 
-/** Whether a check is worth sending: a name of two letters or more. */
 export function checkReady(request: DuplicateCheckRequest): boolean {
   return (request.name ?? "").trim().length >= 2;
 }
 
-/** The candidates still to show: not already set aside as "Different person", best first, at most 3. */
 export function visibleCandidates(candidates: DuplicateCandidate[], dismissed: ReadonlySet<string>, limit = 3): DuplicateCandidate[] {
   return candidates
     .filter((candidate) => !dismissed.has(candidate.artisan.id))
@@ -266,21 +249,15 @@ export function visibleCandidates(candidates: DuplicateCandidate[], dismissed: R
     .slice(0, limit);
 }
 
-/**
- * The `duplicateAcknowledged` a create sends: the ids set aside as "Different person", or `[]` when
- * nothing was. Always a list on a create (a list is what asks the server to hold), never on an edit.
- */
 export function acknowledgedIds(dismissed: ReadonlySet<string>): string[] {
   return Array.from(dismissed).slice(0, 20);
 }
 
-/** One line under a candidate's name: place · craft · born, with whatever is known. */
 export function candidateLine(candidate: DuplicateCandidate): string {
   const a = candidate.artisan;
   return [a.place || a.district, a.craft, a.birthYear ? `born ${a.birthYear}` : null].filter(Boolean).join(" · ");
 }
 
-/** The hold behind a 409, or null when the failure was something else. */
 export function possibleDuplicateHold(error: unknown): PossibleDuplicateHold | null {
   if (!(error instanceof ApiError) || error.status !== 409) return null;
   const payload = error.payload as { detail?: unknown } | null | undefined;
@@ -290,7 +267,6 @@ export function possibleDuplicateHold(error: unknown): PossibleDuplicateHold | n
   return hold.code === "artisan_possible_duplicate" && Array.isArray(hold.candidates) ? hold : null;
 }
 
-/** The survivor of `GET /artisans/{id}`'s 404 `artisan_merged`, or null. */
 export function mergedSurvivorId(error: unknown): string | null {
   if (!(error instanceof ApiError) || error.status !== 404) return null;
   const payload = error.payload as { detail?: unknown } | null | undefined;
@@ -298,7 +274,6 @@ export function mergedSurvivorId(error: unknown): string | null {
   return detail && detail.code === "artisan_merged" && typeof detail.survivorId === "string" ? detail.survivorId : null;
 }
 
-/** The default side of every field for a survivor. */
 export function defaultChoices(fields: MergeField[], survivor: "A" | "B"): Record<string, MergeChoice> {
   const out: Record<string, MergeChoice> = {};
   for (const field of fields) {
@@ -311,13 +286,11 @@ export function defaultChoices(fields: MergeField[], survivor: "A" | "B"): Recor
   return out;
 }
 
-/** The value a field will end with, for the preview column. */
 export function resultingValue(field: MergeField, choice: MergeChoice): string | null {
   if (choice === "BOTH") return [field.a, field.b].filter((v) => v && v.trim()).join("\n") || null;
   return choice === "A" ? field.a : field.b;
 }
 
-/** What the merge call sends: only the choosable fields, locked rows left to the server. */
 export function choicesPayload(fields: MergeField[], picks: Record<string, MergeChoice>): Record<string, MergeChoice> {
   const out: Record<string, MergeChoice> = {};
   for (const field of fields) {

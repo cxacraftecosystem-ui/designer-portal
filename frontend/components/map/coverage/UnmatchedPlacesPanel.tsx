@@ -7,11 +7,6 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { createAlias, fetchUnmatched } from "@/components/map/coverage/coverageApi";
 import type { LgdRegister, UnmatchedItem } from "@/components/map/coverage/coverageTypes";
 
-/**
- * Admin only: the place spellings the map could not put in a district. Mapping one saves an alias
- * that applies to every record written that way, and the map refreshes. Nothing is matched for
- * the reader — the suggestion is an exact district name in another state, never a guess.
- */
 export function UnmatchedPlacesPanel({ onMapped }: { onMapped: () => void }) {
   const [items, setItems] = useState<UnmatchedItem[] | null>(null);
   const [register, setRegister] = useState<LgdRegister | null>(null);

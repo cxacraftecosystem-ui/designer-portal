@@ -13,13 +13,6 @@ import {
 } from "@/lib/joinCards";
 import { decodeWorkshopCode, formatWorkshopCodeForPrint, workshopCodeCheck } from "@/lib/workshopCodes";
 
-/**
- * JOIN CARDS ON THE WEB — the decoder that must agree with the server and the handset on the canonical
- * string, and the readings of the server's answers that must never paint a provisional foothold as
- * membership. The vector is the handset's (`DwJoinCardTest.CARD`), so the two ports are held to one
- * card; the server recomputes the same check over the same canonical form.
- */
-
 const WORKSHOP_ID = "cmsik2jg8000eh8xc1lcy661a";
 const SECRET = "9TQ4V0KZ7BXMHR3NDPJ2WY";
 const CARD = "DPW2:J:CMSIK2JG8000EH8XC1LCY661A.9TQ4V0KZ7BXMHR3NDPJ2WY:7AWF";
@@ -33,7 +26,6 @@ test.describe("decoding a join card", () => {
   test("what a person does to it on the way in is forgiven: case, the print grouping, look-alike letters", () => {
     expect(decodeJoinCard(formatWorkshopCodeForPrint(CARD))).toEqual({ ok: true, workshopId: WORKSHOP_ID, code: CARD });
     expect(decodeJoinCard(CARD.toLowerCase())).toEqual({ ok: true, workshopId: WORKSHOP_ID, code: CARD });
-    // `O` for `0` in the SECRET is folded back; the id is never folded.
     const misread = CARD.replace(SECRET, SECRET.replace("0", "O"));
     expect(decodeJoinCard(misread)).toEqual({ ok: true, workshopId: WORKSHOP_ID, code: CARD });
   });
@@ -43,7 +35,6 @@ test.describe("decoding a join card", () => {
     expect(asRecord.ok).toBe(false);
     expect(looksLikeJoinCard(CARD)).toBe(true);
     expect(looksLikeJoinCard(formatWorkshopCodeForPrint(CARD))).toBe(true);
-    // The workshop's own tag is a record code and stays with the record parser.
     expect(looksLikeJoinCard("DPW1:G:CMSIK2JG8000EH8XC1LCY661A:0PK3")).toBe(false);
   });
 

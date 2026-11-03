@@ -1,14 +1,5 @@
-/**
- * The coverage map's wire shapes — `GET /map/coverage` and its sub-routes, exactly as
- * `backend/app/services/coverage.py` builds them. Field for field the Field Repository's
- * `coverageTypes.ts`; the designer portal adds the optional fields only it sends (design and planned
- * workshops, the Field Repository's `peer` row, the admin register) and never renames a shared one.
- * Android mirrors this file in `data/CoverageModels.kt`.
- */
-
 export type CoverageLevel = "STATE" | "DISTRICT";
 
-/** How a unit's outline is drawn: its own polygon, the parent district's, or its state's. */
 export type PolygonSource = "OWN" | "PARENT" | "STATE";
 
 export type CoverageCounts = {
@@ -18,12 +9,10 @@ export type CoverageCounts = {
   products: number;
   tools: number;
   media: number;
-  /** Designer portal only. */
   designWorkshops?: number;
   plannedWorkshops?: number;
 };
 
-/** Designer portal only: the Field Repository's figures for the same unit, never added to ours. */
 export type PeerCounts = {
   workshops: number;
   artisans: number;
@@ -78,7 +67,6 @@ export type UnmatchedItem = {
   suggestion: { stateLgd: number; districtLgd: number | null; reason: string } | null;
 };
 
-/** Designer portal only: whether the Field Repository's figures were asked for and reached. */
 export type PeerStatus = "OFF" | "OK" | "UNAVAILABLE";
 
 export type CoverageResponse = {
@@ -102,7 +90,6 @@ export type CoverageResponse = {
   markersTruncated: boolean;
   gaps: CoverageGaps;
   unmatched: { count: number; unplaced?: number; sample?: UnmatchedItem[] };
-  /** Designer portal only. */
   peer?: { status: PeerStatus; asOf: string | null; unknownUnits?: number; schemeIgnored?: boolean };
   truncated: boolean;
 };
@@ -132,7 +119,6 @@ export type UnitRecordsResponse = {
   peerHref: string | null;
 };
 
-/** Designer portal only: the LGD register the admin alias pickers choose from. */
 export type LgdRegister = {
   states: Array<{ lgd: number; name: string }>;
   districts: Array<{ lgd: number; stateLgd: number; name: string }>;
@@ -140,10 +126,8 @@ export type LgdRegister = {
 
 export type UnmatchedResponse = { items: UnmatchedItem[]; total: number; register?: LgdRegister };
 
-/** What the choropleth colours by. `records` is read as `all` for saved links (`coverageMath`). */
 export type CoverageMetric = "workshops" | "artisans" | "all";
 
-/** The filters the view keeps in the URL. `peer` is the designer portal's Field Repository switch. */
 export type CoverageQuery = {
   level: CoverageLevel;
   craftCode: string[];

@@ -15,12 +15,6 @@ import {
   type DuplicateCandidate
 } from "@/lib/duplicates";
 
-/*
-  THE ARTISAN FORM'S "ALREADY RECORDED?" CARD. The server scores; the form shows at most three rows,
-  sets them aside on "Different person", and every create carries the set-aside ids as
-  `duplicateAcknowledged` ([] when nothing was shown) — the list is what lets the server hold.
-*/
-
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 

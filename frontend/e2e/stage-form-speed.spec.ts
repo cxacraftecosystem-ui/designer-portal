@@ -7,62 +7,6 @@ import { expect, test, type APIRequestContext, type BrowserContext, type Page } 
 import { API, CREDENTIALS_MISSING, EMAIL, apiToken, bearer, signInWithToken } from "./support/session";
 import { greyPng } from "./support/qrPhotograph";
 
-/**
- * HOW FAST THE DESIGN-WORKSHOP STAGE FORM OPENS, AND HOW FAST IT ANSWERS A KEY — measured, not felt.
- *
- * The stage form is the screen designers spend their day on, and the UX audit timed it at ~4.6 s to
- * open against a 1.3 s median for every other screen, with ~85 ms per keystroke. This spec is the
- * instrument the speed work was done with and the one to re-run before anybody claims it regressed
- * or improved. It is NOT a pass/fail gate: timings on a developer laptop are noise around a trend,
- * and a gate that flakes is a gate people switch off. It prints a table and writes
- * `test-results/stage-form-speed.json`; the only assertions are that the form actually opened.
- *
- * NOT A `-unit` SPEC, deliberately: it needs the API, the database and a built frontend, so it is
- * outside `npm run test:unit` by its name. It is also SKIPPED unless `E2E_STAGE_SPEED=1`, because it
- * seeds a 22-stage workshop with 40 photographs and has no business running in an ordinary e2e pass.
- *
- * ── THE COMMAND ─────────────────────────────────────────────────────────────────────────────────
- *
- *   npx next build && npx next start -p 3000          # a BUILD: dev-mode timings mean nothing
- *   E2E_STAGE_SPEED=1 E2E_EMAIL=admin2@example.org E2E_PASSWORD='LocalDev123!' \
- *     npx playwright test e2e/stage-form-speed.spec.ts
- *
- * Optional: `E2E_CPU_THROTTLE=4` slows the CPU four times through the DevTools protocol (a modest
- * field laptop); `E2E_STAGE_KEY=<key>` measures a named stage instead of stage 4 (see `DEFAULT_STAGE`);
- * `E2E_SPEED_PG_CONTAINER` names the Postgres container (default `designer-portal-pg`) and
- * `E2E_SPEED_PG_DB` the database the API is pointed at; `E2E_STAGE_SPEED_WORKSHOP=<id>` re-measures a
- * workshop an earlier run seeded (its id is in the JSON), so a before and an after read the same rows;
- * `E2E_STAGE_SPEED_PROFILE=1` adds a CPU profile of the typing (readable against a
- * `next build --no-mangling` build).
- *
- * ── WHAT IS SEEDED ──────────────────────────────────────────────────────────────────────────────
- *
- * One workshop, every one of the 22 stages filled from the registry itself (so a field added to
- * `stage_definitions.py` is seeded without this file changing): every singleton field answered,
- * every collection given rows, rich text with headings, paragraphs and a table, and 40 photographs
- * spread over the measured stage's image fields. The photographs are `MediaFile` rows written
- * straight into the database — the local stack's object store is not needed and is usually not
- * running — and their bytes are served to the browser by a route below, so every picture still
- * costs a real request and a real decode.
- *
- * ── WHAT IS MEASURED ────────────────────────────────────────────────────────────────────────────
- *
- * - **Open, cold**: a hard load of the stage URL in a browser that has never held this workshop
- *   (empty IndexedDB) — the first open on a device, which waits for the server's copy.
- * - **Open, warm**: the same URL again in the same browser — every later open.
- * - **Ready** = the "Save stage" button and the first stage box both enabled. **Interactive** = ready,
- *   and the main thread then free of long tasks (>50 ms) for 500 ms; it is the later of the two.
- *   **Settled** = the UX audit's measure: nothing in flight, and no request finished and no long task
- *   ended for 500 ms.
- * - **Requests**: every request the page made until settled, split API / script / image, with
- *   the API's own time per call (request start to first byte) and its payload size.
- * - **Script**: compressed and decoded bytes of every `/_next/static` script the route loaded.
- * - **Keystroke**: 40 characters typed into a plain text box and into the rich-text editor; each is
- *   timed from the key event to the frame after the next paint (`requestAnimationFrame` then a task),
- *   which is the latency a designer feels, including React's render and the browser's layout.
- * - The same keystroke figure with the document preview open beside the form.
- */
-
 const RUN = process.env.E2E_STAGE_SPEED === "1";
 const CPU_THROTTLE = Number(process.env.E2E_CPU_THROTTLE ?? 1);
 const PG_CONTAINER = process.env.E2E_SPEED_PG_CONTAINER ?? "designer-portal-pg";
@@ -87,8 +31,6 @@ type Field = {
 type Entity = { key: string; cardinality: "SINGLETON" | "COLLECTION"; fields: Field[] };
 type Stage = { key: string; number: number; title: string; entities: Entity[] };
 type Registry = { enums: Record<string, { value: string }[]>; stages: Stage[] };
-
-/* ── Seeding ─────────────────────────────────────────────────────────────────────────────────── */
 
 const SENTENCES = [
   "The cluster works with handloom cotton and natural dyes sourced from within twenty kilometres.",
@@ -129,7 +71,6 @@ function clip(text: string, field: Field): string {
   return field.maxLength ? text.slice(0, field.maxLength) : text;
 }
 
-/** A plausible answer for one field, or undefined to leave it blank (references, files, recordings). */
 function answer(field: Field, registry: Registry, seed: number, photos: () => string[]): unknown {
   if (field.deprecated || field.derivedKind) return undefined;
   const options = field.options ?? (field.enum ? registry.enums[field.enum] : undefined) ?? [];
@@ -182,8 +123,6 @@ function answer(field: Field, registry: Registry, seed: number, photos: () => st
       return many.length ? many : undefined;
     }
     default:
-      // REF, FILE, AUDIO, VIDEO: a reference needs a record and a recording needs bytes; neither
-      // changes what the form costs to draw, so both are left blank rather than faked.
       return undefined;
   }
 }
@@ -194,13 +133,6 @@ function psql(sql: string): string {
   }).trim();
 }
 
-/**
- * The stage measured, and the one the photographs are put on.
- *
- * Stage 4 by default: eighteen rich-text narratives and four photograph galleries, the stage a
- * designer writes most of the report on. `E2E_STAGE_KEY` names another — `WORKSHOP_SETUP` is the one
- * the UX audit timed, `WORKSHOP_PLAN_PARTICIPANTS_OPENING` the participant roster.
- */
 const DEFAULT_STAGE = "CLUSTER_CRAFT_BACKGROUND";
 
 function targetStage(registry: Registry): Stage {
@@ -250,7 +182,6 @@ async function seedWorkshop(request: APIRequestContext, token: string) {
           seed += 1;
           const take = () => {
             if (field.type === "IMAGE") return pool.splice(0, 1);
-            // Singleton galleries take the bulk; a row's gallery takes two.
             const want = entity.cardinality === "SINGLETON" ? 10 : 2;
             return pool.splice(0, Math.min(want, field.maxItems ?? want));
           };
@@ -269,19 +200,6 @@ async function seedWorkshop(request: APIRequestContext, token: string) {
   return { workshopId, stage: target };
 }
 
-/* ── Measuring ───────────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Installed before any page script runs: long tasks, and the per-keystroke clock.
- *
- * TWO CLOCKS PER KEY, both started at the event's own timestamp:
- *  - `__keyWork` stops in the first task after the key's own: everything the page DID for the key —
- *    the handlers, React's render, commit and effects. This is the figure held to the 16 ms budget,
- *    because it is the part the page controls and the part that makes the next key wait.
- *  - `__keys` stops in a task queued from the first animation frame after it — the frame that paints
- *    the key — so it adds style, layout, paint AND the wait for the display's next refresh, which on
- *    a 60 Hz screen is anything up to 16.7 ms on its own. It is what a designer sees.
- */
 function instrument() {
   const w = window as unknown as {
     __longTasks: { start: number; end: number }[];
@@ -296,7 +214,6 @@ function instrument() {
       for (const entry of list.getEntries()) w.__longTasks.push({ start: entry.startTime, end: entry.startTime + entry.duration });
     }).observe({ type: "longtask", buffered: true });
   } catch {
-    // Not supported: interactive degrades to ready.
   }
   window.addEventListener(
     "keydown",
@@ -378,7 +295,6 @@ async function openStage(page: Page, url: string): Promise<OpenResult> {
         .catch(() => ({ url: response.url(), kb: 0 }))
     );
   };
-  // In flight, counted from Playwright's side: Resource Timing only ever sees requests that finished.
   let inFlight = 0;
   const started = () => (inFlight += 1);
   const ended = () => (inFlight = Math.max(0, inFlight - 1));
@@ -389,11 +305,6 @@ async function openStage(page: Page, url: string): Promise<OpenResult> {
   await page.goto(url);
   const readyMs = await waitReady(page);
   const { interactiveMs, longTaskMs } = await waitQuiet(page, readyMs);
-  /*
-    SETTLED — the audit's own measure ("network idle and nothing still loading"): no request in flight,
-    and none finished and no long task ended in the last 500 ms. The later of the three activities is
-    the moment the page stopped working, which is what is reported.
-  */
   let settledMs = interactiveMs;
   for (let waited = 0; waited < 30_000; waited += 100) {
     const last = await page.evaluate(() => {
@@ -434,7 +345,6 @@ async function openStage(page: Page, url: string): Promise<OpenResult> {
   const api = resources
     .filter((r) => r.name.startsWith(API))
     .map((r) => ({
-      // Record ids (cuids) become `:id`; route words such as `schema` and `batch` are kept.
       url: r.name
         .replace(API, "")
         .replace(/\/c[a-z0-9]{20,}(?=[/?]|$)/g, "/:id")
@@ -463,8 +373,6 @@ async function openStage(page: Page, url: string): Promise<OpenResult> {
       compressed: Math.round(scripts.reduce((sum, r) => sum + r.encoded, 0) / 1024),
       decoded: Math.round(scripts.reduce((sum, r) => sum + r.decoded, 0) / 1024)
     },
-    // What the form waited for: the scripts that had started by the time it was ready. The total
-    // above also counts what is fetched afterwards on purpose (the preview, fetched when idle).
     scriptKbBeforeReady: {
       count: scripts.filter((r) => r.start <= readyMs).length,
       compressed: Math.round(scripts.filter((r) => r.start <= readyMs).reduce((sum, r) => sum + r.encoded, 0) / 1024),
@@ -490,7 +398,6 @@ async function typeInto(page: Page, selector: string, text: string) {
     w.__keys = [];
     w.__keyWork = [];
   });
-  // 80 ms between keys is a brisk typist; it keeps one key's frame from being charged to the next.
   await page.keyboard.type(text, { delay: 80 });
   await page.waitForTimeout(400);
   const { keys, work } = await page.evaluate(() => {
@@ -500,7 +407,6 @@ async function typeInto(page: Page, selector: string, text: string) {
   return { work: summarise(work), toPaint: summarise(keys) };
 }
 
-/** A stage field's plain box, and a stage field's rich-text editor — never the recording-place card above them. */
 const TEXT_BOX = "main [data-dw-field] textarea:not([disabled]), main [data-dw-field] input[type=text]:not([disabled])";
 const RICH_TEXT = "main [data-dw-field] [contenteditable=true]";
 
@@ -514,11 +420,6 @@ async function measureKeys(page: Page) {
 
 type ProfileNode = { id: number; callFrame: { functionName: string; url: string; lineNumber: number }; children?: number[] };
 
-/**
- * Where the main thread's time goes while typing — only with `E2E_STAGE_SPEED_PROFILE=1`, and only
- * readable against a build made with `next build --no-mangling` (otherwise every name is one letter).
- * Prints the twenty functions with the most SELF time across the typing run.
- */
 async function profileTyping(page: Page, cdp: import("@playwright/test").CDPSession, selector: string) {
   await cdp.send("Profiler.enable");
   await cdp.send("Profiler.setSamplingInterval", { interval: 100 });
@@ -544,7 +445,6 @@ async function profileTyping(page: Page, cdp: import("@playwright/test").CDPSess
 async function newMeasuredContext(browser: import("@playwright/test").Browser, token: string): Promise<BrowserContext> {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const png = greyPng({ width: 64, height: 48, data: new Uint8ClampedArray(64 * 48).fill(150) });
-  // The local object store is usually not running; the photographs still cost a request and a decode.
   await context.route(/^https?:\/\/(localhost|127\.0\.0\.1|minio):9000\//, (route) =>
     route.fulfill({ status: 200, contentType: "image/png", body: png })
   );
@@ -552,9 +452,6 @@ async function newMeasuredContext(browser: import("@playwright/test").Browser, t
   return context;
 }
 
-// NO TRACE AND NO SCREENSHOTS. The config keeps a trace for failures, and recording one snapshots the
-// DOM in the page on every keyboard action — measured at several milliseconds a key, charged to the
-// very number this spec exists to report.
 test.use({ trace: "off", screenshot: "off", video: "off" });
 
 test.describe("stage form speed", () => {
@@ -564,8 +461,6 @@ test.describe("stage form speed", () => {
 
   test("opens a busy stage and answers a key", async ({ browser, request }) => {
     const token = await apiToken(request);
-    // `E2E_STAGE_SPEED_WORKSHOP=<id>` re-measures a workshop an earlier run seeded, so a before and an
-    // after are taken over the very same rows.
     const reuse = process.env.E2E_STAGE_SPEED_WORKSHOP;
     const { workshopId, stage } = reuse
       ? {
@@ -582,12 +477,10 @@ test.describe("stage form speed", () => {
     await signInWithToken(page, token);
     const cdp = await context.newCDPSession(page);
     if (CPU_THROTTLE > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU_THROTTLE });
-    // The preview starts closed whatever this browser remembered.
     await page.addInitScript(() => {
       try {
         window.localStorage.setItem("dw_stage_preview_open", "0");
       } catch {
-        // Blocked storage leaves it closed anyway.
       }
     });
 
@@ -602,14 +495,12 @@ test.describe("stage form speed", () => {
           }
         : undefined;
 
-    // The same keystrokes with the document beside the form.
     const opening = Date.now();
     await page.getByRole("button", { name: /Document preview/ }).click();
     await page.locator("[data-stage-preview] .rp-sheet").first().waitFor({ timeout: 60_000 });
     const previewMs = Date.now() - opening;
     await page.waitForTimeout(1500);
     const keysWithPreview = await measureKeys(page);
-    // The preview must still be following the form: the words just typed are on its pages.
     await expect(page.locator("[data-stage-preview]")).toContainText("washed twice", { timeout: 15_000 });
 
     const result = {

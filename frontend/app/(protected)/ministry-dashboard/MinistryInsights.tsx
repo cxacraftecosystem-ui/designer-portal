@@ -1,19 +1,5 @@
 "use client";
 
-/**
- * The Ministry dashboard's actionable half (owner decisions C14 and C15, 2026-10-17).
- *
- * - `AttentionCards` — four clickable cards and a "sanctioned" figure. A card is a NARROWING of the
- *   list below it, counted by the server over the reader's scope; pressing it again clears it.
- * - `StateBreakdown` — workshops per state, each a narrowing too.
- * - `MinistryAnalyticsPanel` — the cross-workshop findings, read only, for the Ministry Admin
- *   (whole archive) and Regional Directors (their posted workshops). Closed until asked for.
- * - `StageDataExportPanel` — one spreadsheet of stage data across the filtered workshops, identity
- *   numbers masked, built in the background. Polls while a job is in flight.
- *
- * Selected states carry a tick and a word, never colour alone (rule 5). Every figure is the server's.
- */
-
 import { useCallback, useEffect, useState } from "react";
 import { ChartNoAxesCombined, Check, ChevronDown, Download, FileSpreadsheet } from "lucide-react";
 

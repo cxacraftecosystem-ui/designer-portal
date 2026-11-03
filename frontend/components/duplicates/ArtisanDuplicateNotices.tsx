@@ -8,10 +8,8 @@ import { useToast } from "@/components/ui/Toast";
 import { listPairs } from "@/lib/duplicates";
 import { isAdmin } from "@/lib/permissions";
 
-/** The query flag a merged id's redirect carries, so the survivor's page can say where you are. */
 export const MERGED_FROM_FLAG = "merged";
 
-/** "Possible duplicate — Review", for admins, while an open pair names this artisan. */
 export function PossibleDuplicateBanner({ artisanId }: { artisanId: string }) {
   const { user } = useAuth();
   const admin = isAdmin(user);
@@ -41,7 +39,6 @@ export function PossibleDuplicateBanner({ artisanId }: { artisanId: string }) {
   );
 }
 
-/** One toast on arrival from a merged id: "Merged into {name}". */
 export function MergedIntoToast({ name }: { name: string }) {
   const { toast } = useToast();
   const shown = useRef(false);

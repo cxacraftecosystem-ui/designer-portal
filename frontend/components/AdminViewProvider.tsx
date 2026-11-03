@@ -6,39 +6,12 @@ import { useAuth } from "@/components/AuthProvider";
 import { isAdmin, isContentAdmin, isMasterAdmin } from "@/lib/permissions";
 import type { User } from "@/lib/types";
 
-/**
- * Admin view is a NARROWING switch, never a widening one: it lets an admin browse the app as an
- * ordinary user by hiding admin chrome. Nothing may be unlocked by turning it on — every gate
- * still checks the role/capability first (see NAV_ITEMS in DynamicIslandNav, ROUTE_GUARDS in
- * lib/permissions, and `adminChromeVisible` below), so a non-admin can neither reach the toggle nor
- * gain anything from a forged `adminMode`: `canAdmin` is recomputed from the server-issued role on
- * every render and the stored preference is wiped for anyone who is not an admin.
- */
 type AdminViewValue = {
-  /** True only when the user has admin rights AND has admin view turned on. Gate admin UI on this. */
   adminMode: boolean;
-  /** Whether the user is currently in admin view (false for non-admins). */
   adminView: boolean;
-  /**
-   * Whether this reader is offered Delete — every record, row, file, comment and section delete in
-   * the app reads this. The content admins (`isContentAdmin`), WHETHER OR NOT admin view is on
-   * (owner, 2026-10-21); nobody else, and the server refuses everyone else regardless.
-   */
   canDeleteRecords: boolean;
-  /** Whether the user has any admin capability at all — the toggle is offered to these users only. */
   canAdmin: boolean;
-  /**
-   * The content admins (`isContentAdmin`: ADMIN, MASTER_ADMIN, MINISTRY_ADMIN) — whoever may turn
-   * admin view on. The island's admin control shows when this is true. Same value as `canAdmin`.
-   */
   available: boolean;
-  /**
-   * False until the stored preference for THIS account has actually been read. `user` arrives from
-   * an async /me call, so there is one commit where the account is known but its preference is not;
-   * anything that would LOCK a page on admin view has to wait for this rather than decide on the
-   * default and flash the wrong answer. Everything that merely HIDES chrome can ignore it, because
-   * `adminMode` is false until it resolves — the safe direction.
-   */
   adminViewResolved: boolean;
   setAdminView: (value: boolean) => void;
   toggleAdminView: () => void;
@@ -47,15 +20,8 @@ type AdminViewValue = {
 const AdminViewContext = createContext<AdminViewValue | undefined>(undefined);
 const STORAGE_PREFIX = "field_repo_admin_view";
 
-/** The stored preference once read, tagged with the account it was read for. */
 type ResolvedView = { userId: string; view: boolean };
 
-/**
- * localStorage throws rather than returning null when a browser has storage blocked. The preference
- * is not worth an exception — and an exception thrown in the effect below would leave the view
- * unresolved forever, which is a stalled page on every admin route. Failing to "no preference
- * stored" degrades to the default (master admin in admin view, other admins out of it).
- */
 function readPreference(key: string): string | null {
   try {
     return typeof window === "undefined" ? null : window.localStorage.getItem(key);
@@ -70,18 +36,12 @@ function writePreference(key: string, value: string | null) {
     if (value === null) window.localStorage.removeItem(key);
     else window.localStorage.setItem(key, value);
   } catch {
-    // A preference that cannot be persisted still applies for this session.
   }
 }
 
 export function AdminViewProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  // The content admins (owner's ruling, 2026-10-20): Ministry Admin gains admin view. Delete is
-  // theirs whether or not it is on (`canDeleteRecords`, 2026-10-21). The default stays off for
-  // everyone but the master admin.
   const canAdmin = isContentAdmin(user);
-  // null = not yet read for this user; resolved in the effect below. Tagging it with the user id is
-  // what stops one account's preference from being applied for a frame after a switch of accounts.
   const [resolved, setResolved] = useState<ResolvedView | null>(null);
 
   useEffect(() => {
@@ -90,14 +50,11 @@ export function AdminViewProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (!canAdmin) {
-      // Drop any preference left behind by a demotion (or a hand-edited value) so it cannot come
-      // back if the account is promoted again — admin view is re-earned, not remembered.
       writePreference(`${STORAGE_PREFIX}:${user.id}`, null);
       setResolved({ userId: user.id, view: false });
       return;
     }
     const stored = readPreference(`${STORAGE_PREFIX}:${user.id}`);
-    // Default: master admin opens in admin view; other admins open normally.
     const view = stored === "on" ? true : stored === "off" ? false : isMasterAdmin(user);
     setResolved({ userId: user.id, view });
   }, [user, canAdmin]);
@@ -113,7 +70,6 @@ export function AdminViewProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AdminViewValue>(() => {
     const settled = user && resolved && resolved.userId === user.id ? resolved : null;
-    // Unresolved reads as OFF, so no admin chrome can be painted before we know the preference.
     const view = canAdmin && settled !== null && settled.view;
     return {
       adminView: view,
@@ -136,33 +92,10 @@ export function useAdminView(): AdminViewValue {
   return ctx;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Admin chrome — the half of the app the toggle may hide.
- *
- * Hiding a nav entry is not narrowing: /admin, /users, /settings/api-keys and the rest are all one
- * typed URL, bookmark or Back button away. The list below is therefore the single place that says
- * WHICH routes are admin chrome, and AppShell enforces it above every page in the (protected) tree
- * the same way it enforces ROUTE_GUARDS.
- *
- * What is deliberately NOT here:
- *  - /review — Field Contributors and above review, so it is a capability an admin holds as a
- *    reviewer, not admin chrome. Locking it on the toggle would stop an admin reviewing at all.
- *  - /tasks — everyone can be an assignee. Only the ASSIGNING board (/settings/tasks) is chrome.
- *  - /data — professors and dataset grantees, /search, /sharing and every record page: an ordinary
- *    user reaches these too, so narrowing to "what an ordinary user sees" leaves them untouched.
- *  - /settings itself — Appearance, Accessibility and Request workshop access belong to the
- *    account, not to the repository. Only its administration grid and the master-admin app
- *    settings panel are chrome, and the page hides those sections itself.
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type AdminChromeRoute = {
-  /** The path this rule covers, together with everything nested beneath it. */
   path: string;
-  /** How the lock panel names the page. */
   label: string;
-  /** One line on what is behind the switch, so the panel explains rather than just refuses. */
   blurb: string;
-  /** The ordinary-user route that does the nearest equivalent job, where one exists. */
   alternative?: { href: string; label: string };
 };
 
@@ -173,48 +106,26 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     blurb: "Admin tools."
   },
   {
-    // Nested under /admin and therefore already chrome — listed, like the roster below, so the
-    // panel says what is actually behind the door rather than describing the settings hub.
     path: "/admin/analytics",
     label: "Cross-workshop analytics",
     blurb:
       "Outcomes compared across workshops.",
-    // No `alternative`. The nearest ordinary-user page is /design-workshops, and sending somebody
-    // there would imply it answers a smaller version of this question — it does not. It lists the
-    // workshops an account may open, one at a time, which is the thing this page exists because
-    // nobody could do by hand.
     alternative: undefined
   },
   {
-    // Nested under /admin and therefore already chrome — listed separately only so the panel says
-    // what is actually behind the door. The /admin rule's label ("The settings hub") and blurb
-    // describe reviews, recordings and feedback, none of which is what an admin was looking for
-    // when they typed this URL; the longest matching rule wins, so this one answers instead.
     path: "/admin/designers",
     label: "The designer roster",
     blurb: "Designers who may sign in.",
-    // No `alternative`: there is no ordinary-user half of this page. A designer's own standing is
-    // not something they can look up, by design, so offering them a substitute route would be
-    // offering them a page that does not exist.
     alternative: undefined
   },
   {
-    // Nested under /admin and therefore already chrome — listed for the reason the two rules above
-    // are: the longest matching rule wins, and the hub's blurb (reviews, recordings, feedback) is
-    // not remotely what an admin was looking for when they typed this URL.
     path: "/admin/access",
     label: "Who may sign in",
     blurb:
       "Who may sign in, and who is waiting.",
-    // No `alternative`. There is no ordinary-user half of this page and there must not be: it is a
-    // list of named people who tried to get in, and the person who most wants to read it is the one
-    // whose own request is in it. Somebody waiting is told they are waiting, on the sign-in screen,
-    // and that is the whole of what they may know.
     alternative: undefined
   },
   {
-    // Professor+ by role, so this rule can only ever fire for an ADMIN — a professor has no toggle
-    // and `adminChromeVisible` returns true for them, which is what keeps them out of this branch.
     path: "/users",
     label: "User management",
     blurb: "Roles, promotions, capability grants and account administration live there."
@@ -229,9 +140,6 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     label: "Workshop access administration",
     blurb:
       "Requests, rosters and access levels.",
-    // /workshop-access itself is NOT chrome: it belongs to every account, and an admin with the
-    // toggle off is sent to the request page there exactly as an ordinary user is. Only the console
-    // is chrome, so this is the one path listed.
     alternative: { href: "/workshop-access/request", label: "Request workshop access" }
   },
   {
@@ -241,34 +149,17 @@ export const ADMIN_CHROME_ROUTES: AdminChromeRoute[] = [
     alternative: { href: "/tasks", label: "Go to my tasks" }
   },
   {
-    // Not "/settings/analytics" — the name is taken. See usage.py's module docstring: a second,
-    // unrelated meaning of "analytics" would leave every future reader working out which one a name
-    // meant, in a codebase where one of the two is a privacy surface. This one aggregates navigation
-    // across every account; /admin/analytics (listed above) aggregates workshop CONTENT and observes
-    // no person at all — the two are deliberately distinct rows here for the reader comparing them.
     path: "/settings/usage",
     label: "Usage",
     blurb: "Screen usage, speed and errors.",
-    // No `alternative`: an account's own trail (`GET /usage/me`) has no UI yet, so there is nothing
-    // ordinary-user to send a refused visitor to.
     alternative: undefined
   }
 ];
 
-/**
- * Does an admin-tier surface show, given the toggle?
- *
- * This answers ONLY the admin-view half of the question and must always be ANDed with the role or
- * capability check that already guards the surface — on its own it returns true for everyone
- * WITHOUT the toggle (professors, capability grantees, ordinary users), because they have no way to
- * switch admin view back on and must never be narrowed by a control they do not own. That shape is
- * also the invariant: a forged `adminMode` can only ever satisfy this half, never the role half.
- */
 export function adminChromeVisible(user: User | null | undefined, adminMode: boolean): boolean {
   return !isAdmin(user) || adminMode;
 }
 
-/** The most specific admin-chrome rule covering `pathname`, or null when the route is not chrome. */
 export function adminChromeRouteFor(pathname: string): AdminChromeRoute | null {
   let best: AdminChromeRoute | null = null;
   for (const route of ADMIN_CHROME_ROUTES) {

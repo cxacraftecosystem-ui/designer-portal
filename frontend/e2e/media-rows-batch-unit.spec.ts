@@ -3,14 +3,6 @@ import { expect, test } from "@playwright/test";
 import { ApiError } from "@/lib/api";
 import { MEDIA_BATCH_MAX, fetchMediaRow, resetMediaRowBatching } from "@/lib/mediaRows";
 
-/**
- * `fetchMediaRow` — the coalescing underneath every photograph on the stage form.
- *
- * What a caller gets must be exactly what `GET /media/{id}` gave it before batching existed: a row,
- * or an `ApiError` 404 for an id with no row. What changes is only how many requests carry them. The
- * network is a stub on `globalThis.fetch`, so these drive the real `apiFetch` underneath.
- */
-
 type Reply = { status: number; body?: unknown };
 type Handler = (url: URL) => Reply;
 
@@ -18,7 +10,6 @@ function stub(handler: Handler) {
   const calls: URL[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: unknown) => {
-    // Relative since the cookie session: the page calls `/api/*` on its own origin.
     const url = new URL(String(input), "https://designer-repository.vercel.app");
     calls.push(url);
     const reply = handler(url);
@@ -103,7 +94,6 @@ test("a batch that fails on the server costs no photograph but the one that is r
     expect(also.status).toBe("fulfilled");
     expect(bad.status).toBe("rejected");
     expect(((bad as PromiseRejectedResult).reason as ApiError).status).toBe(500);
-    // The fallback was for that batch only: the next tick tries the batch route again.
     await Promise.allSettled([fetchMediaRow("x"), fetchMediaRow("y")]);
     expect(net.calls.filter(isBatch)).toHaveLength(2);
   } finally {

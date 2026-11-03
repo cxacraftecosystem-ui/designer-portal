@@ -1,18 +1,5 @@
 "use client";
 
-/**
- * COVERAGE — which districts the programme reaches, and which it has not reached yet.
- *
- * The Field Repository's view (layout, fills and panels) with the designer portal's layers on top:
- * the Field Repository's figures beside ours (`peer`), planned workshops and clusters on the map, and
- * design workshops counted as workshops. The ministry entitlement gate is the page's
- * (`app/(protected)/map/page.tsx`); this view is never mounted without it.
- *
- * Every filter lives in the URL (`?view=coverage&craftCode=..&fy=..&peer=1`), so a view can be linked
- * and Back restores it. The district polygons are fetched only here (`shapeGeometry.loadShapes`);
- * nothing in this folder imports a mapping library or calls a tile server.
- */
-
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -67,17 +54,14 @@ export function CoverageView() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  /** null until `peerCoverageEnabled` answers. */
   const [peerAnswer, setPeerAnswer] = useState<boolean | null>(null);
   const peerAvailable = peerAnswer === true;
   const urlQuery = useMemo(
     () => coverageQueryFromParams(new URLSearchParams(searchParams.toString())),
     [searchParams]
   );
-  // The Field Repository is asked only when cross-portal coverage is switched on.
   const peerRequested = Boolean(urlQuery.peer) && peerAvailable;
   const query = useMemo(() => ({ ...urlQuery, peer: peerRequested }), [urlQuery, peerRequested]);
-  // A link asking for peer coverage waits for that answer, so the view is fetched once, not twice.
   const queryReady = !urlQuery.peer || peerAnswer !== null;
   const metric = metricFromParams(new URLSearchParams(searchParams.toString()));
 
@@ -138,7 +122,6 @@ export function CoverageView() {
     return () => controller.abort();
   }, [query, reload, queryReady]);
 
-  // The state picker needs the whole register; a narrowed first view asks once.
   useEffect(() => {
     if (register.length || !data || isWholeRegister(data)) return;
     const controller = new AbortController();

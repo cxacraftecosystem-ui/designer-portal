@@ -2,26 +2,9 @@ import type { TranscriptPreview } from "@/lib/transcript/contract";
 import type { RecordingChips } from "@/lib/questionnaire/chips";
 import type { CompletenessBlock } from "@/lib/completenessCore";
 
-/**
- * The eleven tiers, highest first. THE ROW THAT MATTERS MOST in the whole mirror set: every
- * `Record<UserRole, …>` in this client is exhaustive against THIS union and nothing else, so a tier
- * missing here silently un-enforces four self-enforcing mirrors at once — `tsc` keeps passing, the
- * records stay "complete", and all of them are complete against the wrong ladder.
- * `backend/tests/test_role_ladder_parity.py` is what compares it to the server; nothing else does.
- *
- * `INSPECTOR` (rank 37) is stored as INSPECTOR and LABELLED "Inspector / Reviewer" — see
- * `lib/permissions.ts::ROLE_LABELS`. "Reviewer" is not available as a token because `canReview`
- * already means something relational and different here.
- */
 export type UserRole =
   | "MASTER_ADMIN"
   | "ADMIN"
-  // The three DIRECTORATE tiers, added 2026-09-13 at 48/45/42 — above PROFESSOR and below ADMIN.
-  // `MINISTRY_ADMIN` IS NOT AN ADMIN: `isAdmin` in `lib/permissions.ts` is `role === "MASTER_ADMIN"
-  // || role === "ADMIN"`, set membership and not a rank test, so no arithmetic reaches it. What rank
-  // 42 and up DOES buy on this client is `canManageUsers`, `canManageCrafts`, `canManageWorkshops`,
-  // `canManageQuestionnaire`, `canDownloadDataset` and `canSeeDataTile` — every `hasRank(…,
-  // "PROFESSOR")` predicate in `lib/permissions.ts` at once.
   | "MINISTRY_ADMIN"
   | "REGIONAL_DIRECTOR"
   | "ASSISTANT_DIRECTOR"
@@ -55,64 +38,12 @@ export type User = {
   canReview?: boolean;
   canViewProvenance?: boolean;
   canDownloadDataset?: boolean;
-  /**
-   * ── THE FIRST-LOGIN PASSWORD, 2026-08-30 ────────────────────────────────────────────────────
-   *
-   * True when the account must choose its own password before it does anything else. An account
-   * provisioner sets it — at `POST /api/users` (unless they unticked "Require a new password at
-   * first sign-in"), with a temporary password written through `PATCH /api/users/{id}`, or by
-   * requiring a new password at next sign-in on a password that stays as it is — and the owner
-   * clears it by choosing one. It arrives on every `/me` and on the sign-in response for free,
-   * because `serialize_user` encodes the whole row.
-   *
-   * **THE SERVER ENFORCES IT; TWO SCREENS ON THE WEB ASK FOR THE PASSWORD.** This paragraph once said
-   * that no screen on either client consumed the flag, and then that the second web screen was "the
-   * enforcement". Both were true when written and neither is now. Since 2026-10-09, while the flag
-   * stands, every authenticated route outside a short allow-list answers 401 with
-   * `X-Password-Change-Required: 1` — see `mustChangePassword` in `lib/signIn.ts` for the list, the
-   * configured master's exemption, and why sign-in itself still succeeds. An admin-issued password,
-   * a secret two people know by construction, therefore buys nothing but the change itself.
-   *
-   * `components/FirstPasswordGate.tsx` is the form; `app/login/page.tsx` renders it between sign-in
-   * and the dashboard, and `components/AppShell.tsx` renders it above the WHOLE protected tree — the
-   * host that meets a session already OPEN when an administrator raises the flag through
-   * `PATCH /api/users/{id}`. Neither keeps a latch of its own: `AuthProvider.markPasswordChanged` is
-   * the one both read. And a refused request no longer ends the session — `apiFetch` keeps the token
-   * on that 401 and `AuthProvider` re-reads `/me`, so the gate is drawn in place.
-   * `PasswordGateScreen` gates the handset the same way, as a `when` arm replacing the home screen.
-   *
-   * Read it through `mustChangePassword` rather than this field directly — an absent field means "a
-   * server older than the column", which is neither "must" nor "need not".
-   *
-   * The "Password link" action on /users remains the OTHER way this is cleared, and it is the one
-   * to reach for when somebody cannot sign in at all: /set-password clears the flag as part of the
-   * redemption, so the gate is never met by a person who arrived through a link. It is offered on
-   * every account that HAS a password (`passwordSetAt`), and no longer keyed on `authProvider` — a
-   * password account somebody once signed into with Google is still a password account.
-   */
   mustChangePassword?: boolean;
-  /** ISO-8601. Null alongside a Google account means "never had a password", which is the
-   *  distinction this column was added to make; see schema.prisma. */
   passwordSetAt?: string | null;
-  /** Whether the account holds a password at all, derived by the server on every user payload.
-   *  Absent from a server older than the field — read it through `hasOwnPassword` / `hasPassword`,
-   *  which fall back to `passwordSetAt`. */
   hasPassword?: boolean;
-  /** Two-step verification is on for this account. Drives the "Two-step on" badge on /users; the
-   *  account's own card reads `GET /auth/two-factor` instead. Absent from a server that predates it. */
   twoFactorEnabled?: boolean;
-  /** ISO-8601, when it was last switched on; null while it is off. */
   twoFactorEnabledAt?: string | null;
-  /**
-   * ISO-8601. The first time this account actually got IN, by either credential — stamped once at
-   * sign-in and never moved. Null means no sign-in has been recorded: an account nobody has used
-   * yet, or one last used before the column was added (August 2026). /users reads it for "Never
-   * signed in", and the server reads it to make a password link a 72-hour invitation rather than a
-   * 2-hour reset — but only for an account CREATED since the column existed, because an older account's
-   * silence proves nothing and gets the reset.
-   */
   firstLoginAt?: string | null;
-  /** The most recent sign-in, by either credential (2026-10-17). Null until the account next signs in. */
   lastLoginAt?: string | null;
 };
 
@@ -120,34 +51,14 @@ export type FieldProvenanceEntry = { by?: string; byName?: string; at?: string }
 export type FieldProvenance = Record<string, FieldProvenanceEntry>;
 export type ExtraMetadata = { fieldProvenance?: FieldProvenance } & Record<string, unknown>;
 
-/**
- * `GET /reference/address` — the state list the API validates writes against, served so a form's
- * dropdown and the validator cannot hold different lists (backend/app/services/address.py).
- * `statesAndUnionTerritories` is the flat list a single-group dropdown binds to; the two grouped
- * arrays are the same names split for a form that wants a labelled "Union territories" heading.
- */
 export type AddressReference = {
   version: number;
   states: string[];
   unionTerritories: string[];
   statesAndUnionTerritories: string[];
-  /**
-   * The 795 districts, keyed by the state they belong to — the same shape and the same call as the
-   * state list, because a district dropdown that fetches its own options after a state is chosen
-   * stalls visibly on a field connection and can briefly disagree with what the server validates
-   * against. `byState` covers every name in `statesAndUnionTerritories`, so a chosen state always
-   * has options.
-   *
-   * OPTIONAL IN THE TYPE, not in the contract. The frontend and the API deploy separately, so there
-   * is a window in which this build is talking to a backend that predates the district list — and
-   * the district dropdown is a REQUIRED field, so the difference between "no options" and a crash
-   * is the difference between a form somebody can still submit and a white screen. Marked here so
-   * the compiler makes every reader deal with it rather than trusting the version on the other end.
-   */
   districts?: {
     source: string;
     sourceUrl: string;
-    /** The date the list was compiled, so an export can record which vintage it was coded against. */
     asOf: string;
     listVersion: number;
     count: number;
@@ -189,37 +100,21 @@ export type ArtisanQuestionnaire = {
   artisanId: string;
   answered: ArtisanAnswer[];
   total: number;
-  // Every interview this artisan belongs to (alone, in a subset, or in a larger set), with recordings.
   interviews?: ArtisanInterview[];
 };
 
-/**
- * Two answers to two different questions, in one payload. See `components/forms/LocationFields`.
- *
- * PROVENANCE — `latitude`, `longitude`, `altitude`, `accuracy`, `capturedAt`, `placeName`,
- * `address`. Where the DEVICE was. Filled automatically, never presented as the subject's address.
- *
- * STATED — `state`, `district`, `village`, `pincode`, `subjectLatitude`, `subjectLongitude`. Where
- * the SUBJECT is, said by the researcher. The geocoder may offer these; only a person writes one.
- */
 export type LocationPayload = {
   latitude?: number | "";
   longitude?: number | "";
   altitude?: number | "";
   accuracy?: number | "";
-  /** ISO 8601. When the device produced the fix above — provenance is not provenance without it. */
   capturedAt?: string;
   address?: string;
   placeName?: string;
-  /** Canonical name from `AddressReference`; the API rejects anything off that list. */
   state?: string | null;
-  /** Canonical district of `state`, from `AddressReference.districts.byState`. */
   district?: string | null;
-  /** The village or hamlet. Free text — no closed list of Indian villages exists. */
   village?: string | null;
-  /** Bare 6 digits, no separators — the API normalises "380 001" but stores "380001". */
   pincode?: string | null;
-  /** The researcher's optional pin on the SUBJECT'S place. Both or neither; never the device fix. */
   subjectLatitude?: number;
   subjectLongitude?: number;
 };
@@ -233,15 +128,11 @@ export type Craft = {
   place?: string | null;
   recordedAt?: string | null;
   recordedTimezone?: string | null;
-  // The workshop this craft was documented at. Nullable everywhere: it was added after the join
-  // tables, so historical rows carry none. The API hydrates `workshop` alongside the scalar id.
   workshopId?: string | null;
-  /** The design & prototype workshop this record is filed under. See `Artisan`. */
   designWorkshopId?: string | null;
   workshop?: Workshop | null;
   extraMetadata?: ExtraMetadata | null;
   createdAt?: string;
-  /** The master-list identity (REQUIREMENTS_2026-10-20 §2.2); equal in both portals. */
   slug?: string | null;
   subCategoryId?: string | null;
   categoryId?: string | null;
@@ -250,83 +141,35 @@ export type Craft = {
   stateOfPractice?: string[];
   giStatus?: "GI" | "NON_GI" | null;
   isCatchAll?: boolean;
-  /** ACTIVE is on the list; LEGACY predates it and waits for review; MERGED folded into another. */
   status?: "ACTIVE" | "LEGACY" | "MERGED";
   mergedIntoId?: string | null;
   craftCode?: string | null;
 };
 
 export type Artisan = {
-  /** Which fields this record still lacks — computed on read by the server (lib/completenessCore.ts). */
   completeness?: CompletenessBlock | null;
   id: string;
   name: string;
   localName?: string | null;
   gender?: string | null;
   phone?: string | null;
-  /** The phone's country code; `phone` is digits only (lib/standardValues). */
   phoneCountryCode?: string | null;
   email?: string | null;
   place: string;
   address?: string | null;
   notes?: string | null;
-  /**
-   * The artisan deduplication key (UNIQUE server-side): the same person documented at two workshops
-   * resolves to one record through this column. It arrives in TWO shapes under the same name, which
-   * is why it is typed as a plain nullable string rather than as 12 digits — the artisan record
-   * itself (`GET /artisans/{id}`, i.e. the edit form) returns the FULL number, while the data
-   * browser, the .xlsx report and CSV exports return it MASKED ("XXXX XXXX 9012"). Treat any value
-   * as regulated personal data: never render it in a list, a card or an export view.
-   */
   aadhaarNumber?: string | null;
-  /**
-   * Date of birth, ISO. The design workshop's participant table shows an AGE, derived from this
-   * server-side on every read — an age stored would be wrong within a year with nothing to say so.
-   * Both this and `experienceYears` exist because the workshop declares them as fields the
-   * reference picker fills in, and until the columns existed importing an artisan left both blank
-   * and adding one had nowhere to put them.
-   */
   dateOfBirth?: string | null;
-  /**
-   * The date the artisan began practising the craft, ISO — the feeder `experienceYears` is derived
-   * from, and the same argument `dateOfBirth` above makes one answer later: a stated NUMBER of years
-   * is right on the day it is typed and silently wrong from then on, while a stated DATE is right
-   * every time it is read. Null on every row written before 2026-08-23; the migration that added the
-   * column deliberately refuses to guess one from the number.
-   */
   craftStartDate?: string | null;
-  /**
-   * Years practising the craft AS SOMEBODY STATED IT. 0..90, matching the stage registry's own
-   * bounds. It is the second of three answers, not the only one: the derived value from
-   * `craftStartDate` outranks it wherever a row has one, and the legacy `extraMetadata` spellings
-   * sit behind it. See `lib/recordDerivations` for the client's port of that rule.
-   */
   experienceYears?: number | null;
-  /** Does the artisan hold a PM Vishwakarma Pehchan card? Defaults to true on create. */
   pehchanCardAvailable?: boolean;
-  /** Only ever set while `pehchanCardAvailable` is true — the API nulls it whenever the answer is No. */
   pehchanCardNumber?: string | null;
-  // Newline-separated, numbered Do's (positive prompt) and Don'ts (negative prompt). Required on new
-  // records; existing rows may be null until backfilled.
   dos?: string | null;
   donts?: string | null;
   status: RecordStatus;
   craftId?: string | null;
   craft?: Craft | null;
   workshopId?: string | null;
-  /**
-   * THE DESIGN & PROTOTYPE WORKSHOP this record is filed under. Added 2026-08-28 with the column.
-   *
-   * A SECOND LINK BESIDE `workshopId`, NOT A REPLACEMENT. `workshopId` is the ordinary field
-   * workshop, gated by `WorkshopAssignment`; this is the 22-stage design and prototype record,
-   * gated by `load_workshop_or_404` — creator, admin, or a `DesignWorkshopViewer` grant. Two
-   * tables, two access systems; a record may carry either, both or neither.
-   * `Artisan.designWorkshopId` in `backend/prisma/schema.prisma` holds the argument.
-   *
-   * OPTIONAL, AND AN EXPLICIT `null` UNFILES on the way back: the key is in
-   * `records.CLEARABLE_KEYS`, so a `null` survives `clean_data` instead of being stripped as an
-   * unset optional. Omitting it leaves the stored link alone.
-   */
   designWorkshopId?: string | null;
   workshop?: Workshop | null;
   recordedAt?: string | null;
@@ -337,11 +180,6 @@ export type Artisan = {
   createdAt: string;
 };
 
-/**
- * The artisan already holding an identity number. Deliberately just enough to recognise a person and
- * navigate to them — the API returns it to a caller who already possesses the number they searched
- * with, and nothing more than name/place/craft/workshop is needed to answer "is this the same man?".
- */
 export type ArtisanIdentityMatch = {
   id: string;
   name: string;
@@ -350,17 +188,8 @@ export type ArtisanIdentityMatch = {
   workshop?: string | null;
 };
 
-/**
- * `POST /artisans/lookup/aadhaar` (number in the body) — the artisan form's pre-flight duplicate check. It never 404s:
- * `{found: false}` is the expected, successful answer.
- */
 export type AadhaarLookupResult = { found: boolean; artisan?: ArtisanIdentityMatch | null };
 
-/**
- * The HTTP 409 `detail` from POST/PATCH /artisans when an identity number is already on another
- * record. It is an object, not a string, so it must be read off `ApiError.payload` — `ApiError.message`
- * stringifies to "[object Object]" for structured details.
- */
 export type ArtisanIdentityConflict = {
   code: "artisan_identity_conflict";
   field: "aadhaarNumber" | "pehchanCardNumber";
@@ -369,16 +198,6 @@ export type ArtisanIdentityConflict = {
   maskedValue?: string | null;
 };
 
-/**
- * Which KIND of workshop a row records.
- *
- * A Design & Prototype Development Workshop and an ordinary documentation visit are both
- * `Workshop` rows, and nothing distinguished them — so the design-workshop picker had to offer
- * every craft-documentation visit ever recorded. Only a design-prototype workshop carries the
- * sanction, cluster and dates a 22-stage record's cover page is built from.
- *
- * `OTHER` is the default, which is what every row recorded before the column implicitly was.
- */
 export type WorkshopType = "DESIGN_PROTOTYPE" | "OTHER";
 
 export const WORKSHOP_TYPE_LABELS: Record<WorkshopType, string> = {
@@ -387,16 +206,10 @@ export const WORKSHOP_TYPE_LABELS: Record<WorkshopType, string> = {
 };
 
 export type Workshop = {
-  /** Which fields this record still lacks — computed on read by the server (lib/completenessCore.ts). */
   completeness?: CompletenessBlock | null;
   id: string;
   title: string;
   workshopType?: WorkshopType;
-  /**
-   * Hydrated by `GET /workshops` — `RELATIONS` in the route includes it. Declared here because the
-   * design-workshop picker reads the state and district off it to fill a 22-stage record's cover,
-   * and the type not admitting a field the API has always returned is how that read looks wrong.
-   */
   location?: LocationPayload | null;
   date: string;
   startDate?: string | null;
@@ -414,16 +227,6 @@ export type Workshop = {
   createdAt: string;
 };
 
-/**
- * Answer from `GET /workshops/{id}/submission-check` — what submitting a record into one workshop
- * would mean for the current user, asked BEFORE the record is sent.
- *
- * - `canSubmit` false: the workshop has assignments and the user is not one of them, so a create
- *   would be refused with 403. Warn at select time rather than at save time.
- * - `needsAdminApproval` true: the submission is accepted but forced to PENDING, and only an admin
- *   or master admin may approve it. Admins never see this (they are the approval authority), so an
- *   admin submitting late sees `outOfWindow` true with `needsAdminApproval` false.
- */
 export type WorkshopSubmissionCheck = {
   workshopId: string | null;
   title?: string | null;
@@ -437,7 +240,6 @@ export type WorkshopSubmissionCheck = {
 
 export type MediaFile = {
   id: string;
-  /** A questionnaire take's chips (owner, 31 Oct 2026); absent on any other file. */
   questionnaireChips?: RecordingChips | null;
   originalFilename: string;
   mediaType: MediaType;
@@ -446,73 +248,26 @@ export type MediaFile = {
   objectKey: string;
   url?: string | null;
   caption?: string | null;
-  /**
-   * `sha256:<hex>` of the stored bytes, written by the upload (`computeChecksum` in lib/media.ts,
-   * §2.8 of docs/MEDIA_PIPELINE.md) and returned by the API on every media row.
-   *
-   * OPTIONAL, AND THE ABSENCE MEANS "UNKNOWN", NEVER "DIFFERENT". It is null for anything that
-   * predates the checksum (seeded and legacy rows) and for any file over the 32 MiB hashing ceiling,
-   * so duplicate detection may only ever conclude "these are the same" from two checksums that are
-   * both present and equal — a comparison that treats null as a distinct value would report every
-   * legacy photograph as unique.
-   */
   checksum?: string | null;
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
-  /**
-   * THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload was filed under, from that form's own
-   * dropdown — never derived from the pair above.
-   *
-   * `linkedRecordType: "designWorkshop"` says which RECORD a file was uploaded against and is
-   * written by the upload path for every stage photograph; this says which workshop a person CHOSE
-   * to file a loose file under. `records.media_relation_data` on the server carries the argument for
-   * why deriving one from the other would break the orphan-recovery machinery. A file may hold one,
-   * both or neither.
-   */
   designWorkshopId?: string | null;
-  /**
-   * The client-written Json column beside the file — read for exactly one key today.
-   *
-   * DECLARED BECAUSE A PROPERTY TYPESCRIPT CANNOT SEE IS A PROPERTY NOTHING READS. It has been on the
-   * wire all along (`MediaFile.extraMetadata` in `schema.prisma`; `records._redact_sensitive` scrubs
-   * password hashes, identity numbers and media URLs, and nothing else), and the web has only ever
-   * WRITTEN it — `ProductForm` and `ToolForm` stamp `{ purpose: MEASUREMENT_GRID_PURPOSE }` on a grid
-   * capture. `mediaNoteGrammar.isMeasurementGridRow` is the first reader, and without this line a
-   * `MediaFile` would still be assignable to its optional-property row shape while the value read
-   * `undefined` for ever: the filter would never fire, and the symptom is a count one too high on
-   * exactly the records somebody measured most carefully. Silent, plausible, and printed.
-   *
-   * `unknown` and not a shape: it is a free Json column several clients write different keys into, and
-   * a declared shape here would be a promise this type cannot keep. Narrow it at the reader.
-   */
   extraMetadata?: unknown;
   recordedAt?: string | null;
   recordedTimezone?: string | null;
   status: RecordStatus;
   transcriptText?: string | null;
-  /** The list preview (transcript contract v2): plain text under speaker labels; null when withheld or empty. */
   transcriptPreview?: TranscriptPreview | null;
   transcriptSummary?: string | null;
   transcriptStatus?: string | null;
   transcriptError?: string | null;
-  /**
-   * When a person last replaced this transcript, or null when nothing is on record.
-   *
-   * NULL IS NOT "NEVER EDITED". The column landed on 2026-08-31 and is null for every row stored
-   * before it, so a reader may draw "Edited" from a value and must draw NOTHING from its absence —
-   * `POST /media/{id}/transcript` has been able to replace a transcript all along, and printing
-   * "these are the machine's words" over one a researcher rewrote is the claim the flag exists to
-   * stop being made. The migration carries the full argument.
-   */
   transcriptEditedAt?: string | null;
-  /** Who made that edit. An audit stamp with no relation behind it — see the schema. */
   transcriptEditedById?: string | null;
   uploadedBy?: User | null;
   createdAt: string;
 };
 
 export type ProductDocumentation = {
-  /** Which fields this record still lacks — computed on read by the server (lib/completenessCore.ts). */
   completeness?: CompletenessBlock | null;
   id: string;
   craftName: string;
@@ -542,7 +297,6 @@ export type ProductDocumentation = {
   artisanId?: string | null;
   craftId?: string | null;
   workshopId?: string | null;
-  /** The design & prototype workshop this record is filed under. See `Artisan`. */
   designWorkshopId?: string | null;
   workshop?: Workshop | null;
   media?: MediaFile[];
@@ -553,7 +307,6 @@ export type ProductDocumentation = {
 };
 
 export type ToolDocumentation = {
-  /** Which fields this record still lacks — computed on read by the server (lib/completenessCore.ts). */
   completeness?: CompletenessBlock | null;
   id: string;
   craftName: string;
@@ -564,47 +317,8 @@ export type ToolDocumentation = {
   englishName?: string | null;
   processUsedIn?: string | null;
   material?: string | null;
-  /** A code from the shared material list (lib/standardValues). */
   materialFamily?: string | null;
   yearsInUse?: number | null;
-  /**
-   * TWO HEIGHTS AND TWO WIDTHS, PAIRED 1:1 SINCE 2026-09-15 — read all four before writing any.
-   *
-   * `height` is the CENTIMETRE box and `heightInches` its inch partner; `width` is the centimetre
-   * box and `breadthInches` its inch partner. `lengthInches` is standalone and has no centimetre
-   * column. The tool form converts between each pair as a person types — `cm = in × 2.54`, two
-   * decimals, one direction per keystroke — and `components/forms/dimensionUnits.ts` is the whole
-   * of that arithmetic.
-   *
-   * ── WHAT THIS BLOCK SAID BEFORE, AND WHY IT IS RETIRED RATHER THAN DELETED ─────────────────────
-   * It read: *"`height` is the original column and it declares no unit: not in its name, not in
-   * `schema.prisma`, not on the label a designer reads… `heightInches` was added on 2026-08-27 to
-   * end the defect that absence caused"*. Every clause of that was true of the column as it stood,
-   * and the pairing is what answered it: the box now says "Height (cm)" on all four clients, so the
-   * unit is declared where a designer reads it. What did NOT change is the column name — `height`
-   * and `width` keep their spelling on the wire, in `_CLEARABLE_COLUMNS` and in the schemas — so
-   * nothing that reads them had to move.
-   *
-   * ── HISTORIC ROWS GENUINELY HOLD TWO NUMBERS THAT DISAGREE, AND THAT IS NOT REPAIRABLE HERE ────
-   * Every row saved before the pairing has whatever somebody typed into `height`, in whatever unit
-   * they had in mind, beside whatever a measurement route put in `heightInches`. So NOTHING converts
-   * on LOAD: opening a record never rewrites either box, because a load-time conversion would
-   * destroy the disagreeing pair on the next save. Conversion fires on user input only, which is
-   * also what makes correcting one of the two a deliberate act.
-   *
-   * `heightInches` is still the only one of its pair a method marker can name —
-   * `services/measurement_provenance.DIMENSION_FIELDS` is exactly `lengthInches` / `breadthInches` /
-   * `heightInches` — so a machine reading is accepted into the INCH box, which then fills its
-   * centimetre partner; the centimetre box carries no provenance and must never be given a fake one.
-   *
-   * `string | number | null` like every dimension here, and not `number`: these are Prisma
-   * `Decimal(10, 2)` columns and a `Decimal` arrives over the wire as a JSON STRING. Read one behind
-   * `Number.isFinite(Number(v))`; seed an input with `String(v)`.
-   *
-   * Verified 2026-08-27 against `grep -n heightInches backend/prisma/schema.prisma
-   * backend/app/schemas/records.py backend/app/api/routes/tools.py` — the column, both request
-   * schemas, and `_CLEARABLE_COLUMNS` (which is what lets emptying the box empty the column).
-   */
   height?: string | number | null;
   width?: string | number | null;
   lengthInches?: string | number | null;
@@ -624,35 +338,11 @@ export type ToolDocumentation = {
   status: RecordStatus;
   recordedAt?: string | null;
   recordedTimezone?: string | null;
-  /**
-   * THE FIRST LINKED ARTISAN AND THE FIRST LINKED CRAFT — not the only ones. See
-   * {@link ToolDocumentation.artisanLinks} and {@link ToolDocumentation.craftLinks}.
-   *
-   * A tool has linked several artisans through `ToolArtisan` since that table existed, and several
-   * crafts through `ToolCraft` since 2026-09-15. These two columns were not retired and are not
-   * being retired: every filter, index, report, carry-forward and data-browser branch reads them,
-   * and they keep holding the FIRST of each selection. `GET /tools?craftId=` therefore still matches
-   * only a tool's first craft — a deliberate, stated consequence of that compatibility, not an
-   * oversight.
-   */
   artisanId?: string | null;
   craftId?: string | null;
-  /**
-   * EVERY CRAFT AND EVERY ARTISAN THIS TOOL IS LINKED TO, hydrated on every read of a tool.
-   *
-   * Always present and never null — an empty array for a tool with no links. `craftLinks` comes back
-   * in the order the names appear in `craftName` (the join table carries no ordinal, and `Craft.name`
-   * is unique, so the string is what records the order the designer ticked them in); `artisanLinks`
-   * comes back `createdAt` ascending, which is what `GET /tools/{id}/artisans` has always promised.
-   *
-   * THE NESTED RECORD MAY BE MASKED. `public_encode` applies the identity mask through
-   * `artisanLinks`, exactly as it does everywhere else an `Artisan` is nested — so never render
-   * `artisan.aadhaarNumber` from one of these rows, and see `Artisan.aadhaarNumber` for the rule.
-   */
   craftLinks?: ToolCraftLink[];
   artisanLinks?: ToolArtisanLink[];
   workshopId?: string | null;
-  /** The design & prototype workshop this record is filed under. See `Artisan`. */
   designWorkshopId?: string | null;
   workshop?: Workshop | null;
   media?: MediaFile[];
@@ -662,13 +352,6 @@ export type ToolDocumentation = {
   createdAt: string;
 };
 
-/**
- * A row of the `ToolCraft` join table, hydrated with the craft it points at.
- *
- * `craft` is optional because it is the SERVER's `include` rather than a column — a payload built by
- * an older build, or one this account may not read the craft of, carries the ids and nothing else,
- * and a picker that assumed the nested row would draw a blank chip for a link the record holds.
- */
 export type ToolCraftLink = {
   id: string;
   toolId: string;
@@ -677,7 +360,6 @@ export type ToolCraftLink = {
   craft?: Craft | null;
 };
 
-/** A row of the `ToolArtisan` join table, hydrated with the artisan it points at. See above. */
 export type ToolArtisanLink = {
   id: string;
   toolId: string;
@@ -710,14 +392,12 @@ export type QuestionnaireResponse = {
   questionId: string;
   answerText?: string | null;
   notes?: string | null;
-  /** C28: null = typed by a person; MACHINE_SUGGESTED / MACHINE_SUGGESTED_EDITED = drafted from the transcript. */
   answerOrigin?: string | null;
   question?: QuestionnaireQuestion;
   answeredBy?: User;
 };
 
 export type QuestionnaireInterview = {
-  /** Which fields this record still lacks — computed on read by the server (lib/completenessCore.ts). */
   completeness?: CompletenessBlock | null;
   id: string;
   title: string;
@@ -729,7 +409,6 @@ export type QuestionnaireInterview = {
   recordedAt?: string | null;
   recordedTimezone?: string | null;
   workshopId?: string | null;
-  /** The design & prototype workshop this record is filed under. See `Artisan`. */
   designWorkshopId?: string | null;
   workshop?: Workshop | null;
   artisans?: Array<{ artisan: Artisan }>;
@@ -738,7 +417,6 @@ export type QuestionnaireInterview = {
   createdBy?: User;
   createdById: string;
   createdAt: string;
-  /** Soft delete (H5, 21 Oct 2026): set only on rows from the deleted-interviews list. */
   deletedAt?: string | null;
   deletedByName?: string | null;
 };
@@ -818,11 +496,6 @@ export type WorkshopAssignment = {
   user?: User;
   assignedBy?: User | null;
   createdAt?: string;
-  /**
-   * The row's state. `GET /workshops/{id}/assignments` returns EVERY row on the workshop — pending
-   * requests, denials and revocations included — and only GRANTED confers access. A caller building
-   * "who is assigned" must filter on this; taking every `userId` treats a refused request as a member.
-   */
   status?: "PENDING" | "GRANTED" | "DENIED" | "REVOKED";
   accessLevel?: string;
 };
@@ -833,7 +506,6 @@ export const makerOptions = ["ARTISAN", "LOCAL_BLACKSMITH", "CARPENTER", "WORKSH
 export const traditionOptions = ["TRADITIONAL", "CONTEMPORARY", "TRANSITIONAL"];
 export const mediaTypes: MediaType[] = ["IMAGE", "VIDEO", "AUDIO", "PDF", "DOCUMENT", "OTHER"];
 
-/** One key quote: the speaker's own words and their English. */
 export type InsightQuote = {
   original: string;
   english: string;
@@ -842,11 +514,6 @@ export type InsightQuote = {
 
 export type InsightTranslationStatus = "NOT_NEEDED" | "COMPLETED" | "PARTIAL" | "FAILED";
 
-/**
- * A machine-written summary, key quotes and English translation of one transcript
- * (`GET /media/{id}/insights`). `edited` is null until a researcher saves a change; it never names
- * the editor, for the reason `EditedFlag` does not. Same contract as the Field Repository.
- */
 export type TranscriptInsight = {
   id: string;
   version: number;

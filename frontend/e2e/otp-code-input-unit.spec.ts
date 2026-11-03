@@ -15,15 +15,6 @@ import {
   typeInto
 } from "@/components/ui/otpCode";
 
-/**
- * THE SIX-BOX CODE ENTRY — the owner's rules (2026-10-17), keystroke by keystroke.
- *
- * Exactly six boxes; digits only (a letter is refused and the box does not change); a paste of the
- * code fills all six from whichever box it lands in; typing advances; Backspace on an empty box steps
- * back and empties that one; the code is complete only at six ASCII digits. `OtpCodeInput` renders
- * these functions and nothing else decides; Android's `OtpCode` (OtpCodeTest) is the same table.
- */
-
 test("there are exactly six boxes, named Digit n of 6", () => {
   expect(OTP_LENGTH).toBe(6);
   expect(Array.from({ length: OTP_LENGTH }, (_, i) => digitLabel(i))).toEqual([
@@ -80,11 +71,9 @@ test("a paste of the six-digit code fills every box, from whichever box it lands
     expect(pasteInto("", box, "739104")).toEqual({ value: "739104", focus: 5, accepted: true });
     expect(pasteInto("11", box, "739104")).toEqual({ value: "739104", focus: 5, accepted: true });
   }
-  // How authenticators, SMS and e-mails print a code: the separators go, the digits stay.
   expect(pasteInto("", 0, "739 104").value).toBe("739104");
   expect(pasteInto("", 0, "739-104").value).toBe("739104");
   expect(pasteInto("", 0, " Your code is 739104. ").value).toBe("739104");
-  // More than six: the first six. Nothing numeric at all: refused, unchanged.
   expect(pasteInto("", 0, "73910455").value).toBe("739104");
   expect(pasteInto("12", 2, "abc")).toEqual({ value: "12", focus: 2, accepted: false });
 });
@@ -102,7 +91,6 @@ test("Backspace empties a filled box in place, and on an empty box steps back an
   expect(backspaceAt("123", 3)).toEqual({ value: "12", focus: 2, accepted: true });
   expect(backspaceAt("123456", 5)).toEqual({ value: "12345", focus: 5, accepted: true });
   expect(backspaceAt("", 0)).toEqual({ value: "", focus: 0, accepted: false });
-  // Holding Backspace walks the whole code away.
   let value = "123456";
   let focus = 5;
   for (let i = 0; i < 8; i += 1) ({ value, focus } = backspaceAt(value, focus));

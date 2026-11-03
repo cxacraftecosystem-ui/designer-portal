@@ -1,35 +1,12 @@
-/**
- * THE ROWS A RECORD'S READ-ONLY PAGE PRINTS, one builder per kind, in the order of the record's own
- * form so a reader who knows the form finds each value where they expect it.
- *
- * Pure on purpose: there is no React renderer in this repo's devDependencies, so a judgement made
- * inside JSX is only ever checked by somebody looking at a screen. `e2e/record-view-unit.spec.ts`
- * calls these instead — above all the one judgement that must not drift, which is what a view is
- * NOT allowed to print.
- *
- * ── WHAT A VIEW NEVER PRINTS ────────────────────────────────────────────────────────────────────
- *
- * The identity numbers. §12.8 of the frontend contract: an artisan's Aadhaar arrives IN FULL from
- * `GET /artisans/{id}` — this very endpoint — and must never be rendered in a list, a card or an
- * export view; the lists show only whether a card is on file. A read-only page is opened by a click
- * on that list, so it answers the same question the list does — "On file" — and the digits stay on
- * the edit form, in front of the person correcting them. The same for the Pehchan card number.
- *
- * Empty values are left out rather than printed as a dash: a column of "—" says nothing except that
- * the page is padded, and the record's form is one click away for anybody who wants every box.
- */
-
 import type { ProcessRecord } from "@/components/forms/ProcessForm";
 import { bytes, formatDate } from "@/lib/format";
 import type { Artisan, Craft, MediaFile, ProductDocumentation, QuestionnaireInterview, ToolDocumentation, Workshop } from "@/lib/types";
 import { languageName, phoneOf, traditionLabel } from "@/lib/standardValues";
 
-/** One printed line: a label and its value, already in words. */
 export type RecordFieldRow = { label: string; value: string };
 
 type Raw = string | number | boolean | null | undefined;
 
-/** A stored code ("HIGH_DEMAND") in plain words ("High demand"). Free text passes through. */
 export function plainWords(value: string | null | undefined): string | null {
   if (value == null) return null;
   const trimmed = value.trim();
@@ -39,7 +16,6 @@ export function plainWords(value: string | null | undefined): string | null {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-/** A Decimal-or-number with an optional unit; anything that is not a finite number is dropped. */
 function measure(value: string | number | null | undefined, unit?: string): string | null {
   if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
@@ -47,7 +23,6 @@ function measure(value: string | number | null | undefined, unit?: string): stri
   return unit ? `${number} ${unit}` : String(number);
 }
 
-/** Builds the rows, dropping every label whose value is empty. */
 export function rows(entries: Array<[label: string, value: Raw]>): RecordFieldRow[] {
   const out: RecordFieldRow[] = [];
   for (const [label, value] of entries) {
@@ -59,7 +34,6 @@ export function rows(entries: Array<[label: string, value: Raw]>): RecordFieldRo
   return out;
 }
 
-/** "On file" or nothing — never the number. See the header. */
 function onFile(value: string | null | undefined): string | null {
   return value && value.trim() ? "On file" : null;
 }

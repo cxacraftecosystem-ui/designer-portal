@@ -4,11 +4,6 @@ import { lastSignIn } from "@/app/(protected)/users/accountAdmin";
 import { accessEntryDetails, type AccessRosterEntry } from "@/lib/accessRoster";
 import type { User } from "@/lib/types";
 
-/**
- * Who added and decided an access-roster entry, in words, and when an account last signed in
- * (2026-10-17). The server joins the names; these pin what the two admin screens say with them.
- */
-
 function entry(extra: Partial<AccessRosterEntry> = {}): AccessRosterEntry {
   return {
     id: "ar-1",

@@ -1,14 +1,3 @@
-/**
- * The handset's entry into `modelViewerCore.ts`. NOT IMPORTED BY THE WEB — it is the input to
- * `scripts/build-android-model-viewer.mjs`, which bundles it with three.js into
- * `android/app/src/main/assets/model-viewer/viewer.js`.
- *
- * The page (`assets/model-viewer/index.html`) is opened by `DwModelViewer.kt` with the model's local
- * address and format in the query string. The model is read from the app's own storage through the
- * WebView's asset loader, so nothing here reaches the network, and the result is reported back to
- * the app through the `DwModelViewerHost` bridge so the screen around the WebView can say it.
- */
-
 import { MODEL_FORMATS, type ModelFormat } from "./modelFormats";
 import { ModelViewerError, mountModelViewer, type ModelViewerHandle } from "./modelViewerCore";
 
@@ -48,7 +37,6 @@ async function start(): Promise<void> {
   }
 }
 
-// Called by the app's "Reset view" button.
 (globalThis as unknown as { dwResetModelView?: () => void }).dwResetModelView = () => handle?.reset();
 addEventListener("pagehide", () => handle?.dispose());
 

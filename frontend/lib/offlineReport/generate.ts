@@ -1,12 +1,3 @@
-/**
- * The report screen's one door into building a report on the device: from the draft this browser
- * holds and the sources it has kept, to a preview or a .docx/.pdf, with the warnings that belong
- * beside it.
- *
- * Pure apart from the writers' injected loaders, so `offline-report-files-unit.spec.ts` drives it in
- * Node with the fixture workshop and real fonts.
- */
-
 import { byCount, countNoun } from "@/lib/format";
 import { buildOfflineReport, type OfflineReportInput, type ReportOptions, type ReportSources } from "@/lib/offlineReport/assemble";
 import type { Registry, Row } from "@/lib/offlineReport/builder";
@@ -35,10 +26,6 @@ export type DraftLike = {
   customDefinition?: OfflineReportInput["customDefinition"] | null;
 };
 
-/**
- * The draft as the builder reads a workshop: one singleton per stage (the server keeps exactly one),
- * every collection's rows in the draft's order, and the designer's own answers per stage.
- */
 export function draftReportInput(draft: DraftLike, sources: ReportSources | null, now: Date = new Date()): OfflineReportInput {
   const stages: OfflineReportInput["stages"] = {};
   for (const [stageKey, stage] of Object.entries(draft.stages)) {
@@ -72,11 +59,6 @@ export function draftReportInput(draft: DraftLike, sources: ReportSources | null
   };
 }
 
-/**
- * The server's `_report_file_name`, through the same `workshopFilename` (NAMING 2.1), so a report
- * written on this device and one downloaded from the server carry one name:
- * `DesignWorkshop_Workshop_2026-10-18_Bagru-Jaipur_Hand-Block-Printing_DW-RJ-0012_Report.pdf`.
- */
 export function reportFileName(workshop: WorkshopNameFields, format: "DOCX" | "PDF", now: Date = new Date()): string {
   return workshopFilename(workshop, "Report", format === "PDF" ? "pdf" : "docx", { at: now });
 }
@@ -93,7 +75,6 @@ const SCRIPT_NAMES: Record<string, string> = {
   GURMUKHI: "Gurmukhi"
 };
 
-/** `_dropped_warnings`, worded for a file written on this device. */
 export function droppedWarnings(dropped: readonly string[]): string[] {
   const said: string[] = [];
   if (dropped.some((d) => d.startsWith("map:"))) {
@@ -136,7 +117,6 @@ export type OfflineWriters = {
   fontSource: FontSource;
 };
 
-/** Build and write one file on the device. */
 export async function generateOfflineFile(
   registry: Registry,
   input: OfflineReportInput,

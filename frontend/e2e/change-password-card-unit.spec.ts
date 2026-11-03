@@ -15,30 +15,6 @@ import {
 } from "@/lib/passwordChange";
 import { CONFIRM_PROVIDER_HEADER, MAX_PASSWORD_LENGTH } from "@/lib/signIn";
 
-/**
- * "CHANGE PASSWORD" IN SETTINGS — A PASSWORD ACCOUNT ROTATING ITS OWN SECRET, WITHOUT ASKING ANYBODY.
- *
- * ── THE GAP ─────────────────────────────────────────────────────────────────────────────────────
- *
- * `POST /auth/change-password` had one caller on the web: the first-password gate. Once past it, an
- * account that suspected somebody else knew its password could only ask an administrator for a link.
- * The accounts that sign in with a password are exactly the ones this matters for — an administrator
- * created them and typed a password two people therefore knew.
- *
- * ── WHAT IS PINNED ──────────────────────────────────────────────────────────────────────────────
- *
- *   1. it is offered to an account with a password of its own (`passwordSetAt`), and to no other;
- *   2. it refuses what the gate refuses, from the same functions — a mismatch, the password it is
- *      replacing — before anything is sent, and stops at the same 200-character ceiling;
- *   3. a refused current password empties that box and keeps the other two;
- *   4. it is a data-screen card drawn with the data-screen recipes, on the account's own hub;
- *   5. the receipt and the refusal are said into regions that exist before they have anything to say;
- *   6. the fresh session a change answers with is adopted before the account is re-read.
- *
- * Pure functions where the rule is a function, source reads where it is a component — there is no
- * React renderer in devDependencies. ⚠ LINE-ENDING AGNOSTIC: `\s` and `[\s\S]` throughout.
- */
-
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
 
 const CARD = read("components", "settings", "ChangePasswordCard.tsx");
@@ -50,15 +26,9 @@ const SUBMIT = (() => {
   return from < 0 ? "" : CARD.slice(from, CARD.indexOf("return (", from));
 })();
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 1. Who sees it
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("it is offered to an account with a password of its own, and to no other", () => {
   expect(hasOwnPassword({ passwordSetAt: "2026-10-01T09:30:00.000Z" })).toBe(true);
-  // A Google-only account has nothing to change, and the server would say so.
   expect(hasOwnPassword({ passwordSetAt: null })).toBe(false);
-  // A server older than the column sends nothing: no card rather than a form the server refuses.
   expect(hasOwnPassword({})).toBe(false);
   expect(hasOwnPassword(null)).toBe(false);
   expect(hasOwnPassword(undefined)).toBe(false);
@@ -69,15 +39,12 @@ test("the card decides between changing and setting a password after its hooks",
   const mode = CARD.indexOf("const settingFirst = canSetFirstPassword(user);");
   expect(gate, "the gate was located").toBeGreaterThan(-1);
   expect(mode, "the mode was located").toBeGreaterThan(gate);
-  // Rules of hooks: an early return above a hook would change the hook count between renders.
-  // The card's own hooks: `ConfirmItsYou`, below it, is a component of its own with its own hooks.
   const card = CARD.slice(0, CARD.indexOf("function ConfirmItsYou("));
   expect(gate).toBeGreaterThan(card.lastIndexOf("useEffect("));
   expect(gate).toBeGreaterThan(card.lastIndexOf("useState("));
 });
 
 test("an account with no password is offered SET a password, and the server's own answer wins", () => {
-  // The derived field the server now sends wins over the stamp, in both directions.
   expect(hasOwnPassword({ hasPassword: false, passwordSetAt: "2026-10-01T09:30:00.000Z" })).toBe(false);
   expect(hasOwnPassword({ hasPassword: true, passwordSetAt: null })).toBe(true);
   expect(canSetFirstPassword({ hasPassword: false })).toBe(true);
@@ -85,41 +52,31 @@ test("an account with no password is offered SET a password, and the server's ow
   expect(canSetFirstPassword({ hasPassword: true })).toBe(false);
   expect(canSetFirstPassword(null)).toBe(false);
   expect(CARD).toContain('settingFirst ? "Set a password" : "Change password"');
-  // No current-password box for an account that has none.
   expect(CARD).toMatch(/\{settingFirst \? null : \(\s*<div>\s*<label htmlFor="settings-current-password"/);
   expect(SUBMIT).toContain("settingFirst && proof ? await setFirstPassword(next, proof, askCode ? code : undefined) : await changeOwnPassword(current, next);");
   expect(FIRST_PASSWORD_NOTE).toMatch(/or the way you sign in now/);
 });
 
 test("a first password needs a fresh provider sign-in, and a refused one is asked for again", () => {
-  // The server names the provider to confirm with on the header; the sentence is never parsed.
   const named = new Headers({ [CONFIRM_PROVIDER_HEADER]: "MICROSOFT" });
   expect(providerConfirmationRequired(new ApiError(400, "Confirm it's you", null, named))).toBe("MICROSOFT");
   expect(providerConfirmationRequired(new ApiError(400, "Confirm it's you", null))).toBe(null);
   expect(providerConfirmationRequired(new ApiError(401, "x", null, named))).toBe(null);
   expect(providerConfirmationRequired(new ApiError(400, "x", null, new Headers({ [CONFIRM_PROVIDER_HEADER]: "ELSEWHERE" })))).toBe(null);
-  // Nothing is sent without a proof, the boxes wait for it, and a refused proof is dropped.
   expect(SUBMIT).toContain("if (settingFirst && !proof) {");
   expect(CARD).toContain("{settingFirst && !proof ? (");
   expect(SUBMIT).toContain("const confirmAgain = settingFirst ? providerConfirmationRequired(err) : null;");
-  expect(SUBMIT).toMatch(/if \(confirmAgain\) \{\s*\/\/[^\n]*\n\s*setProof\(null\);/);
-  // The old "sign out and sign in again" offer is gone: a session is no longer the proof.
+  expect(SUBMIT).toMatch(/if \(confirmAgain\) \{\s*setProof\(null\);/);
   expect(CARD).not.toContain("Sign out and sign in again");
 });
 
 test("it sits on the account's own settings hub, with no role gate", () => {
   expect(SETTINGS).toMatch(/import \{ ChangePasswordCard \} from "@\/components\/settings\/ChangePasswordCard"/);
   expect(SETTINGS).toContain("<ChangePasswordCard />");
-  // Not behind the admin links: changing your own password needs permission from nobody.
   const adminAt = SETTINGS.indexOf("{links.length ? (");
   expect(SETTINGS.indexOf("<ChangePasswordCard />")).toBeLessThan(adminAt);
-  // And the grievance card keeps its place DIRECTLY under the consent card, as its comment requires.
-  expect(SETTINGS).toMatch(/<UsageConsentCard \/>\s*\{\/\*[\s\S]*?\*\/\}\s*<GrievanceRedressalCard \/>/);
+  expect(SETTINGS).toMatch(/<UsageConsentCard \/>\s*<AadhaarVerifyPanel subject=\{\{ kind: "self" \}\} \/>\s*<GrievanceRedressalCard \/>/);
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 2. The same refusals as the gate, from the same place
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("it refuses a mismatch and the password it would replace, before sending anything", () => {
   expect(newPasswordProblem({ current: "old-password", next: "new-password", confirm: "new-passw0rd" })).toMatch(/do not match/);
@@ -151,13 +108,8 @@ test("every box stops at the one ceiling and tells a password manager what it is
   expect((CARD.match(/maxLength=\{MAX_PASSWORD_LENGTH\}/g) ?? []).length, "current, new and repeat").toBe(3);
   expect((CARD.match(/autoComplete="current-password"/g) ?? []).length).toBe(1);
   expect((CARD.match(/autoComplete="new-password"/g) ?? []).length).toBe(2);
-  // The account the new password belongs to, so a password manager updates the right entry.
   expect(CARD).toMatch(/<input type="text" name="username" autoComplete="username" value=\{user\.email\} readOnly hidden \/>/);
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 3. A refusal, and a success
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("a refused current password empties that box and keeps the other two", () => {
   expect(currentPasswordRefused(new ApiError(400, "Current password is incorrect", null))).toBe(true);
@@ -179,13 +131,6 @@ test("a success empties all three boxes and says so", () => {
 });
 
 test("the receipt is said into a status region that exists before it has anything to say", () => {
-  /*
-    A region created together with its sentence announces nothing (this repository's own rule, argued
-    above the stage page's save regions), and the card used to mount `<p role="status">` only once the
-    change had worked — so a screen-reader user heard nothing, and could not tell success from a silent
-    failure. One element each for the receipt and the refusal, always rendered, the class swapped to
-    `sr-only` while empty; never `hidden`, which takes a region out of the tree.
-  */
   expect(CARD).not.toMatch(/\{changed \? \(\s*<p role="status"/);
   expect(CARD).not.toMatch(/\{error \? \(\s*<div role="alert"/);
   expect(CARD).toMatch(/<p\s+role="status"\s+aria-live="polite"\s+className=\{changed \? "[^"]+" : "sr-only"\}\s*>\s*\{changed \?\? ""\}\s*<\/p>/);
@@ -194,15 +139,6 @@ test("the receipt is said into a status region that exists before it has anythin
 });
 
 test("the session the change answers with is in the cookie before anything re-reads /me", () => {
-  /*
-    Since 2026-10-09 the server binds every session to the password it was opened with, so this change
-    retires the token that sent it along with every other session — and answers with a fresh one, in
-    its `X-Session-Token` header. Since 2026-10-17 this site's change-password route puts that token in
-    the HttpOnly session cookie before the answer reaches the card, and `changeOwnPassword` resolves
-    `true` (`X-Session-Rotated`; `password-change-enforcement-unit.spec.ts` drives it). So the card has
-    nothing to adopt — and must not try: no script may hold the token. It re-reads the account on a
-    renewal and does exactly what it did before without one.
-  */
   expect(SUBMIT).toContain("settingFirst && proof ? await setFirstPassword(next, proof, askCode ? code : undefined) : await changeOwnPassword(current, next);");
   const renewed = SUBMIT.slice(SUBMIT.indexOf("if (fresh) {"), SUBMIT.indexOf("} else {"));
   expect(renewed, "the renewal arm was located").toContain("void refreshMe();");
@@ -211,22 +147,12 @@ test("the session the change answers with is in the cookie before anything re-re
   expect(CARD, "no script touches the session token").not.toMatch(/setToken|getToken|localStorage/);
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 4. A data-screen card
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("it is drawn with the data-screen recipes, not the auth stack", () => {
-  // §11.2 of the frontend reference: a data screen is never standardised onto the auth `Button`.
   expect(CARD).not.toMatch(/from "@\/components\/ui\/button"/);
   expect(CARD).toContain('<section ref={section} className="panel scroll-mt-28 p-5">');
-  // Three boxes: current, new, repeat. The two-step code, drawn only for a first password on an account
-  // with two-step verification on, is the shared six-box entry (owner's rule, 2026-10-17) — with its
-  // separate recovery-code box behind "Use a recovery code instead".
   expect((CARD.match(/className="field-input/g) ?? []).length).toBe(3);
   expect(CARD).toContain("<TwoStepCodeEntry");
   expect(CARD).toMatch(/<button type="submit" className="field-button"/);
-  // The rule line under the boxes is the gate's, from the same function and the same constant — which
-  // no longer says other devices stay signed in: a change now ends every session but the fresh one.
   expect(CARD).toContain("passwordRuleLine(settingFirst ? FIRST_PASSWORD_NOTE : PASSWORD_CHANGE_SESSIONS)");
   expect(GATE).toContain("passwordRuleLine(PASSWORD_CHANGE_SESSIONS)");
   expect(PASSWORD_CHANGE_SESSIONS).toMatch(/signed out everywhere else/);

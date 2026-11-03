@@ -45,32 +45,12 @@ export default function ProductsPage() {
   const [collabId, setCollabId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const skipFirstDebounce = useRef(true);
-  /**
-   * Which fetch is the current one — the same counter /artisans, /questionnaires and
-   * /design-workshops carry, and for the same reason. The search box debounces the APPLIED TERM,
-   * not the request, and the pager and the funnel fire the same effect, so two or three requests
-   * are routinely in flight together. Without this the answer to an abandoned question can land
-   * LAST and win.
-   *
-   * The failure is worse than a stale table, because `<Pagination>` below is driven by the ANSWER
-   * (`page={data.page}`) while the refetch effect is driven by STATE (`page`). Let request A (page
-   * 1) land after request B (page 2) and you get `data.page === 1` with `page === 2`; Next then
-   * computes `onPage(data.page + 1)` = `setPage(2)`, React bails on the identical scalar, no
-   * dependency changes, no request is issued — the Next button is simply dead until Previous is
-   * pressed. Audit 2026-08-15 filed that against this file, /tools, /processes and /media.
-   *
-   * Counted rather than aborted because `listResource` takes no `AbortSignal`; ignoring the late
-   * answer is the part that matters. If you add another `setData`/`setError` to `load()`, put the
-   * guard in front of it too — a single unguarded write restores the dead pager.
-   */
   const currentLoad = useRef(0);
-  /** Search, page, funnel and scroll, so Back from a product's page lands on the same rows. */
   const memory = useListMemory("products", { query, applied, page, funnel, filters: { completeness } }, data !== null);
 
   async function load() {
     const generation = (currentLoad.current += 1);
     try {
-      // /products supports all three funnel params directly.
       const result = await listResource<ProductDocumentation>("/products", {
         search: applied || undefined,
         workshopId: funnel.workshopId || undefined,
@@ -89,14 +69,12 @@ export default function ProductsPage() {
     }
   }
 
-  // Waits for the funnel's initial onChange (default = most recent workshop) before the first fetch.
   useEffect(() => {
     if (!funnelReady) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [funnelReady, page, applied, funnel, completeness]);
 
-  // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
   useEffect(() => {
     if (skipFirstDebounce.current) {
       skipFirstDebounce.current = false;
@@ -110,8 +88,6 @@ export default function ProductsPage() {
   }, [query]);
 
   function onFunnelChange(next: FunnelValue, _workshop: FunnelWorkshop | null) {
-    // The funnel's FIRST answer is when this page learns its defaults — and so when a remembered
-    // place (Back from a record's page) replaces them. See `useListMemory`.
     const remembered = funnelReady ? null : memory.recall();
     if (remembered) {
       if ((remembered.query ?? "") !== query) skipFirstDebounce.current = true;
@@ -154,9 +130,6 @@ export default function ProductsPage() {
         actions={
           <>
             {canDownloadDataset(user) ? <DownloadCsvButton path="/export/products.csv" filename={exportFilename("Product", "Export", "csv")} /> : null}
-            {/* Gated, not merely locked: an ungated "New …" invited every tier to press a
-                button that lands on the route guard's refusal. Below researcher the honest UI is
-                no button, matching `require_record_creator` on the server. */}
             {canCreateRecords(user) ? (
               <Link className="field-button" href="/products/new">
                 <Plus className="h-4 w-4" aria-hidden />
@@ -213,8 +186,6 @@ export default function ProductsPage() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((product) => (
-                  // The whole row opens the record read-only; its name is the same act as a real link.
-                  // Update, Discuss, Delete and the preview tiles keep their own clicks (`OpenableRow`).
                   <OpenableRow key={product.id} href={RECORD_VIEW_HREF.product(product.id)}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">

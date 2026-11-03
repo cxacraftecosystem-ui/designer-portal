@@ -72,11 +72,8 @@ import { ActionGroup } from "@/components/ui/ActionGroup";
 import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
-// The API includes the workshop's linked crafts (not yet in the Workshop TS type); used to pre-fill
-// the "Crafts covered" selection when editing.
 type WorkshopWithCrafts = Workshop & { crafts?: Array<{ craftId?: string; craft?: { id: string; name?: string } }> };
 
-/** Names of the crafts a workshop covers, for a covered craft that is no longer on the list. */
 function linkedCraftNames(workshop: Workshop | null): Record<string, string> {
   const names: Record<string, string> = {};
   for (const item of (workshop as WorkshopWithCrafts | null)?.crafts ?? []) {
@@ -85,26 +82,16 @@ function linkedCraftNames(workshop: Workshop | null): Record<string, string> {
   return names;
 }
 
-/** The artisan ids a workshop is already linked to, for pre-filling the picker on edit. */
 function linkedArtisanIds(workshop: Workshop | null): string[] {
   return workshop?.artisans?.map((item) => item.artisan.id) ?? [];
 }
 
-/** The craft ids a workshop already covers. The API returns either a nested craft or a bare id. */
 function linkedCraftIds(workshop: Workshop | null): string[] {
   return ((workshop as WorkshopWithCrafts | null)?.crafts ?? [])
     .map((item) => item.craft?.id ?? item.craftId)
     .filter((id): id is string => Boolean(id));
 }
 
-/**
- * Do these two id lists name the same set? ORDER-INSENSITIVE on purpose: the multi-selects hand back
- * the order the researcher ticked boxes in, while the stored list comes back in the join table's own
- * order, so comparing sequences would report "changed" for a roster nobody touched — which is the
- * exact 403 the diff in `submit` exists to avoid. Both inputs are already duplicate-free (the join
- * table is unique on the pair; the pickers cannot tick a row twice), so a length check plus
- * membership is a true set comparison here.
- */
 function sameIdSet(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   const seen = new Set(a);
@@ -113,14 +100,12 @@ function sameIdSet(a: string[], b: string[]): boolean {
 
 const statusOptions: RecordStatus[] = ["DRAFT", "PENDING", "APPROVED", "REJECTED", "NEEDS_REVISION"];
 
-/** Section id the workshop media batch publishes under, so the page-level tray can aggregate it. */
 const MEDIA_SECTION = "workshop-media";
 const MEDIA_SECTION_LABEL = "Workshop media";
 
 export default function WorkshopsPage() {
   return (
     <UploadsProvider>
-      {/* Next 16: `useEditDeepLink` reads useSearchParams, which must sit inside a Suspense boundary. */}
       <Suspense fallback={<div className="panel p-4 text-sm text-ink-500">Loading...</div>}>
         <WorkshopsPageBody />
       </Suspense>
@@ -135,72 +120,19 @@ function WorkshopsPageBody() {
   const { canDeleteRecords } = useAdminView();
   const { addCompleted } = useUploads();
   const allowManage = canManageWorkshops(user);
-  /**
-   * OPENING a workshop is a narrower question than MANAGING one, and this page is where the two
-   * separate. `canManageWorkshops` (Professor and above) still decides who may CORRECT a workshop —
-   * `PATCH /workshops/{id}` is unchanged — and this decides who may bring a new one into existence:
-   * a rank floor at MINISTRY_ADMIN, so `{Ministry Admin, Admin, Master Admin}`.
-   *
-   * IT MIRRORS `require_workshop_opener` IN `backend/app/api/routes/workshops.py` AND MUST KEEP
-   * MIRRORING IT. The server is the rule; this is the courtesy that stops somebody filling in a form
-   * that ends in a 403. Looser here and a professor types out a workshop and loses it on Save;
-   * stricter and the ministry admin the feature exists for is left staring at a list.
-   *
-   * THE NAMED TWIN LANDED, and this line is the one that was promised. It read
-   * `hasRank(user, "MINISTRY_ADMIN")` while the create affordance and the shared predicate file were
-   * in different slices; `canCreateWorkshops` in `lib/permissions.ts` now holds the threshold, beside
-   * `canManageWorkshops`, with the argument for why the two are separate rules rather than one rule
-   * and a narrowing. The dashboard's Workshop tile reads the same twin for its "New" button.
-   *
-   * NOT `isAdmin`: that is set membership, `{ADMIN, MASTER_ADMIN}`, and a Ministry Admin at rank 48
-   * is NOT an admin by it — the same trap `canManageAnnualPlan` documents at length one file over.
-   */
   const allowCreate = canCreateWorkshops(user);
   const allowAssign = isAdmin(user);
-  // Status policy (mirrors the backend): professor+ may pick any status (default APPROVED on
-  // create); everyone below sees a locked Pending chip and the server forces/keeps the status.
   const canSetStatus = hasRank(user, "PROFESSOR");
   const [data, setData] = useState<PageResult<Workshop> | null>(null);
   const [artisans, setArtisans] = useState<Artisan[]>([]);
-  /**
-   * DID THE PICKERS LOAD? Three answers, because two of them used to render identically.
-   *
-   * The effect below fetches both lists in one `Promise.all` and its `catch` was a comment saying
-   * the pickers "degrade to empty lists". They did, and an empty list then drew "No artisans
-   * recorded yet" and "No crafts available yet" -- claims about the repository made out of a
-   * request that never arrived. That is the silent-emptiness class named in rule 10 of the frontend
-   * contract and in `docs/archive/DROPDOWN_DESIGN.md` section 3.5, and `WorkshopListState` is the three-way
-   * answer the rest of this app already holds, so this page reuses it rather than inventing a
-   * fourth local spelling of the same three states.
-   *
-   * ONE FLAG FOR BOTH LISTS, because one request carries both: they arrive together or not at all.
-   */
   const [pickerLoad, setPickerLoad] = useState<"loading" | "failed" | "ok">("loading");
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<Workshop | null>(null);
   const editingCraftNames = linkedCraftNames(editing);
-  // Both link pickers are themed MultiSelectDropdowns, which are React state rather than form
-  // controls, so the selections live here and are read straight out of state at submit time. They
-  // are re-seeded in `resetForm` — the one place a different workshop is ever loaded into the form.
   const [artisanIds, setArtisanIds] = useState<string[]>([]);
   const [craftIds, setCraftIds] = useState<string[]>([]);
-  /*
-    THE TWO DICTATED SINGLE-LINE BOXES ARE CONTROLLED, and the rest of this form is not.
-
-    Dictation writes into a box from OUTSIDE the keyboard, so an uncontrolled input would need a ref
-    plus a hand-dispatched `input` event to keep React and the DOM agreeing about what is in it.
-    `submit` reads `FormData` off the form element, so nothing downstream can tell the difference.
-
-    They are re-seeded in `resetForm` for the reason the two link pickers are: that is the ONE place a
-    different workshop is loaded into the form, and a controlled value left alone there would keep the
-    PREVIOUS record's title while the row highlighted below said otherwise.
-
-    The DESCRIPTION needs none of this: `DictatedTextArea` is uncontrolled by design — `defaultValue`
-    plus `onDirty`, exactly the shape of the plain `<TextArea>` it replaces — so it re-seeds with the
-    form and holds no value here.
-  */
   const [title, setTitle] = useState("");
   const [place, setPlace] = useState("");
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
@@ -208,23 +140,14 @@ function WorkshopsPageBody() {
   const [completeness, setCompleteness] = useState<CompletenessValue>("");
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
-  // Unsaved-changes guard: dirty is set by any form input / media change; confirmAction holds the
-  // navigation the user asked for while the dialog decides its fate.
   const router = useRouter();
   const [dirty, setDirty] = useState(false);
-  /*
-    React state rather than an uncontrolled form control, for the same reason the two link pickers
-    are: `resetForm` is the ONE place a different workshop is loaded into the form, and an
-    uncontrolled `<select>` keeps whatever the previous record left in it. Editing an "Other"
-    workshop straight after a design-prototype one would silently re-file it as design-prototype.
-  */
   const [workshopType, setWorkshopType] = useState<WorkshopType>("OTHER");
   const [confirmAction, setConfirmAction] = useState<(() => void) | null>(null);
   const [saving, setSaving] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const afterSaveRef = useRef<(() => void) | null>(null);
   const skipFirstDebounce = useRef(true);
-  // Assignment manager (admin only).
   const [assigning, setAssigning] = useState<Workshop | null>(null);
   const [researchers, setResearchers] = useState<User[]>([]);
   const [assignIds, setAssignIds] = useState<Set<string>>(new Set());
@@ -236,20 +159,9 @@ function WorkshopsPageBody() {
     try {
       const [assignments, users] = await Promise.all([
         apiFetch<WorkshopAssignment[]>(`/workshops/${workshop.id}/assignments`),
-        // 100 is the server's cap (`pageSize: int = Query(20, ge=1, le=100)`); asking for 200 was a
-        // 422, which left `researchers` empty and the dialog permanently showing "No users to assign".
-        // `LIST_PAGE_CEILING` and deliberately NOT `RENDER_CAP`: this list is not drawn by a
-        // dropdown. The assign dialog renders every row as its own checkbox in a scrolling box, so
-        // there is no 80-row draw cap to align the fetch with, and cutting the request to 80 would
-        // hide twenty accounts that are on screen today. The ceiling is the server's -- asking for
-        // 200 was a 422, which left `researchers` empty and the dialog permanently showing "No
-        // users to assign".
         researchers.length ? Promise.resolve({ items: researchers }) : listResource<User>("/users", { pageSize: LIST_PAGE_CEILING })
       ]);
       if (!researchers.length) setResearchers((users as { items: User[] }).items ?? []);
-      // GRANTED only. The endpoint returns every row on the workshop — pending requests, denials and
-      // revocations too — so taking every userId pre-ticked people who had been refused or removed,
-      // and saving the dialog (a whole-set PUT) silently granted them access again.
       setAssignIds(new Set(assignments.filter((a) => a.status === "GRANTED").map((a) => a.userId)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load assignments");
@@ -292,10 +204,6 @@ function WorkshopsPageBody() {
     }
   }
 
-  /**
-   * Search, page and scroll, so Back from a workshop's read-only page lands on the same rows. Recalled
-   * once before the first fetch — `placeRestored` holds that fetch until it has been.
-   */
   const memory = useListMemory("workshops", { query, applied, page, filters: { completeness } }, data !== null);
   const [placeRestored, setPlaceRestored] = useState(false);
   useEffect(() => {
@@ -304,32 +212,20 @@ function WorkshopsPageBody() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, applied, placeRestored, completeness]);
 
-  // The linked-artisan / craft pickers only need loading once.
   useEffect(() => {
     (async () => {
       try {
-        // Crafts come from the catalogue inside `CraftSelect` (REQUIREMENTS_2026-10-20 §2.4).
         const [artisanResult] = await Promise.all([
-          // `RENDER_CAP`, not the round `100`. Both lists go straight into a
-          // `MultiSelectDropdown`, which draws at most `RENDER_CAP` rows and prints its own
-          // truncation sentence from what it was handed -- so a hundred-row page fetched twenty
-          // artisans and twenty crafts that no reader could reach, and made the panel's total and
-          // any notice beside it two different numbers about one list. The workshop pickers have
-          // used this alias (as `WORKSHOP_OPTION_PAGE_SIZE`) since the same defect was closed there.
           listResource<Artisan>("/artisans", { pageSize: RENDER_CAP })
         ]);
         setArtisans(artisanResult.items);
         setPickerLoad("ok");
       } catch {
-        // The workshop list still loads. The pickers no longer degrade SILENTLY to an empty list:
-        // they say the read failed, which is a different fact from "there are none" and has a
-        // different next move. See `pickerLoad`.
         setPickerLoad("failed");
       }
     })();
   }, []);
 
-  // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
   useEffect(() => {
     if (skipFirstDebounce.current) {
       skipFirstDebounce.current = false;
@@ -342,9 +238,6 @@ function WorkshopsPageBody() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  // AFTER the debounce effect on purpose: effects run in declaration order, so the debounce's own
-  // first run has already spent `skipFirstDebounce`, and the flag raised here is the one that stops
-  // the restored query being debounced into a page-1 reset.
   useEffect(() => {
     const remembered = memory.recall();
     if (remembered) {
@@ -355,11 +248,9 @@ function WorkshopsPageBody() {
       setCompleteness(parseCompletenessFilter(remembered.filters?.completeness));
     }
     setPlaceRestored(true);
-    // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Warn on hard navigation (close tab / reload) while the workshop form has unsaved edits.
   useEffect(() => {
     if (!dirty) return;
     function onBeforeUnload(event: BeforeUnloadEvent) {
@@ -370,11 +261,8 @@ function WorkshopsPageBody() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
 
-  // Soft navigation via the round back control in the page header — the page's only back control —
-  // parks through the same mechanism, so Discard performs the navigation that was asked for.
   useLeaveGuard(dirty, () => guard(() => router.back()));
 
-  /** Run `action` now, or park it behind the unsaved-changes dialog when the form is dirty. */
   function guard(action: () => void) {
     if (dirty) setConfirmAction(() => action);
     else action();
@@ -383,8 +271,6 @@ function WorkshopsPageBody() {
   function resetForm(next: Workshop | null) {
     setEditing(next);
     setWorkshopType(next?.workshopType ?? "OTHER");
-    // The controlled, dictated boxes. `""` and not `undefined` — a controlled input handed undefined
-    // switches to uncontrolled and React warns, and the box then keeps the last record's text.
     setTitle(next?.title ?? "");
     setPlace(next?.place ?? "");
     setArtisanIds(linkedArtisanIds(next));
@@ -393,24 +279,11 @@ function WorkshopsPageBody() {
     setDirty(false);
   }
 
-  // `/workshops?edit=<id>` loads that workshop into the form below; `/workshops?new=1` opens a blank
-  // one. Both are how the View Data browser, a search result, the dashboard tiles and Recent
-  // submissions reach this page — before this they all linked to the bare `/workshops`, so
-  // "Update workshop" landed on the create form with none of the record's fields in it.
-  //
-  // The fetched record goes through the SAME `resetForm` a row click uses, which is what re-seeds the
-  // two link pickers: `artisanIds` and `craftIds` are React state rather than form controls, so a
-  // deep link that only set `editing` would have shown the workshop's title and place with its
-  // artisan and craft rosters silently empty — and saving would then have cleared them.
-  // `?edit=<id>&focus=<key>` from a meter pill: the field is focused once the workshop is in the form.
   useFocusField(Boolean(editing));
   const { loading: deepLinkLoading } = useEditDeepLink<Workshop>({
     endpoint: "/workshops",
     basePath: "/workshops",
     targetRef: formRef,
-    // Through `guard`, exactly as the row Edit button below goes through it — see the same note on
-    // /crafts for why seeding directly would silently discard work typed while the fetch was in
-    // flight.
     onEdit: (record) => guard(() => resetForm(record)),
     onNew: () => guard(() => resetForm(null)),
     onError: setError,
@@ -420,7 +293,6 @@ function WorkshopsPageBody() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // React nulls event.currentTarget after the first await — capture it before any async work.
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     setSaving(true);
@@ -436,32 +308,11 @@ function WorkshopsPageBody() {
         place: requiredText(form, "place"),
         description: textValue(form, "description"),
         notes: textValue(form, "notes"),
-        // Below professor the backend forces PENDING on create and drops status changes on update.
         status: canSetStatus ? requiredText(form, "status") : "PENDING",
         location
       };
-      /*
-       * THE TWO ROSTERS ARE SENT ONLY WHEN THEY CHANGED, and only on an edit. This mirrors Android's
-       * WorkshopForm, which diffs them the same way, and it is a permission fix rather than a saving
-       * of bytes.
-       *
-       * `PATCH /workshops/{id}` re-checks each roster it is SENT: when the caller is neither an
-       * admin nor the workshop's creator and lacks EDIT-level access to it,
-       * `assert_can_contribute_relation(..., populated=link_count > 0, ...)` refuses any send at all
-       * against an already-populated roster. Sending both unconditionally therefore meant a
-       * professor who opened someone else's workshop, corrected a typo in its PLACE and pressed
-       * Update was answered "Only the original contributor or an admin can change populated
-       * relation: artisanIds" — a refusal about two pickers they had not touched, on a save the
-       * server would otherwise have accepted. Omitting an unchanged roster leaves `artisanIds` unset
-       * in the payload, which is exactly what the WorkshopUpdate schema's `list[str] | None = None`
-       * means: do not touch this relation.
-       *
-       * On CREATE both are always sent — there is no stored roster to compare against, and the
-       * create path has no such check.
-       */
       if (!editing || !sameIdSet(artisanIds, linkedArtisanIds(editing))) payload.artisanIds = artisanIds;
       if (!editing || !sameIdSet(craftIds, linkedCraftIds(editing))) payload.craftIds = craftIds;
-      // Offline this queues to the outbox with its media rather than failing at the Save button.
       const outcome = await saveOrQueue<Workshop>({
         label: `Workshop · ${title || "Untitled"}`,
         endpoint: editing ? `/workshops/${editing.id}` : "/workshops",
@@ -477,10 +328,6 @@ function WorkshopsPageBody() {
         ]
       });
       if (outcome.queued) {
-        // OutboxBanner at the top of the page names the entry and says where it lives. Clear the form
-        // as a saved one is cleared: left filled with Save live, a second press queued a second copy
-        // and both synced as duplicate workshops. A save from the unsaved-changes dialog then runs
-        // the navigation it was asked for.
         resetForm(null);
         setConfirmAction(null);
         formElement.reset();
@@ -493,9 +340,6 @@ function WorkshopsPageBody() {
       }
       const saved = outcome.saved;
       if (mediaFiles.length) {
-        // `outcomes` AND NOT `uploaded`: one entry per file we handed over, at its position, with the
-        // `File` attached. `uploaded` is COMPACTED, so its positions are not this page's — see
-        // `BatchResult.outcomes` for the two ship-blockers that came out of lining those up.
         const { outcomes } = await uploadMediaBatch({
           files: mediaFiles,
           linkedRecordType: "workshop",
@@ -505,7 +349,6 @@ function WorkshopsPageBody() {
           onProgress: setUploadProgress
         });
         setUploadProgress(null);
-        // The uploaded files surface twice: as chips under this section and in the page-level tray.
         addCompleted(
           MEDIA_SECTION,
           MEDIA_SECTION_LABEL,
@@ -513,27 +356,6 @@ function WorkshopsPageBody() {
         );
         const stranded = outcomes.filter((outcome) => outcome.failure !== null);
         if (stranded.length) {
-          /*
-            KEEP THE BYTES THAT DID NOT LAND, AND ONLY THOSE. The early return already left the whole
-            batch in the capture card, so nothing was destroyed — but the card then described files
-            that ARE attached to the workshop as still needing to be sent, and a second Save would
-            have re-uploaded every one of them. Narrowing it to the stranded outcomes makes the card
-            mean what it says. `outcome.file` and not a name lookup: two photographs off one handset
-            are routinely both IMG_0001.jpg.
-
-            THE SENTENCE DOES NOT SAY "NOTHING HAS BEEN LOST", AND IT DID. That was true of this
-            instant and false of the move it recommended: the row's Edit button and the `?edit=`
-            deep link's `onEdit` both go through `resetForm`, which calls `setMediaFiles([])` — so
-            "re-open the workshop" is exactly the action that discards the bytes the sentence
-            promised were safe. `dirty` is still true here, so the unsaved-changes dialog interposes
-            and nothing vanishes without a click; being asked to confirm a Discard right after
-            reading a promise is still us misleading the designer.
-
-            AND NOT "PRESS SAVE AGAIN", which is the only remedy in reach and is wrong after a
-            CREATE: `editing` is still null on this return, so a second Save POSTs a SECOND workshop.
-            The crafts page carries the identical sentence for the identical reason — the two are
-            kept word for word so a fix to one is visibly owed to the other.
-          */
           setMediaFiles(stranded.map((outcome) => outcome.file));
           setError(
             `${stranded.length} of ${countNoun(mediaFiles.length, "file")} failed to upload: ${stranded
@@ -581,14 +403,6 @@ function WorkshopsPageBody() {
 
   const artisanOptions = artisans.map((artisan) => ({ value: artisan.id, label: `${artisan.name} · ${artisan.place}` }));
 
-  /*
-    The two lists as the shared vocabulary sees them, so the four sentences under and inside these
-    pickers are the app's and not this page's own wording. `scoped: false` on both: neither request
-    carries an access filter, so an empty answer is a statement about the REPOSITORY ("No artisans
-    have been recorded yet") and never about this account's grants. `accessList: false` on both: a
-    register is not a grant set, so R6's reason for refusing to cache one must not be printed over
-    it. See `WorkshopListVoice`.
-  */
   const artisanList: WorkshopListState<Artisan> =
     pickerLoad === "ok" ? { kind: "ok", rows: artisans, total: artisans.length } : { kind: pickerLoad };
   const listsOnline = !deviceLooksOffline();
@@ -601,8 +415,6 @@ function WorkshopsPageBody() {
   };
   const artisanNotice = workshopListNotice(artisanList, artisanVoice);
 
-  // The API already returns workshops createdAt-descending; re-sorting keeps the guarantee local
-  // so the list stays newest-first even if a caller ever changes the server ordering.
   const rows = data ? [...data.items].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")) : [];
 
   return (
@@ -619,30 +431,12 @@ function WorkshopsPageBody() {
         </div>
       ) : null}
 
-      {/* WHY THIS SITS ON THE WORKSHOPS PAGE and not in Settings. What it fixes is a workshop's own
-          contents — "this workshop looks empty" — so the person who notices the symptom is already here,
-          looking at the workshop. Admin-only because it writes to hundreds of rows at once; the endpoints
-          are gated the same way, so the card is not the security boundary. Unmapped records are content
-          admins' (2026-10-20); assignments stay with admins. */}
       {isContentAdmin(user) ? (
         <div className="mb-5">
           <WorkshopMappingPanel />
         </div>
       ) : null}
 
-      {/*
-        THE FORM SLOT, AND IT NOW ANSWERS TWO QUESTIONS RATHER THAN ONE.
-
-        `allowManage` alone used to decide it, which was right while "add" and "edit" were one
-        capability. They are not any more: the ministry opens a workshop and Professor-and-above
-        corrects one. So the form is drawn when the account may create (a blank form, as before) OR
-        when there is a workshop loaded into it to edit — which is how a professor, an assistant
-        director and a regional director still reach every field on this page, through the row's Edit
-        button and through `?edit=<id>`.
-
-        A GREYED-OUT "Create workshop" WAS THE OTHER OPTION AND IS WORSE: it says "no" and names
-        neither who can nor what to do instead. The panel below this form says both.
-      */}
       {allowManage && (editing || allowCreate) ? (
       <form
         ref={formRef}
@@ -650,13 +444,8 @@ function WorkshopsPageBody() {
         onSubmit={submit}
         onInput={() => setDirty(true)}
         onKeyDown={handleFormEnter}
-        // scroll-mt-28 clears the island nav when `?edit=` scrolls this form into view, and it is
-        // load-bearing here in a way it is not on /crafts: an admin has the workshop-mapping panel
-        // sitting above this form, so there is real content to scroll past.
         className="panel mb-5 grid scroll-mt-28 gap-4 p-4"
       >
-        {/* WHICH workshop is in the form — see the same chip on /crafts for why the button label is
-            not enough on its own when the researcher arrived here from another page entirely. */}
         {editing ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-field-200 px-2.5 py-1 text-xs font-medium text-ink-900">
@@ -674,15 +463,6 @@ function WorkshopsPageBody() {
             photos: mediaFiles.filter((file) => inferMediaType(file) === "IMAGE").length
           }}
         />
-        {/*
-          WHICH KIND OF WORKSHOP, FIRST — above the title, because it changes what the record is
-          FOR rather than describing it.
-
-          A Design & Prototype Development Workshop and an ordinary documentation visit were both
-          `Workshop` rows with nothing to tell them apart, so the design-workshop page's picker had
-          to offer every craft-documentation visit ever recorded and the right row was hard to find.
-          Marking one here is what puts it in that list.
-        */}
         <Field label="Kind of workshop" required>
           <Dropdown
             value={workshopType}
@@ -702,16 +482,6 @@ function WorkshopsPageBody() {
         </Field>
 
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          {/*
-            DICTATED, AND `FieldBlock` RATHER THAN `Field` — 2026-08-28. `DictatedTextInput` draws its
-            own label and its own asterisk from `required`, so wrapping it in a `<label>` would name
-            the box twice and fold the microphone button's name into the field's own (§12.3).
-
-            CONTROLLED, which the rest of this form's boxes are not: dictation writes from outside the
-            keyboard, and an uncontrolled input would need a ref plus a hand-dispatched `input` event
-            to keep React and the DOM agreeing. `submit` reads `FormData` off the form element, so
-            nothing downstream can tell the difference.
-          */}
           <DictatedTextInput
             name="title"
             label="Workshop title"
@@ -719,8 +489,6 @@ function WorkshopsPageBody() {
             value={title}
             onChange={(next) => {
               setTitle(next);
-              // A dictated phrase is a React state write and fires no native `input` event, so the
-              // form's own `onInput` cannot see it. Every themed control here arms the guard by hand.
               setDirty(true);
             }}
             explainWhenUnavailable={false}
@@ -754,8 +522,6 @@ function WorkshopsPageBody() {
               </div>
             )}
           </Field>
-          {/* A description is prose and gets the multi-line dictated box, exactly as an artisan's
-              address does on its own form. */}
           <DictatedTextArea
             name="description"
             label="Description"
@@ -764,14 +530,6 @@ function WorkshopsPageBody() {
             explainWhenUnavailable={false}
           />
           <MultiNoteField defaultValue={editing?.notes ?? ""} />
-          {/* Both link pickers use the same themed multi-select as every other one in the app; the
-              selections are React state, not FormData (see the note on `artisanIds` above).
-
-              Both pass `searchable` rather than leaving it to the option count, because both lists
-              are records: the artisans interviewed and the crafts recorded. The count rule would
-              give this one form a filter box on the artisan picker and none on the craft picker for
-              most of this repository's life (16 against 9, either side of a threshold of 8), which
-              is one form asking the same question two ways. */}
           <Field label="Linked artisans" fieldKey="artisans">
             <MultiSelectDropdown
               values={artisanIds}
@@ -782,12 +540,8 @@ function WorkshopsPageBody() {
               options={artisanOptions}
               searchable
               placeholder="Link the artisans who took part"
-              /* Was the literal "No artisans recorded yet" -- a claim about the repository drawn
-                 just as readily off a read that never arrived. See `artisanList`. */
               emptyLabel={workshopEmptyLabel(artisanList, artisanVoice)}
               confirmLabel="Link artisans"
-              // R3: nothing to pick means the control is disabled AND the sentence is on screen.
-              // Never while loading -- the panel covers that wait in its own slot.
               disabled={pickerLoad !== "loading" && artisans.length === 0}
             />
           </Field>
@@ -818,9 +572,6 @@ function WorkshopsPageBody() {
           />
         </div>
         <UploadProgress progress={uploadProgress} sectionId={MEDIA_SECTION} label={MEDIA_SECTION_LABEL} files={mediaFiles} />
-        {/* Editing an existing workshop: everything already attached to it, with per-file delete.
-            `recordHold={null}`: a crafts workshop is never filed under a design workshop, so only a
-            file's own workshop columns can hold it — which the panel reads for itself. */}
         {editing ? (
           <ExistingMedia
             linkedRecordType="workshop"
@@ -829,12 +580,6 @@ function WorkshopsPageBody() {
             title="Previously uploaded workshop media"
           />
         ) : null}
-        {/*
-          One form serves create AND edit here (the `key` above remounts it), so the stored location
-          has to be handed over on the edit pass. Without it the card reads `initial === undefined`,
-          treats an edit as a new record, and auto-captures — writing wherever the researcher happens
-          to be sitting over the coordinates of a workshop that was documented somewhere else.
-        */}
         <LocationFields
           initial={editing ? ((editing as Workshop & { location?: LocationInitialValues | null }).location ?? null) : undefined}
           onDirty={() => setDirty(true)}
@@ -851,28 +596,6 @@ function WorkshopsPageBody() {
         </ActionGroup>
       </form>
       ) : (
-        /*
-          WHAT STANDS WHERE THE FORM WAS, AND IT IS TWO DIFFERENT SENTENCES FOR TWO DIFFERENT
-          AUDIENCES, because "you cannot do this" and "you cannot do this ONE thing any more" are
-          different facts and one sentence covering both would be false for everybody.
-
-          THE SENTENCE THESE TWO REPLACED SENT PEOPLE TO ASK THE MASTER ADMIN FOR "workshop creation
-          access", AND IT WAS WRONG rather than merely stale: creating a workshop has not been a
-          per-user grant for a long time. There is no `canManageWorkshops` column anybody can set —
-          the server reads rank alone — so it directed people to request something nobody can hand
-          out, and they came back to the same empty panel. Both replacements name a TIER and a next
-          move instead.
-
-          (The old wording is described here and not quoted, deliberately. The test that keeps it
-          from coming back searches this file for it as plain text, and a sentence reproduced inside
-          a comment reads to that search exactly like a sentence still on the screen — the same trap
-          `create_design_workshop` documents about naming its own retired gates in prose.)
-
-          IT IS A STANDING PANEL AND NOT A DISMISSIBLE NOTICE, unlike the design-workshops page's,
-          because it is not answering a navigation — it occupies the slot a form used to occupy, and
-          a blank gap where a professor remembers a form is the thing that generates the support
-          question.
-        */
         <div className="panel mb-5 p-4 text-sm text-ink-muted">
           {allowManage ? (
             <>
@@ -885,12 +608,7 @@ function WorkshopsPageBody() {
           )}
         </div>
       )}
-      {/* The workshop's own code, drawn live for the workshop in the form. A workshop is edited
-          INLINE on this list rather than at a /[id]/edit route, so this is the record's detail view
-          and this is where its code belongs. */}
       {editing ? <RecordCodeCard recordType="workshop" id={editing.id} title={editing.title} className="mb-5" /> : null}
-      {/* Same provenance block the artisan/product/tool edit surfaces carry, for the workshop being
-          edited. empty:hidden — FieldProvenance renders nothing without provenance access. */}
       {editing ? (
         <div className="mb-5 empty:hidden">
           <FieldProvenance extraMetadata={editing.extraMetadata} title="Workshop field contributions" />
@@ -939,7 +657,6 @@ function WorkshopsPageBody() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {rows.map((workshop) => (
-                  // The whole row opens the workshop read-only; Update loads it into the form above.
                   <OpenableRow key={workshop.id} href={RECORD_VIEW_HREF.workshop(workshop.id)}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -989,18 +706,6 @@ function WorkshopsPageBody() {
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
 
-      {/*
-        THE ASSIGN DIALOG GOES THROUGH `FieldDialog` LIKE EVERY OTHER MODAL IN THE APP. It used to be
-        a `fixed inset-0 z-50 bg-black/40` div with a `stopPropagation` guard and nothing else: no
-        `role="dialog"`, no focus trap, no Escape, no focus restore, no scroll lock — so an admin
-        opening it from the keyboard was left on the Assign button behind the dimmer with the table
-        still being read out underneath, and the page scrolled under the overlay.
-
-        `dismissOnBackdrop={false}` because the panel below holds work in progress: the ticks are
-        state, not a saved answer, and a stray click on the dim area silently threw away however many
-        researchers had been picked while showing the original assignment untouched on reopening.
-        `busy` suspends Escape and the X while the PUT is in flight for the same reason.
-      */}
       <FieldDialog
         open={assigning !== null}
         onClose={() => setAssigning(null)}
@@ -1016,9 +721,6 @@ function WorkshopsPageBody() {
         busy={assignBusy}
         footer={
           <>
-            {/* Deliberately NOT disabled while `busy`: `busy` suspends the ambiguous dismissals
-                (Escape, the X, the backdrop), and Cancel is the one explicit way out that must stay
-                available — as it was before this dialog had any of the others. */}
             <button className="field-button-secondary" onClick={() => setAssigning(null)}>
               Cancel
             </button>

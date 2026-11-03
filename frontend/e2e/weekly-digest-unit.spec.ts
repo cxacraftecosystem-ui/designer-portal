@@ -18,11 +18,6 @@ import {
   type DigestPreference
 } from "@/lib/weeklyDigest";
 
-/**
- * THE MONDAY SUMMARY — the shared routes, the Settings card's decisions and the page's tiles. The
- * routes are pinned because the documentation portal and both handsets call the same three.
- */
-
 const ELIGIBLE: DigestPreference = {
   eligible: true,
   enabled: true,
@@ -40,7 +35,6 @@ test("the routes are the shared contract", () => {
 test("the card draws nothing for an account the summary is not for", () => {
   expect(digestCardView(null)).toBeNull();
   expect(digestCardView(readPreference({ eligible: false, emailAvailable: true }))).toBeNull();
-  // A malformed answer is read as not eligible, never as a switch that cannot work.
   expect(digestCardView(readPreference(undefined))).toBeNull();
 });
 
@@ -101,7 +95,6 @@ test("the page draws four tiles in order", () => {
     ["Reports in", "71%"]
   ]);
   expect(tiles[3].note).toBe("41 of 58");
-  // A coverage with no denominator (the documentation portal's districts) is a plain number.
   const districts = digestTiles({ ...DIGEST, coverage: { label: "Districts documented", value: 12, of: null, percent: null } });
   expect(districts[3]).toEqual({ key: "coverage", label: "Districts documented", figure: "12", note: null });
 });

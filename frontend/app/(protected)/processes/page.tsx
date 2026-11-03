@@ -33,13 +33,6 @@ function ProcessesPageInner() {
   const searchParams = useSearchParams();
   const { canDeleteRecords } = useAdminView();
   const { user } = useAuth();
-  /**
-   * Documenting a process needs `require_record_creator`, the same as an artisan, product or tool.
-   * Those three sit behind ROUTE_GUARDS on /artisans/new and friends; this form is a QUERY parameter
-   * on a list route, and ROUTE_GUARDS matches the pathname alone, so the central table could never
-   * see it — a crowdsource volunteer filled the whole form in and met the 403 at Save. The gate is
-   * therefore here, in the only place that can read `?new=1`.
-   */
   const creator = canCreateRecords(user);
   const isNew = searchParams.get("new") === "1" && creator;
 
@@ -51,43 +44,18 @@ function ProcessesPageInner() {
   const [success, setSuccess] = useState<string | null>(null);
   const skipFirstDebounce = useRef(true);
 
-  // Editing loads the full hydrated record (steps + media) into the form.
   const [editing, setEditing] = useState<ProcessRecord | null>(null);
   const [editLoadingId, setEditLoadingId] = useState<string | null>(null);
 
-  // Drop the parameter as well as the form, so a refresh or a shared link does not keep asking for a
-  // page this account cannot have. The list underneath is open to everyone, which is where they land.
   useEffect(() => {
     if (!creator && searchParams.get("new") === "1") router.replace("/processes");
   }, [creator, router, searchParams]);
   const [collabId, setCollabId] = useState<string | null>(null);
 
-  // Cascading funnel filters: Workshop -> Craft -> Artisan, the shared component every list uses.
-  // /processes accepts workshopId, craftId and artisanId directly (craft/artisan resolve through
-  // the process's parent product), so the funnel filters server-side like products and tools.
   const [funnel, setFunnel] = useState<FunnelValue>(EMPTY_FUNNEL);
   const [funnelReady, setFunnelReady] = useState(false);
 
-  /**
-   * Which fetch is the current one — the counter /artisans, /questionnaires and /design-workshops
-   * already carry. The search box debounces the APPLIED TERM, not the request, and the pager, the
-   * funnel and the post-save `load()` calls all fire the same fetch, so several are routinely in
-   * flight together and an abandoned question's answer can land LAST and win.
-   *
-   * Worse than a stale table here, because `<Pagination>` is rendered with `page={data.page}` — the
-   * ANSWERED page — while the refetch effect depends on `page`, the REQUESTED one. Let page 1's
-   * slow answer land after page 2's fast one and `data.page` is 1 while `page` is 2; Next then
-   * calls `setPage(data.page + 1)` = `setPage(2)`, React bails on the identical scalar, nothing
-   * re-renders and nothing refetches — the button is dead until Previous is pressed. Audit
-   * 2026-08-15 filed that against this file, /products, /tools and /media.
-   *
-   * Counted rather than aborted because `listResource` takes no `AbortSignal`; ignoring the late
-   * answer is the part that matters. Note this page also calls `load(pageToLoad)` directly after a
-   * save or delete — those are ordinary generations too, and the guard is what stops a slow list
-   * refresh from overwriting the fresher one the user's next click asked for.
-   */
   const currentLoad = useRef(0);
-  /** Search, page, funnel and scroll, so Back from a process's page lands on the same rows. */
   const memory = useListMemory("processes", { query, applied, page, funnel }, data !== null);
 
   async function load(pageToLoad = page) {
@@ -110,14 +78,12 @@ function ProcessesPageInner() {
     }
   }
 
-  // Waits for the funnel's initial onChange (default = the most recent workshop) before the first fetch.
   useEffect(() => {
     if (!funnelReady) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [funnelReady, page, applied, funnel]);
 
-  // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
   useEffect(() => {
     if (skipFirstDebounce.current) {
       skipFirstDebounce.current = false;
@@ -131,8 +97,6 @@ function ProcessesPageInner() {
   }, [query]);
 
   function onFunnelChange(next: FunnelValue, _workshop: FunnelWorkshop | null) {
-    // The funnel's FIRST answer is when this page learns its defaults — and so when a remembered
-    // place (Back from a record's page) replaces them. See `useListMemory`.
     const remembered = funnelReady ? null : memory.recall();
     if (remembered) {
       if ((remembered.query ?? "") !== query) skipFirstDebounce.current = true;
@@ -162,23 +126,11 @@ function ProcessesPageInner() {
     }
   }
 
-  /**
-   * `/processes?edit=<id>` — the link the dashboard's Recent submissions rows and the View Data
-   * browser have always produced for a process. Nothing on this page read it, so both landed on the
-   * plain list and the researcher had to find the row again themselves.
-   *
-   * `onNew` is deliberately NOT passed: `?new=1` is a render mode this page derives on every render
-   * (`isNew` above), not a one-shot intent, and a hook that consumed and stripped it would close the
-   * create form the moment it opened. No `targetRef` either — the edit view REPLACES the list, so
-   * the top of the document is the form, which is where `openEdit` already scrolls.
-   */
   const { loading: deepLinkLoading } = useEditDeepLink<ProcessRecord>({
     endpoint: "/processes",
     basePath: "/processes",
     onEdit: setEditing,
     onError: setError,
-    // PATCH /processes/{id} is gated by `get_current_user` and decides field by field inside
-    // `guard_record_edit`, exactly like the row Update button below, which is offered to everyone.
     allowed: true,
     errorMessage: "Unable to load this process"
   });
@@ -216,7 +168,6 @@ function ProcessesPageInner() {
     </>
   );
 
-  // /processes?new=1 — ONLY the create form, no list.
   if (isNew) {
     return (
       <>
@@ -239,8 +190,6 @@ function ProcessesPageInner() {
     );
   }
 
-  // Edit view: the record loaded into the same form, saved via PATCH. The form carries the process's
-  // own attached media (pre-process clips and per-step captures) with per-file delete.
   if (editing) {
     return (
       <>
@@ -259,9 +208,6 @@ function ProcessesPageInner() {
           }}
           onCancel={() => setEditing(null)}
         />
-        {/* The process's own code, drawn live. A process is edited INLINE from this list rather than
-            at a /[id]/edit route, so this view IS the record's detail view and this is where its code
-            belongs. */}
         <RecordCodeCard recordType="process" id={editing.id} title={editing.name} className="mt-6" />
       </>
     );
@@ -269,7 +215,6 @@ function ProcessesPageInner() {
 
   const filtersActive = Boolean(applied || funnel.workshopId || funnel.craftId || funnel.artisanId);
 
-  // /processes — list/update view only.
   return (
     <>
       <PageHeader
@@ -327,7 +272,6 @@ function ProcessesPageInner() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((process) => (
-                  // The whole row opens the process read-only; Update loads it into the form here.
                   <OpenableRow key={process.id} href={RECORD_VIEW_HREF.process(process.id)}>
                     <td className="px-4 py-3">
                       <OpenableRowLink href={RECORD_VIEW_HREF.process(process.id)}>{process.name}</OpenableRowLink>
@@ -377,7 +321,6 @@ function ProcessesPageInner() {
 }
 
 export default function ProcessesPage() {
-  // Next 16: useSearchParams must sit inside a Suspense boundary.
   return (
     <Suspense fallback={<div className="panel p-4 text-sm text-ink-500">Loading...</div>}>
       <ProcessesPageInner />

@@ -1,37 +1,5 @@
 "use client";
 
-/**
- * WORKSHOPS I MONITOR — the officer's own list, and the first half of the sixth scope.
- *
- * ── WHY A LIST IS HALF THE FEATURE, NOT A CONVENIENCE ─────────────────────────────────────────
- *
- * A scope the list does not honour tells its holder that a workshop exists (they can open it by id)
- * and simultaneously that it does not (it is absent from every list they can reach). Nothing in
- * either client navigates to a workshop by typed id, so an officer with no list has no feature at
- * all — which is exactly the state the inspector tier was in while its whole server side sat
- * finished and uncalled.
- *
- * ── THE EMPTY PAGE IS A REAL ANSWER AND HAS TO BE TOLD FROM A FAILURE ─────────────────────────
- *
- * There is no "all workshops" arm, no rank fallback and no `createdById` arm — an officer creates
- * nothing — so an officer with no oversight row sees an empty page, and that IS the whole scope.
- * `items === null` is "still asking", `[]` is "genuinely none" and `error` is a banner that never
- * empties the list. The correct empty state and a silent failure look identical, and the person
- * reading this has no other surface to cross-check against.
- *
- * ── SINCE 2026-10-09 THE PAGE IS AN ADMIN'S TOO, AND "NONE" HAS ONE SENTENCE ─────────────────
- *
- * Until the owner's ruling D3, `assert_oversight_surface` answered an ADMIN and a MASTER ADMIN a 403
- * by name — they could hold no oversight row, so their page could only ever be empty — and a
- * Ministry Admin was admitted to a page that was always empty for the same reason. The ruling lets
- * all three be named Assistant Director or Regional Director on a workshop, so this page is theirs
- * and lists exactly the workshops they were named on. The empty state names the posts THIS reader
- * may hold ({@link oversightEmptyState}), and a 403 met by an admin means "no posts held" — a server
- * that admits them only once they hold a row, or one older than the ruling — so it is drawn as that
- * empty state rather than as a banner ({@link oversightRefusalMeansNoPosts}). A directorate tier
- * refused here has met a fault and still gets the banner.
- */
-
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Binoculars, Lock } from "lucide-react";
@@ -62,7 +30,6 @@ import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 const PAGE_SIZE = 20;
 
-/** 300 ms, this app's number. Clearing the box does not wait — see the sibling list's note. */
 const SEARCH_DEBOUNCE_MS = 300;
 
 function describeFailure(error: unknown): string {
@@ -85,7 +52,6 @@ export default function WorkshopsIMonitorPage() {
   const [sort, setSort] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  /** A generation counter rather than an abort: `apiFetch` takes no `AbortSignal`. */
   const generation = useRef(0);
 
   useEffect(() => {
@@ -93,8 +59,6 @@ export default function WorkshopsIMonitorPage() {
     const timer = window.setTimeout(
       () => {
         setApplied(term);
-        // BACK TO PAGE ONE WHENEVER THE TERM SETTLES. A narrowed list is a different list, and
-        // staying on page 3 of it shows "Page 3 of 1" with nothing under it.
         setPage(1);
       },
       term ? SEARCH_DEBOUNCE_MS : 0
@@ -115,14 +79,10 @@ export default function WorkshopsIMonitorPage() {
       .catch((err) => {
         if (generation.current !== current) return;
         if (oversightRefusalMeansNoPosts(err, user)) {
-          // NOT A FAILURE: an admin the server will not yet show this list to holds no posts, and
-          // that is exactly what the empty state says. See the header.
           setData({ items: [], total: 0, page: 1, pageSize: PAGE_SIZE, pages: 0 });
           setError(null);
           return;
         }
-        // The list is NOT emptied. An empty table under an error banner reads as "nothing is
-        // assigned to me", which is the one thing this screen must never say by accident.
         setError(describeFailure(err));
       });
   }, [applied, page, loading, user, sort]);
@@ -132,14 +92,6 @@ export default function WorkshopsIMonitorPage() {
       <div>
         <PageHeader title="Workshops I monitor" icon={<Binoculars className="h-5 w-5" aria-hidden />} />
         <section className="panel px-6 py-14 text-center" aria-live="polite">
-          {/*
-            PURPLE, DELIBERATELY, AND IT IS THE ONLY ACCENT ON THIS ROUTE THAT DID NOT MOVE.
-            /officers/monitored is a ministry surface and `AppShell` stamps `data-surface="ministry"`
-            on it, so its panels, borders and header chip took the ministry ramp in 0.0.12. This
-            padlock did not, because a refusal is shown to somebody who is NOT a ministry account —
-            a designer, a professor, an inspector — and putting the ministry's own colour around the
-            notice that they are not of the ministry would be a lie told in colour.
-          */}
           <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-purple-50 text-purple-700">
             <Lock className="h-5 w-5" aria-hidden />
           </div>
@@ -226,9 +178,6 @@ export default function WorkshopsIMonitorPage() {
                     <span className="block truncate font-medium text-ink-900">
                       {workshopDisplayTitle(workshop)}
                     </span>
-                    {/* The code is denormalised from stage 1 and is null until that stage has been
-                        saved — so its absence means "stage 1 is not done", not "missing". An officer
-                        reads that as a finding rather than as a gap in this screen. */}
                     <span className="block truncate text-xs text-ink-500">
                       {workshop.workshopCode ?? "No workshop code yet"}
                       {workshop.craftName ? ` · ${workshop.craftName}` : ""}

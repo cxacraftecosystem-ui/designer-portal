@@ -25,12 +25,6 @@ import {
 } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
-/*
-  THE MINISTRY'S MONTHLY EXPORT PACKS, without a browser: the guard row and its refusal against the
-  server's own constant, the polling rule, which controls each status draws, "Every scheme", the
-  `?period=` the e-mail's link carries, and the 410 sentence.
-*/
-
 const ROOT = join(__dirname, "..", "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 const SERVICE = read("backend/app/services/ministry_exports.py");
@@ -104,7 +98,6 @@ test("?period= preselects the month, and a bad one falls back", () => {
 });
 
 test("months are India time, and the generator offers this month and the twelve before", () => {
-  // 30 Sep 19:00 UTC is 1 Oct 00:30 IST.
   expect(currentPeriod(new Date("2026-09-30T19:00:00Z"))).toBe("2026-10");
   const months = recentPeriods(13, new Date("2026-01-10T00:00:00Z"));
   expect(months[0]).toBe("2026-01");

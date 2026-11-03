@@ -45,7 +45,6 @@ function toPreview(item: CompletedUpload): PreviewMedia {
   };
 }
 
-/** Chips for media that finished uploading — tap one to preview it in the lightbox. */
 export function UploadedMediaChips({ items, showSection = false }: { items: CompletedUpload[]; showSection?: boolean }) {
   const [active, setActive] = useState<PreviewMedia | null>(null);
   if (!items.length) return null;
@@ -65,8 +64,6 @@ export function UploadedMediaChips({ items, showSection = false }: { items: Comp
               {showSection ? <span className="shrink-0 text-ink-500">· {item.sectionLabel}</span> : null}
               <span className="shrink-0 text-ink-500">{bytes(item.file.sizeBytes)}</span>
             </button>
-            {/* Uploaded now, so the server's copy is the one saved. Absent only where the server sent
-                no URL for this reader — the chip still opens the preview, which says why. */}
             {item.file.url ? (
               <DownloadMediaButton
                 name={item.file.originalFilename}
@@ -81,23 +78,12 @@ export function UploadedMediaChips({ items, showSection = false }: { items: Comp
   );
 }
 
-/**
- * The local File behind the row's "current file", matched by NAME. Never guessed by position alone:
- * some forms rename a file before sending it (`STAGE_STEP_<n>_…`) or send two fields' files as one
- * batch, and saving the wrong photograph is worse than offering no button on this row — the tile
- * above it still carries one.
- */
 function fileInFlight(files: readonly File[], progress: BatchProgress): File | null {
   const named = files.filter((file) => file.name === progress.currentFileName);
   if (named.length === 1) return named[0];
   return null;
 }
 
-/**
- * Section-scope upload state: a determinate bar with percentage, file counter and ETA while the
- * batch runs, and the media this section finished uploading afterwards. Passing `sectionId`
- * publishes the same progress to the page-level <UploadTray>, so one call site feeds both scopes.
- */
 export function UploadProgress({
   progress,
   sectionId,
@@ -108,12 +94,7 @@ export function UploadProgress({
   progress: BatchProgress | null;
   sectionId?: string;
   label?: string;
-  /**
-   * The files this batch is sending, as the page holds them. When given, the running row offers
-   * Download for the file in flight, read from this local copy rather than from the server.
-   */
   files?: readonly File[];
-  /** Extra classes for the wrapper — grid parents pass their column span here. */
   className?: string;
 }) {
   const { reportSection, completed } = useUploads();
@@ -124,8 +105,6 @@ export function UploadProgress({
     reportSection(sectionId, sectionLabel, progress);
   }, [sectionId, sectionLabel, progress, reportSection]);
 
-  // Clearing has to happen on UNMOUNT only — doing it in the effect above would drop and re-add the
-  // section on every progress tick, restarting the page-level ETA clock each time.
   const latest = useRef({ sectionId, sectionLabel, reportSection });
   useEffect(() => {
     latest.current = { sectionId, sectionLabel, reportSection };

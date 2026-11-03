@@ -15,7 +15,6 @@ import {
 
 type SwitchKey = "emailReviewNotes" | "emailWorkshopUpdates" | "emailAccessNotices";
 
-/** The three opt-outs, in the order a designer meets them. Words held to Android's settings card. */
 export const EMAIL_SWITCHES: { key: SwitchKey; label: string; description: string }[] = [
   {
     key: "emailReviewNotes",
@@ -34,11 +33,6 @@ export const EMAIL_SWITCHES: { key: SwitchKey; label: string; description: strin
   }
 ];
 
-/**
- * This account's e-mail choices. NO ROLE GATE — the choice belongs to the person — and NOTHING AT
- * ALL is drawn until the server says mail is on (`available`). The hand-in choice is drawn only for
- * an inspector or the approving authority (`reviewsHandIns`). Each change saves only that field.
- */
 export function EmailNotificationsCard() {
   const [state, setState] = useState<NotificationPreferences | null>(null);
   const [saving, setSaving] = useState(false);

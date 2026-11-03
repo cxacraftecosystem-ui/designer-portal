@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * "Planned workshop" on the sanction form (owner decision C1, 2026-10-17).
- *
- * One annual-plan row is one workshop, and the officer may pick ONLY a row whose number matches
- * exactly — so this is a number box and a Find button, never a browsable list of the plan (the plan
- * is not this tier's to read). The server answers the exact matches; a row already opened or
- * withdrawn comes back with its reason and cannot be picked. The pick is controlled by the page so
- * the submit can send `annualPlanEntryId` and reset it after an order is recorded.
- */
-
 import { useState } from "react";
 
 import { Field, TextInput } from "@/components/FormControls";
@@ -24,7 +14,6 @@ function dateRange(row: PlannedWorkshopCandidate): string | null {
   return start ?? end ?? null;
 }
 
-/** The one line that identifies a plan row: craft, place and dates, whichever are filled. */
 export function plannedRowSummary(row: PlannedWorkshopCandidate): string {
   return [
     row.craftName,
@@ -35,7 +24,6 @@ export function plannedRowSummary(row: PlannedWorkshopCandidate): string {
     .join(" · ");
 }
 
-/** One pickable exact match, and nothing else, is picked for the officer; anything more is theirs. */
 export function autoPickedRow(items: readonly PlannedWorkshopCandidate[]): PlannedWorkshopCandidate | null {
   return items.length === 1 && items[0]!.pickable ? items[0]! : null;
 }
@@ -64,7 +52,6 @@ export function PlannedWorkshopPicker({
       const answer = await findPlannedWorkshops(clean);
       setRows(answer.items);
       setTruncated(answer.truncated);
-      // One pickable exact match is the ordinary case: pick it, the officer can still clear it.
       onPick(autoPickedRow(answer.items));
     } catch (error) {
       setRows(null);

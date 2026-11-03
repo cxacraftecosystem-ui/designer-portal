@@ -7,10 +7,6 @@ import { cardCheck, cardShortCode, looksLikeArtisanCard, parseArtisanCard } from
 import { classifyScanInput } from "@/lib/scanInput";
 import { encodeWorkshopCode } from "@/lib/workshopCodes";
 
-/**
- * The artisan QR card's parse rules on the web, held to `shared/artisan-card-vectors.json` — the
- * same file the backend (`tests/test_artisan_card.py`) and both Android apps read. No browser.
- */
 type Vectors = {
   alphabet: string;
   shortCodes: { issuer: string; code: string; check: string; shortCode: string }[];
@@ -54,11 +50,9 @@ test("a scan is tried as an artisan card first, then as a DPW1 code", () => {
   const payload = classifyScanInput(VECTORS.tags.cases[0].payload);
   expect(payload.kind).toBe("card");
 
-  // A mistyped card is refused with the server's sentence, never handed to the DPW1 decoder.
   expect(classifyScanInput("D-7K3QM-9XA2F-H0")).toEqual({ kind: "refused", message: "Check the code. One character is wrong." });
   expect(looksLikeArtisanCard("D-7K3QM-9XA2F-H0")).toBe(true);
 
-  // An old DPW1:A card still decodes: old printed cards keep scanning.
   const old = encodeWorkshopCode({ recordType: "artisan", id: "clx0abc1230000example" });
   expect(old.ok).toBe(true);
   if (old.ok) {
@@ -67,7 +61,6 @@ test("a scan is tried as an artisan card first, then as a DPW1 code", () => {
     if (scanned.kind === "workshop") expect(scanned.ref).toEqual({ recordType: "artisan", id: "clx0abc1230000example" });
   }
 
-  // Free text is neither, and says so through the DPW1 decoder's own refusal.
   expect(classifyScanInput("hello").kind).toBe("refused");
 });
 

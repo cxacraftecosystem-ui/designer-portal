@@ -103,13 +103,6 @@ function GrantCell({
   );
 }
 
-/**
- * Tone per status. A WORD in every chip, always — colour is the second channel, never the only one.
- * The amber is the one an administrator may have to act on: the account's next sign-in leads only to
- * choosing a new password, whether a provisioner typed the present one or a change was required of
- * the owner's own (the footnote under the table says which two). Literal status colours on both
- * sides, as `StatusBadge` does, so the pairing holds in either theme.
- */
 const STATUS_TONE: Record<AccountStatusKind, string> = {
   MUST_CHOOSE_NEW_PASSWORD: "border-amber-500/30 bg-amber-100 text-amber-800",
   GOOGLE_ONLY: "border-line-200 bg-surface-50 text-ink-700",
@@ -143,12 +136,6 @@ function AccountStatusCell({ user }: { user: User }) {
   );
 }
 
-/**
- * `useSearchParams` suspends under Next 16, and this page reads it once — the pre-filled create form
- * a link from "Who may sign in" carries. The fallback is the page's own header, so the frame does not
- * jump while the query string is read.
- */
-/** What the "account created" panel draws from — see `created` for the one secret it may hold. */
 type CreatedPanel = {
   account: User;
   mustChangePassword: boolean;
@@ -159,7 +146,6 @@ type CreatedPanel = {
   passwordLinkError: string | null;
 };
 
-/** "How will they sign in?" — the three answers, in the order the form offers them. */
 const SIGN_IN_CHOICES: { mode: PasswordMode; label: string }[] = [
   { mode: "SET", label: "Set a password now" },
   { mode: "GENERATE", label: "Make a temporary password for me" },
@@ -177,94 +163,37 @@ export default function UsersPage() {
 function UsersScreen() {
   const confirm = useConfirm();
   const [showNewPassword, setShowNewPassword] = useState(false);
-  /**
-   * A password link an admin has just minted, held on screen until they dismiss it.
-   *
-   * **THE ONLY COPY OF THIS CREDENTIAL IS THE ONE ON SCREEN.** The server stores a SHA-256 of
-   * the token and never the token, so nothing can hand it back a second time: dismissing this
-   * panel loses the link and the remedy is to issue another. That is deliberate and it is why
-   * the panel says so rather than being quietly dismissable.
-   */
   const [issuedLink, setIssuedLink] = useState<{ user: User; link: IssuedPasswordLink } | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
-  // Whether "E-mail a password link" is offered at all. False until the answer arrives, and false
-  // for good on a deployment without mail: the choice is then simply not drawn.
   const [mailAvailable, setMailAvailable] = useState(false);
   const { user: currentUser } = useAuth();
   const { adminMode } = useAdminView();
-  /**
-   * THREE POWERS ON ONE PAGE, AND THEY ARE NOT NESTED BY RANK.
-   *
-   * Everybody who reaches /users (Professor and above, `canManageUsers`) changes the role of anybody
-   * beneath them. `provision` adds creating password accounts and looking after them — a temporary
-   * password, a forced change, a password link, a corrected name or address — and is the SET
-   * `canProvisionAccounts`, which holds MINISTRY_ADMIN although that tier is not an admin. `admin`
-   * adds deleting accounts and the capability checkboxes, and `masterControls` the bulk panel. A
-   * ministry admin is therefore shown the create form and the password actions and is NOT shown
-   * Delete or a single grant box: the server refuses both, and a control it refuses is not offered.
-   *
-   * `adminChromeVisible` is the admin-view half. For an ADMIN with admin view off AppShell already
-   * replaces the whole route (the nav link is hidden, so the page would otherwise be reachable only
-   * by URL) — this is the second line, keeping the admin-only controls tied to the toggle wherever
-   * the page renders. It cannot narrow anybody who is not `isAdmin` — a professor, a director, a
-   * ministry admin — because they have no toggle to undo it, so for them it is always true.
-   */
   const chrome = adminChromeVisible(currentUser, adminMode);
   const provision = canProvisionAccounts(currentUser) && chrome;
   const admin = isAdmin(currentUser) && chrome;
   const masterControls = isMasterAdmin(currentUser) && chrome;
   const offeredRoles = provisionableRoles(currentUser);
-  /**
-   * THE ADDRESS BAR SEEDS THE CREATE FORM ONCE. Read in a lazy initialiser — so the first render
-   * already carries a link's address and tier — and stripped from the bar right after, so a reload
-   * or Back does not put an account that was just created back into the form. Cleared again by a
-   * successful create, which is what lets the form come back empty.
-   */
   const searchParams = useSearchParams();
   const [prefill, setPrefill] = useState<CreateFormPrefill>(() =>
     createFormPrefill(new URLSearchParams(searchParams.toString()), offeredRoles)
   );
-  /**
-   * The tier the new account is created at. HELD HERE rather than left to the uncontrolled form, for
-   * two reasons that are both about saying something BEFORE the account exists: a link that named an
-   * address and no tier opens it EMPTY and required (`createFormRole`), and choosing the reader's own
-   * tier draws the sentence that they will not manage the account afterwards (`createsPeerAccount`).
-   */
   const [role, setRole] = useState<UserRole | "">(() => createFormRole(prefill, offeredRoles));
-  /** Bumped by a successful create so the uncontrolled form remounts empty, prefill included. */
   const [formGeneration, setFormGeneration] = useState(0);
   const [requireChange, setRequireChange] = useState(true);
   const [edgeSpace, setEdgeSpace] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  /** "How will they sign in?" — SET (typed here), GENERATE (the server makes one) or NONE. */
   const [passwordMode, setPasswordMode] = useState<PasswordMode>("SET");
-  /** NONE only, and only drawn where mail is set up: also e-mail them a link to set a password. */
   const [sendLink, setSendLink] = useState(false);
-  /** A duplicate create's 409: the account that already holds the address, to open instead. */
   const [existing, setExisting] = useState<{ id: string; email: string } | null>(null);
-  /** The row "Open their account" brought into view, outlined once. */
   const [focusId, setFocusId] = useState<string | null>(null);
   const [temporaryCopied, setTemporaryCopied] = useState(false);
-  /**
-   * The account just made, held on screen until dismissed so the creator is told what to hand over.
-   * NEVER A TYPED PASSWORD: the form is remounted empty the moment this is set, and nothing here keeps
-   * the typed value — a page that echoed it back would be one more place it lives. The one secret it
-   * DOES hold is a password the SERVER generated (`temporaryPassword`), because this panel is the only
-   * place it will ever exist: shown once, with Copy, and gone with "Done".
-   */
   const [created, setCreated] = useState<CreatedPanel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [temporary, setTemporary] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
   const [requiring, setRequiring] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
   const [details, setDetails] = useState<{ open: boolean; user: User | null }>({ open: false, user: null });
-  /**
-   * The account a click on its row opened, READ-ONLY (owner ruling, 2026-10-16: a record opens to be
-   * read; changing it is the separate "Update"). A dialog and not a route, because an account's
-   * whole record is the row's own columns — what the dialog adds is the room to read them without
-   * a role picker and two grant toggles under the pointer.
-   */
   const [viewing, setViewing] = useState<User | null>(null);
   const [data, setData] = useState<PageResult<User> | null>(null);
   const [query, setQuery] = useState("");
@@ -272,7 +201,6 @@ function UsersScreen() {
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const skipFirstDebounce = useRef(true);
-  // The master-admin bulk panel picks from EVERY user, not just the page of the table above it.
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [adminSelection, setAdminSelection] = useState<Set<string>>(new Set());
   const [grantAdmin, setGrantAdmin] = useState(true);
@@ -296,8 +224,6 @@ function UsersScreen() {
     setAdminMessage(null);
     setError(null);
     try {
-      // Additive grants only: checked privileges are granted, unchecked ones are left untouched
-      // (revoke individually via the per-user table above). This keeps the bulk action safe.
       const body: Record<string, unknown> = {};
       if (grantAdmin) body.role = "ADMIN";
       if (grantQuestionnaire) body.canManageQuestionnaire = true;
@@ -331,18 +257,12 @@ function UsersScreen() {
     }
   }
 
-  /** Full roster for the bulk grants panel — the paged table alone would hide most accounts. */
   async function loadAllUsers() {
     if (!masterControls) return;
     try {
-      // `LIST_PAGE_CEILING`, the server's own cap, by name rather than as a literal -- and
-      // deliberately NOT `RENDER_CAP`: the bulk grants panel draws every account as its own
-      // checkbox row, not through a dropdown, so there is no 80-row draw cap to align this with
-      // and asking for 80 would simply hide twenty accounts that are reachable today.
       const result = await listResource<User>("/users", { pageSize: LIST_PAGE_CEILING });
       setAllUsers(result.items);
     } catch {
-      // The bulk panel degrades to whatever is already loaded; the table above still works.
     }
   }
 
@@ -366,7 +286,6 @@ function UsersScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id, masterControls]);
 
-  // Live search: debounce typing by 350ms; Enter applies immediately via onSubmit.
   useEffect(() => {
     if (skipFirstDebounce.current) {
       skipFirstDebounce.current = false;
@@ -379,20 +298,14 @@ function UsersScreen() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  // The query string seeded `prefill` and is not this page's state after that; see `prefill`.
   useEffect(() => {
     if (hasPrefill(prefill)) window.history.replaceState(null, "", "/users");
   }, [prefill]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // Read before any await: React nulls `currentTarget` across one.
     const form = new FormData(event.currentTarget);
-    // ONE REQUEST AT A TIME. A double-click used to send two creates; the server answers the second
-    // with a 409, but a page that never sends it does not need the server to be right about a race.
     if (creating) return;
-    // The picker is `required`, so the browser normally stops this first; said here as well because a
-    // tier nobody chose must never reach the server as a default it would accept.
     if (!role) {
       setCreateError("Choose the role for this account.");
       return;
@@ -403,8 +316,6 @@ function UsersScreen() {
         email: requiredText(form, "email"),
         role,
         passwordMode,
-        // EXACTLY AS TYPED, never through `requiredText`, which trims: a password stored trimmed
-        // while its owner pastes the original is refused at sign-in for ever.
         password: passwordFrom(form),
         mustChangePassword: requireChange,
         sendPasswordLink: passwordMode === "NONE" && mailAvailable && sendLink,
@@ -420,7 +331,6 @@ function UsersScreen() {
       const account = await createPasswordAccount(body);
       setCreated({
         account,
-        // The SERVER's answer, not the box: what the account now owes is what was stored.
         mustChangePassword: account.mustChangePassword ?? body.mustChangePassword ?? false,
         signInAt: `${window.location.origin}/login`,
         passwordMode,
@@ -431,7 +341,6 @@ function UsersScreen() {
       setTemporaryCopied(false);
       setIssuedLink(null);
       setNotice(null);
-      // Remount the form empty — the typed password is gone with it — and drop the link's prefill.
       setPrefill(NO_PREFILL);
       setRole(createFormRole(NO_PREFILL, offeredRoles));
       setFormGeneration((value) => value + 1);
@@ -443,7 +352,6 @@ function UsersScreen() {
       load();
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Unable to create the account");
-      // The address already has an account: offer THAT account rather than a second one.
       const id = existingAccountId(err);
       setExisting(id ? { id, email: body.email } : null);
     } finally {
@@ -451,7 +359,6 @@ function UsersScreen() {
     }
   }
 
-  /** "Open their account" — the table narrowed to the address, scrolled to and the row outlined. */
   function openExisting() {
     if (!existing) return;
     setQuery(existing.email);
@@ -566,7 +473,6 @@ function UsersScreen() {
     }
   }
 
-  // The panel's offer is the ROW's offer for the same account — see `createdPanelOffersLink`.
   const createdLinkOffered = created ? createdPanelOffersLink(currentUser, created.account, { provision, admin }) : false;
   const createdLinkNote = created ? createdPanelLinkNote(currentUser, created.account, { provision, admin }) : null;
 
@@ -582,7 +488,6 @@ function UsersScreen() {
           {error}
         </div>
       ) : null}
-      {/* Mounted from the first render, so a notice that appears later is announced. */}
       <div aria-live="polite">
         {notice ? (
           <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{notice}</div>
@@ -625,9 +530,6 @@ function UsersScreen() {
       ) : issuedLink ? (
         <div className="mb-4 grid gap-2 rounded-md border border-line-200 bg-field-50 px-3 py-3">
           <p className="text-sm font-medium text-ink-900">
-            {/* The SERVER chose the purpose — an invitation for an account with no password or one
-                never signed into since it was made, a reset otherwise — and the reader is told which
-                they are holding. */}
             {issuedLink.link.purpose === "INVITE" ? "Invitation link" : "Password reset link"} for{" "}
             {issuedLink.user.name} · {issuedLink.user.email}
           </p>
@@ -647,10 +549,6 @@ function UsersScreen() {
                   await navigator.clipboard.writeText(issuedLink.link.link ?? "");
                   setLinkCopied(true);
                 } catch {
-                  // Clipboard access can be refused outright (an insecure origin, a locked-down
-                  // browser). SAY NOTHING RATHER THAN CLAIM SUCCESS — the link is on screen and
-                  // selectable, which is the fallback, and a "Copied" that did not copy is the
-                  // one outcome that loses the credential.
                   setLinkCopied(false);
                 }
               }}
@@ -687,20 +585,12 @@ function UsersScreen() {
               Done
             </button></ActionGroup>
           </div>
-          {/* TERSE, per the owner's instruction of 2026-08-30 — but this sentence is not
-              decoration: nothing can show this link again, and an admin who closes the panel
-              without copying it has to issue another one. */}
           <p className="text-xs leading-5 text-ink-500">
             Shown once. Send it yourself — it works once and expires{" "}
             {new Date(issuedLink.link.expiresAt).toLocaleString()}.
           </p>
         </div>
       ) : null}
-      {/*
-        WHAT TO HAND OVER — and never the password itself. The form below has already been remounted
-        empty, so the typed value is gone from the page by the time this is drawn; this panel names
-        what the creator must pass on and how, and that it will not be shown again.
-      */}
       <div aria-live="polite">
         {created ? (
           <section
@@ -749,7 +639,6 @@ function UsersScreen() {
                         await navigator.clipboard.writeText(created.temporaryPassword ?? "");
                         setTemporaryCopied(true);
                       } catch {
-                        // Refused clipboard: the password is on screen and selectable; never claim a copy.
                         setTemporaryCopied(false);
                       }
                     }}
@@ -777,8 +666,6 @@ function UsersScreen() {
                 </p>
               </>
             )}
-            {/* An account at the creator's own tier is one the link route refuses them (403 every
-                time), so the panel says why there is no button rather than offering one. */}
             {createdLinkNote ? <p className="text-sm leading-6 text-ink-700">{createdLinkNote}</p> : null}
             <ActionGroup>
               {createdLinkOffered ? (
@@ -828,19 +715,12 @@ function UsersScreen() {
             </h2>
             <p className="mt-1 text-sm leading-6 text-ink-muted">
               Name, address, role and sign-in.{" "}
-              {/* Two readers, two true sentences: an admin's create admits the address on "Who may
-                  sign in" whatever stood there, while a ministry admin's is refused (409) for an
-                  address an admin refused or suspended — overturning that is an admin's decision. */}
               {admin
                 ? "Also adds the address to “Who may sign in”."
                 : "Also lets the address sign in, unless an admin refused it."}
             </p>
           </div>
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-            {/* `autoComplete="off"` on both identity boxes and `new-password` on the secret: this is
-                a form for SOMEBODY ELSE's account, and a browser that took it for a sign-in form
-                would fill in the administrator's own address and password — creating an account
-                whose temporary password is theirs. */}
             <Field label="Name" required>
               <TextInput name="name" required maxLength={160} autoComplete="off" defaultValue={prefill.name} />
             </Field>
@@ -849,12 +729,6 @@ function UsersScreen() {
             </Field>
             {passwordMode === "SET" ? (
             <Field label="Password" required>
-              {/*
-                THE EYE, ADDED 2026-08-30. This box is where an administrator TYPES A PASSWORD FOR
-                SOMEBODY ELSE and then has to read it out or message it — the one situation in which
-                masking protects nobody and costs the person on the other end of the telephone a
-                second attempt.
-              */}
               <div className="relative">
                 <TextInput
                   name="password"
@@ -878,10 +752,6 @@ function UsersScreen() {
             </Field>
             ) : null}
             <Field label="Role">
-              {/* `provisionableRoles` — exactly what the server's `assert_role` accepts from this
-                  account, and empty for anybody the create route refuses outright. Required, and
-                  EMPTY when a link filled in an address but no tier this reader can create at: see
-                  `createFormRole` for the Researcher a trusted link used to hand out. */}
               <Select
                 name="role"
                 value={role}
@@ -901,7 +771,6 @@ function UsersScreen() {
             <p className="text-xs leading-5 text-ink-500">Choose a role.</p>
           ) : null}
           {createsPeerAccount(currentUser, role) ? (
-            // Said BEFORE the account exists: afterwards the row only reads "Peer tier".
             <p className={CAUTION_CLASS}>
               {isMasterAdmin(currentUser)
                 ? "Once created, other master admins can't manage its password."
@@ -936,7 +805,6 @@ function UsersScreen() {
           {passwordMode === "SET" && edgeSpace ? <EdgeSpaceNote /> : null}
           {passwordMode === "SET" ? (
           <div className="grid gap-2">
-            {/* Ticked by default and SENT EITHER WAY: what the box says is what the account owes. */}
             <Toggle checked={requireChange} onChange={setRequireChange} label="Require a new password at first sign-in" />
             <RequireChangeNote required={requireChange} when="first" />
           </div>
@@ -944,18 +812,10 @@ function UsersScreen() {
           {admin ? (
             <div className="grid gap-1 sm:grid-cols-2 sm:gap-4">
               <Toggle name="canManageQuestionnaire" label="Manage questionnaire" />
-              {/* Crafts and workshops are NOT here, deliberately. They are rank-only now
-                  (require_craft_manager / require_workshop_manager = Professor and above), so a
-                  checkbox for them would set a column nothing reads — a control that looks like it
-                  grants access and does not is worse than no control at all. Promote the person
-                  instead. And neither box is drawn for a provisioner who is not an admin: the server
-                  refuses a ministry admin any grant, so offering one would only manufacture a 403. */}
               <Toggle name="canDownloadDataset" label="Download dataset" />
             </div>
           ) : null}
           {createError ? (
-            // Beside the button rather than at the top of the page: a 409 for an address that is
-            // already an account, or one an admin has barred, is about THIS form.
             <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {createError}
               {existing ? (
@@ -976,25 +836,9 @@ function UsersScreen() {
         </form>
       ) : null}
       <p className="mb-4 text-xs text-ink-muted">
-        {/* DERIVED, AND IT USED TO BE TYPED OUT. This was the one place in the app that spelled the
-            ladder out in prose rather than reading ROLE_RANK — so it shipped saying "six" with one
-            tier too few, was corrected by hand to "Seven tiers: … → Designer → …", and would have
-            been wrong again the day INSPECTOR landed. A hand-written enumeration of an
-            access-control ladder is a fact with no owner: nothing renders it wrong, there is simply
-            one fewer name than there are roles. The count is `.length` and the names come from
-            `ROLES_BY_RANK` (already highest-first) through `roleLabel`, so this sentence cannot
-            disagree with the picker three lines below it that is built from the same array. */}
         {ROLES_BY_RANK.length} roles: {ROLES_BY_RANK.map(roleLabel).join(" → ")}. You can promote up to your own role and manage roles below it.
       </p>
       <p className="mb-4 text-xs text-ink-muted">
-        {/* CORRECTED 2026-10-09. This warned that promoting somebody to Designer without empanelling
-            the address got their next sign-in refused, and cited a `require_signin_allowed` that no
-            longer exists. Sign-in now empanels an admitted DESIGNER who has no roster row
-            (`auth.login`, through `ensure_empanelled`), and `POST /api/users` does it at once — so the
-            warning sent people on a needless second errand. What is still true, and still costs
-            somebody a working day, is the exception: `ensure_empanelled` only ever CREATES, so a
-            SUSPENDED empanelment stays suspended and the sign-in is refused until an admin restores
-            it. */}
         Designers are added to the roster automatically, unless suspended there.{" "}
         {canManageDesignerRoster(currentUser) ? (
           <Link href="/admin/designers" className="font-medium text-purple-700 dark:text-purple-300 underline-offset-2 hover:underline">
@@ -1035,22 +879,14 @@ function UsersScreen() {
                   <ResizableTh>Role</ResizableTh>
                   <ResizableTh>Questionnaire</ResizableTh>
                   <ResizableTh>Dataset</ResizableTh>
-                  {/* "Sign-in" replaced "Provider". The raw LOCAL/GOOGLE enum answered a question
-                      nobody here asks, and stopped answering it once a password account could also
-                      be signed into with Google; the status says whether a temporary secret is
-                      still live, and names a Google-only account as such. */}
                   <ResizableTh>Sign-in</ResizableTh>
                   <ResizableTh className="text-right">Actions</ResizableTh>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.map((user) => {
-                  // ONE DECISION PER ROW, made in ./accountAdmin where a test can reach it.
                   const offers = rowOffers(currentUser, user, { provision, admin });
                   return (
-                  // The whole row opens the account read-only; the role picker, the grant toggles and
-                  // every action button keep their own clicks (`OpenableRow`). The name is a real
-                  // button — the same act for the keyboard.
                   <OpenableRow
                     key={user.id}
                     onOpen={() => setViewing(user)}
@@ -1065,16 +901,10 @@ function UsersScreen() {
                       >
                         {user.name}
                       </button>
-                      {/* Draws nothing unless the server has Aadhaar verification switched on. */}
                       <AadhaarUserBadge account={user} viewer={currentUser} onDecided={() => void load()} />
                     </td>
                     <td className="px-4 py-3 text-ink-700">{user.email}</td>
                     <td className="px-4 py-3">
-                      {/* The themed dropdown, no filter box: `assignableRoles` is the role ladder from
-                          `lib/permissions`, a fixed vocabulary short enough to read at a glance. It was
-                          a native <select> until 2026-10-17, the one permission control on this page
-                          outside the themed register; the owner's rule now forbids a plain <select>
-                          on any surface, which closes the inconsistency this note used to name. */}
                       {offers.changeRole ? (
                         <SearchableSelect
                           className="max-w-52"
@@ -1097,9 +927,6 @@ function UsersScreen() {
                       label={`Allow ${user.email} to manage questionnaire`}
                       onChange={(value) => updateGrant(user, "canManageQuestionnaire", value)}
                     />
-                    {/* No Crafts or Workshops columns: both are rank-only now, so the cell could
-                        only ever have restated the role beside it or offered a toggle that changed
-                        nothing. Read the Role column for those two. */}
                     <GrantCell
                       included={hasRank(user, "PROFESSOR") || !!user.canDownloadDataset}
                       editable={offers.grants}
@@ -1109,9 +936,6 @@ function UsersScreen() {
                     <AccountStatusCell user={user} />
                     <td className="px-4 py-3 text-right">
                       {offers.standing !== "MANAGED" ? (
-                        // WHY there are no controls, in the reader's own terms: their own account,
-                        // one above them, or one at their tier. One label for all three used to
-                        // tell a ministry admin that every Admin was their peer.
                         <span className="text-xs text-ink-500">{STANDING_LABEL[offers.standing]}</span>
                       ) : offers.editDetails || offers.remove ? (
                         <RowActions>
@@ -1124,11 +948,6 @@ function UsersScreen() {
                               Update
                             </button>
                           ) : null}
-                          {/* Keyed on HAVING A PASSWORD (`passwordSetAt`), no longer on
-                              `authProvider`: Google sign-in used to flip a password account to
-                              GOOGLE while it kept its hash, and the link then vanished from exactly
-                              the account that needed it. A Google-only account gets no link — giving
-                              it a password is a decision, taken through "Set temporary password". */}
                           {offers.passwordLink ? (
                             <button
                               type="button"
@@ -1204,11 +1023,6 @@ function UsersScreen() {
         )}
         {data ? <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} /> : null}
       </section>
-      {/* What two of the status words do NOT say, said where they are read (rule 10: a label that
-          quietly overstates is the same defect as a list that quietly stops). The first used to say
-          "a password somebody else typed still opens the account", which is false of an owner-chosen
-          password an administrator has required a change of — and invited a needless temporary
-          password, which WOULD have made a shared secret. */}
       <p className="mt-2 text-xs text-ink-muted">
         “{ACCOUNT_STATUS_LABEL.MUST_CHOOSE_NEW_PASSWORD}”: a new password is required at next sign-in — because a provisioner typed it, or because a change was
         required of the owner&apos;s own. “{ACCOUNT_STATUS_LABEL.NEVER_SIGNED_IN}”: no sign-in yet.
@@ -1257,8 +1071,6 @@ function UsersScreen() {
           </div>
         </section>
       ) : null}
-      {/* Closing leaves the account in place (`open` only), so each exit animation plays over the
-          real content; see ./AccountDialogs. */}
       <TemporaryPasswordDialog
         open={temporary.open}
         target={temporary.user}
@@ -1285,8 +1097,6 @@ function UsersScreen() {
           setError(null);
           setNotice(`${who} is signed out and must choose a new password.`);
           load();
-          // AFTER the flag: the decision stands whether or not the link is then issued, and a refused
-          // link reaches the alert at the top of the page with the server's own sentence.
           if (withLink) void issueLink(updated);
         }}
       />
@@ -1301,7 +1111,6 @@ function UsersScreen() {
               <button type="button" className="field-button-secondary" onClick={() => setViewing(null)}>
                 Close
               </button>
-              {/* The same decision the row's own Update makes — never a wider one. */}
               {rowOffers(currentUser, viewing, { provision, admin }).editDetails ? (
                 <button
                   type="button"

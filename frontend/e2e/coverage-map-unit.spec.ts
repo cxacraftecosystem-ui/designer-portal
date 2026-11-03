@@ -8,12 +8,6 @@ import type { CoverageUnit } from "@/components/map/coverage/coverageTypes";
 import { project } from "@/components/map/projection";
 import type { DistrictShape } from "@/components/map/shapeGeometry";
 
-/*
-  THE DESIGNER PORTAL'S COVERAGE MAP DRAWS AS THE FIELD REPOSITORY'S DOES. Rendered to markup from a
-  fixture payload — no browser, no network — so the layer order, the fills and the focus are held
-  without anybody looking at a screen.
-*/
-
 const square = (lon: number, lat: number, size = 0.5): Array<[number, number]> => [
   [lon, lat],
   [lon + size, lat],

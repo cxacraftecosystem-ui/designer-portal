@@ -21,30 +21,8 @@ import { roleLabel } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 
-/**
- * The shared vocabulary of the task screens.
- *
- * Both boards — the admin's assignment/accountability board and the assignee's own list — describe
- * the same five-dimension scope and the same two progress numbers, so every chip, pill and meter is
- * defined once here. Two rules hold throughout: colour never carries meaning on its own (each bar
- * and chip is labelled in words), and the reported figure and the repository-derived figure are
- * always shown TOGETHER, because either one alone is misleading.
- */
-
 const CHIP = "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium";
 
-/**
- * A labelled slot for a DROPDOWN — looks exactly like `FormControls.Field`, but is a `<div>` rather
- * than a `<label>`.
- *
- * That difference is load-bearing. A `<label>` forwards a stray click to the first labelable control
- * inside it, and for a custom listbox that control is the trigger button: ticking an option inside a
- * `<label>`-wrapped MultiSelectDropdown therefore fires the trigger's toggle as well and slams the
- * menu shut after ONE pick, so a second option can never be reached and the Confirm button — which
- * only appears once something is ticked — is never on screen long enough to click. Verified in the
- * browser before this wrapper existed. `Field` stays correct for inputs and textareas, which are
- * exactly what a `<label>` is for; composite widgets get named through `role="group"` instead.
- */
 export function FieldBlock({
   label,
   required,
@@ -56,7 +34,6 @@ export function FieldBlock({
   required?: boolean;
   hint?: React.ReactNode;
   children: React.ReactNode;
-  /** The completeness rule key this block answers — see `Field`'s prop of the same name. */
   fieldKey?: string;
 }) {
   const id = useId();
@@ -66,13 +43,6 @@ export function FieldBlock({
         {label}
         <RequiredMark when={required} />
       </span>
-      {/*
-        The `role="group"` names the SLOT; the provider names the CONTROL. Both, because they are
-        announced at different moments: a group label is spoken on entering the group, and a reader
-        who tabs straight onto the trigger — or comes back to it later to check an answer — hears only
-        the control's own name. A themed dropdown is a `<button>`, whose name comes from its contents,
-        so without this it announced its value and never its question. See `ui/fieldLabel.tsx`.
-      */}
       <div role="group" aria-labelledby={id}>
         <FieldLabelProvider value={id}>{children}</FieldLabelProvider>
       </div>
@@ -99,10 +69,6 @@ export function TaskStatusPill({ status }: { status: TaskStatus }) {
   return <span className={cn(CHIP, STATUS_TONE[status] ?? STATUS_TONE.OPEN)}>{STATUS_TEXT[status] ?? status}</span>;
 }
 
-/**
- * Records vs questionnaire sections — the one distinction an assignee has to make at a glance,
- * because the two kinds of work happen in completely different parts of the app.
- */
 export function TaskKindBadge({ recordTypes, sections }: { recordTypes: string[]; sections: TaskSectionRef[] }) {
   const hasRecords = (recordTypes ?? []).length > 0;
   const hasSections = (sections ?? []).length > 0;
@@ -129,7 +95,6 @@ export function DueBadge({ dueAt, overdue }: { dueAt?: string | null; overdue?: 
   );
 }
 
-/** Name + role, the way every hierarchy-aware screen in the app writes a person. */
 export function PersonLine({ user, className }: { user?: TaskUserBrief | null; className?: string }) {
   if (!user) return <span className={cn("text-sm text-ink-500", className)}>Unknown user</span>;
   return (
@@ -140,10 +105,6 @@ export function PersonLine({ user, className }: { user?: TaskUserBrief | null; c
   );
 }
 
-/**
- * Every dimension of a scope, spelled out. Artisans collapse past four names — a task handed out for
- * twenty artisans is about the count, not the roster, and the full list is on the task itself.
- */
 export function ScopeChips({
   recordTypeLabels,
   sections,
@@ -201,11 +162,6 @@ const GAP_TONE = {
   unknown: { className: "border-line-200 bg-surface-50 text-ink-500", Icon: HelpCircle }
 } as const;
 
-/**
- * The reported-vs-derived verdict as a labelled, icon-bearing chip. Every tone carries an icon and a
- * sentence, so the judgement survives colour-blindness, greyscale printing and forced-colours mode —
- * and `w-fit` keeps it a chip rather than letting a grid stretch it into a full-width banner.
- */
 export function GapChip({ reported, derived }: { reported: number; derived: number | null | undefined }) {
   const gap = progressGap(reported, derived);
   const tone = GAP_TONE[gap.tone];
@@ -224,14 +180,6 @@ function Bar({ value, denominator, className }: { value: number; denominator: nu
   );
 }
 
-/**
- * The gap made legible: what the assignee says, directly above what the repository can actually see,
- * on ONE shared scale so the two bars are comparable by length.
- *
- * When there is no target count the shared denominator is the larger of the two figures, which keeps
- * the comparison honest (the longer bar is genuinely the bigger number) without inventing a quota
- * that was never set.
- */
 export function ProgressGapMeter({
   reported,
   derived,
@@ -274,7 +222,6 @@ export function ProgressGapMeter({
   );
 }
 
-/** A single headline number. No plot, so no hover layer — the number IS the content. */
 export function StatTile({
   label,
   value,
@@ -297,7 +244,6 @@ export function StatTile({
   );
 }
 
-/** Slim single-value bar used where the two-number meter would be overkill (batch rollups). */
 export function PercentBar({ percent, label }: { percent: number; label?: string }) {
   const clamped = Math.max(0, Math.min(100, Math.round(percent)));
   return (

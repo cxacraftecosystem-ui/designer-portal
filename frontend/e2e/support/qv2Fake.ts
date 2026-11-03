@@ -1,16 +1,5 @@
 import type { Page, Route } from "@playwright/test";
 
-/**
- * AN IN-MEMORY QUESTIONNAIRE API FOR THE BROWSER SPECS (`e2e/questionnaire-dr-web.spec.ts`).
- *
- * The pages run for real in a real browser over a production build; every `/api/...` call they make
- * is answered here from a small state that the routes below change the way the server would. The
- * shapes are the contract's (`lib/questionnaire/api.ts`), so a screen that reads a field the server
- * does not send fails here. What each request asked is kept in `calls`, so a spec can assert the
- * body a screen sent. The real server's rules are held by the backend suites and by the real-stack
- * spec (`e2e/questionnaire-dr-v2-stack.spec.ts`).
- */
-
 export type Call = { method: string; path: string; query: URLSearchParams; body: unknown };
 
 type Json = Record<string, unknown>;
@@ -106,7 +95,6 @@ function session(id: string, over: Json = {}): Json {
   };
 }
 
-/** A session's chips as the server sends them (owner, 31 Oct 2026). */
 function sessionChips(over: Json = {}): Json {
   return {
     session: { id: "s-1", title: "Interview_2026-10-22_Bagru" },
@@ -126,7 +114,6 @@ function sessionChips(over: Json = {}): Json {
   };
 }
 
-/** A take's chips: Section A · Tools, Giriraj answering and Meena present, 22 Oct, Bagru. */
 function recordingChips(): Json {
   return {
     ...sessionChips(),
@@ -170,7 +157,6 @@ function recording(id: string, over: Json = {}): Json {
   };
 }
 
-/** The shared filters as the server reads them: repeatable, comma-separated (filters.py). */
 function many(query: URLSearchParams, key: string): string[] {
   return query.getAll(key).flatMap((v) => v.split(",")).filter(Boolean);
 }
@@ -186,7 +172,6 @@ export class QuestionnaireFake {
   sessions: Json[] = [session("s-1"), session("s-2", { title: "Interview_2026-10-21_Bagru_Second-Sitting", respondents: [] })];
   deleted: Json[] = [session("s-gone", { title: "Interview_2026-10-20_Bagru_Deleted", deletedAt: "2026-10-21T10:00:00Z" })];
   answers: Json[] = [
-    // Priya's typed answer for Giriraj: locked to the lead? No: the lead may change it. Locked to others.
     { id: "ans-1", version: 1, text: "Wooden blocks", origin: "TYPED", attribution: "INDIVIDUAL", pinned: false, sourceRecordingId: null, artisanId: "a1", respondentId: null, questionLineageId: "l1", actorId: OTHER.id, note: null, status: "PENDING" }
   ];
   recordings: Json[] = [recording("rec-1"), recording("rec-gone", { removedAt: "2026-10-22T06:00:00Z", subjects: [] })];
@@ -201,7 +186,6 @@ export class QuestionnaireFake {
     { id: "fold", title: "Old baseline", description: null, ownerId: ME.id, ownerName: ME.name, designWorkshopId: null, designWorkshopTitle: null, isShared: false, isActive: true, kind: null, kindLabel: "Kind not stated", version: 1, sourceFilename: null, createdAt: "2026-09-01T00:00:00Z", updatedAt: null, deletedAt: "2026-10-20T00:00:00Z", deletedByName: ME.name }
   ];
 
-  /** The grid the workspace draws: Giriraj recorded on A, typed-only on B (✎), the guest typed on A. */
   grid(): Json {
     const typedB = this.answers.some((a) => a.artisanId === "a1" && a.questionLineageId === "l3" && String(a.text).trim());
     return {
@@ -244,22 +228,12 @@ export class QuestionnaireFake {
     return this.calls.filter((c) => c.method === method && (typeof path === "string" ? c.path === path : path.test(c.path)));
   }
 
-  /** B24: question lineage -> artisan column it is prefilled from (none by default). */
   prefill: Record<string, string> = {};
-  /** B32: whether f1 is the global default form. */
   isDefault = false;
-  /** Paths answered with a dropped connection (A16: reading a form with no signal). */
   unreachable: RegExp[] = [];
-  /**
-   * Artisans removed from the workshop: the server refuses every participant call naming one, with the
-   * same detail each time, so a re-send (the outbox re-runs a refused step on every drain) reads the
-   * same "Not sent" reason as the refusal it replaces.
-   */
   removedArtisans = new Set<string>();
 
-  /** Artisan consent answers the fake gives (`GET /artisans/{id}/consent`). */
   consent: Record<string, string> = { a2: "REFUSED" };
-  /** The open session `GET /questionnaire/sessions/open-match` reports, when set. */
   openMatch: Json | null = null;
 
   private answer(
@@ -285,7 +259,6 @@ export class QuestionnaireFake {
     if (path === "/design-workshops/default-for-me") return { status: 200, json: { workshopId: WORKSHOP.id, title: WORKSHOP.title, accessAt: null, reason: "CREATED" } };
     if (path === "/questionnaires" && method === "GET") {
       const all = query.get("deletedOnly") === "true" ? this.deletedForms : this.forms;
-      // A shared filter keeps the forms with a matching session: here, only f1 has sessions.
       const narrowed = SHARED_FILTER_KEYS.some((k) => query.has(k));
       const items = narrowed ? all.filter((f) => f.id === "f1" && (!query.has("artisanId") || many(query, "artisanId").includes("a1"))) : all;
       return { status: 200, json: { items, total: items.length, page: 1, pageSize: 100, pages: 1 } };
@@ -399,7 +372,6 @@ export class QuestionnaireFake {
     }
     if (path === "/users/directory") return { status: 200, json: [{ id: "u-third", name: "Ravi Kumar", email: "ravi@example.org", role: "DESIGNER" }] };
 
-    // ── sessions ───────────────────────────────────────────────────────────────────────────────
     if (path === "/questionnaire/sessions" && method === "GET") {
       const items = query.get("deleted") === "true" ? this.deleted : this.sessions;
       const search = (query.get("q") ?? query.get("search") ?? "").toLowerCase();
@@ -502,14 +474,12 @@ export class QuestionnaireFake {
       return { status: 200, json: { cleared: !b.status } };
     }
 
-    // ── answers ────────────────────────────────────────────────────────────────────────────────
     if (path === "/questionnaire/answers" && method === "PUT") {
       const items = ((body as Json).items as Json[]) ?? [];
       const results = items.map((item) => {
         const key = (a: Json) => (a.artisanId ? `A:${a.artisanId}` : `R:${a.respondentId}`);
         const current = this.answers.find((a) => key(a) === key(item) && a.questionLineageId === item.questionLineageId);
         const base = { artisanId: item.artisanId ?? null, respondentId: item.respondentId ?? null, questionLineageId: item.questionLineageId };
-        // THE LOCK (owner decision 2): someone else's answer with text, unless the caller leads or is an admin.
         if (current && String(current.text).trim() && current.actorId !== ME.id && this.role !== "ADMIN") {
           return { ...base, status: "FORBIDDEN", code: "ANSWER_LOCKED", answer: null, current };
         }
@@ -552,7 +522,6 @@ export class QuestionnaireFake {
       return { status: 200, json: { items: live, nextCursor: null } };
     }
     if (path === "/questionnaire/filters" && query.get("field")) {
-      // A searchable select's typing: that one list, narrowed by q, as the server answers it.
       const field = String(query.get("field"));
       const q = (query.get("q") ?? "").toLowerCase();
       const lists: Record<string, Json[]> = {

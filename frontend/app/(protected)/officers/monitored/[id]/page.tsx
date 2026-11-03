@@ -1,49 +1,5 @@
 "use client";
 
-/**
- * ONE WORKSHOP UNDER OVERSIGHT — every stage, read-only, with who wrote each field.
- *
- * ── WHY PROVENANCE IS ON THIS SCREEN ──────────────────────────────────────────────────────────
- *
- * `read_overseen_workshop` resolves the per-field authorship names before it answers, deliberately,
- * because "who wrote this field" is most of what supervision is for and the ids without them are
- * unreadable. So this page draws {@link FieldProvenance} under every value — the SAME component the
- * designer's stage form draws under every box, producing the same sentence in the same words,
- * because an officer and the designer they supervise must not be reading two different accounts of
- * who did what.
- *
- * ── `readOnly` IS HONOURED RATHER THAN ASSUMED ───────────────────────────────────────────────
- *
- * `readOnly` IS THE ASSIGNMENT'S PROPERTY AND NOT A ROLE'S, WHICH MATTERS SINCE 2026-09-14. This
- * comment used to say an officer is outside `DESIGN_WORKSHOP_ROLES` so the workshop tree answers a
- * **404** to them, exactly as it does to a professor. The three directorate tiers are now inside
- * that set, so that is no longer the reason and this page must not lean on it: what makes a
- * MONITORED workshop read-only is the oversight assignment it is rendered from, which grants
- * watching and not authoring. Since the owner's ruling of 2026-10-09 that holds in the workshop tree
- * too: whoever holds a post on a workshop — an admin named its Regional Director, say — is refused
- * its writes there for as long as they hold it, and a designer row on it is refused to them.
- *
- * The read-only banner is DECLARED rather than left to be inferred from the absence of buttons: a
- * screen with no Save on it looks the same as a screen whose Save has not loaded yet.
- *
- * ── THE RENDERERS ARE THE INSPECTION SURFACE'S, IMPORTED AND NOT COPIED ──────────────────────
- *
- * `inspectionFieldReading` is a PURE function over the stage registry — it decides whether a field
- * is empty, is media this read does not carry, or is text, and it is the same question on both
- * surfaces. Its name says "inspection" because that scope needed it first; importing it is
- * deliberate, and a second copy here would be two renderers of one registry drifting the first time
- * either is corrected. **If it is ever promoted to `lib/designWorkshops`, this import follows it.**
- *
- * ── THE WORKSHOP'S FILES AND ITS OWN QUESTIONS ARE SHOWN, READ-ONLY (sweep item F5, 2026-10-10) ──
- *
- * The files come from this surface's own second read,
- * `GET /design-workshop-oversight/assigned/{id}/media`, behind the same loader as the workshop, with
- * short-lived signed links and no control that writes — the same components the inspection screen
- * draws them with (`components/designworkshop/ReaderWorkshopMedia.tsx`). The workshop's questions
- * travel on the read as `customSections`, so each stage's custom answers are printed with their
- * wording and their author.
- */
-
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { Binoculars, Loader2, Lock, MessageSquarePlus, Send } from "lucide-react";
@@ -83,7 +39,6 @@ function describeFailure(error: unknown, user: User | null | undefined): string 
     return "Couldn't connect, so this workshop couldn't be loaded. Check your connection and try again.";
   }
   if (oversightRefusalMeansNoPosts(error, user)) {
-    // An admin the server will not yet show this surface to holds no post anywhere — so none here.
     return "You aren't an Assistant or Regional Director on any workshop yet. An admin names officers on Workshop oversight.";
   }
   if (error.status === 404) {
@@ -104,9 +59,7 @@ export default function WorkshopUnderOversightPage({
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
-  /* The workshop's files, asked for once the workshop itself has been read. */
   const media = useReaderMedia("oversight", id, detail !== null);
-  // C16 (2026-10-17): an Assistant or Regional Director may file notes. Drafts collect in a tray.
   const tray = useReviewTray(user?.id, id, "supervise");
   const [composing, setComposing] = useState<FlagTarget | null>(null);
   const [busy, setBusy] = useState(false);
@@ -142,9 +95,6 @@ export default function WorkshopUnderOversightPage({
       })
       .catch(() => {
         if (cancelled) return;
-        // A SEPARATE FAILURE FROM THE WORKSHOP READ, because it means something different: the
-        // answers are in hand and the field list that names them is not. Folding it into the error
-        // above would say the workshop could not be read when it was.
         setRegistryError("The form couldn't be loaded. Check your connection and try again.");
       });
     return () => {
@@ -152,8 +102,6 @@ export default function WorkshopUnderOversightPage({
     };
   }, [loading, user]);
 
-  // EVERY HOOK ABOVE THE REFUSAL BELOW, WITHOUT EXCEPTION — the refusal returns early, and a
-  // `useMemo` written under it would run on some renders and not others.
   const overall = useMemo(() => overallPercent(detail?.completeness), [detail]);
   const stages: DwStage[] = useMemo(() => registry?.stages ?? [], [registry]);
   const active = useActiveStage(
@@ -170,14 +118,6 @@ export default function WorkshopUnderOversightPage({
           icon={<Binoculars className="h-5 w-5" aria-hidden />}
         />
         <section className="panel px-6 py-14 text-center" aria-live="polite">
-          {/*
-            PURPLE, DELIBERATELY, ON THE ONE PANEL OF THIS PAGE THAT IS NOT A MINISTRY SURFACE.
-            The read-only band above moved to the `ministry` ramp in 0.0.12 and this padlock did
-            not: a refusal is shown to somebody who is NOT a ministry account — a designer, a
-            professor, an inspector — and painting the ministry's own colour around the notice that
-            they are not of the ministry would be a lie told in colour. `AppShell` makes the same
-            call one level up and stamps `data-surface="ministry"` only when the page is served.
-          */}
           <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-purple-50 text-purple-700">
             <Lock className="h-5 w-5" aria-hidden />
           </div>
@@ -263,15 +203,6 @@ export default function WorkshopUnderOversightPage({
         </div>
       ) : null}
 
-      {/*
-        S0's inline-swap row for this file. A plain `p` and NOT a `.panel`, which is what keeps it
-        out of the scoped `[data-surface="ministry"] .panel` rule's way — that selector is (0,2,0)
-        and would beat a border utility written on the same element.
-
-        THE `dark:` PAIR IS NOT OPTIONAL HERE. The ministry ramp is literal and does not invert, so
-        `bg-ministry-50` under a dark `bg-card` is a pale slab, and `text-ministry-700` on it is
-        2.44:1. Both halves move together: `ministry-950/40` ground, `ministry-300` ink.
-      */}
       {detail && readOnly ? (
         <p className="mb-4 rounded-md border border-ministry-300 bg-ministry-50 px-3 py-2 text-xs leading-5 text-ink-700 dark:border-ministry-900 dark:bg-ministry-950/40">
           <span className="font-semibold text-ministry-700 dark:text-ministry-300">Read-only.</span>{" "}
@@ -323,9 +254,6 @@ export default function WorkshopUnderOversightPage({
                 ))}
               </ul>
             ) : (
-              // A DIFFERENT SENTENCE FROM "nothing loaded". You are reading this page, so an
-              // oversight row naming you exists; an empty list here would be the server contradicting
-              // itself, and saying so is more useful than drawing an empty box.
               <p className="mt-2 text-sm text-ink-700">
                 No Assistant Director or Regional Director is recorded on this workshop.
               </p>
@@ -402,9 +330,6 @@ export default function WorkshopUnderOversightPage({
             onRetry={media.retry}
             state={media.state}
           />
-          {/* WHERE THE REPORT STANDS, AND WHO DECIDED — the sign-off is the Ministry Admin's, and a
-              supervisor reading the workshop is owed who approved it, who handed it on, and every
-              decision on the way. */}
           {signOffLines(detail).length || detail.decisions?.length ? (
             <section className="panel mb-4 grid gap-3 p-4">
               <h2 className="font-display text-base font-bold tracking-tight text-ink-900">Decisions on this report</h2>

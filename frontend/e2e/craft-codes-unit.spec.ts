@@ -5,10 +5,6 @@ import { expect, test } from "@playwright/test";
 
 import { codeOptions, unmappedHeading } from "@/components/crafts/UnmappedCraftsPanel";
 
-/**
- * C26 on the web: an administrator maps a craft to the shared code from the crafts page, and the
- * panel is drawn for administrators only. Same spec in both portals. No browser.
- */
 test("the code picker names the craft first and sorts by name", () => {
   expect(
     codeOptions([

@@ -1,31 +1,6 @@
 "use client";
 
 /** @jsxImportSource react */
-// The pragma above is React's own default; it is spelled out so the unit specs, whose test runner
-// compiles JSX for its own component harness, render this file with React (`coverage-map-unit`).
-
-/**
- * The coverage choropleth: districts filled by how much documented work each holds.
- *
- * The Field Repository's `CoverageMap.tsx` (the reference), with the designer portal's markers
- * layered back on: design workshops as a filled purple disc, PLANNED workshops with a dashed rim and
- * CLUSTERs with a double rim.
- *
- * WHAT SHOWS INDIA'S EXTENT. The verified national outline (`indiaGeometry.ts`, the official
- * depiction) is drawn first as a neutral base fill, and every district fill is clipped to it with an
- * SVG `clipPath`. So a part of Jammu & Kashmir or Ladakh the district data has no polygon for still
- * reads as India, in the "no record" tone — never as blank. State borders sit on top, outside the
- * clip. No tiles, no mapping library: the same hand-drawn SVG and the same `projection.ts` as the
- * Places view.
- *
- * A district with no polygon of its own is drawn inside the parent it was carved from, so the
- * parent's fill carries both and gets a dashed outline; the legend and the unit panel say so.
- *
- * The only zoom is the state focus, which fits the viewBox to that state. Markers, the hover label
- * and the cluster cell are scaled by the viewBox so they keep one on-screen size at every focus.
- *
- * `aria-hidden`, like `IndiaMap`: `CoverageTable` is the text version of everything drawn here.
- */
 
 import { memo, useEffect, useId, useMemo, useState } from "react";
 
@@ -37,7 +12,6 @@ import { shapePath, type DistrictShape } from "@/components/map/shapeGeometry";
 
 export type { PolygonFill } from "@/components/map/coverage/coverageMath";
 
-/** Five sequential steps, one hue, light to dark — reversed in dark mode so "more" is brighter. */
 export const BIN_CLASSES = [
   "fill-purple-300 dark:fill-purple-800",
   "fill-purple-400 dark:fill-purple-700",
@@ -46,31 +20,25 @@ export const BIN_CLASSES = [
   "fill-purple-900 dark:fill-purple-200"
 ] as const;
 
-/** Markers closer than this (on-screen user units at national scale) are drawn as one counted mark. */
 export const CLUSTER_CELL = 22;
 
-/** The hover label's type size at national scale; divided by the zoom so it never grows. */
 const LABEL_FONT = 12;
 
 export type CoverageMapProps = {
   shapes: DistrictShape[];
   fills: Map<number, PolygonFill>;
   breaks: number[];
-  /** Polygons (by LGD) whose districts have no workshop: hatched. */
   noWorkshop: Set<number>;
   markers: CoverageMarker[];
   selectedLgd: number | null;
-  /** Narrow the drawing to one state's districts. */
   stateLgd: number | null;
   names: Map<number, string>;
   onSelectPolygon: (lgd: number) => void;
-  /** The state borders, when the caller already has them (tests, a cached render). */
   statePath?: string | null;
 };
 
 export type MarkerCluster = { x: number; y: number; markers: CoverageMarker[] };
 
-/** Markers closer than `cell` user units fold into one mark, drawn at the members' averaged position. */
 export function clusterMarkers(markers: CoverageMarker[], cell: number = CLUSTER_CELL): MarkerCluster[] {
   const cells = new Map<string, MarkerCluster>();
   for (const marker of markers) {
@@ -88,7 +56,6 @@ export function clusterMarkers(markers: CoverageMarker[], cell: number = CLUSTER
   return [...cells.values()];
 }
 
-/** The viewBox for a state focus: that state's districts, padded. The whole country otherwise. */
 export function stateBox(shapes: DistrictShape[], stateLgd: number | null): string {
   const full = `0 0 ${VIEW_BOX.width} ${VIEW_BOX.height}`;
   if (stateLgd === null) return full;
@@ -115,7 +82,6 @@ export function stateBox(shapes: DistrictShape[], stateLgd: number | null): stri
   ).toFixed(1)}`;
 }
 
-/** How much smaller one user unit is on screen than at national scale (1 = the whole country). */
 export function viewScale(viewBox: string): number {
   const width = Number(viewBox.split(" ")[2]);
   if (!Number.isFinite(width) || width <= 0) return 1;
@@ -182,7 +148,6 @@ function CoverageMapImpl({
   const clusters = useMemo(() => clusterMarkers(markers, CLUSTER_CELL * scale), [markers, scale]);
   const hoveredShape = hovered !== null ? visible.find((shape) => shape.lgd === hovered) : undefined;
 
-  // On a desktop the whole country fits the sticky panel: capped to the viewport, never scrolled inside it.
   return (
     <svg viewBox={viewBox} className="block h-auto w-full lg:max-h-[calc(100dvh-17rem)]" aria-hidden data-testid="coverage-map">
       <defs>
@@ -194,7 +159,6 @@ function CoverageMapImpl({
         </pattern>
       </defs>
 
-      {/* The base: all of India, in the "no record" tone. */}
       <path d={outline} fillRule="evenodd" className="fill-field-100 stroke-line-200" strokeWidth={1} />
 
       <g clipPath={`url(#${clipId})`} data-testid="coverage-districts">
@@ -321,10 +285,6 @@ function MarkerMark({
   );
 }
 
-/**
- * "Barmer · 6", centred above the district's centroid. Every size is multiplied by the view scale, so
- * a focused state does not blow the label up to a headline.
- */
 export function HoverLabel({
   shape,
   name,

@@ -6,31 +6,6 @@ import { expect, test } from "@playwright/test";
 import { API_BASE } from "@/lib/api";
 import { checkPasswordLink, takeLinkTokenFromAddress } from "@/lib/signIn";
 
-/**
- * A SET-PASSWORD LINK'S TOKEN STAYS OFF EVERY REQUEST LINE THE WEB SENDS, AND OUT OF THE ADDRESS BAR.
- *
- * ── THE FINDING ─────────────────────────────────────────────────────────────────────────────────
- *
- * The token is the link's whole authority. The web checked a link with
- * `GET /api/auth/set-password?token=…`, so the token rode the request line, which nginx and any CDN in
- * front of the API write to their access logs; and the page left `?token=…` in the address bar, where
- * a copied address, a bookmark or Back would carry it on (docs/OPEN_FINDINGS.md, docs/SECURITY.md §3.5).
- *
- * ── WHAT IS PINNED ──────────────────────────────────────────────────────────────────────────────
- *
- *   1. the token is read from the fragment (`#token=`) first and the query (`?token=`) second, and the
- *      address the page puts back has neither, with everything else kept;
- *   2. the check is `POST /api/auth/set-password/check` with the token in the body, and the old GET is
- *      asked ONLY when that answers 404 or 405 — an API older than the POST;
- *   3. the page takes the token out of the address before it checks the link, without
- *      `useSearchParams` (which cannot see a fragment), and the server really serves the POST it calls.
- *
- * `takeLinkTokenFromAddress` and `checkPasswordLink` are driven for real: the first is pure, and the
- * second needs only `fetch`, which stands up in Node (the approach `password-change-enforcement-unit`
- * takes). The page is a source read, for this repository's usual reason: no React renderer.
- * ⚠ LINE-ENDING AGNOSTIC: `\s` and `[\s\S]` throughout.
- */
-
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
 const PAGE = read("app", "set-password", "page.tsx");
 const AUTH_ROUTES = readFileSync(
@@ -38,7 +13,6 @@ const AUTH_ROUTES = readFileSync(
   "utf8"
 );
 
-/** Shaped like `credential_links.mint_token`'s output, and distinctive enough to search for. */
 const TOKEN = "eyJzdWIiOiJhY2N0LTA0NTEifQ.Link-Token-Signature-0451";
 const SITE = "https://designer-repository.example";
 
@@ -79,7 +53,6 @@ test.describe("checking the link", () => {
   const realFetch = globalThis.fetch;
   let sent: Sent[] = [];
 
-  /** Answer each request in turn with the next status; a 200 carries `verdict`. */
   function answer(statuses: number[], verdict: object = { valid: true, reason: null, purpose: "RESET" }) {
     sent = [];
     const queue = [...statuses];
@@ -136,8 +109,6 @@ test.describe("checking the link", () => {
 
 test.describe("the page", () => {
   test("reads the address itself, because useSearchParams cannot see a fragment", () => {
-    // Asserted on the import and the call, not the word: the page's own header explains why the hook
-    // is gone, and a bare match would read that explanation as the hook.
     expect(PAGE).not.toMatch(/import\s*\{[^}]*\buseSearchParams\b[^}]*\}\s*from\s*"next\/navigation"/);
     expect(PAGE).not.toMatch(/\buseSearchParams\(\)/);
     expect(PAGE).toMatch(/takeLinkTokenFromAddress\(window\.location\.href\)/);
@@ -153,14 +124,10 @@ test.describe("the page", () => {
   });
 
   test("rewrites it through the router's own replaceState, one microtask after the effect", () => {
-    // Next patches `history.replaceState` in an effect of its own, which runs AFTER this page's: a
-    // call made inside the effect reaches the browser's method, wipes the router's state off the entry
-    // and leaves the router to write the token back. `null` lets the patched method carry it over.
     expect(PAGE).toMatch(/queueMicrotask\(\(\)\s*=>\s*window\.history\.replaceState\(null,\s*"",\s*address\)\)/);
   });
 
   test("keeps the first token it read when Strict Mode runs the effect again", () => {
-    // The second run reads the address the first has just cleaned; overwriting would read as "missing".
     expect(PAGE).toMatch(/setToken\(\(previous\)\s*=>\s*previous\s*\|\|\s*taken\.token\)/);
   });
 

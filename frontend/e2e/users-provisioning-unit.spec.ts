@@ -41,32 +41,7 @@ import {
 } from "@/lib/signIn";
 import type { User, UserRole } from "@/lib/types";
 
-/**
- * ACCOUNT PROVISIONING ON THE WEB — the owner's ruling of 2026-10-09.
- *
- * MINISTRY_ADMIN, ADMIN and MASTER_ADMIN create password accounts, require a new password at the
- * first or the next sign-in, set temporary passwords, issue password links and correct names and
- * addresses — on accounts they manage. Deleting accounts and granting capability flags stay with the
- * admins, and `isAdmin` stays exactly {MASTER_ADMIN, ADMIN}.
- *
- * Three halves, because the page is three kinds of thing:
- *   1. the PREDICATES in lib/permissions.ts, called directly;
- *   2. the per-row JUDGEMENTS in app/(protected)/users/accountAdmin.ts, called directly — there is no
- *      React renderer in devDependencies, which is why they live outside the JSX at all;
- *   3. what only the SOURCE can show (an `autoComplete`, a `maxLength`, a password read without
- *      trimming), read as text with comments stripped and line-ending-agnostic patterns.
- * And the wire shapes of the three new `lib/signIn.ts` helpers, through the real `apiFetch` over a
- * stubbed `fetch`.
- *
- * FOUR TIERS ARE NAMED HERE AND NO MORE, ON PURPOSE. `backend/tests/test_role_ladder_parity.py` sweeps
- * the client trees for files naming five or more and demands each be registered as a mirror of the
- * ladder; this file asserts predicates rather than mirroring anything, so every other tier it needs
- * is DERIVED from `ROLES_BY_RANK` by rank. The per-tier table lives in
- * `e2e/directorate-tiers-unit.spec.ts`, which is a registered mirror.
- */
-
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
-/** Block comments (JSX ones included) and whole-line `//` comments: prose may say anything. */
 const withoutComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 const PAGE = withoutComments(read("app", "(protected)", "users", "page.tsx"));
@@ -87,21 +62,14 @@ const account = (role: UserRole, extra: Partial<User> = {}): User =>
     ...extra
   }) as User;
 
-/** Every tier strictly below the lowest provisioner, derived — this is where AD, RD and Professor sit. */
 const BELOW_PROVISIONERS = ROLES_BY_RANK.filter((role) => ROLE_RANK[role] < ROLE_RANK.MINISTRY_ADMIN);
-/** The highest tier below Professor — a target an admin's capability boxes mean something for. */
 const BELOW_PROFESSOR = ROLES_BY_RANK.find((role) => ROLE_RANK[role] < ROLE_RANK.PROFESSOR) as UserRole;
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 1. The predicates
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("the three provisioner tiers provision, and the ministry admin is still not an admin", () => {
   expect([...ACCOUNT_PROVISIONER_ROLES].sort()).toEqual(["ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN"]);
   for (const role of ACCOUNT_PROVISIONER_ROLES) {
     expect(canProvisionAccounts(account(role)), role).toBe(true);
   }
-  // THE CELL TO READ TWICE. Provisioning is a set BESIDE `isAdmin`, not a widening of it.
   expect(isAdmin(account("MINISTRY_ADMIN"))).toBe(false);
   expect(canProvisionAccounts(null)).toBe(false);
   expect(canProvisionAccounts(undefined)).toBe(false);
@@ -119,18 +87,14 @@ test("the creation ceiling is strictly below one's own tier (owner's decision, 2
   for (const role of ACCOUNT_PROVISIONER_ROLES) {
     const actor = account(role);
     const offered = provisionableRoles(actor);
-    // Strictly below one's own rank: nobody creates a peer they could not then manage.
     expect(offered, role).not.toContain(role);
     for (const option of offered) expect(ROLE_RANK[option], `${role} offers ${option}`).toBeLessThan(ROLE_RANK[role]);
-    // Never more than the promotion picker would let the same account hand out a moment later.
     for (const option of offered) expect(assignableRoles(actor), role).toContain(option);
-    // Highest first: the picker's order is the ladder's.
     expect(offered).toEqual(ROLES_BY_RANK.filter((option) => offered.includes(option)));
   }
   expect(provisionableRoles(account("MINISTRY_ADMIN"))).not.toContain("ADMIN");
   expect(provisionableRoles(account("ADMIN"))).not.toContain("ADMIN");
   expect(provisionableRoles(account("ADMIN"))).not.toContain("MASTER_ADMIN");
-  // Only the master admin is offered Admin.
   expect(provisionableRoles(account("MASTER_ADMIN"))).toContain("ADMIN");
   expect(provisionableRoles(account("MASTER_ADMIN"))).not.toContain("MASTER_ADMIN");
 });
@@ -142,10 +106,6 @@ test("the sentence naming who provisions is derived from the set, lowest tier fi
   expect(phrase.indexOf(roleLabel("MINISTRY_ADMIN"))).toBe(0);
   expect(phrase).toMatch(/ and [^,]+$/);
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 2. One row
- * ──────────────────────────────────────────────────────────────────────────── */
 
 const MINISTRY_POWERS = { provision: true, admin: false };
 const ADMIN_POWERS = { provision: true, admin: true };
@@ -184,11 +144,8 @@ test("the tiers that only promote get the role picker and nothing else", () => {
 
 test("the password link follows HAVING a password, never authProvider", () => {
   const ministry = account("MINISTRY_ADMIN");
-  // A password account once signed into with Google: the old rule hid the link from exactly this row.
   const flipped = account(BELOW_PROFESSOR, { authProvider: "GOOGLE" });
   expect(rowOffers(ministry, flipped, MINISTRY_POWERS).passwordLink).toBe(true);
-  // A Google-only account: no link (the server answers 422), no forced change (nothing to replace) —
-  // and still a temporary password, because giving it one is a decision the dialog names.
   const googleOnly = account(BELOW_PROFESSOR, { authProvider: "GOOGLE", passwordSetAt: null });
   const offers = rowOffers(ministry, googleOnly, MINISTRY_POWERS);
   expect(offers.passwordLink).toBe(false);
@@ -216,24 +173,16 @@ test("a row with no controls says why: You, Above your tier, Peer tier", () => {
   expect(rowStanding(ministry, account("ADMIN"))).toBe("ABOVE");
   expect(rowStanding(ministry, account("MINISTRY_ADMIN"))).toBe("PEER");
 
-  // `canManageUser` answers TRUE for a master admin's own row; the page still offers it nothing.
   const master = account("MASTER_ADMIN");
   expect(rowStanding(master, master)).toBe("SELF");
   const self = rowOffers(master, master, ADMIN_POWERS);
   expect(self.temporaryPassword || self.requirePasswordChange || self.remove || self.changeRole).toBe(false);
-  // Master admins are peers, and neither manages the other.
   const other = rowOffers(master, account("MASTER_ADMIN"), ADMIN_POWERS);
   expect(other.standing).toBe("PEER");
   expect(other.temporaryPassword || other.remove || other.changeRole).toBe(false);
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 3. The status column
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("the status says a new password is owed, before anything else, without saying who caused it", () => {
-  // NEUTRAL: the flag stands on a password a provisioner typed AND on one its owner chose that an
-  // administrator has required a change of. "Must set own password" claimed the first for both.
   expect(ACCOUNT_STATUS_LABEL.MUST_CHOOSE_NEW_PASSWORD).toBe("Must choose a new password");
   expect(ACCOUNT_STATUS_LABEL.NEVER_SIGNED_IN).toBe("Never signed in");
   expect(ACCOUNT_STATUS_LABEL.ACTIVE).toBe("Active");
@@ -241,20 +190,15 @@ test("the status says a new password is owed, before anything else, without sayi
 
   const role = BELOW_PROFESSOR;
   expect(accountStatus(account(role, { mustChangePassword: true, firstLoginAt: null }))).toBe("MUST_CHOOSE_NEW_PASSWORD");
-  // First even after a sign-in: the flag standing is the fact an administrator acts on.
   expect(accountStatus(account(role, { mustChangePassword: true }))).toBe("MUST_CHOOSE_NEW_PASSWORD");
   expect(accountStatus(account(role, { firstLoginAt: null }))).toBe("NEVER_SIGNED_IN");
   expect(accountStatus(account(role))).toBe("ACTIVE");
   expect(accountStatus(account(role, { authProvider: "GOOGLE", passwordSetAt: null }))).toBe("GOOGLE_ONLY");
   expect(accountStatus(account(role, { passwordSetAt: null }))).toBe("NO_PASSWORD");
-  // A password account somebody signed into with Google is still a password account.
   expect(accountStatus(account(role, { authProvider: "GOOGLE" }))).toBe("ACTIVE");
 });
 
 test("the footnote under the table names both causes, and never claims somebody else typed the password", () => {
-  // It said "a password somebody else typed still opens the account" of every flagged row — false of
-  // an owner's own password after "Require a new password", and an invitation to a needless
-  // temporary password, which WOULD make a shared secret.
   const at = PAGE.indexOf("{ACCOUNT_STATUS_LABEL.MUST_CHOOSE_NEW_PASSWORD}");
   expect(at, "the footnote was located").toBeGreaterThan(-1);
   const footnote = PAGE.slice(at, PAGE.indexOf("</p>", at));
@@ -262,10 +206,6 @@ test("the footnote under the table names both causes, and never claims somebody 
   expect(footnote).toMatch(/a\s+change\s+was\s+required\s+of\s+the\s+owner/);
   expect(PAGE).not.toContain("somebody else typed still opens the account");
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 4. Creating an account
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("the password is read exactly as typed, and an edge space is noticed rather than removed", () => {
   const form = new FormData();
@@ -304,37 +244,28 @@ test("a non-admin provisioner's create carries no grant at all; an admin's carri
 });
 
 test("the create form: raw password, browser hints, one ceiling, and the first-sign-in box ticked", () => {
-  // Never through `requiredText`, which trims.
   expect(PAGE).not.toMatch(/requiredText\(\s*form\s*,\s*["']password["']\s*\)/);
   expect(PAGE).toContain("password: passwordFrom(form)");
-  // `off` on both identity boxes, `new-password` on the secret — or a browser fills in the
-  // administrator's own sign-in and the new account's temporary password is theirs.
   expect(PAGE).toMatch(/name="name"[^>]*autoComplete="off"/);
   expect(PAGE).toMatch(/name="email"[^>]*autoComplete="off"/);
   expect(PAGE).toMatch(/name="password"[\s\S]{0,200}maxLength=\{MAX_PASSWORD_LENGTH\}[\s\S]{0,80}autoComplete="new-password"/);
   expect(MAX_PASSWORD_LENGTH).toBe(200);
-  // Ticked by default, sent either way, and warned about when unticked.
   expect(PAGE).toMatch(/\[requireChange, setRequireChange\] = useState\(true\)/);
   expect(PAGE).toContain("Require a new password at first sign-in");
   expect(PAGE).toContain("mustChangePassword: requireChange");
   expect(PAGE).toMatch(/<RequireChangeNote required=\{requireChange\} when="first" \/>/);
   expect(DIALOGS).toContain("Not required: the password you type stays theirs");
-  // The picker offers what the server accepts, and the form is the provisioners'.
   expect(PAGE).toContain("const offeredRoles = provisionableRoles(currentUser)");
   expect(PAGE).toMatch(/offeredRoles\.map\(/);
   expect(PAGE).toContain("const provision = canProvisionAccounts(currentUser) && chrome;");
   expect(PAGE).toContain("const admin = isAdmin(currentUser) && chrome;");
   expect(PAGE).toMatch(/\{provision \? \(\s*<form/);
-  // The grant boxes are an admin's alone.
   expect(PAGE).toMatch(/\{admin \? \(\s*<div[\s\S]{0,400}name="canManageQuestionnaire"/);
-  // One request at a time.
   expect(PAGE).toMatch(/if \(creating\) return;/);
 });
 
 test("the success panel says what to hand over and never holds the password", () => {
   expect(PAGE).toContain("Hand them two things, and not in the same message");
-  // The state the panel draws from holds no TYPED password — only the one the server generated,
-  // shown once — and the form is remounted empty.
   expect(PAGE).toContain("useState<CreatedPanel | null>(null)");
   expect(PAGE).not.toMatch(/setCreated\(\{[^}]*\bpassword:/);
   expect(PAGE).toContain("temporaryPassword: account.temporaryPassword ?? null");
@@ -343,10 +274,6 @@ test("the success panel says what to hand over and never holds the password", ()
 });
 
 test("the success panel offers a password link only where the row would — never to a peer", () => {
-  // CREATING at one's own tier is allowed (`assert_role` is inclusive); ISSUING A LINK for that
-  // account is not (`assert_can_manage_target` refuses an account at the issuer's tier, and master
-  // admins are peers). The panel used to offer the button to every create, and a peer's was a 403
-  // every time.
   const admin = account("ADMIN");
   const ministry = account("MINISTRY_ADMIN");
   const master = account("MASTER_ADMIN");
@@ -356,13 +283,11 @@ test("the success panel offers a password link only where the row would — neve
   expect(createdPanelOffersLink(admin, account(BELOW_PROFESSOR), ADMIN_POWERS), "admin → below").toBe(true);
   expect(createdPanelOffersLink(ministry, account(BELOW_PROFESSOR), MINISTRY_POWERS), "ministry → below").toBe(true);
 
-  // And the panel says why, in the creator's own terms — never silence where a button used to be.
   expect(createdPanelLinkNote(admin, account("ADMIN"), ADMIN_POWERS)).toMatch(/the same role as yours, so only a higher role/);
   expect(createdPanelLinkNote(ministry, account("MINISTRY_ADMIN"), MINISTRY_POWERS)).toMatch(/the same role as yours/);
   expect(createdPanelLinkNote(master, account("MASTER_ADMIN"), ADMIN_POWERS)).toMatch(/No master admin can issue/);
   expect(createdPanelLinkNote(admin, account(BELOW_PROFESSOR), ADMIN_POWERS), "a link is offered: nothing to explain").toBeNull();
 
-  // The button and its sentence sit behind the helper, on the page.
   expect(PAGE).toContain(
     "const createdLinkOffered = created ? createdPanelOffersLink(currentUser, created.account, { provision, admin }) : false;"
   );
@@ -380,10 +305,6 @@ test("choosing one's own tier says, before the account exists, that it cannot be
   expect(createsPeerAccount(null, "ADMIN")).toBe(false);
   expect(PAGE).toMatch(/\{createsPeerAccount\(currentUser, role\) \? \(/);
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 5. The rows on the page
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("every row control is decided by rowOffers, and the old fallthroughs are gone", () => {
   expect(PAGE).toContain("const offers = rowOffers(currentUser, user, { provision, admin });");
@@ -405,7 +326,6 @@ test("every row control is decided by rowOffers, and the old fallthroughs are go
 test("both password actions say the person is signed out everywhere, before it happens", () => {
   expect(DIALOGS).toMatch(/\{who\} is signed out everywhere now/);
   expect(DIALOGS).toMatch(/Saving signs \{who\} out everywhere/);
-  // The dialog's own box: ticked by default, sent in both directions.
   expect(DIALOGS).toMatch(/\[requireChange, setRequireChange\] = useState\(true\)/);
   expect(DIALOGS).toContain("setTemporaryPassword(target.id, password, requireChange)");
   expect(DIALOGS).toContain("Require a new password at next sign-in");
@@ -415,13 +335,6 @@ test("both password actions say the person is signed out everywhere, before it h
 });
 
 test("requiring a new password says what a Google sign-in and an old phone will meet, and offers the link", () => {
-  /*
-    Two things on the other end of this decision that nothing on /users shows the reader. The screen
-    the person is held at asks for their PRESENT password, which somebody who only ever signs in with
-    Google may never have known — their way through is a password link, offered from the same dialog
-    (and ticked already for an account the server still records as a Google sign-in). And handsets on
-    0.0.15 or older word that screen "An administrator set your password", which is false here.
-  */
   const dialog = DIALOGS.slice(DIALOGS.indexOf("export function RequirePasswordChangeDialog("));
   const body = dialog.slice(0, dialog.indexOf("export function AccountDetailsDialog("));
   expect(body, "the dialog was located").toContain("requirePasswordChange(target.id)");
@@ -430,9 +343,7 @@ test("requiring a new password says what a Google sign-in and an old phone will 
   expect(body).toContain("Also issue a password link");
   expect(body).toContain('const withLink = withLinkChoice ?? target?.authProvider === "GOOGLE";');
   expect(body).toContain("onSaved(updated, asked)");
-  // The old-handset version note was removed in the 2026-10-10 copy rewrite: no app version is named on screen.
   expect(body).not.toContain("0.0.15 or older");
-  // The page issues the link AFTER the flag is raised, through the same path as the row's button.
   expect(PAGE).toMatch(/onSaved=\{\(updated, withLink\) => \{[\s\S]{0,600}?if \(withLink\) void issueLink\(updated\);/);
 });
 
@@ -441,10 +352,6 @@ test("the status column replaced the raw provider column", () => {
   expect(PAGE).not.toContain("<ResizableTh>Provider</ResizableTh>");
   expect(PAGE).toContain("<AccountStatusCell user={user} />");
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 6. Arriving from "Who may sign in"
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("the pre-filled link round-trips, and a tier the reader cannot create at is dropped", () => {
   const href = passwordAccountHref("ad.design@example.gov.in", "MINISTRY_ADMIN", "A Director");
@@ -455,34 +362,24 @@ test("the pre-filled link round-trips, and a tier the reader cannot create at is
     name: "A Director",
     role: "MINISTRY_ADMIN"
   });
-  // A ministry admin may create a ministry admin; nobody is handed a tier above their own.
   const above = new URLSearchParams(passwordAccountHref("x@example.org", "ADMIN").slice("/users?".length));
   expect(createFormPrefill(above, provisionableRoles(account("MINISTRY_ADMIN"))).role).toBeNull();
-  // No role in the link is no role in the form.
   const bare = new URLSearchParams(passwordAccountHref("y@example.org", null).slice("/users?".length));
   expect(createFormPrefill(bare, provisionableRoles(account("ADMIN")))).toEqual({ email: "y@example.org", name: "", role: null });
 });
 
 test("a link that named an address and no tier opens the picker on NO tier, never the ordinary default", () => {
-  /*
-    "Who may sign in" sends a bare link for an address admitted at the platform default — where Google
-    sign-in would have started the person at the lowest rung. The picker used to open on the form's
-    ordinary default, so an admin who trusted the link and pressed "Create account" made somebody two
-    rungs up, and the allow-list row moved with it. Now the tier is a choice made on /users.
-  */
   const offered = provisionableRoles(account("ADMIN"));
   const bare = createFormPrefill(
     new URLSearchParams(passwordAccountHref("y@example.org", null).slice("/users?".length)),
     offered
   );
   expect(createFormRole(bare, offered), "a bare prefill preselects nothing").toBe("");
-  // A tier the reader may not create at is dropped — and the form asks, rather than choosing another.
   const dropped = createFormPrefill(
     new URLSearchParams(passwordAccountHref("z@example.org", "ADMIN").slice("/users?".length)),
     provisionableRoles(account("MINISTRY_ADMIN"))
   );
   expect(createFormRole(dropped, provisionableRoles(account("MINISTRY_ADMIN")))).toBe("");
-  // A tier the link carried is the tier the form opens on; no link at all keeps the ordinary default.
   const tiered = createFormPrefill(
     new URLSearchParams(passwordAccountHref("w@example.org", "MINISTRY_ADMIN").slice("/users?".length)),
     offered
@@ -491,7 +388,6 @@ test("a link that named an address and no tier opens the picker on NO tier, neve
   expect(createFormRole(NO_PREFILL, offered)).toBe(DEFAULT_CREATE_ROLE);
   expect(offered).toContain(DEFAULT_CREATE_ROLE);
 
-  // The picker is held in state, seeded by that rule, and required — never a literal default.
   expect(PAGE).toContain("useState<UserRole | \"\">(() => createFormRole(prefill, offeredRoles))");
   expect(PAGE).toMatch(/<Select\s+name="role"\s+value=\{role\}[\s\S]{0,160}?required/);
   expect(PAGE).not.toMatch(/defaultValue=\{prefill\.role \?\?/);
@@ -502,13 +398,11 @@ test("/users reads the link once and strips it; /admin/access says Google and of
   expect(PAGE).toMatch(/useState<CreateFormPrefill>\(\(\) =>\s*createFormPrefill\(/);
   expect(PAGE).toContain('window.history.replaceState(null, "", "/users")');
   expect(PAGE).toMatch(/<Suspense[\s\S]{0,200}<UsersScreen \/>/);
-  // Only Google sign-in makes an account by itself; the notice and the form copy now say so.
   expect(ACCESS_PAGE).toContain("may sign in with Google");
   expect(ACCESS_PAGE).toContain("the first time they sign in with Google");
   expect(ACCESS_PAGE).not.toContain("and the account is created the first time they sign in.");
   expect(ACCESS_PAGE).toContain("passwordAccountHref(created.email, created.admitRole, created.fullName)");
   expect(ACCESS_PAGE).toMatch(/<Link href="\/users"/);
-  // "…and tier already filled in" only where a tier was chosen — the link cannot carry the default.
   expect(ACCESS_PAGE).toContain("admitRole: created.admitRole");
   expect(ACCESS_PAGE).toMatch(
     /\{passwordAccount\.admitRole\s*\?\s*", with this address and role already filled in\."\s*:\s*", with this address filled in — choose their role there/
@@ -517,13 +411,6 @@ test("/users reads the link once and strips it; /admin/access says Google and of
 });
 
 test("an approval that left an existing account's role alone says so in the server's words, on both approving paths", () => {
-  /*
-    The sign-in list rule (2026-10-18): approving never changes an account that already exists. When
-    one is there at another role, the 200 carries `accountPromotionHeld`, the sentence that says so
-    and names Manage users. This screen's own receipt ("may sign in from their next attempt") would
-    read as "done", so the server's sentence replaces it, drawn amber. Restoring is an approval at the
-    row's own role and can meet the same thing.
-  */
   const sentence =
     "lata@example.org already has an account, as Researcher. Its role stays; change it on Manage users.";
   expect(promotionHeldSentence({ accountPromotionHeld: sentence })).toBe(sentence);
@@ -536,16 +423,12 @@ test("an approval that left an existing account's role alone says so in the serv
   expect((ACCESS_PAGE.match(/const held = promotionHeldSentence\(updated\);/g) ?? []).length, "approve and restore").toBe(2);
   expect(ACCESS_PAGE).toContain("setNotice(held ?? `${updated.email} may sign in from their next attempt.`);");
   expect(ACCESS_PAGE).toContain("setNotice(held ?? `${updated.email} can sign in again.`);");
-  // Approve, restore, and adding an address by hand (which admits it like an approval).
   expect((ACCESS_PAGE.match(/setHeldPromotion\(held\);/g) ?? []).length).toBe(3);
   expect(ACCESS_PAGE).toContain("const held = promotionHeldSentence(created);");
-  // Amber only while the notice is still that very sentence — a later notice replaces it, nothing to clear.
   expect(ACCESS_PAGE).toContain("heldPromotion !== null && heldPromotion === notice");
-  // And the confirmation says the list sets new accounts only, and no longer promises a lift.
   expect(ACCESS_PAGE).toContain("note: NEW_ACCOUNTS_ONLY,");
   expect(ACCESS_PAGE).not.toContain("raised to match");
 
-  // The key is the server's, read where it is written.
   expect(readFileSync(join(__dirname, "..", "..", "backend", "app", "api", "routes", "access.py"), "utf8")).toContain(
     '"accountPromotionHeld": promotion_held'
   );
@@ -562,10 +445,6 @@ test("the decision's answer reaches the screen with the held sentence, through t
   expect(promotionHeldSentence(answer)).toBe(sentence);
   expect(answer.email).toBe("a@example.org");
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 7. The wire, through the real apiFetch
- * ──────────────────────────────────────────────────────────────────────────── */
 
 type Sent = { url: string; method: string; body: unknown };
 
@@ -599,7 +478,6 @@ test("setTemporaryPassword sends the password untrimmed and the flag in BOTH dir
   await setTemporaryPassword("u-1", " spaced out ", false);
   expect(sent[0].method).toBe("PATCH");
   expect(sent[0].url).toMatch(/\/api\/users\/u-1$/);
-  // `false` must travel: the server's default for a password set for somebody else is `true`.
   expect(sent[0].body).toEqual({ password: " spaced out ", mustChangePassword: false });
   await setTemporaryPassword("u-1", "another one", true);
   expect(sent[1].body).toEqual({ password: "another one", mustChangePassword: true });

@@ -3,15 +3,6 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-/**
- * Every tool the stage form loads on demand goes through `deferredTool`, which gives it a local
- * failure panel (so a script that cannot be fetched offline never takes the whole form down) and a
- * place in the warming queue (so the service worker holds it before the designer leaves coverage).
- *
- * Source assertions, for this repository's usual reason: there is no React renderer in
- * devDependencies. A plain `next/dynamic` in any of these files would bring the page-wide failure back.
- */
-
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
 
 const FILES: Record<string, string[]> = {

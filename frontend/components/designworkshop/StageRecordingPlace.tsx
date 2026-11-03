@@ -1,33 +1,5 @@
 "use client";
 
-/**
- * WHERE AND WHEN THIS STAGE IS BEING RECORDED — one card at the top of the stage, feeding every
- * photograph, recording and file the stage uploads.
- *
- * WHY IT IS NOT A REGISTRY FIELD, which is the first thing a reader will ask. `save_stage` drops any
- * key the registry does not declare and reports it in `droppedKeys`, so inventing a `_recordedAt`
- * would produce a banner on every save telling the designer their answer was not stored — which
- * would be the literal truth. The place of recording therefore lives where this repository already
- * keeps provenance: on the `MediaFile` rows. `uploadMediaBatch` takes `location`, `recordedAt` and
- * `recordedTimezone`, `attach_location` writes a `Location` row from them, and the whole of
- * `/media`, the data browser and the exports already know how to read it back. One card here fills
- * that in for all eleven media fields of a stage instead of asking eleven times and getting eleven
- * different answers.
- *
- * IT NEVER CAPTURES BY ITSELF, and that is the same rule the artisan form's location card enforces
- * for the same reason. A stage is very often filled in at a desk a week after the workshop, from
- * photographs taken in a courtyard 1,500 km away. A fix taken on mount would stamp the desk onto
- * every one of them and call it the place of recording — which is precisely the defect that put
- * fifteen Kharagpur coordinates on artisans in Bagru, Kutch and Rudraprayag. Nothing is captured
- * until somebody presses a button, and an empty card means the media is uploaded with no location,
- * exactly as it was before this card existed.
- *
- * THE TWO GROUPS ARE NOT ONE GROUP. The coordinates are where the DEVICE is — a measurement, with a
- * radius. The state, district and village are a STATEMENT by the designer about where the workshop
- * was held. They are stored in different columns, they can legitimately disagree, and the card keeps
- * them visibly apart so nobody reads a device fix as an address.
- */
-
 import { useEffect, useId, useState } from "react";
 import { ChevronDown, LocateFixed, MapPinned } from "lucide-react";
 
@@ -43,11 +15,8 @@ import type { DwGeoValue } from "@/lib/designWorkshops";
 import type { AddressReference } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/** Everything this card hands to an upload, in `uploadMediaBatch`'s own vocabulary. */
 export type StageRecordingPlace = {
-  /** The device fix, for a GEO field that wants to copy it. Null until somebody captures one. */
   point: DwGeoValue | null;
-  /** The `location` payload — undefined when there is no coordinate, because a Location row needs one. */
   location: Record<string, unknown> | undefined;
   recordedAt: string | undefined;
   recordedTimezone: string;
@@ -60,15 +29,6 @@ export const EMPTY_RECORDING_PLACE: StageRecordingPlace = {
   recordedTimezone: "Asia/Kolkata"
 };
 
-/**
- * The interpretation timezone.
- *
- * `Asia/Kolkata` is the fallback the rest of this repository uses (`recordedTimezoneFromForm`), and
- * the browser's own zone is preferred over it because a designer working from a university abroad
- * would otherwise have every timestamp re-read five and a half hours out. Falling back rather than
- * failing: `resolvedOptions()` is missing on old WebViews and throwing here would take the stage
- * down over a timestamp label.
- */
 function browserTimezone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
@@ -107,22 +67,12 @@ export function StageRecordingPlaceCard({
         if (live) setReference(payload);
       })
       .catch(() => {
-        // Offline, which out here is a normal minute of the morning. The state dropdown falls back
-        // to the bundled 36 and the district simply offers nothing — neither may cost a record,
-        // because none of this is required.
       });
     return () => {
       live = false;
     };
   }, []);
 
-  /**
-   * Rebuild the payload from the four stated boxes and whatever coordinate is standing.
-   *
-   * Everything goes through here rather than each control patching `value` itself, because the
-   * `location` payload is only valid AS A WHOLE: `locationFromForm` returns undefined without a
-   * coordinate, and a state typed with no pin has nowhere to be stored. One place to get that right.
-   */
   function publish(
     point: DwGeoValue | null,
     stated: { state: string; district: string; village: string; pincode: string },
@@ -179,9 +129,6 @@ export function StageRecordingPlaceCard({
           {
             lat: position.coords.latitude,
             lon: position.coords.longitude,
-            // The radius travels with the fix or the fix cannot be judged later. A browser with no
-            // satellite lock silently falls back to Wi-Fi or the IP address and reports kilometres
-            // while returning coordinates that look every bit as precise.
             ...(Number.isFinite(position.coords.accuracy) ? { accuracy: position.coords.accuracy } : {})
           },
           new Date().toISOString()
@@ -241,7 +188,6 @@ export function StageRecordingPlaceCard({
             Stamped on every file in this stage. Captured only when you ask.
           </p>
 
-          {/* CAPTURED AT — a measurement of where the device is. */}
           <div className="grid gap-2 rounded-md border border-line-200 bg-surface-50 p-3">
             <p className="field-label">Captured at — the device&apos;s own reading</p>
             <ActionGroup>
@@ -278,9 +224,6 @@ export function StageRecordingPlaceCard({
                 lon={value.point?.lon ?? null}
                 markerColor="#64748b"
                 onPick={(lat, lon) =>
-                  // A hand-placed pin measured nothing and happened at no particular instant, so it
-                  // carries no accuracy — and the capture time is the moment it was placed, which is
-                  // the only honest answer available.
                   setPoint({ lat: Number(lat), lon: Number(lon) }, new Date().toISOString())
                 }
                 onFailure={() => setProblem("Map didn't load. Use GPS instead.")}
@@ -290,9 +233,6 @@ export function StageRecordingPlaceCard({
             {problem ? <p className="text-xs font-medium leading-5 text-error-600">{problem}</p> : null}
           </div>
 
-          {/* STATED — the designer's answer about the place, from the same closed lists the API
-              validates against. Only usable alongside a coordinate, and the notice says so rather
-              than letting somebody fill four boxes that go nowhere. */}
           <div className="grid gap-3 rounded-md border border-line-200 bg-card p-3">
             <p className="field-label">The place itself</p>
             <div className="grid gap-3 md:grid-cols-2">
@@ -305,10 +245,6 @@ export function StageRecordingPlaceCard({
                   onChange={(next) => setStated({ state: next, district: "" })}
                   options={stateOptions}
                   placeholder="Select"
-                  /* Reference data, so `searchable` is passed by provenance rather than left to the
-                     option count — the rule on `SearchableSelectProps.searchable`. No behaviour
-                     change here (the state list is always past eight); it keeps this box and the
-                     district beside it under one rule, and the district's is a real fix. */
                   searchable
                   ariaLabel="State or union territory"
                   disabled={disabled}
@@ -321,17 +257,11 @@ export function StageRecordingPlaceCard({
                   onChange={(next) => setStated({ district: next })}
                   options={districtOptions}
                   placeholder={stateName ? "Select" : "Choose a state first"}
-                  /* ── `searchable` HERE IS A FIX ───────────────────────────────────────────────
-                     795 district names, and per state the list straddles `SEARCH_THRESHOLD` both
-                     ways: Goa 2, Sikkim 6, Uttar Pradesh 75. Left to the count, this box grew a
-                     filter box for one state and lost it for the next on the same card. */
                   searchable
                   ariaLabel="District"
                   disabled={disabled || !districtOptions.length}
                 />
                 {stateName && !districtOptions.length ? (
-                  // Said rather than left blank: 795 districts cannot be bundled, so an empty list
-                  // means the reference fetch has not landed, not that the state has no districts.
                   <p className="text-xs leading-5 text-ink-500">
                     Districts need a connection.
                   </p>
@@ -365,9 +295,6 @@ export function StageRecordingPlaceCard({
                   onChange={(event) => setStated({ pincode: event.target.value.replace(/\D/g, "").slice(0, 6) })}
                 />
                 {pincodeProblem ? <p className="text-xs font-medium leading-5 text-error-600">{pincodeProblem}</p> : null}
-                {/* Advisory, never blocking: it is a postal-zone check, so it can prove a
-                    contradiction but never confirm a code, and a field app that refused to save over
-                    a heuristic loses the day's work at the edge of coverage. */}
                 {!pincodeProblem && zoneProblem ? (
                   <p className="rounded-md border border-amber-500 bg-amber-100 px-2 py-1 text-xs leading-5 text-amber-800">
                     {zoneProblem}

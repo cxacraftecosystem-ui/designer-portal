@@ -16,16 +16,6 @@ import {
 import type { TaskProgressAssignee, TaskProgressReport } from "@/components/tasks/types";
 import { cn } from "@/lib/utils";
 
-/**
- * Who has what, and how far along they ACTUALLY are.
- *
- * Every line carries two numbers: `reportedTotal`, which the assignee typed in, and `derivedTotal`,
- * which is counted from the records that reached the repository. They are never merged and neither
- * one is presented as the truth — the distance between them is the signal this whole view exists to
- * surface, so it is shown as two bars on one scale plus a worded verdict, never as a single
- * "progress" percentage that would quietly average the disagreement away.
- */
-
 function AssigneeRow({ row }: { row: TaskProgressAssignee }) {
   const [open, setOpen] = useState(false);
   const userId = row.user?.id ?? "unknown";

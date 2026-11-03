@@ -15,10 +15,6 @@ import {
 } from "@/lib/crossPortal";
 import type { Artisan } from "@/lib/types";
 
-/**
- * C27 on the web: a Field Repository match fills the artisan form's own fields, says who was found
- * in one line, and the form draws nothing until the server says the feature is on. No browser.
- */
 const MATCH: CrossPortalMatch = {
   remoteArtisanId: "fr1",
   matchedBy: "AADHAAR",
@@ -41,7 +37,7 @@ test("a match fills the form's fields and leaves blanks alone", () => {
   const prefill = prefillFromMatch(MATCH);
   expect(prefill.name).toBe("Meena Devi");
   expect(prefill.dateOfBirth).toBe("1980-05-01");
-  expect(prefill.experienceYears).toBe(0); // a stated 0 is an answer
+  expect(prefill.experienceYears).toBe(0);
   expect(prefill.craftId).toBe("c-local");
   expect(prefill.phone).toBeUndefined();
   expect(prefill).not.toHaveProperty("aadhaarNumber");
@@ -56,9 +52,7 @@ test("the form mounts the lookup only through the server-gated components", () =
   expect(form).toContain("<CrossPortalFind");
   expect(form).toContain("<CrossPortalLinkPanel");
   const panel = readFileSync(join(__dirname, "../components/forms/CrossPortalLookup.tsx"), "utf8");
-  // Both components return nothing until the status endpoint says the feature is on.
   expect(panel.match(/if \(!enabled\) return null;|if \(!enabled \|\| !link\) return null;/g)?.length).toBe(2);
-  // The lookup body sends the agreement; the server refuses one without it.
   const lib = readFileSync(join(__dirname, "../lib/crossPortal.ts"), "utf8");
   expect(lib).toContain("consent: true");
 });
@@ -89,7 +83,6 @@ test("a refresh hands the form the identity values the server now holds", () => 
   expect(form).toContain("<CrossPortalLinkPanel artisanId={initial.id} onRefreshed={takeRefreshedArtisan} />");
   const panel = readFileSync(join(__dirname, "../components/forms/CrossPortalLookup.tsx"), "utf8");
   expect(panel).toContain("onRefreshed(answer.artisan ?? null, answer.changed)");
-  // Unlink asks first.
   expect(panel).toContain("if (!(await confirm(UNLINK_CONFIRM))) return;");
 });
 

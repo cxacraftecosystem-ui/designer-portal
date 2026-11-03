@@ -1,18 +1,5 @@
 "use client";
 
-/**
- * /ministry-exports — THE MINISTRY'S MONTHLY EXPORT PACKS. Web only, like every ministry authoring
- * screen.
- *
- * Three sections: the packs of one month (a card per scheme, Excel and PDF once ready), generating a
- * month on demand, and who is e-mailed when the scheduled packs are ready. The guard is the
- * `ROUTE_GUARDS` row (`MINISTRY_EXPORT_ROLES`); while the deployment has the feature off the page is
- * the not-found screen, as the API is.
- *
- * `?period=YYYY-MM` opens that month — it is the link the monthly e-mail carries. A download is a
- * five-minute link minted per click (`lib/ministryExports.downloadPackFile`), never stored here.
- */
-
 import { notFound, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileArchive, FileSpreadsheet, FileText, RefreshCw, Trash2, UserPlus } from "lucide-react";
@@ -109,7 +96,6 @@ function MinistryExportsScreen() {
   const [busy, setBusy] = useState<string | null>(null);
   const load = useRef(0);
 
-  // The first read decides the month: `?period=`, else the newest with packs, else last month.
   useEffect(() => {
     let cancelled = false;
     Promise.all([fetchSchemes(), fetchPacks()])
@@ -125,7 +111,6 @@ function MinistryExportsScreen() {
     return () => {
       cancelled = true;
     };
-    // `query` is read once, on arrival; choosing a month afterwards writes it back.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -146,7 +131,6 @@ function MinistryExportsScreen() {
     if (period) void refresh(period);
   }, [period, refresh]);
 
-  // Poll while anything is queued or building; stop once every pack has finished.
   useEffect(() => {
     if (!period || !packs || !shouldPoll(packs)) return;
     const timer = window.setTimeout(() => void refresh(period), POLL_MS);
@@ -215,7 +199,6 @@ function MinistryExportsScreen() {
           Packs
         </h2>
         {periodPills.length ? (
-          // A segmented month picker, not an action row.
           <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Month">
             {periodPills.map((month) => (
               <button

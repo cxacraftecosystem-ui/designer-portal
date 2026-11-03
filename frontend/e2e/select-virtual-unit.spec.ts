@@ -5,12 +5,6 @@ import { expect, test } from "@playwright/test";
 
 import { OVERSCAN, VIRTUALIZE_AT, scrollTopToShow, virtualSlice } from "@/components/ui/selectFilter";
 
-/**
- * `SearchableSelect` / `SearchableMultiSelect` on a long list (owner, 2026-10-17: "works for long
- * lists"): every row reachable, virtualised past 200, and a single select that can be cleared. The
- * same numbers and the same prop as documentation-portal's same-named component.
- */
-
 const ROOT = path.resolve(__dirname, "..");
 const source = (relative: string) =>
   readFileSync(path.join(ROOT, relative), "utf8").replace(/\r\n/g, "\n");
@@ -45,11 +39,8 @@ test("the slice never runs past the end", () => {
 });
 
 test("the keyboard highlight is kept in view by the least scroll, never re-centred", () => {
-  // Already visible: nothing moves.
   expect(scrollTopToShow(3, 36, 0, 288)).toBe(0);
-  // Below the view: scrolled so the row's bottom meets the view's bottom.
   expect(scrollTopToShow(10, 36, 0, 288)).toBe(10 * 36 + 36 - 288);
-  // Above the view: scrolled so the row's top meets the view's top.
   expect(scrollTopToShow(2, 36, 500, 288)).toBe(72);
 });
 
@@ -57,7 +48,6 @@ test("virtual rows say where they are in the whole list", () => {
   const select = source("components/ui/SearchableSelect.tsx");
   expect(select.match(/aria-setsize=\{listVirtual \? rendered\.length : undefined\}/g)?.length).toBe(2);
   expect(select.match(/aria-posinset=\{listVirtual \? index \+ 1 : undefined\}/g)?.length).toBe(2);
-  // Both listboxes are the scroll container the window measures.
   expect(select.match(/ref=\{listRef\}/g)?.length).toBe(2);
 });
 
@@ -71,7 +61,6 @@ test("the single select is clearable by a separate button, never one nested in t
   expect(select).toContain("clearable?: boolean;");
   expect(select).toContain("clearable = false,");
   expect(select).toContain('aria-label={clearLabel ?? (ariaLabel ? `Clear ${ariaLabel}` : "Clear selection")}');
-  // The clear button follows the trigger's closing tag: a sibling, 44px on a phone.
   const trigger = select.indexOf("className={cn(TRIGGER_CLASS, showClear");
   const close = select.indexOf("</button>", trigger);
   const clear = select.indexOf("{showClear ? (", trigger);

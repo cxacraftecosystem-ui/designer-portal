@@ -3,10 +3,6 @@
 import { binLabels } from "@/components/map/coverage/coverageMath";
 import { BIN_CLASSES } from "@/components/map/coverage/CoverageMap";
 
-/**
- * Five quantile bins, the hatched "no workshop" swatch and the dashed parent outline — the Field
- * Repository's legend — plus the "Planned" marker when planned workshops are on the map.
- */
 export function CoverageLegend({
   breaks,
   metricLabel,

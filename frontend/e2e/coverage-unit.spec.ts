@@ -19,16 +19,9 @@ import {
 } from "@/components/map/coverage/coverageMath";
 import type { CoverageUnit } from "@/components/map/coverage/coverageTypes";
 
-/*
-  THE COVERAGE MAP'S PURE HALF: the shape decoder (the outline's own scheme, reused rather than
-  copied), quantile bins, financial-year labels, the URL round trip, and the rule that the coverage
-  bundle never reaches for a tile server or a mapping library.
-*/
-
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
-/** The build's encoder, restated: a ring as one record, no hole flag, deltas from zero. */
 function encode(points: Array<[number, number]>): string {
   const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   let out = "";

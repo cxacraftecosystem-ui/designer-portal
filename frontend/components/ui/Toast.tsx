@@ -1,24 +1,5 @@
 "use client";
 
-/**
- * Toasts — transient, non-blocking notices.
- *
- * `ToastProvider` owns the queue and renders one live region; `useToast()` hands any
- * descendant a `toast()` / `dismiss()` pair. It is mounted ONCE, in `app/layout.tsx` next to
- * AuthProvider/ThemeProvider, so every page can call `useToast()` — same contract as `useAuth`.
- * Do not re-mount it per page: a nested provider shadows the root one, and its viewport renders a
- * second `aria-live` region that screen readers then announce twice.
- *
- * Accessibility notes that drove the shape:
- *  - the live region is rendered even when the queue is empty, because assistive tech only
- *    announces mutations *inside* a region that already existed; creating the region together
- *    with its first message is silently dropped by most screen readers;
- *  - `aria-live="polite"` never interrupts, which is right for "Coming soon" but means a toast
- *    is the wrong home for anything the user must act on;
- *  - the countdown pauses on hover *and* on focus, so a keyboard user tabbing to the dismiss
- *    button does not have the toast vanish mid-reach.
- */
-
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, Info, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -32,9 +13,7 @@ export type ToastInput = {
   title: string;
   description?: string;
   tone?: ToastTone;
-  /** Milliseconds on screen; 0 stays up until it is dismissed. */
   duration?: number;
-  /** Stable key — re-firing the same id updates that toast instead of stacking a duplicate. */
   id?: string;
 };
 
@@ -47,7 +26,6 @@ type ToastRecord = {
 };
 
 type ToastContextValue = {
-  /** Queue a toast; returns the id so a caller can dismiss it early. */
   toast: (input: ToastInput) => string;
   dismiss: (id: string) => void;
 };
@@ -55,7 +33,6 @@ type ToastContextValue = {
 const ToastContext = createContext<ToastContextValue | undefined>(undefined);
 
 const DEFAULT_DURATION = 5000;
-/** Older toasts drop off the top rather than filling the corner. */
 const MAX_VISIBLE = 3;
 
 const TONES: Record<ToastTone, { icon: LucideIcon; chip: string }> = {
@@ -102,28 +79,6 @@ export function useToast() {
 }
 
 function ToastViewport({ toasts, onDismiss }: { toasts: ToastRecord[]; onDismiss: (id: string) => void }) {
-  /**
-   * BOTH SWITCHES, NOT JUST THE OS ONE — corrected 2026-09-03.
-   *
-   * This read `useReducedMotion()` from framer-motion, which subscribes to
-   * `prefers-reduced-motion: reduce` and to nothing else. This app has a SECOND switch — the
-   * Settings toggle, which stamps `data-reduced-motion="true"` on `<html>` — and it reaches CSS
-   * through a paired selector block while reaching framer's inline styles not at all. So a reader
-   * who turned reduced motion on in this app, on a machine whose OS preference is unset, still got
-   * the spring slide and the layout shuffle on every toast: the one preference they had expressed,
-   * ignored by the one surface that animates unprompted.
-   *
-   * `useAppReducedMotion()` is the union of the two and is the house answer everywhere else
-   * (`AppShell`, `FieldDialog`, the guide, `useDragReorder`). It reads `ThemeProvider`'s context,
-   * which is safe here: `app/layout.tsx` mounts `ToastProvider` INSIDE `ThemeProvider`, and this
-   * viewport is rendered by that provider. Moving `ToastProvider` above `ThemeProvider` would throw
-   * on first paint rather than fail quietly.
-   *
-   * It reads false on the server and on the first client render (the stored preference has not been
-   * read yet) and corrects a tick later. That is harmless here for the reason it is harmless in
-   * `AppShell`: nothing is animating at first paint — the viewport is deliberately mounted EMPTY,
-   * and the first toast arrives from a user action long after `ThemeProvider`'s mount effect.
-   */
   const reduce = useAppReducedMotion();
 
   return (
@@ -131,10 +86,7 @@ function ToastViewport({ toasts, onDismiss }: { toasts: ToastRecord[]; onDismiss
       role="status"
       aria-live="polite"
       aria-atomic="false"
-      // Bottom-right keeps clear of the floating island nav at the top of every page. The
-      // container itself is click-through; only the cards take pointer events.
       className="pointer-events-none fixed bottom-4 right-4 z-110 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2"
-      // Above the bottom island where one is drawn (`--bottom-nav-h`, below `lg` only).
       style={{ bottom: "calc(var(--bottom-nav-h, 0px) + 0.75rem)" }}
     >
       <AnimatePresence initial={false}>
@@ -161,14 +113,11 @@ function ToastCard({
   const dismiss = useCallback(() => onDismiss(toast.id), [onDismiss, toast.id]);
 
   useEffect(() => {
-    // remaining hits 0 for sticky toasts (duration 0) and once the countdown is spent.
     if (paused || remaining.current <= 0) return;
     startedAt.current = Date.now();
     const timer = setTimeout(dismiss, remaining.current);
     return () => {
       clearTimeout(timer);
-      // Bank the slice already served so resuming continues the countdown instead of
-      // restarting it — otherwise a toast could be kept alive forever by hovering it.
       remaining.current = Math.max(0, remaining.current - (Date.now() - startedAt.current));
     };
   }, [dismiss, paused]);

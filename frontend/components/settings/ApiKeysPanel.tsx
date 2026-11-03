@@ -11,41 +11,17 @@ import { apiFetch } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * The managed provider keys (`/api/secrets`, master admin only).
- *
- * Two rules shape this screen:
- *
- * 1. **A value is never rendered until it is asked for.** The list endpoint deliberately carries only
- *    a four-character `hint`; the plaintext exists solely behind `GET /secrets/{key}/reveal`, which is
- *    audit-logged server-side. So the Value column shows `••••·hint` and the eye button fetches on
- *    demand — and un-reveals itself after {@link REVEAL_TIMEOUT_MS} so a key cannot be left on screen
- *    in an empty room.
- * 2. **A saved key is live immediately.** Writes invalidate the server's cache, so the next provider
- *    call uses the new value — no restart, no redeploy. That is the whole reason this page exists,
- *    so the banner says it rather than leaving the master admin wondering whether to SSH in.
- */
-
 const REVEAL_TIMEOUT_MS = 30_000;
 
 type SecretSource = "database" | "environment" | "unset";
 type SecretStatus = "UNKNOWN" | "OK" | "FAILED";
 
-/** Mirror of the backend ManagedSecretDto. It NEVER carries the value — only a 4-character hint. */
 export type ManagedSecret = {
   key: string;
   label: string;
   description: string;
   configured: boolean;
   source: SecretSource;
-  /**
-   * A stored override row exists whose ciphertext this deployment cannot open — the
-   * JWT_SECRET-rotated-without-SECRETS_ENCRYPTION_KEY casualty `managed_secrets._describe`
-   * documents. The value in force is then the ENVIRONMENT one, which is why `source` reads
-   * "environment" (or "unset") rather than "database" in this state. Optional on the wire only
-   * defensively: the DTO always sends it, but a row read from a cached response predating the
-   * field must not silently become "yes, unreadable".
-   */
   overrideUnreadable?: boolean;
   hint: string | null;
   lastStatus: SecretStatus;
@@ -55,26 +31,6 @@ export type ManagedSecret = {
   updatedAt: string | null;
 };
 
-/**
- * IS THERE A STORED OVERRIDE TO CLEAR? — which is NOT the same question as "where did the value in
- * force come from", and this repository has already paid for conflating them.
- *
- * `source` was made honest in `managed_secrets._describe`: when a saved override cannot be
- * decrypted, the value every provider call sends is the environment one, so the row now reports
- * `source: "environment"` (or `"unset"`) instead of the old lie `"database"`. Three audit findings
- * closed at once — the reveal endpoint, the Test button, and the hint beside the value.
- *
- * But this panel drew its "Clear override" button from `secret.source === "database"`, so that fix
- * took the button off the ONE row it exists for: the admin was told an override was broken and
- * given no control to remove it. The remedy for a state must not be gated on the state's absence.
- *
- * So the two facts are separated here, permanently. `source` = where the VALUE came from;
- * `hasStoredOverride` = whether a ROW exists to delete. The disjunction below is exact rather than
- * a guess: the backend sets `source = "database"` exactly when a row exists AND opens, and
- * `overrideUnreadable` exactly when a row exists and does NOT open. Those two are the whole of
- * "a row exists". If a future field ever states row existence directly, use it — but do NOT go
- * back to reading it off `source`.
- */
 export function hasStoredOverride(secret: Pick<ManagedSecret, "source" | "overrideUnreadable">): boolean {
   return secret.source === "database" || secret.overrideUnreadable === true;
 }
@@ -105,7 +61,6 @@ const STATUS_META: Record<SecretStatus, { label: string; tone: string }> = {
   UNKNOWN: { label: "Unknown", tone: "border-line-200 bg-surface-50 text-ink-500" }
 };
 
-/** Which per-row action is in flight, so only that row's buttons go busy. */
 type Busy = { key: string; action: "reveal" | "test" | "save" | "clear" } | null;
 
 export function ApiKeysPanel() {
@@ -114,17 +69,13 @@ export function ApiKeysPanel() {
   const [secrets, setSecrets] = useState<ManagedSecret[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
-  /** key -> plaintext, present ONLY while that row is revealed. */
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  /** Per-render only, never persisted: this is a shared machine. See `PasswordRevealButton`. */
   const [revealDraft, setRevealDraft] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  // One auto-hide timer per revealed key. Kept in a ref (not state) so re-renders never restart a
-  // countdown that is already running.
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   useEffect(() => {
     const pending = timers.current;
@@ -148,7 +99,6 @@ export function ApiKeysPanel() {
     });
   }, []);
 
-  /** Swap one row in place, so a test/save/clear never costs a full reload of the table. */
   const replaceRow = useCallback((row: ManagedSecret) => {
     setSecrets((current) => (current ? current.map((item) => (item.key === row.key ? row : item)) : [row]));
   }, []);
@@ -305,7 +255,6 @@ export function ApiKeysPanel() {
                       </td>
 
                       <td className="px-4 py-3">
-                        {/* Icon controls beside the value (reveal, copy) — a cell toolbar, not an action row. */}
                         <div className="flex items-start gap-2">
                           {plaintext ? (
                             <code className="max-w-[18rem] break-all rounded-md bg-surface-50 px-2 py-1 font-mono text-xs text-ink-900">
@@ -352,10 +301,6 @@ export function ApiKeysPanel() {
                           {source.label}
                         </span>
                         <p className="mt-1 max-w-48 text-[0.6875rem] leading-4 text-ink-500">{source.help}</p>
-                        {/* Why an "Environment" (or "Not set") row is nonetheless offering "Clear
-                            override": there IS a saved key here, it just cannot be decrypted any
-                            more, so it is not the key being sent. Without this sentence the badge
-                            and the button contradict each other on screen. */}
                         {secret.overrideUnreadable ? (
                           <p className="mt-1 max-w-48 text-[0.6875rem] leading-4 text-error-600">
                             This saved key can no longer be read, so it is not in use. Enter it again, or clear the
@@ -411,10 +356,6 @@ export function ApiKeysPanel() {
                               </>
                             )}
                           </button>
-                          {/* Drawn from "is there a row to delete", never from "where did the value
-                              come from" — see `hasStoredOverride`. An unreadable override reports
-                              source "environment"/"unset" and is precisely the row an admin needs
-                              this button for. */}
                           {hasStoredOverride(secret) ? (
                             <button
                               data-danger className={rowAction("danger")}
@@ -436,14 +377,6 @@ export function ApiKeysPanel() {
                               <span className="field-label">
                                 {secret.source === "unset" ? `New ${secret.label} key` : `Replace the ${secret.label} key`}
                               </span>
-                              {/*
-                                THE EYE, ADDED 2026-08-30. A repository API key is a 50-plus
-                                character string pasted from a provider's console, and a masked box
-                                is where a truncated paste hides: the key saves, and the failure
-                                surfaces hours later as "the provider rejected this" on somebody
-                                else's screen. Revealing is per-render and never persisted — this
-                                is a shared machine.
-                              */}
                               <div className="relative">
                                 <input
                                   autoComplete="off"

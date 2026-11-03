@@ -1,20 +1,3 @@
-/**
- * The .pdf a browser writes from a `ReportDocument`, with pdfmake — the counterpart of
- * `backend/app/services/report_pdf.py`, laid out to the same plan as the .docx beside it
- * (`lib/offlineReport/docx.ts`): a cover page with no running head, contents, numbered headings in
- * the accent, tables with the accent header and zebra rows, photo grids, figures as pictures, and
- * "Page N of M" in the foot.
- *
- * SET IN NOTO, LIKE THE SERVER'S. `report_pdf.py` binds Noto Sans for Latin and the rupee sign and a
- * Noto face per Indic script; this embeds the same families from `public/report-fonts`
- * (`offlineAssets.ts`), and pdfkit's shaper lays out the conjuncts. A script whose face cannot be
- * loaded is named in the warnings beside the download — the text prints, in boxes, exactly as the
- * server's does when it has no face — and the .docx, which names a face rather than embedding one,
- * is unaffected.
- *
- * The pdfmake instance is passed in: the browser build in the app, the Node build in the unit spec.
- */
-
 import {
   pageSizeMm,
   runsOf,
@@ -30,7 +13,6 @@ import {
 import type { FigureRasteriser, ImageLoader, LoadedImage } from "@/lib/offlineReport/docx";
 import { LATIN_FONT_FILES, SCRIPT_FONTS, scriptFontFiles } from "@/lib/offlineReport/offlineAssets";
 
-// pdfmake's document definition is untyped JSON.
 type Node = any;
 
 export type PdfMakeLike = {
@@ -39,7 +21,6 @@ export type PdfMakeLike = {
   createPdf(definition: object): { getBuffer(): Promise<Uint8Array> };
 };
 
-/** A font file's bytes by file name, or null when it cannot be had. */
 export type FontSource = (file: string) => Promise<ArrayBuffer | null>;
 
 const PT_PER_MM = 72 / 25.4;
@@ -80,7 +61,6 @@ class PdfWriter {
     return this.doc.theme;
   }
 
-  /** Register the Latin family and every script family the document uses. */
   async loadFonts(): Promise<boolean> {
     const fonts: Record<string, Record<string, string>> = {};
     const latin: Record<string, string> = {};
@@ -139,7 +119,6 @@ class PdfWriter {
     return this.withBreak(node);
   }
 
-  /** A page break the document asked for is carried onto the next node, as pdfmake wants it. */
   private withBreak(node: Node): Node {
     if (this.pendingBreak) {
       this.pendingBreak = false;
@@ -524,7 +503,6 @@ function collectRuns(block: Block, visit: (runs: readonly Run[]) => void): void 
   }
 }
 
-/** Write the .pdf. `missingScripts` names the scripts no face could be loaded for. */
 export async function renderPdf(
   document: ReportDocument,
   pdfmake: PdfMakeLike,

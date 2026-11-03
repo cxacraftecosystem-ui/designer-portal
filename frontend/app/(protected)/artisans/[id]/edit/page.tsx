@@ -36,14 +36,11 @@ export default function EditArtisanPage() {
       {record ? (
         <div className="grid gap-6">
           <ArtisanForm initial={record} />
-          {/* The artisan's QR card: an opaque signed token, never the record id (services/artisan_card.py).
-              Until the card key is set here, the DPW1 card code as before. */}
           {cardsStatus === false ? (
             <RecordCodeCard recordType="artisan" id={record.id} title={record.name} />
           ) : (
             <ArtisanCardPanel artisanId={record.id} />
           )}
-          {/* Draws nothing unless the server has switched an Aadhaar method on. */}
           <AadhaarVerifyPanel subject={{ kind: "artisan", id: record.id }} recordName={record.name} />
           <ArtisanQuestionnairePanel artisanId={record.id} />
           <FieldProvenance extraMetadata={record.extraMetadata} title="Artisan field contributions" />

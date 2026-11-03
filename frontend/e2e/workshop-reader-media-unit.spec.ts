@@ -21,15 +21,6 @@ import {
   type ReaderMediaFile
 } from "@/lib/workshopReaderMedia";
 
-/**
- * THE THREE GAPS THE SWEEP NAMED, CLOSED ON THE WEB — what can be decided without a browser.
- *
- * F5: an inspector and a directorate post holder see a workshop's files and the wording of its own
- * questions, read-only. F13: the inspection list's filters. F8: the pool directory on Design review.
- * The server half — who is admitted and refused, and that every link is signed — is
- * `backend/tests/test_reader_media_and_pool_directory.py`.
- */
-
 const ROOT = join(__dirname, "..");
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
 
@@ -170,8 +161,6 @@ test.describe("F5 — a workshop's files, read-only", () => {
     const source = read("components/designworkshop/ReaderWorkshopMedia.tsx");
     expect(source).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/);
     expect(source).not.toMatch(/<input[^>]*type=["']file/);
-    // Since 2026-10-17 the three review screens draw their stages through ONE shared reader, which
-    // holds the media and custom-answer components; the approval screen shows photographs too (A23).
     const reader = read("components/designworkshop/review/ReviewReadStage.tsx");
     expect(reader).toContain("ReaderMediaValue");
     expect(reader).toContain("ReaderCustomAnswers");
