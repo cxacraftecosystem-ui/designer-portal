@@ -128,7 +128,7 @@ fun DwAiLayersScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(dwLayerKindWords(layer.kind), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                    Text(dwLayerKindWords(layer.kind), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                     Text(
                         listOf(if (layer.accepted) "Accepted" else "Awaiting a decision", layer.provider, layer.modelId)
                             .filter { it.isNotBlank() }.joinToString(" · "),
@@ -164,7 +164,7 @@ fun DwAiLayersScreen(
         val registerable = remember(layers, transcripts) { dwRegisterableTranscripts(layers, transcripts) }
         if (registerable.isNotEmpty()) {
             HorizontalDivider()
-            Text(DW_AI_LAYERS_REGISTER_TITLE, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+            Text(DW_AI_LAYERS_REGISTER_TITLE, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
             Text(DW_AI_LAYERS_REGISTER_NOTE, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             registerable.forEach { item ->
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -214,7 +214,7 @@ fun DwAiLayersScreen(
                 ) { Text(if (busy == "history") "Loading…" else "Show decision history") }
             }
         } else {
-            Text(DW_AI_LAYERS_HISTORY_TITLE, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+            Text(DW_AI_LAYERS_HISTORY_TITLE, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
             if (shown.isEmpty()) {
                 Text(DW_AI_LAYERS_HISTORY_EMPTY, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
