@@ -31,12 +31,11 @@ class WalkthroughSurfaceTest {
             "WalkthroughJourney.kt" to journey,
         ).forEach { (name, stripped) ->
             val raw = repoFile(sourcePaths.getValue(name)).readText(Charsets.UTF_8)
-                .replace("\r\n", "\n").length
-            assertTrue(
-                "$name stripped to ${stripped.length} of $raw characters — the comment stripper " +
-                    "is no longer removing comments, so every assertion in this file may now be " +
-                    "satisfied by a sentence about the code instead of by the code",
-                stripped.length * 10 < raw * 7,
+                .replace("\r\n", "\n").replace(Regex("""\s+"""), " ")
+            assertEquals(
+                "$name holds no comments, so the parser must hand back all of its code",
+                raw.length,
+                stripped.length,
             )
         }
     }
