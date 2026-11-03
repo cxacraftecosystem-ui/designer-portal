@@ -38,6 +38,7 @@ from app.services import (
     app_settings,
     design_workshop_posts,
     dictation_consent,
+    transcribe_choice,
     transcript_insights,
     transcription_jobs,
 )
@@ -1001,6 +1002,7 @@ async def _finish_pending_media(
 ) -> dict[str, Any]:
     """Return an already-created media row for a retried /complete, enqueuing its processing jobs once
     if the original request died before it could (so a retry never drops transcription)."""
+    processing_requests = await transcribe_choice.resolve_retry(existing, processing_requests)
     if processing_requests and not (existing.processingJobs or []):
         await enqueue_media_processing_jobs(existing, processing_requests, user_id, settings)
         existing = await db.mediafile.find_unique(where={"id": existing.id}, include=INCLUDE)
@@ -1371,6 +1373,7 @@ async def complete_media_upload(
                 racer, processing_requests, current_user.id, settings
             )
         raise
+    processing_requests = await transcribe_choice.resolve_upload(created, processing_requests)
     await enqueue_media_processing_jobs(created, processing_requests, current_user.id, settings)
     created = await db.mediafile.find_unique(where={"id": created.id}, include=INCLUDE)
     return await _public(created, current_user)
@@ -1869,10 +1872,10 @@ async def transcribe_media_now_route(
     overwrites a transcript that workshop's report prints (2026-10-09)."""
     media = await require_record(db.mediafile, media_id)
     await design_workshop_posts.refuse_a_holders_media_write(media, current_user)
-    if str(getattr(media, "mediaType", "") or "").upper() != "AUDIO":
+    if not transcribe_choice.transcribable(media):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only audio files can be transcribed.",
+            detail="Only audio and video files can be transcribed.",
         )
     # Asked here as well as inside ``transcribe_media_now`` so a consent store that cannot be read
     # answers a plain 503 rather than a 500 (``app/api/consent_http.py``); a refusal is a 409.

@@ -193,6 +193,7 @@ async def enqueue_stage_transcriptions(
     inside a save a designer is watching a spinner for in a village. The question is the same for
     every clip, so it is asked once for all of them.
     """
+    from app.services import transcribe_choice
     from app.services.media_queue import enqueue_media_processing_jobs
     from app.services.records import owned_or_granted_where
 
@@ -212,7 +213,7 @@ async def enqueue_stage_transcriptions(
     candidates = [
         row
         for row in rows
-        if str(getattr(row, "mediaType", "")).endswith("AUDIO")
+        if transcribe_choice.wanted(row)
         and str(getattr(row, "transcriptStatus", "") or "").upper()
         not in _SETTLED_TRANSCRIPT_STATUSES
         and not str(getattr(row, "transcriptText", "") or "").strip()

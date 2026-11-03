@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**590 operations** in the working tree — 276 GET, 205 POST, 45 DELETE,
+**592 operations** in the working tree — 278 GET, 205 POST, 45 DELETE,
 33 PATCH, 31 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -77,6 +77,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `products.py` | 5 |
 | `review.py` | 5 |
 | `secrets.py` | 5 |
+| `transcription_admin.py` | 5 |
 | `workshop_types.py` | 5 |
 | `craft_codes.py` | 4 |
 | `design_ratings.py` | 4 |
@@ -89,7 +90,6 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `ministry_stage_data_exports.py` | 3 |
 | `reference.py` | 3 |
 | `search.py` | 3 |
-| `transcription_admin.py` | 3 |
 | `cross_portal_search.py` | 2 |
 | `design_workshop_copy.py` | 2 |
 | `map_points.py` | 2 |
@@ -148,7 +148,7 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 373 | 6531 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Backend unit (`backend/tests/`) | 374 | 6549 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 307 | 3423 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 388 | 4198 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 21 | 72 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
@@ -176,7 +176,7 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 389 | 218,688 | 389 | 218,688 |
+| `backend/app` | 391 | 219,228 | 391 | 219,228 |
 | `frontend/app` | 129 | 56,539 | 129 | 56,539 |
 | `frontend/components` | 460 | 160,731 | 460 | 160,731 |
 | `frontend/lib` | 233 | 90,366 | 233 | 90,366 |

@@ -75,6 +75,18 @@ async def env():
             "bucket": "test-bucket",
             "objectKey": f"media/{user.id}/{stamp}-fresh.m4a",
             "uploadedById": user.id,
+            "transcribeRequested": True,
+            "transcribeRequestSource": "UPLOAD",
+        })
+        unticked = await db.mediafile.create(data={
+            "originalFilename": "unticked.m4a",
+            "mediaType": "AUDIO",
+            "mimeType": "audio/mp4",
+            "sizeBytes": 512_000,
+            "bucket": "test-bucket",
+            "objectKey": f"media/{user.id}/{stamp}-unticked.m4a",
+            "uploadedById": user.id,
+            "transcribeRequested": False,
         })
         done = await db.mediafile.create(data={
             "originalFilename": "loom-notes.m4a",
@@ -108,6 +120,8 @@ async def env():
             "objectKey": f"media/{user.id}/{stamp}-stranded.m4a",
             "uploadedById": user.id,
             "transcriptStatus": "QUEUED",
+            "transcribeRequested": True,
+            "transcribeRequestSource": "UPLOAD",
         })
         await db.mediaprocessingjob.create(data={
             "jobType": "TRANSCRIPTION",
@@ -128,6 +142,7 @@ async def env():
             "fresh": fresh.id,
             "done": done.id,
             "stranded": stranded.id,
+            "unticked": unticked.id,
             "user": user.id,
         }
 
@@ -221,6 +236,14 @@ async def test_audio_attached_to_a_stage_is_queued_for_transcription(env, grante
     assert entry["includedInReport"] is False, "nothing to print until the worker has run"
     assert entry["stageKey"] == STAGE
     assert entry["fieldLabel"] == "Artisan’s spoken explanation"
+
+
+async def test_a_stage_clip_whose_box_was_left_unticked_is_not_queued(env, granted):
+    client = env["client"]
+    response = _save_audio(client, granted, env["unticked"])
+    assert response.status_code == 200, response.text
+    assert response.json()["transcriptionsQueued"] == 0
+    assert _jobs(client.get(f"/api/media/{env['unticked']}").json()) == []
 
 
 async def test_saving_the_same_stage_again_does_not_queue_a_second_job(env, granted):
@@ -529,12 +552,11 @@ async def test_a_refused_workshops_recording_is_stored_but_not_queued(env, works
     assert "that is the answer on record" in (media["transcriptError"] or "")
 
 
-async def test_the_auto_enqueue_is_gated_too(env, workshop):
-    """The same refusal for a body that names no ``processingRequests`` at all — ``_job_requests``
-    adds TRANSCRIPTION for any AUDIO file, and that branch is reachable by any signed-in caller."""
+async def test_a_body_that_asks_for_nothing_queues_nothing(env, workshop):
     media = _upload_audio(env["client"], env["user"], tag=DW_TAG, tag_id=workshop)
     assert _jobs(media) == []
-    assert media["transcriptStatus"] == "FAILED"
+    assert media["transcribeRequested"] is False
+    assert media["transcribeRequestSource"] is None
 
 
 async def test_a_consented_workshops_recording_is_queued_at_upload_time(env, granted):
