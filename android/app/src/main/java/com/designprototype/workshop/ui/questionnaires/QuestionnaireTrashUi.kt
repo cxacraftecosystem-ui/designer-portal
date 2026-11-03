@@ -32,16 +32,6 @@ import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/**
- * SOFT DELETE AND RESTORE FOR CUSTOM QUESTIONNAIRES ON ANDROID (audit L9, 21 Oct 2026).
- *
- * The server has soft-deleted forms and sittings since 20 Oct and the web offers a trash; the
- * handset offered neither. A form is deleted and restored by its author or a content admin
- * ([mayDeleteQuestionnaire], owner 22 Oct 2026); a sitting by a content admin alone
- * ([mayDeleteQuestionnaireItems]).
- *
- * The words live in [QuestionnaireTrashCopy] so a JVM test pins them.
- */
 object QuestionnaireTrashCopy {
     const val QUESTIONNAIRE_BODY =
         "Moves this questionnaire to Deleted. Its sittings and answers are kept, and its author or an admin can restore it."
@@ -54,14 +44,12 @@ object QuestionnaireTrashCopy {
     const val NOTHING_DELETED = "Nothing here."
     const val RESTORE = "Restore"
 
-    /** "Deleted 21 Oct 2026 by Meera" — the date as the server sent it, its first ten characters. */
     fun deletedLine(deletedAt: String?, deletedBy: String?): String = listOfNotNull(
         deletedAt?.takeIf { it.isNotBlank() }?.let { "Deleted ${it.take(10)}" } ?: "Deleted",
         deletedBy?.takeIf { it.isNotBlank() }?.let { "by $it" },
     ).joinToString(" ")
 }
 
-/** One row of a trash: what it was, who deleted it and when, and a single Restore. */
 @Composable
 private fun TrashRow(title: String, line: String, busy: Boolean, onRestore: () -> Unit) {
     Row(
@@ -79,7 +67,6 @@ private fun TrashRow(title: String, line: String, busy: Boolean, onRestore: () -
     }
 }
 
-/** A collapsed card that lists a trash only when opened, so the list screen reads nothing extra. */
 @Composable
 private fun <T> TrashCard(
     heading: String,
@@ -136,10 +123,6 @@ private fun <T> TrashCard(
     }
 }
 
-/**
- * The questionnaire trash on the list screen. A content admin's lists every deleted form; anyone
- * else's ([ownOnly]) lists the forms they authored, which the server scopes and lets them restore.
- */
 @Composable
 fun DeletedQuestionnairesCard(
     repository: WorkshopRepository,
@@ -160,7 +143,6 @@ fun DeletedQuestionnairesCard(
     )
 }
 
-/** One questionnaire's deleted sittings, on its detail screen. Content admins only. */
 @Composable
 fun DeletedSittingsCard(
     repository: WorkshopRepository,

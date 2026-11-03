@@ -8,32 +8,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * A designer may not start a design workshop — and finds that out in the courtyard, not at sync.
- *
- * ── THE FAILURE THIS FILE EXISTS TO CATCH ─────────────────────────────────────────────────────
- *
- * A designer fills twenty-two stages into a local draft over a fortnight and learns, at the first
- * bar of signal, that the workshop can never be created. That is not a permissions message; it is
- * lost fieldwork. `POST /design-workshops` is and remains the load-bearing gate, but it can only
- * speak when there is a connection, and the whole point of this client is the days when there is
- * not — so the rule is also evaluated here, from the cached role, before a byte is written.
- *
- * Every assertion below is a way that could quietly stop being true.
- */
 class DwWorkshopCreationTest {
 
-    // ── The rule ─────────────────────────────────────────────────────────────────────────────────
-
-    /**
-     * The set is ADMIN and MASTER_ADMIN, and a DESIGNER is outside it.
-     *
-     * A SET rather than a rank floor, exactly as the server writes it. Written as
-     * `rank >= RANK_ADMIN` it would give the same answer today and would silently admit any role
-     * later inserted above 50 — and the one role this rule is actually about, DESIGNER at 35, sits
-     * below a PROFESSOR at 40 who is ALSO refused. There is no threshold that produces this answer
-     * for both of them, which is why approximating it with the ladder is not available.
-     */
     @Test
     fun `only admins and the master admin may create a workshop`() {
         assertTrue(canCreateDesignWorkshops("ADMIN"))
@@ -54,13 +30,6 @@ class DwWorkshopCreationTest {
         assertFalse("an unknown role must never be a creator", canCreateDesignWorkshops("SUPERUSER"))
     }
 
-    /**
-     * The refusal names the next move, and it names what still works.
-     *
-     * Somebody reading it is standing in a courtyard with participants in front of them. "Forbidden"
-     * tells them to stop working; the truth is that everything they came to do works as soon as an
-     * admin has opened the workshop. If a later edit trims this to a status message, this fails.
-     */
     @Test
     fun `the refusal says who can, and that everything else still works`() {
         assertTrue(DW_WORKSHOP_CREATE_REFUSAL.contains("Ask an admin"))
@@ -68,20 +37,6 @@ class DwWorkshopCreationTest {
         assertTrue(DW_WORKSHOP_CREATE_REFUSAL.contains("already have access to is open to you now"))
     }
 
-    // ── The tri-state ────────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Not told yet is ALLOWED; signed out is REFUSED; the role decides the rest.
-     *
-     * "Not told yet" allows deliberately. Refusing it would block an ADMIN in the moment before the
-     * cached user has been read — a refusal for a rule that does not apply to them, which is the
-     * kind of false negative that teaches people to ignore refusals altogether. Nothing escapes
-     * through that window that matters: the server is the gate.
-     *
-     * "Signed out" is the state the tri-state is worth having for. Signing out does not clear the
-     * draft store, so without this a signed-out handset could still mint a workshop into `filesDir`
-     * that no account owns and no sync pass could ever send.
-     */
     @Test
     fun `the tri-state allows the unknown session and refuses the signed-out one`() {
         assertTrue(
@@ -96,20 +51,6 @@ class DwWorkshopCreationTest {
         assertTrue(mayMintLocalWorkshop(known = true, role = "ADMIN"))
     }
 
-    // ── The bug that was shipped once and caught ─────────────────────────────────────────────────
-
-    /**
-     * A draft ALREADY ON THE SERVER is never declined, whoever is signed in.
-     *
-     * THIS IS THE MISTAKE, PINNED. Written as "refuse whenever this session may not create", the
-     * rule also refuses the draft whose create had already landed before the rule shipped — a real
-     * workshop on the server that this device merely never saw the answer for. That draft needs no
-     * create at all; the pass only has to write the id back. Refusing it strands an existing
-     * workshop behind a permanent failure and tells the designer to go and ask an admin for a
-     * workshop they already have.
-     *
-     * Both facts are in the signature so neither can be dropped by accident.
-     */
     @Test
     fun `a create that already landed is never declined, even for a designer`() {
         assertFalse(
@@ -119,19 +60,12 @@ class DwWorkshopCreationTest {
         assertFalse(createMustBeDeclined(alreadyOnServer = true, sessionMayCreate = true))
     }
 
-    /** A create that is genuinely owed, by a session that may not make one, is declined. */
     @Test
     fun `a designer's uncreated draft is declined rather than posted every forty-five seconds`() {
         assertTrue(createMustBeDeclined(alreadyOnServer = false, sessionMayCreate = false))
         assertFalse(createMustBeDeclined(alreadyOnServer = false, sessionMayCreate = true))
     }
 
-    /**
-     * The declined-create failure names the control that fixes it, and says nothing was lost first.
-     *
-     * A designer meets this sentence looking at a fortnight of fieldwork with a red mark on it. The
-     * order matters: "nothing has been deleted" before anything else, then the route out by name.
-     */
     @Test
     fun `the declined-create failure names the way out and says nothing was lost`() {
         assertTrue(DW_WORKSHOP_CREATE_DECLINED_BY_APP.contains("Move into a workshop"))
@@ -142,15 +76,6 @@ class DwWorkshopCreationTest {
         )
     }
 
-    // ── Starting one with no signal ──────────────────────────────────────────────────
-
-    /**
-     * An account that may create is answered CREATE, connection or not — and the ORDER is why.
-     *
-     * An admin's draft is destined to become a workshop on the next pass whether it was started in
-     * an office or a courtyard. Answered LINK_LATER, an admin would be told to go and ask themselves
-     * for a workshop they are entitled to open.
-     */
     @Test
     fun `an admin is answered CREATE whether or not the phone can reach the server`() {
         assertEquals(
@@ -163,12 +88,6 @@ class DwWorkshopCreationTest {
         )
     }
 
-    /**
-     * THE HALF THAT MUST NOT MOVE. With signal a designer has two better answers than an unlinked
-     * draft — open a workshop they already hold, or ask an admin for one — and
-     * [DW_WORKSHOP_CREATE_REFUSAL] names both. An unlinked draft minted WITH a connection would be a
-     * second, worse copy of a workshop that could have been the real one from the first keystroke.
-     */
     @Test
     fun `a designer with a connection is still refused`() {
         assertEquals(
@@ -177,7 +96,6 @@ class DwWorkshopCreationTest {
         )
     }
 
-    /** The owner's clause: offline, a designer may start one for the time being. */
     @Test
     fun `a designer with no connection is answered LINK_LATER`() {
         assertEquals(
@@ -186,13 +104,6 @@ class DwWorkshopCreationTest {
         )
     }
 
-    /**
-     * The arm is for the people who run workshops and nobody else.
-     *
-     * `canRunDesignWorkshops` is a SET, so a PROFESSOR outranks a designer and is still outside it —
-     * and a draft minted by an account that can never OPEN a workshop has no future at all, since
-     * adoption needs a workshop the account may be named on.
-     */
     @Test
     fun `an account outside the workshop set is refused, reachable or not`() {
         assertEquals(
@@ -205,15 +116,6 @@ class DwWorkshopCreationTest {
         )
     }
 
-    /**
-     * A DESIGNER'S DRAFT IS NEVER POSTED, WHOEVER MINTED IT — the invariant the whole arm hangs on.
-     *
-     * [dwClassifyDraftStart] decides what is WRITTEN; [createMustBeDeclined] decides what is SENT,
-     * against the role as of the drain. A draft minted under LINK_LATER therefore meets exactly the
-     * refusal every stranded designer draft has met since the create rule shipped. If this ever
-     * stopped being true the create arm would collect the server's 403 — which is not transient —
-     * and the draft would park for ever behind a retry that can only fetch the same 403.
-     */
     @Test
     fun `a draft minted with no signal still takes the adopt path and never the create path`() {
         assertEquals(
@@ -223,15 +125,6 @@ class DwWorkshopCreationTest {
         assertTrue(createMustBeDeclined(alreadyOnServer = false, sessionMayCreate = false))
     }
 
-    /**
-     * The four link-later strings say what they have to say.
-     *
-     * "Not a workshop yet" is not decoration: "saved offline" describes every other record in this
-     * app, all of which send themselves, and a designer who reads this as the usual offline banner
-     * waits a fortnight for a sync that is never coming. The browser holds the same four literals
-     * and `frontend/e2e/design-workshop-offline-start-unit.spec.ts` asserts THIS FILE contains them
-     * byte for byte — which is the only thing that can, since neither client can run the other.
-     */
     @Test
     fun `the link-later words name the state and the next move`() {
         assertTrue(DW_LOCAL_START_NOTE.contains("Not a workshop yet"))
@@ -241,16 +134,6 @@ class DwWorkshopCreationTest {
     }
 
 
-    // ── Which drafts need a workshop ─────────────────────────────────────────────────────────────
-
-    /**
-     * A workshop created ONLINE is keyed by the server's id with `remoteId` still null.
-     *
-     * So `remoteId == null` is NOT the test, and using it would be a live defect in two places at
-     * once: the list would offer to "move into a workshop" a workshop that is already one, and the
-     * sync pass would decline a create it does not owe. `WorkshopSync.remoteIdOf` computes exactly
-     * this, and [remoteWorkshopIdOf] is its public twin so the two cannot drift.
-     */
     @Test
     fun `a draft keyed by a server id needs no workshop even with a null remoteId`() {
         val onlineCreated = WorkshopDraft(workshopId = "cmsv0001", remoteId = null)
@@ -266,15 +149,11 @@ class DwWorkshopCreationTest {
         assertEquals("cmsv0002", remoteWorkshopIdOf(adopted))
     }
 
-    /** A blank `remoteId` is an absent one — a stored empty string must not read as adopted. */
     @Test
     fun `a blank remote id is treated as no remote id`() {
         assertTrue(localDraftNeedsAWorkshop(WorkshopDraft(workshopId = "local-abc", remoteId = "")))
     }
 
-    // ── Adoption ─────────────────────────────────────────────────────────────────────────────────
-
-    /** A courtyard draft: two stages of real work, with deletions and completion marks on it. */
     private fun courtyardDraft() = WorkshopDraft(
         workshopId = "local-abc",
         title = "Bagru block printing",
@@ -292,8 +171,6 @@ class DwWorkshopCreationTest {
                 custom = mapOf("loomsWorking" to JsonPrimitive(12)),
                 notes = "Sanction order still awaited",
                 completedAt = "2026-08-02T10:00:00Z",
-                // TRUE because a local-only workshop has nothing on the server to be missing — the
-                // documented rule, and exactly the premise adoption invalidates.
                 stageSeen = true,
                 customSeen = true,
                 emptiedEntities = listOf("costSheet"),
@@ -316,16 +193,6 @@ class DwWorkshopCreationTest {
         ),
     )
 
-    /**
-     * THE ADOPTION CLEARS `stageSeen`, ON EVERY STAGE — this is the wholesale-overwrite guard.
-     *
-     * `stageSeen` is true on a local-only draft by its own rule: there is no server copy to be
-     * missing. Adoption is the moment that expires, and it expires harder than on a create — the
-     * target workshop was made by somebody else and `POST /design-workshops` has already seeded
-     * `workshopSetup` and `workshopPlan` singletons into it. Left standing, the first save claims
-     * authority (merge omitted), `save_stage` replaces the singleton's `data` wholesale, and the
-     * seeded designer block is destroyed in place under a 200.
-     */
     @Test
     fun `adoption withdraws every claim to have read the server`() {
         val moved = adoptedIntoWorkshop(courtyardDraft(), "cmsv_target", "2026-08-16T12:00:00Z")
@@ -335,16 +202,6 @@ class DwWorkshopCreationTest {
         )
     }
 
-    /**
-     * AND IT CLEARS THE DELETIONS, WHICH IS THE DANGEROUS HALF.
-     *
-     * `emptiedEntities` and `deletedRowKeys` are the only mechanism by which a deletion reaches the
-     * server, and they arm the sweep on the sync PUT. On a never-synced draft every one of those
-     * deletions was of a row that has only ever existed on THIS DEVICE. Carried into an adoption
-     * they arm a sweep against a workshop this phone has never read, and `save_stage` deletes rows
-     * belonging to whoever has been working in the target. That is the difference between adopting a
-     * workshop and emptying one.
-     */
     @Test
     fun `adoption disarms the deletions so it cannot sweep the workshop it moves into`() {
         val moved = adoptedIntoWorkshop(courtyardDraft(), "cmsv_target", "2026-08-16T12:00:00Z")
@@ -353,15 +210,6 @@ class DwWorkshopCreationTest {
         assertTrue(stage.deletedRowKeys.isEmpty())
     }
 
-    /**
-     * AND IT CLEARS THE STAGE SIGNATURES, or the fortnight is reported as already sent.
-     *
-     * A signature is "the body the server last accepted for this stage" — and the server in question
-     * was a different workshop, or none. Kept, `isFullySynced` reads the adopted draft as backed up,
-     * the pass sends nothing, and the designer is told everything is on the server while none of it
-     * is. This is the failure mode that loses the fieldwork silently, which is why it is cleared
-     * here rather than left to the pass to notice.
-     */
     @Test
     fun `adoption forgets what an unrelated workshop had accepted`() {
         val moved = adoptedIntoWorkshop(courtyardDraft(), "cmsv_target", "2026-08-16T12:00:00Z")
@@ -373,14 +221,6 @@ class DwWorkshopCreationTest {
         assertNull(moved.sync.lastError)
     }
 
-    /**
-     * AND IT KEEPS EVERY LAST THING THE DESIGNER RECORDED. Adoption is not a reset.
-     *
-     * This is the assertion that makes the rule shippable: the answers, the custom answers, the
-     * notes, the completion marks, the photographs, the title and the creation date all survive. If
-     * a later "tidy-up" starts clearing one of them, a fortnight of somebody's fieldwork is quietly
-     * emptied by the control that exists to save it.
-     */
     @Test
     fun `adoption keeps the fieldwork, which is the entire point of adopting`() {
         val before = courtyardDraft()
@@ -402,19 +242,6 @@ class DwWorkshopCreationTest {
         assertEquals(2, moved.stages.size)
     }
 
-    /**
-     * `customSeen` is deliberately LEFT ALONE, and that is worth pinning next to `stageSeen`.
-     *
-     * The two look like a pair and are not. `stageSeen` is cleared because it would arm
-     * `replaceCollections` and a non-merge write against a workshop somebody else seeded.
-     * `customSeen` guards the SEPARATE `_custom` row, which `POST /design-workshops` does not seed
-     * at all — there is nothing there for a claim to overwrite. Clearing it would cost a designer
-     * their custom-answer clearances until each stage is next opened with a connection, for no
-     * corresponding protection.
-     *
-     * If a future change makes the create route seed custom rows, this test is the one that has to
-     * be rewritten — and its docstring says why the old assertion went.
-     */
     @Test
     fun `adoption leaves the custom-row claim alone because nothing seeds that row`() {
         val moved = adoptedIntoWorkshop(courtyardDraft(), "cmsv_target", "2026-08-16T12:00:00Z")

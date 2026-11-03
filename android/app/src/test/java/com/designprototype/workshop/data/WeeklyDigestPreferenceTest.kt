@@ -6,7 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The Monday summary's switch: the wire shape both portals send, and when the row is drawn. */
 class WeeklyDigestPreferenceTest {
     private val json = ApiClient.json
 

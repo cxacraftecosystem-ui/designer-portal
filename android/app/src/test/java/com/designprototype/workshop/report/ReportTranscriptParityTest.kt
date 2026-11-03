@@ -18,19 +18,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * The phone's transcript annexure, held block for block to the SERVER's (DA-29).
- *
- * `shared/report-parity/expected.json` is written by `backend/tools/report_offline_parity.py`, which
- * runs `report_annexures.append_transcript_annexure` — the server's own code — over the transcripts in
- * `shared/report-parity/workshop.json`; `tests/test_report_offline_parity.py` fails the backend build
- * when that file is stale. So the slice compared here is not a copy somebody typed: it is what the
- * office's report prints for these recordings today, and [appendTranscriptAnnexure] has to print the
- * same headings, table, notes and paragraphs in the same order.
- *
- * Heading NUMBERS are compared below their first component: the server's annexure sits at section 28
- * of a whole report and this one is built alone, so "28.1" and "1.1" are the same position.
- */
 class ReportTranscriptParityTest {
 
     private fun repoFile(vararg relative: String): File {
@@ -52,7 +39,6 @@ class ReportTranscriptParityTest {
 
     private fun JsonElement?.str(): String = (this as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content.orEmpty()
 
-    /** The fixture's transcripts, exactly as the tool hands them to `TranscriptItem(**t)`. */
     private fun fixtureItems(): List<DwTranscriptItem> =
         shared("workshop.json")["sources"]!!.jsonObject["transcripts"]!!.jsonArray.map { raw ->
             val t = raw.jsonObject
@@ -72,7 +58,6 @@ class ReportTranscriptParityTest {
             )
         }
 
-    /** The server's annexure out of one case: its page break up to the next page break or chapter. */
     private fun expectedSlice(case: String): List<JsonObject> {
         val blocks = shared("expected.json")["cases"]!!.jsonObject[case]!!.jsonObject["blocks"]!!.jsonArray
             .map { it.jsonObject }
@@ -92,8 +77,6 @@ class ReportTranscriptParityTest {
         }
         return blocks.subList(head - 1, end)
     }
-
-    // ── one comparable shape for both sides ─────────────────────────────────────────────────────
 
     private fun plain(e: JsonElement?): Any? = when (e) {
         null, JsonNull -> null
@@ -175,7 +158,6 @@ class ReportTranscriptParityTest {
 
     @Test
     fun `the fixture reaches the branches the port could drift on`() {
-        // A fixture that stopped exercising these would let the port diverge there unseen.
         val blocks = built()
         val text = blocks.joinToString("\n") { b ->
             when (b) {

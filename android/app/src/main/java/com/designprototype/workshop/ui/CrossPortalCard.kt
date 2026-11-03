@@ -43,13 +43,6 @@ import com.designprototype.workshop.data.CrossPortalPrefill
 import com.designprototype.workshop.data.apiRefusal
 import kotlinx.coroutines.launch
 
-/**
- * C27 on the handset — the twin of the web's `components/forms/CrossPortalLookup.tsx`, same words
- * ([CrossPortalCopy]). Draws NOTHING until the server says the feature is on. The consent tick is an
- * agreement, not a setting, so it is a checkbox row (§11.11), as Aadhaar's consent is, and it names
- * every item the lookup shares, from the server's list. A refusal prints the server's own sentence;
- * only a failure to reach it reads "can't be reached". Unlink asks first.
- */
 data class CrossPortalUiState(val enabled: Boolean = false, val sharedFields: String? = null)
 
 @Composable
@@ -64,7 +57,6 @@ fun rememberCrossPortal(): Pair<CrossPortalUiState, CrossPortalClient> {
     return state to client
 }
 
-/** One target for the whole row: the box and its words toggle together, announced as a checkbox. */
 @Composable
 private fun ConsentRow(checked: Boolean, words: String, onChange: (Boolean) -> Unit) {
     Row(
@@ -97,17 +89,12 @@ private fun Note(text: String?) {
     }
 }
 
-/**
- * A new artisan: find by the numbers typed above, then fill the form in one press. Opened from a
- * scanned Field Repository card ([cardInput]), it asks by the card instead (web `CrossPortalFind`).
- */
 @Composable
 fun CrossPortalFindCard(
     aadhaar: String,
     pehchanNumber: String,
     filled: CrossPortalMatchDto?,
     cardInput: String? = null,
-    /** Opens an artisan the card already names here. Null: the note says so without a button. */
     onOpenArtisan: ((String) -> Unit)? = null,
     onFill: (CrossPortalMatchDto) -> Unit,
 ) {
@@ -192,11 +179,6 @@ fun CrossPortalFindCard(
     }
 }
 
-/**
- * A saved artisan: the link, Refresh and Unlink — or Link, for one saved before. [onRefreshed] is
- * handed the artisan's identity values as the server now holds them and which fields moved; the
- * form MUST take them, or its next Save writes the old ones back over the Field Repository's.
- */
 @Composable
 fun CrossPortalLinkCard(artisanId: String, onRefreshed: (CrossPortalFieldsDto, List<String>) -> Unit) {
     val (status, client) = rememberCrossPortal()
@@ -226,7 +208,6 @@ fun CrossPortalLinkCard(artisanId: String, onRefreshed: (CrossPortalFieldsDto, L
             onDismissRequest = { confirmUnlink = false },
             title = { Text(CrossPortalCopy.UNLINK_TITLE) },
             text = { Text(CrossPortalCopy.UNLINK_BODY) },
-            // Cancel first and the safe default: a reflex tap loses nothing.
             dismissButton = {
                 TextButton(onClick = { confirmUnlink = false }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text("Cancel")

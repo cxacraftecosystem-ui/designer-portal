@@ -55,14 +55,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** A file this phone has just saved for the designer: where it went, so "Open" can show it. */
 data class SavedMediaDownload(val uri: Uri, val name: String, val mimeType: String)
 
-/**
- * Saves local media for one surface, and remembers the last save so [MediaDownloadNotice] can offer
- * "Open". Built by [rememberMediaDownloader]; see `data/MediaDownloads.kt` for why every save reads
- * the local copy and never waits on, or touches, the upload.
- */
 @Stable
 class MediaDownloader internal constructor(
     private val context: Context,
@@ -72,13 +66,6 @@ class MediaDownloader internal constructor(
     var saved by mutableStateOf<SavedMediaDownload?>(null)
         internal set
 
-    /**
-     * Save [source] (a `file://` or `content://` Uri this phone holds) to Downloads.
-     *
-     * API 29 and up: straight into the public Downloads collection through MediaStore. Below that
-     * (minSdk is 26): the system's Create document screen, opened at Downloads with the name filled
-     * in, which needs no storage permission and lets the person see where it lands.
-     */
     fun save(source: Uri, displayName: String?, mimeType: String?, capturedAtMillis: Long? = null) {
         val mime = MediaDownloads.baseMimeType(mimeType).ifBlank { "application/octet-stream" }
         val name = MediaDownloads.downloadFileName(displayName, mime, capturedAtMillis)
@@ -93,11 +80,6 @@ class MediaDownloader internal constructor(
         }
     }
 
-    /**
-     * Save a file whose local bytes are gone but whose upload finished, through the server's own
-     * download route. [fetch] does the work (on IO) and answers the saved file's Uri, or null when
-     * it landed somewhere no viewer can be pointed at; then there is no "Open", only the sentence.
-     */
     fun saveFromServer(displayName: String, mimeType: String?, fetch: suspend () -> Uri?) {
         val mime = MediaDownloads.baseMimeType(mimeType).ifBlank { "application/octet-stream" }
         scope.launch {
@@ -129,7 +111,6 @@ class MediaDownloader internal constructor(
         ).show()
     }
 
-    /** Hand the saved file to whatever app on this phone opens its type. */
     fun open(download: SavedMediaDownload) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(download.uri, download.mimeType)
@@ -143,18 +124,11 @@ class MediaDownloader internal constructor(
     }
 }
 
-/**
- * One [MediaDownloader] per surface. It owns its own Create document launcher (used below API 29
- * only), so a row can be dropped anywhere without a host threading one down to it.
- */
 @Composable
 fun rememberMediaDownloader(): MediaDownloader {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    // The save waiting on a destination, and the downloader to finish it. A plain holder, not state:
-    // nothing draws it, and writing state from composition would schedule another composition.
     val pending = remember { PendingSave() }
-    // The generic binary type, so the picker accepts any name; the real type rides on the file.
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { target ->
@@ -179,22 +153,6 @@ private class PendingSave {
     var downloader: MediaDownloader? = null
 }
 
-/**
- * The action buttons on a media card, tile or row — Retry and Download — drawn ONE way on every
- * surface (upload queue, outbox, record forms, stage attachments, media screens). The web's twin is
- * `MediaActionButton` (frontend/components/media/MediaActionButton.tsx).
- *
- * WHY (owner, 2026-10-17: "the buttons for retry and download on media card are not clearly visible").
- * They were 12sp TextButtons with 2dp of vertical padding: a purple word on a white card, easy to miss
- * and well under a thumb's 48dp. Now each is a [FilledTonalButton] with its OWN pale-purple ground, a
- * 1dp purple edge and deep-purple ink ([MediaActionColors]), carrying the icon AND the word, at least
- * 48dp tall — the same look as the web twin (purple-50 ground, purple border, purple-800 ink).
- *
- * It does NOT use the theme's secondaryContainer: this app maps that slot to surface-100, which is
- * about 1.05:1 against the white card in light and 1.13:1 against the dark card, so the button's
- * ground and edge vanished and it read as bold text. [MediaActionColorsTest] pins the edge at 3:1 or
- * better against the card and surface-50, and the ink at 4.5:1 or better on the ground, in both themes.
- */
 @Composable
 fun MediaActionButton(
     label: String,
@@ -202,7 +160,6 @@ fun MediaActionButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    /** The full name for TalkBack — "Download interview-3.m4a". */
     accessibleLabel: String? = null,
 ) {
     val colors = MediaActionColors.forTheme(MaterialTheme.field.isDark)
@@ -227,15 +184,6 @@ fun MediaActionButton(
     }
 }
 
-/**
- * The media action button's colours, from the purple ramp, per theme. Plain values (no Compose
- * lookup) so a JVM unit test can measure every pair.
- *
- * Light: purple-50 ground, purple-600 edge (5.2:1 on the white card, 4.9:1 on surface-50),
- * purple-800 ink (9.4:1 on the ground). Dark: purple-950 ground, purple-500 edge (5.0:1 on the
- * dark card, 4.7:1 on surface-50), purple-200 ink (12:1 on the ground). Disabled keeps a visible
- * edge (line-200 is too faint to say "a button is here") but drops the ink to the placeholder rung.
- */
 @Immutable
 data class MediaActionColors(
     val ground: Color,
@@ -267,7 +215,6 @@ data class MediaActionColors(
     }
 }
 
-/** "Retry" on a failed upload — the same button as Download, so the two read as one pair. */
 @Composable
 fun MediaRetryButton(fileName: String?, onRetry: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     MediaActionButton(
@@ -280,18 +227,6 @@ fun MediaRetryButton(fileName: String?, onRetry: () -> Unit, modifier: Modifier 
     )
 }
 
-/**
- * The one Download control every upload surface draws — [MediaActionButton] with the download icon
- * and the word "Download", so it reads the same on every row.
- *
- * [unavailableReason] disables it and says why, both on screen (under the button, never beside it,
- * so a long sentence cannot squeeze the button) and to TalkBack. It is for one case only — the local
- * bytes are genuinely gone — and never for a file that is still uploading.
- *
- * [onTile] draws it as an outlined button in that ink, for a row sitting on a coloured tile (the
- * purple "N files ready" card), where the theme's primary text button all but vanished (release
- * smoke test 2026-10-17, dp/58).
- */
 @Composable
 fun MediaDownloadButton(
     fileName: String,
@@ -329,13 +264,6 @@ fun MediaDownloadButton(
     }
 }
 
-/**
- * "Saved to Downloads" with an Open action, under the row that saved it, for a few seconds.
- *
- * A snackbar drawn in place rather than through a `SnackbarHostState`: the rows that save live in
- * cards, dialogs and a 13,000-line activity, none of which has a host to lend, and threading one in
- * would put a parameter on every screen between a Scaffold and a file row.
- */
 @Composable
 fun MediaDownloadNotice(downloader: MediaDownloader, modifier: Modifier = Modifier) {
     val saved = downloader.saved ?: return
@@ -356,24 +284,14 @@ fun MediaDownloadNotice(downloader: MediaDownloader, modifier: Modifier = Modifi
     }
 }
 
-/** An outlined button's colours for a coloured tile: the tile's own ink, never the theme primary. */
 @Composable
 fun onTileButtonColors(ink: Color) = ButtonDefaults.outlinedButtonColors(
     contentColor = ink,
     disabledContentColor = ink.copy(alpha = 0.5f),
 )
 
-/** The matching outline: the ink at 70%, which keeps 3:1 against the tile in both themes. */
 fun onTileBorder(ink: Color) = BorderStroke(1.dp, ink.copy(alpha = 0.7f))
 
-/**
- * What the purple "N file(s) attached" card says under its title, and whether it still draws a bar.
- *
- * Once every file that has not uploaded has FAILED, nothing is uploading any more, so "Uploading… 0%
- * (0/1 files done)" beside "Upload failed — tap Retry…" was two contradicting lines (release smoke
- * 2026-10-17, dp-final/26 and 47). The bar and the percentage go, and the line says how many files
- * did not upload; each file's own row still offers Retry and Download.
- */
 data class AttachedUploadsStatus(val line: String, val showProgress: Boolean, val failed: Boolean)
 
 fun attachedUploadsStatus(total: Int, done: Int, failed: Int, fraction: Float): AttachedUploadsStatus = when {

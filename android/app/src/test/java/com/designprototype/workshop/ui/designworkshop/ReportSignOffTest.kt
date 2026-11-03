@@ -13,20 +13,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * THE CERTIFICATION SECTION OF AN APPROVED REPORT, AS THE PHONE WRITES IT.
- *
- * The server's `_render_signatures` prints who approved a report — and, once it has gone, where it
- * was handed on to — after the signatures. A report a designer generates on the phone has to say the
- * same thing in the same place, or the copy in an officer's hand and the office's copy of one approved
- * report disagree about whether it was approved at all. Asserted on the built document's blocks, the
- * way `ReportDocumentTest` asserts content, with no file written.
- */
 class ReportSignOffTest {
 
     private val schema = SchemaResponse(version = "test", stages = emptyList())
 
-    /** A designer named on stage 1 — the Certification section prints nothing without a signatory. */
     private val draft = WorkshopDraft(
         workshopId = "local-test",
         title = "Barpali cluster",
@@ -61,7 +51,6 @@ class ReportSignOffTest {
         )
     }
 
-    /** The paragraphs that follow the signature block, which is where the server prints the lines. */
     private fun afterSignatures(document: ReportDocument): List<String> {
         val at = document.blocks.indexOfFirst { it is SignatureBlock }
         assertTrue("the DCH template prints a Certification section with a signatory", at >= 0)

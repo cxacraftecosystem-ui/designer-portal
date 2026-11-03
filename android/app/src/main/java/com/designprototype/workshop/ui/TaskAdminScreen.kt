@@ -89,34 +89,8 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-/**
- * The task assignment board — hand work out, then hold it to account.
- *
- * A faithful Android port of the web `/settings/tasks` page (`AssignmentBuilder`,
- * `AccountabilityBoard`, `BatchList`). Three views over ONE scope: the workshop picker at the top
- * narrows the artisan list in the builder, the rollup in the accountability view and the assignment
- * list below it, because "who is behind" is a question about a fieldwork trip, not about the whole
- * archive.
- *
- * The accountability tab is the reason this screen exists. `progressCount` is what a researcher SAYS
- * they have done and `derivedCount` is what the repository can actually find them having produced;
- * the two are always drawn together and never merged into one "progress" number, because a task
- * marked done with nothing behind it is exactly the failure this board is meant to catch.
- *
- * Every route behind this screen is `require_content_admin` server-side (2026-10-20), and any content
- * admin withdraws any task, whoever sent it. The caller shows it from the admin hub.
- */
-
-// =================================================================================================
-// The scope vocabulary — a port of frontend/components/tasks/scope.ts, which is itself a port of
-// the backend's scope_title()/_derived_target(). Kept identical so the title previewed here is the
-// title the server actually stores when none is typed.
-// =================================================================================================
-
-/** The canonical order titles read in — matches `RECORD_TYPE_ORDER` on the backend. */
 private val RECORD_TYPE_ORDER = listOf("artisan", "product", "process", "tool", "questionnaire", "media")
 
-/** kind -> (singular, plural), matching `RECORD_TYPE_LABELS` on the backend. */
 private val RECORD_TYPE_LABELS: Map<String, Pair<String, String>> = mapOf(
     "artisan" to ("artisan" to "artisans"),
     "product" to ("product" to "products"),
@@ -133,19 +107,6 @@ private val TASK_STATUS_LABELS = mapOf(
     "CANCELLED" to "Cancelled"
 )
 
-/**
- * The role ladder, highest first — the display order the web uses for role pickers.
- *
- * DESIGNER sits between PROFESSOR and RESEARCHER, at rank 35. It is spelled out here rather than
- * derived because this list is the whole vocabulary of the assignment builder's tier filter (see
- * `roleOptions`), and it is filtered BY MEMBERSHIP: a role absent from it has no chip, whatever the
- * counts say. An admin looking at nine assignees, six of them designers, would find no way to narrow
- * to the designers and no hint that the missing chip is why — the six are still in "Everyone below
- * me", so nothing on screen reads as broken, it just cannot be filtered for.
- */
-// Highest tier first — the display order for the assignment builder's tier chips. It filters BY
-// MEMBERSHIP, so a tier missing from this list simply has no chip: the assignees are still reachable
-// through "Everyone below me" and nothing on screen reads as broken.
 private val ROLES_BY_RANK = listOf(
     "MASTER_ADMIN", "ADMIN", "MINISTRY_ADMIN", "REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR",
     "PROFESSOR", "INSPECTOR", "DESIGNER", "RESEARCHER",
@@ -166,21 +127,13 @@ private val ROLE_LABELS = mapOf(
     "MASTER_ADMIN" to "Master Admin"
 )
 
-/**
- * What a reader is told when a task has no work in it. It used to mirror the server's 422 verbatim —
- * "pass recordTypes (any of ['artisan', …]) and/or sectionIds" — which is an API's parameter list,
- * not a sentence for a person (UX audit 2026-10-16, DA-10). It is the same sentence the summary's
- * warning line already prints.
- */
 private const val EMPTY_SCOPE_MESSAGE =
     "Pick at least one record type or questionnaire section."
 
-/** The label the server gives this role, falling back to the local table for an unknown one. */
 private fun roleLabelOf(role: String?): String = ROLE_LABELS[role] ?: role.orEmpty()
 
 private fun TaskUserDto.displayRole(): String = roleLabel.ifBlank { roleLabelOf(role) }
 
-/** Sort a set of record-type values into the canonical order, dropping anything unknown. */
 private fun orderRecordTypes(values: Collection<String>): List<String> {
     val wanted = values.map { it.trim().lowercase() }.toSet()
     return RECORD_TYPE_ORDER.filter { it in wanted }
@@ -189,17 +142,12 @@ private fun orderRecordTypes(values: Collection<String>): List<String> {
 private fun recordTypeLabel(kind: String, plural: Boolean = true): String =
     RECORD_TYPE_LABELS[kind]?.let { if (plural) it.second else it.first } ?: kind
 
-/** "a", "a and b", "a, b and c" — the backend's `_and_list`. */
 private fun andList(items: List<String>): String = when (items.size) {
     0 -> ""
     1 -> items[0]
     else -> "${items.dropLast(1).joinToString(", ")} and ${items.last()}"
 }
 
-/**
- * The default title the server derives when the admin does not type one — ported line for line from
- * `scope_title()` so the preview never promises a title the backend then writes differently.
- */
 private fun scopeTitle(
     recordTypes: List<String>,
     sectionCodes: List<String>,
@@ -218,7 +166,6 @@ private fun scopeTitle(
     if (sectionCodes.isNotEmpty()) {
         val codes = sectionCodes.joinToString(", ")
         val noun = if (sectionCodes.size == 1) "section" else "sections"
-        // Lower-cased when it trails a record-type half, so the whole reads as one instruction.
         val head = if (parts.isNotEmpty()) "questionnaire" else "Questionnaire"
         parts += "$head $noun $codes"
     }
@@ -235,10 +182,6 @@ private fun scopeTitle(
     return title.take(300)
 }
 
-/**
- * The denominator `derivedCount` is read against — the backend's `_derived_target()`. Null means the
- * scope has no honest denominator (record types with no target count = "as many as apply").
- */
 private fun derivedTargetFor(
     recordTypes: List<String>,
     sectionCount: Int,
@@ -254,7 +197,6 @@ private fun derivedTargetFor(
     return total.takeIf { it > 0 }
 }
 
-/** "for Gitaben Patel", "for 5 named artisans", "for every artisan at Test WS". */
 private fun artisanPhrase(artisanNames: List<String>, workshopTitle: String?): String = when {
     artisanNames.size == 1 -> "for ${artisanNames[0]}"
     artisanNames.size == 2 -> "for ${artisanNames[0]} and ${artisanNames[1]}"
@@ -263,7 +205,6 @@ private fun artisanPhrase(artisanNames: List<String>, workshopTitle: String?): S
     else -> "for every artisan in scope"
 }
 
-/** "record products and tools", "answer questionnaire sections C and D", or both joined. */
 private fun workPhrase(
     recordTypes: List<String>,
     sectionCodes: List<String>,
@@ -286,10 +227,6 @@ private fun workPhrase(
     return "${halves.joinToString(" and ")} ${artisanPhrase(artisanNames, workshopTitle)}"
 }
 
-/**
- * The headline the builder shows before anything is written:
- * "3 people × record products and tools for 5 artisans = 3 tasks".
- */
 private fun assignmentPreview(
     assigneeCount: Int,
     recordTypes: List<String>,
@@ -303,15 +240,12 @@ private fun assignmentPreview(
     return "$who × ${workPhrase(recordTypes, sectionCodes, artisanNames, targetCount, workshopTitle)} = $rows"
 }
 
-/** How the assignee's own number compares with what the repository can see. */
 private enum class GapTone { UNKNOWN, IDLE, MATCH, AHEAD, BEHIND }
 
 private data class ProgressGap(val tone: GapTone, val label: String)
 
 private fun progressGap(reported: Int, derived: Int?): ProgressGap {
     if (derived == null) return ProgressGap(GapTone.UNKNOWN, "Recorded count unavailable")
-    // Two zeroes agree, but agreeing about nothing is not an achievement: a green "matches" tick on
-    // an untouched task would read as reassurance on exactly the row that deserves a chase.
     if (reported == 0 && derived == 0) return ProgressGap(GapTone.IDLE, "Nothing reported or recorded yet")
     val delta = reported - derived
     return when {
@@ -321,8 +255,6 @@ private fun progressGap(reported: Int, derived: Int?): ProgressGap {
     }
 }
 
-// --- dates -------------------------------------------------------------------------------------
-
 private fun parseIsoDate(value: String?): LocalDate? {
     if (value.isNullOrBlank()) return null
     return runCatching { OffsetDateTime.parse(value).toLocalDate() }.getOrNull()
@@ -330,7 +262,6 @@ private fun parseIsoDate(value: String?): LocalDate? {
         ?: runCatching { LocalDate.parse(value.take(10)) }.getOrNull()
 }
 
-/** The web's `formatDate`: dd MMM yyyy, and "-" when there is nothing to show. */
 private fun formatDate(value: String?): String =
     parseIsoDate(value)?.let {
         runCatching { it.format(DateTimeFormatter.ofPattern("dd MMM yyyy")) }.getOrNull()
@@ -339,16 +270,6 @@ private fun formatDate(value: String?): String =
 private fun LocalDate.toDueInstant(): String =
     atStartOfDay(ZoneId.systemDefault()).toInstant().toString()
 
-// =================================================================================================
-// Screen
-// =================================================================================================
-
-/**
- * How long the picker search box waits after the last keystroke before it asks the server.
- *
- * The web's own interval on this screen, and the one `/artisans` debounces its live search at. It is
- * a constant rather than a literal so the two numbers cannot drift apart inside one app.
- */
 private const val TASK_PICKER_SEARCH_DEBOUNCE_MS = 350L
 
 private enum class TaskAdminTab(val label: String) {
@@ -357,27 +278,12 @@ private enum class TaskAdminTab(val label: String) {
     BATCHES("Assignments")
 }
 
-/**
- * Everything the builder holds between tab switches.
- *
- * Hoisted out of the builder composable on purpose: on a phone the three views are tabs in one
- * screen, and a half-filled assignment must survive a stray tap on "Accountability" — the web can
- * afford to unmount its form because a mis-click there is a mouse movement, not a thumb.
- */
 private class AssignmentFormState {
     var roleFilter by mutableStateOf("")
     var assigneeIds by mutableStateOf<Set<String>>(emptySet())
     var recordTypes by mutableStateOf<Set<String>>(emptySet())
     var sectionIds by mutableStateOf<Set<String>>(emptySet())
     var artisanIds by mutableStateOf<Set<String>>(emptySet())
-    /**
-     * The workshop [artisanIds] was picked under, so a change of SCOPE can be told from a change of
-     * LIST. Null until the builder has been on screen once.
-     *
-     * It lives here rather than in the builder because the builder is a tab: `remember` inside it is
-     * discarded on a stray tap at "Accountability", and a scope-tracker that forgets on a tab switch
-     * would read the return as a fresh scope and empty the subset the admin had just chosen.
-     */
     var artisanScope by mutableStateOf<String?>(null)
     var targetCount by mutableStateOf("")
     var title by mutableStateOf("")
@@ -398,16 +304,6 @@ private class AssignmentFormState {
     }
 }
 
-/**
- * The admin task assignment + accountability board.
- *
- * @param repository the shared API client.
- * @param onBack rendered as a back arrow in the header when non-null; pass null when the host chrome
- *   already provides its own back affordance.
- * @param onMessage a confirmation worth surfacing outside the screen (an assignment was sent).
- * @param onError a failure worth surfacing outside the screen; every load/write error is ALSO shown
- *   inline, so a host that ignores this loses nothing.
- */
 @Composable
 fun TaskAdminScreen(
     repository: WorkshopRepository,
@@ -433,41 +329,17 @@ fun TaskAdminScreen(
     var batchesError by remember { mutableStateOf<String?>(null) }
     var batchPage by remember { mutableIntStateOf(1) }
 
-    // Bumped by Refresh and after a write, so the two data effects re-run without a scope change.
     var refreshToken by remember { mutableIntStateOf(0) }
 
-    /*
-     * WHAT THE ADMIN IS TYPING, AND THE SETTLED COPY OF IT THAT ACTUALLY GOES ON THE WIRE.
-     *
-     * WHY THE BOX EXISTS AT ALL. `GET /tasks/options` reads the first 500 accounts, 200 workshops
-     * and 500 artisans and returns whatever fell inside; on this repository's measured population
-     * (3632 accounts, 731 artisans — docs/OPEN_FINDINGS.md, 2026-08-13) two of those cuts are live
-     * today. Every filter box on this screen until now was a filter over WHAT ARRIVED — the tier
-     * dropdown counts the slice, and `MultiSelectField`'s own box filters the list it was handed —
-     * so none of them could reach past the cut by construction, because none of them made a second
-     * request. This one does: the route folds `search` into the same WHERE as the `take`, which is
-     * the only placement that works, since searching after the take searches the first 500 names of
-     * the alphabet and stops at exactly the ceiling the parameter exists to get past.
-     *
-     * WHY TWO PIECES OF STATE. One request per keystroke, against three tables one of which is the
-     * user table, is not a search box but a load generator. 350 ms is the web's own interval on this
-     * screen and the one `/artisans` debounces its live search at; a third number here would make
-     * two clients of one API feel differently responsive for no reason. Only [appliedSearch] is a
-     * key of the options effect, so an abandoned prefix never becomes a request.
-     */
     var pickerSearch by remember { mutableStateOf("") }
     var appliedSearch by remember { mutableStateOf("") }
     LaunchedEffect(pickerSearch) {
-        // LaunchedEffect cancels its previous body when the key changes, so the delay IS the
-        // debounce — no timer to clear and nothing to leak.
         delay(TASK_PICKER_SEARCH_DEBOUNCE_MS)
         appliedSearch = pickerSearch.trim()
     }
 
     val form = remember { AssignmentFormState() }
 
-    // The artisan picker narrows to the chosen workshop, so the options call re-runs on every change
-    // — and on every SETTLED search term, which narrows all three capped lists at the server.
     LaunchedEffect(workshopId, appliedSearch) {
         optionsLoading = true
         runCatching { repository.taskOptions(workshopId.ifBlank { null }, appliedSearch.ifBlank { null }) }
@@ -514,7 +386,6 @@ fun TaskAdminScreen(
     }
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // --- header -------------------------------------------------------------------------
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (onBack != null) {
                 IconButton(onClick = onBack) {
@@ -545,14 +416,10 @@ fun TaskAdminScreen(
 
         optionsError?.let { ErrorBanner(it) }
 
-        // --- step 1: the scope every view below inherits --------------------------------------
         PanelCard {
             StepHeader(number = 1, title = "Workshop")
             SingleSelectField(
                 label = "Scope everything below to",
-                // Workshops are RECORDS, so the filter box is on at every length (field-repo-frontend
-                // §11.5) — which is also why the cut notice below now says the box filters only what
-                // is listed.
                 searchable = true,
                 value = workshopId,
                 placeholder = if (optionsLoading) "Loading workshops..." else "All workshops",
@@ -562,7 +429,6 @@ fun TaskAdminScreen(
                 },
                 onSelect = { value ->
                     workshopId = value
-                    // A new workshop scope invalidates the page the batch list was sitting on.
                     batchPage = 1
                 }
             )
@@ -575,15 +441,6 @@ fun TaskAdminScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            /*
-              The workshop list is capped at 200 and this repository holds 196, measured 2026-08-15 —
-              four rows from the cut, on a list of every workshop ever run, which only grows. Said
-              HERE and not once at the top of the screen, because a notice has to sit at the control
-              it is about: the reader who cannot find their workshop is looking at this picker.
-
-              `localFilter = false` — [SingleSelectField] has no box of its own, unlike the web's
-              workshop dropdown, so this must not tell a reader about one they cannot see.
-            */
             taskPickerCutNotice(
                 truncated = options?.workshopsTruncated == true,
                 noun = "workshops",
@@ -591,28 +448,12 @@ fun TaskAdminScreen(
                 localFilter = true,
             )?.let { WarningLine(it) }
 
-            /*
-              ONE BOX FOR ALL THREE PICKERS, BECAUSE IT IS ONE REQUEST. `GET /tasks/options` takes a
-              single `search` and applies it to the users (name OR email), the workshops (title OR
-              place) and the artisans (name OR place) in the same call — so a box per picker would be
-              three controls posting the same parameter and overwriting each other's terms. The route
-              says so itself, and adds the reason it settled the argument: a parameter FastAPI does
-              not declare is silently DISCARDED, so a client inventing `assigneeSearch` would render
-              a search box that narrows nothing.
-
-              It lives in step 1, with the scope, and not above step 2: the workshop picker directly
-              above it is one of the three lists it narrows, and this screen's other two tabs inherit
-              that picker.
-            */
             FieldLabel("Find a person, workshop or artisan")
             OutlinedTextField(
                 value = pickerSearch,
                 onValueChange = { pickerSearch = it },
                 singleLine = true,
                 placeholder = { Text("Name, email or place", color = MaterialTheme.field.placeholder) },
-                // The idiom `StageIndexScreen`'s search box uses — an always-composable slot with the
-                // control inside it — rather than a nullable lambda. Same rendering, one fewer thing
-                // for the compiler to infer.
                 trailingIcon = {
                     if (pickerSearch.isNotEmpty()) {
                         IconButton(onClick = { pickerSearch = "" }) {
@@ -643,7 +484,6 @@ fun TaskAdminScreen(
             }
         }
 
-        // --- tabs -----------------------------------------------------------------------------
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -666,10 +506,6 @@ fun TaskAdminScreen(
                 loading = optionsLoading,
                 workshopId = workshopId,
                 workshopTitle = workshopTitle,
-                // THE SETTLED TERM AND NEVER THE LIVE BOX. The truncation flags below were computed
-                // by the server for the request this term produced; pairing them with something the
-                // admin has typed since would print a sentence about matches for a word the server
-                // never saw. It is also what keeps the notices from flickering per keystroke.
                 appliedSearch = appliedSearch,
                 onSubmit = { body ->
                     scope.launch {
@@ -747,11 +583,6 @@ fun TaskAdminScreen(
     }
 }
 
-// =================================================================================================
-// Tab 1 — Assign work
-// =================================================================================================
-
-/** Exactly the fields POST /tasks/batch accepts, resolved from the form once the guard has passed. */
 private data class AssignmentRequest(
     val assigneeIds: List<String>,
     val workshopId: String?,
@@ -764,14 +595,6 @@ private data class AssignmentRequest(
     val dueAt: String?
 )
 
-/**
- * The assignment builder — one scope, many people, one POST.
- *
- * Every dimension the backend accepts is expressible here, and the panel at the bottom says the
- * combination back in a sentence before anything is written. That preview is not decoration: five
- * independent multi-selects produce combinations nobody can verify by reading the controls, and an
- * assignment sent to fifteen people is fifteen rows to unpick if it was wrong.
- */
 @Composable
 private fun AssignWorkTab(
     form: AssignmentFormState,
@@ -779,7 +602,6 @@ private fun AssignWorkTab(
     loading: Boolean,
     workshopId: String,
     workshopTitle: String?,
-    /** The term that actually went on the wire — see the call site for why it is not the live box. */
     appliedSearch: String,
     onSubmit: (AssignmentRequest) -> Unit
 ) {
@@ -788,29 +610,6 @@ private fun AssignWorkTab(
     val allSections = options?.sections.orEmpty()
     val allRecordTypes = options?.recordTypes.orEmpty()
 
-    /*
-     * THE ARTISAN SUBSET FOLLOWS THE SCOPE, AND MUST NOT FOLLOW THE SEARCH.
-     *
-     * Switching workshop reloads a narrower artisan list, and anything picked from the previous
-     * workshop has to go or the batch silently carries artisans who are not at this workshop at all.
-     * That was the whole of this effect, and it was keyed on the LIST — which was correct while the
-     * only thing that could shorten the list was a change of workshop.
-     *
-     * A SEARCH TERM ALSO SHORTENS IT, and the same three lines then read the narrowing as "those
-     * artisans are gone" and unpick a batch the admin had already assembled: type three letters and
-     * every artisan whose name does not contain them is dropped, with no message and no undo. The
-     * route's own docstring names this failure and names where it has already happened — "never read
-     * the absence of an already-selected id from a narrowed list as 'that record is gone' and clear
-     * it. ProductForm's craft-change handler does exactly that against a capped page and unlinks the
-     * artisan; do not repeat it here."
-     *
-     * So: a change of SCOPE empties the subset outright, because nothing picked under the previous
-     * workshop can be assumed to belong to this one and a search-narrowed list is too thin to check
-     * against; and a change of LIST prunes only when no term is live, which is exactly the old
-     * behaviour in the only conditions the old behaviour was right for.
-     * [AssignmentFormState.artisanScope] carries the scope across a tab switch, so returning to this
-     * tab is not read as a new workshop.
-     */
     LaunchedEffect(workshopId, allArtisans, appliedSearch) {
         if (form.artisanScope != workshopId) {
             form.artisanScope = workshopId
@@ -843,19 +642,7 @@ private fun AssignWorkTab(
     val hasWork = orderedRecordTypes.isNotEmpty() || selectedSections.isNotEmpty()
     val hasPeople = form.assigneeIds.isNotEmpty()
 
-    // The hierarchy filter: the roles that actually appear below this admin, highest tier first.
     val roleCounts = allAssignees.groupingBy { it.role }.eachCount()
-    /*
-     * EVERY COUNT ON THIS CONTROL IS A COUNT OF WHAT ARRIVED, and when the roster was cut that makes
-     * all of them lower bounds — so all of them are marked, not just the total. The cut is taken in
-     * name order across every tier at once, so there is no tier that could be shown as exact while
-     * its neighbour could not. "Everyone below me (500)" reads as a fact about the organisation, and
-     * on this deployment (3632 accounts) it is short by thousands.
-     *
-     * The "+" does not replace the notice under the picker — a suffix cannot say what to do about it
-     * — and the notice does not replace the "+", because a reader who has read the notice still
-     * reads these numbers as numbers.
-     */
     val cut = if (options?.assigneesTruncated == true) "+" else ""
     val roleOptions = listOf("" to "Everyone below me (${allAssignees.size}$cut)") +
         ROLES_BY_RANK.filter { roleCounts.containsKey(it) }.map { role ->
@@ -866,7 +653,6 @@ private fun AssignWorkTab(
         if (form.roleFilter.isBlank()) allAssignees else allAssignees.filter { it.role == form.roleFilter }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-        // --- step 2 ---------------------------------------------------------------------------
         PanelCard {
             StepHeader(
                 number = 2,
@@ -892,18 +678,6 @@ private fun AssignWorkTab(
                 onSelectAll = { form.assigneeIds = form.assigneeIds + visibleAssignees.map { it.id } },
                 onClear = { form.assigneeIds = emptySet() }
             )
-            /*
-              THE SERIOUS HALF OF THE THREE CAPS. `task_options` serves at most 500 accounts against
-              3632 measured on this repository (docs/OPEN_FINDINGS.md, 2026-08-13), so this picker is
-              cut TODAY — and an assignee who cannot be found here is indistinguishable from a
-              colleague who has no account, the exact failure the design-workshop viewer picker cost
-              this repository once already.
-
-              Note what the two controls above do NOT rescue. "Filter by tier" counts what arrived,
-              and the box inside the picker filters the array it was handed. Neither can see past the
-              cut; only the search box in step 1 can, because only that one reaches the WHERE — which
-              is why `localFilter` is true here and the sentence says so.
-            */
             taskPickerCutNotice(
                 truncated = options?.assigneesTruncated == true,
                 noun = "people",
@@ -939,7 +713,6 @@ private fun AssignWorkTab(
             }
         }
 
-        // --- step 3 ---------------------------------------------------------------------------
         PanelCard {
             StepHeader(
                 number = 3,
@@ -992,11 +765,6 @@ private fun AssignWorkTab(
                 onSelectAll = { form.artisanIds = allArtisans.map { it.id }.toSet() },
                 onClear = { form.artisanIds = emptySet() }
             )
-            /*
-              731 artisans measured against a cap of 500 (docs/OPEN_FINDINGS.md, 2026-08-13), so this
-              list is cut whenever no workshop narrows it. `localFilter` is true: this picker has its
-              own box, and it filters only what is listed.
-            */
             taskPickerCutNotice(
                 truncated = options?.artisansTruncated == true,
                 noun = "artisans",
@@ -1028,7 +796,6 @@ private fun AssignWorkTab(
             )
         }
 
-        // --- step 4 ---------------------------------------------------------------------------
         PanelCard {
             StepHeader(
                 number = 4,
@@ -1050,26 +817,6 @@ private fun AssignWorkTab(
                 modifier = Modifier.fillMaxWidth()
             )
             FieldLabel("Description")
-            /*
-             * THE MICROPHONE, AND DELIBERATELY NOT THE RICH EDITOR.
-             *
-             * It is the biggest box on this screen and it is prose, so it clears the size bar the
-             * user set for these controls — and dictation belongs on it, because an administrator
-             * describing what good work looks like is composing four sentences of guidance, which is
-             * faster said than typed.
-             *
-             * THE EDITOR STAYS OUT BECAUSE THIS COLUMN ALREADY HAS A FORMATTING PROMISE AND IT IS A
-             * DIFFERENT ONE. The placeholder below says "Markdown is supported" — a promise nothing
-             * in this app currently renders, which is a pre-existing inconsistency and not this
-             * lane's to resolve. Putting a rich toolbar over a column whose stated format is Markdown
-             * would give one field two formatting models and leave whoever reads the assignment
-             * looking at whichever one lost. Deciding between them is a product question about
-             * `AssignedTask.description`; until it is answered this box gains the control that is
-             * unambiguously an improvement and none of the one that is not.
-             *
-             * `label = null` because this screen puts the field's name ABOVE the box with
-             * `FieldLabel`; a floating label here would print "Description" twice.
-             */
             RecordProseField(
                 label = null,
                 value = form.description,
@@ -1082,7 +829,6 @@ private fun AssignWorkTab(
             DueDateField(value = form.dueDate, onChange = { form.dueDate = it })
         }
 
-        // --- the preview, then the send ---------------------------------------------------------
         PanelCard(container = MaterialTheme.field.surface50, outlined = true) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(
@@ -1140,8 +886,6 @@ private fun AssignWorkTab(
 
         Button(
             onClick = {
-                // Reject an empty scope HERE, with the server's own sentence, rather than spending a
-                // round trip to be told the same thing.
                 if (!hasWork) {
                     form.error = EMPTY_SCOPE_MESSAGE
                     return@Button
@@ -1156,7 +900,6 @@ private fun AssignWorkTab(
                         targetCount = validTarget,
                         title = form.title.trim().ifBlank { null },
                         description = form.description.trim().ifBlank { null },
-                        // The picker yields a local date; send a full ISO instant at local midnight.
                         dueAt = form.dueDate?.toDueInstant()
                     )
                 )
@@ -1182,17 +925,6 @@ private fun AssignWorkTab(
     }
 }
 
-// =================================================================================================
-// Tab 2 — Accountability
-// =================================================================================================
-
-/**
- * Who has what, and how far along they ACTUALLY are.
- *
- * Every line carries two numbers: `reportedTotal`, which the assignee typed in, and `derivedTotal`,
- * which is counted from the records that reached the repository. They are never merged and neither
- * is presented as the truth — the distance between them is the signal this view exists to surface.
- */
 @Composable
 private fun AccountabilityTab(
     report: TaskProgressReportDto?,
@@ -1330,18 +1062,6 @@ private fun AssigneeTaskCard(task: TaskDto) {
     }
 }
 
-// =================================================================================================
-// Tab 3 — Assignments
-// =================================================================================================
-
-/**
- * Assignments grouped back into the action that created them.
- *
- * An admin thinks in the thing they did — "I gave the tool survey to five people" — not in the five
- * rows it became, so withdrawing it is one action too. Rows written before batching existed (and
- * single-assignee creates) come back with a null batchId; those are deleted one task at a time
- * through the task endpoint, which is why the delete below branches.
- */
 @Composable
 private fun AssignmentsTab(
     page: PageResponse<TaskBatchDto>?,
@@ -1497,13 +1217,6 @@ private fun BatchCard(batch: TaskBatchDto, busy: Boolean, onRemove: () -> Unit) 
     }
 }
 
-// =================================================================================================
-// Shared vocabulary — the chips, pills and meters every tab above draws from.
-//
-// Deliberate local copies rather than reaches into MainActivity: that file is owned elsewhere and
-// its equivalents are private to it.
-// =================================================================================================
-
 private fun Set<String>.toggle(id: String): Set<String> = if (id in this) this - id else this + id
 
 @Composable
@@ -1561,10 +1274,6 @@ private fun StepHeader(number: Int, title: String, hint: String? = null) {
 
 @Composable
 private fun FieldLabel(text: String, required: Boolean = false) {
-    // Appended as text and then painted by [requiredMarked], rather than drawn as a second element:
-    // this screen is the one place in the app that already HAS the Boolean, and it still goes through
-    // the shared helper so the mark is the same glyph, the same leading space and the same colour as
-    // the twenty-odd labels that only ever carry it as a trailing literal. One mark, one owner.
     Text(
         requiredMarked(text + if (required) " *" else ""),
         style = MaterialTheme.typography.labelMedium,
@@ -1572,7 +1281,6 @@ private fun FieldLabel(text: String, required: Boolean = false) {
     )
 }
 
-/** What a multi-select has actually got in it — the trigger only ever says "N selected". */
 @Composable
 private fun PickedHint(labels: List<String>, empty: String) {
     if (labels.isEmpty()) {
@@ -1588,11 +1296,6 @@ private fun PickedHint(labels: List<String>, empty: String) {
     )
 }
 
-/**
- * This screen's one-of-many field, drawn by the shared [SearchableSelectField] (owner's rule,
- * 2026-10-17: one single-select on every surface). An option whose value is "" is this screen's
- * "everything" row; it becomes the shared field's none-row, labelled with its own words.
- */
 @Composable
 private fun SingleSelectField(
     label: String,
@@ -1614,13 +1317,6 @@ private fun SingleSelectField(
     )
 }
 
-/**
- * This screen's many-of-many field, drawn by the shared [SearchableMultiSelectField] — the sheet
- * these lists of dozens of people or artisans need, where several are ticked before it closes.
- * The screen keeps its toggle-shaped state, so the sheet's answer is replayed as toggles over the
- * rows it offered; a selection outside [options] (another role filter's people) is never touched.
- * "Select all" is offered exactly where the screen offered it before.
- */
 @Composable
 private fun MultiSelectField(
     label: String,
@@ -1672,7 +1368,6 @@ private fun PersonChip(user: TaskUserDto, onRemove: () -> Unit) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
-        // The IconButton's own 48dp target (DA-23): a 20dp remove on a chip was a mis-tap waiting to happen.
         IconButton(onClick = onRemove) {
             Icon(
                 Icons.Filled.Close,
@@ -1684,13 +1379,6 @@ private fun PersonChip(user: TaskUserDto, onRemove: () -> Unit) {
     }
 }
 
-/**
- * The task due date. Was an OutlinedButton opening the PLATFORM `android.app.DatePickerDialog`,
- * which is themed from res/values/styles.xml by the SYSTEM's night setting rather than by the app's
- * appearance preference — so a researcher running the app in Dark on a light phone got a white
- * calendar over a dark form. [FieldDateField] is the same Compose colour scheme as the screen and
- * lets the date be typed, which for a due date usually beats paging a calendar to next Friday.
- */
 @Composable
 private fun DueDateField(value: LocalDate?, onChange: (LocalDate?) -> Unit) {
     CalendarField(
@@ -1796,10 +1484,6 @@ private fun StatusPill(status: String) {
     }
 }
 
-/**
- * Records vs questionnaire sections — the one distinction an assignee has to make at a glance,
- * because the two kinds of work happen in completely different parts of the app.
- */
 @Composable
 private fun TaskKindBadge(recordTypes: List<String>, sections: List<TaskSectionDto>) {
     val hasRecords = recordTypes.isNotEmpty()
@@ -1838,7 +1522,6 @@ private fun DueLine(dueAt: String?, overdue: Boolean) {
     }
 }
 
-/** Name + role, the way every hierarchy-aware screen in the app writes a person. */
 @Composable
 private fun PersonLine(user: TaskUserDto?) {
     if (user == null) {
@@ -1863,10 +1546,6 @@ private fun PersonLine(user: TaskUserDto?) {
     }
 }
 
-/**
- * Every dimension of a scope, spelled out. Artisans collapse past four names — a task handed out for
- * twenty artisans is about the count, not the roster.
- */
 @Composable
 private fun ScopeChipsRow(
     recordTypeLabels: List<String>,
@@ -1927,10 +1606,6 @@ private fun ScopeChipsRow(
     }
 }
 
-/**
- * The reported-vs-derived verdict as a labelled, icon-bearing chip. Every tone carries an icon and a
- * sentence, so the judgement survives colour-blindness and greyscale printing.
- */
 @Composable
 private fun GapChip(reported: Int, derived: Int?) {
     val gap = progressGap(reported, derived)
@@ -1982,13 +1657,6 @@ private fun MeterBar(value: Int, denominator: Int, color: Color) {
     }
 }
 
-/**
- * The gap made legible: what the assignee says, directly above what the repository can actually see,
- * on ONE shared scale so the two bars are comparable by length.
- *
- * With no target count the shared denominator is the larger of the two figures, which keeps the
- * comparison honest without inventing a quota that was never set.
- */
 @Composable
 private fun ProgressGapMeter(reported: Int, derived: Int?, target: Int?) {
     val hasTarget = target != null && target > 0
@@ -2050,7 +1718,6 @@ private fun ProgressGapMeter(reported: Int, derived: Int?, target: Int?) {
     }
 }
 
-/** Slim single-value bar used where the two-number meter would be overkill (batch rollups). */
 @Composable
 private fun PercentBar(percent: Int, label: String) {
     val clamped = percent.coerceIn(0, 100)
@@ -2077,7 +1744,6 @@ private enum class StatTone { NEUTRAL, WARN, GOOD }
 
 private data class StatTileSpec(val label: String, val value: Int, val tone: StatTone = StatTone.NEUTRAL)
 
-/** Two tiles per row: five headline numbers do not fit across a phone in one line and never will. */
 @Composable
 private fun StatTileGrid(tiles: List<StatTileSpec>) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {

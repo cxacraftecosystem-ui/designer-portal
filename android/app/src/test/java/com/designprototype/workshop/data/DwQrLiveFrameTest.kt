@@ -8,72 +8,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.ByteBuffer
 
-/**
- * THE LIVE SCANNER'S TWO INVISIBLE FAILURES, BOTH ASSERTED ON A MACHINE WITH NO HANDSET.
- *
- * ── WHY THESE TWO AND NOT SOMETHING ABOUT A LENS ──────────────────────────────────────────────
- *
- * A live QR scanner has exactly two defects that produce NO error, NO log line and NO difference a
- * designer can describe. Both are in this file.
- *
- *  1. THE ROW STRIDE. `Image.Plane.getRowStride()` is at least the width and on many handsets is
- *     strictly greater, because the capture buffer is padded to an alignment. An implementation that
- *     treats the plane as tightly packed produces an image sheared a few pixels further left on every
- *     row: it decodes NOTHING on those handsets and works perfectly on the ones where the stride
- *     happens to equal the width. Correct on the machine of whoever wrote it, silent in a courtyard.
- *     Every plane built below therefore has a stride WIDER than its width, and
- *     [a padded plane is not read as if it were tightly packed] fails against a naive reader.
- *
- *  2. THE RETICLE AND THE CROP. The box drawn on screen and the region handed to the decoder must be
- *     the same region. If the crop is even slightly inside the drawn box, a designer lines a code up
- *     perfectly and the code does not read — indistinguishable from a bad card. So the crop is
- *     asserted to CONTAIN the exact mapped rectangle under every rotation, rather than merely to be
- *     near it.
- *
- * ── WHAT CHANGED UNDER THIS FILE ON 2026-08-28, AND WHY IT STILL RUNS A REAL DECODER ─────────
- *
- * The live camera is ML Kit from that date — `MlKitQrFrameReader` in `data/DwQrFrameReader.kt` —
- * because the accepted regression against ZXing on a bent, angled or glared live frame turned into a
- * reported defect. ML KIT CANNOT RUN IN A JVM UNIT TEST, so if the change had simply replaced ZXing
- * this file would have become a test of nothing, and this repository's only accuracy evidence would
- * have gone with it. It did not: ZXing is retained as `ReferenceQrFrameReader`, which is the live
- * path's fallback on a device where ML Kit cannot start and is still the decoder behind both picture
- * routes. Every decode assertion below runs THAT decoder, which really ships.
- *
- * A SECOND SET OF ASSERTIONS ARRIVED WITH IT, at the bottom of this file. ML Kit takes no rectangle,
- * so the reticle is applied by refusing a sighting whose centre falls outside the box — and the two
- * pure functions that decide it, `dwQrReticleInUprightFrame` and `dwQrSightingInReticle`, are as
- * checkable here as the crop arithmetic is. They are also where the SAME invisible failure would
- * come back: get the coordinate space wrong and a code inside the brackets is refused, silently.
- *
- * ── AND WHAT IS STILL NOT PROVED ──────────────────────────────────────────────────────────────
- *
- * Nothing about a lens, and now nothing at all about ML Kit's own recognition. There is no
- * perspective here, no glare, no motion blur and no autofocus, and whether CameraX fills
- * `ImageProxy.cropRect` on a real handset the way its documentation says is a hardware claim this
- * repository cannot make. `DwQrDecodeTest`'s header sets out the same boundary for the still path;
- * the boundary has not moved, it has only acquired one more thing on the far side of it. What IS
- * verified is the whole chain from this app's own bits, through the stride handling, both reticle
- * maps and the acceptance test, to a decoded record — which is the half that can be.
- */
 class DwQrLiveFrameTest {
 
-    // ── Fixtures ────────────────────────────────────────────────────────────────────────────────
-
-    /** White in a luminance plane. `0xFF` as a signed byte. */
     private val white: Byte = -1
 
-    /** Dark in a luminance plane. */
     private val dark: Byte = 0
 
-    /**
-     * A luminance plane with DELIBERATE ROW PADDING and a value that encodes its own coordinates.
-     *
-     * Each byte is `(row * 7 + column) mod 251`, which is unique enough over any small window that a
-     * reader picking up the wrong row or the wrong column produces a different number rather than a
-     * coincidence. The padding bytes between rows are set to a value that appears nowhere in the
-     * image, so a tightly-packed reader picks up PADDING and the assertion says so.
-     */
     private fun paddedPlane(width: Int, height: Int, rowStride: Int, pixelStride: Int = 1): ByteBuffer {
         require(rowStride >= width * pixelStride)
         val bytes = ByteArray(rowStride * height) { 0x7B }
@@ -87,15 +27,6 @@ class DwQrLiveFrameTest {
 
     private fun expectedAt(row: Int, column: Int): Byte = ((row * 7 + column) % 251).toByte()
 
-    /**
-     * One of this app's own symbols, painted into a padded luminance plane at [scale] pixels per
-     * module with a four-module quiet zone, centred in the plane.
-     *
-     * FOUR MODULES OF QUIET ZONE IS NOT DECORATION — it is what ISO 18004 requires and what
-     * `DwQrSymbolImage` and `renderCardSheetPdf` both leave, and a symbol drawn hard against its
-     * border does not scan. Rendering with less here would make this test agree with a card that
-     * fails in the field.
-     */
     private fun planeWithSymbol(
         symbol: DwQrSymbol,
         width: Int,
@@ -124,34 +55,21 @@ class DwQrLiveFrameTest {
         return ByteBuffer.wrap(bytes)
     }
 
-    // ── The crop arithmetic ─────────────────────────────────────────────────────────────────────
-
-    /**
-     * The reticle is a CENTRED SQUARE on the shorter side, whatever shape the box is.
-     *
-     * Centred is what makes it findable and square is what makes a QR fit it; both are asserted
-     * because the scanner's whole overlay is drawn from this one value.
-     */
     @Test
     fun `the reticle is a centred square on the shorter side`() {
         val tall = dwQrReticleFraction(1080, 1920)
         assertNotNull(tall)
         tall!!
-        // Centred: the two margins are equal on each axis.
         assertEquals(tall.left, 1f - tall.right, 1e-5f)
         assertEquals(tall.top, 1f - tall.bottom, 1e-5f)
-        // Square IN PIXELS, which on a non-square box means UNEQUAL fractions. Asserting equal
-        // fractions would be asserting a rectangle.
         assertEquals(
             (tall.right - tall.left) * 1080f,
             (tall.bottom - tall.top) * 1920f,
             0.5f,
         )
-        // And it is the SHORTER side that is filled, so the square fits.
         assertEquals(1080f * DW_QR_RETICLE_SIDE_FRACTION, (tall.right - tall.left) * 1080f, 0.5f)
     }
 
-    /** An unmeasured box has no reticle, and no reticle must NEVER mean a guessed rectangle. */
     @Test
     fun `an unmeasured box has no reticle at all`() {
         assertNull(dwQrReticleFraction(0, 0))
@@ -162,17 +80,6 @@ class DwQrLiveFrameTest {
         assertNull(dwQrReticleFraction(100, 100, sideFraction = Float.NaN))
     }
 
-    /**
-     * THE ROTATION, PINNED WITH AN OFF-CENTRE RECTANGLE — which is the only kind that can catch it.
-     *
-     * A centred square maps to itself under all four rotations, so a test using the real reticle
-     * would pass with the rotation ignored entirely. This rectangle is off-centre on both axes, so
-     * each quarter turn sends it somewhere different and a dropped or reversed rotation shows up.
-     *
-     * The tolerance is two pixels and is not slack: `0.3f` is 0.30000001192 as a float, so
-     * `ceil(0.3f * 1000)` is 301 rather than 300, and every edge here is rounded OUTWARD on purpose
-     * (see the containment test below). Asserting exact integers would be asserting float noise.
-     */
     @Test
     fun `a rectangle is mapped back through each of the four rotations`() {
         val displayed = DwQrCrop(0, 0, 1000, 1000)
@@ -199,27 +106,12 @@ class DwQrLiveFrameTest {
             )
         }
 
-        // 0 degrees: straight through.
         assertNear(DwQrCrop(100, 200, 200, 200), crop(0), "0 degrees")
-        // 90 clockwise: the buffer's top-left ends up top-right on screen, so screen (x, y) came from
-        // buffer (u, v) = (y, 1 - x).
         assertNear(DwQrCrop(200, 700, 200, 200), crop(90), "90 degrees")
-        // 180: its own inverse.
         assertNear(DwQrCrop(700, 600, 200, 200), crop(180), "180 degrees")
-        // 270 clockwise: buffer (u, v) = (1 - y, x).
         assertNear(DwQrCrop(600, 100, 200, 200), crop(270), "270 degrees")
     }
 
-    /**
-     * THE INVARIANT THAT MATTERS MORE THAN ANY EXACT NUMBER: the crop always CONTAINS the box drawn
-     * on screen.
-     *
-     * If it does not — by half a pixel, on one edge — a designer lines a code up inside a box the app
-     * is not looking at and nothing at all reports it. Every rounding in `dwQrCropInBuffer` is
-     * outward and the rectangle is inflated by `DW_QR_RETICLE_MARGIN` first, and this asserts the
-     * consequence rather than the implementation, at margin 0 (the strictest case) and under every
-     * rotation.
-     */
     @Test
     fun `the crop always contains the rectangle drawn on screen`() {
         val displayed = DwQrCrop(40, 24, 1200, 700)
@@ -237,8 +129,6 @@ class DwQrLiveFrameTest {
             )
             assertNotNull("rotation $rotation should crop", crop)
             crop!!
-            // The exact mapped rectangle, computed independently here in doubles so that a float
-            // rounding bug in the implementation cannot hide behind the same float rounding.
             val (l, t, r, b) = mappedExactly(reticle, rotation)
             val exactLeft = displayed.left + l * displayed.width
             val exactTop = displayed.top + t * displayed.height
@@ -251,7 +141,6 @@ class DwQrLiveFrameTest {
                     crop.left + crop.width >= exactRight - 1e-3 &&
                     crop.top + crop.height >= exactBottom - 1e-3,
             )
-            // And it never leaves the region the viewfinder is actually showing.
             assertTrue("rotation $rotation stays inside the displayed rect", crop.left >= displayed.left)
             assertTrue("rotation $rotation stays inside the displayed rect", crop.top >= displayed.top)
             assertTrue(
@@ -265,7 +154,6 @@ class DwQrLiveFrameTest {
         }
     }
 
-    /** The rotation map, written a second time in doubles, so the test is not the implementation. */
     private fun mappedExactly(box: DwQrFraction, rotation: Int): List<Double> {
         val l = box.left.toDouble()
         val t = box.top.toDouble()
@@ -285,39 +173,22 @@ class DwQrLiveFrameTest {
         )
     }
 
-    /**
-     * EVERY WAY THE ANSWER CAN BE "DECODE THE WHOLE FRAME INSTEAD", and it is never "guess".
-     *
-     * Each of these is a real state a camera implementation can present. A function that answered
-     * with a plausible-looking rectangle for any of them would be inventing the correspondence the
-     * previous test exists to guarantee.
-     */
     @Test
     fun `an answer that cannot be computed honestly is null and never a guess`() {
         val reticle = dwQrReticleFraction(1080, 1920)!!
         val displayed = DwQrCrop(0, 0, 1280, 720)
 
-        // A rotation the map does not cover. Rounding it to the nearest right angle would silently
-        // crop a quarter turn away from the box on screen.
         assertNull(dwQrCropInBuffer(reticle, displayed, 45, 1280, 720))
-        // A displayed rectangle that is not inside the buffer at all.
         assertNull(dwQrCropInBuffer(reticle, DwQrCrop(0, 0, 2000, 720), 0, 1280, 720))
         assertNull(dwQrCropInBuffer(reticle, DwQrCrop(-4, 0, 100, 100), 0, 1280, 720))
-        // No buffer.
         assertNull(dwQrCropInBuffer(reticle, displayed, 0, 0, 0))
-        // A crop under the two-pixels-per-module floor `DwQrDecodeTest` measured. 72% of 100 is 72
-        // pixels, which cannot resolve a module of the largest symbol this app prints.
         assertNull(dwQrCropInBuffer(reticle, DwQrCrop(0, 0, 100, 100), 0, 1280, 720))
-        // A reticle covering the whole frame: there is nothing to crop, so the caller should read the
-        // displayed rectangle it already has.
         assertNull(dwQrCropInBuffer(DwQrFraction(0f, 0f, 1f, 1f), displayed, 0, 1280, 720))
-        // A degenerate rectangle.
         assertNull(dwQrCropInBuffer(DwQrFraction(0.5f, 0.5f, 0.5f, 0.5f), displayed, 0, 1280, 720))
         assertNull(dwQrCropInBuffer(DwQrFraction(0.6f, 0.2f, 0.4f, 0.8f), displayed, 0, 1280, 720))
         assertNull(dwQrCropInBuffer(DwQrFraction(Float.NaN, 0f, 1f, 1f), displayed, 0, 1280, 720))
     }
 
-    /** The margin only ever grows the crop, and never past the region being displayed. */
     @Test
     fun `the margin grows the crop and never past the displayed rectangle`() {
         val reticle = dwQrReticleFraction(1080, 1920)!!
@@ -330,20 +201,10 @@ class DwQrLiveFrameTest {
         assertTrue(loose.top <= tight.top)
         assertTrue(loose.left + loose.width <= displayed.width)
         assertTrue(loose.top + loose.height <= displayed.height)
-        // A nonsense margin is ignored rather than propagated into a NaN rectangle.
         assertEquals(tight, dwQrCropInBuffer(reticle, displayed, 0, 1280, 720, margin = Float.NaN))
         assertEquals(tight, dwQrCropInBuffer(reticle, displayed, 0, 1280, 720, margin = -1f))
     }
 
-    // ── The stride ──────────────────────────────────────────────────────────────────────────────
-
-    /**
-     * A PADDED PLANE IS NOT READ AS IF IT WERE TIGHTLY PACKED.
-     *
-     * This is the test that fails against the implementation everybody writes first. The plane below
-     * has three bytes of padding after each row, filled with a value the image never contains, so a
-     * reader that walks the buffer linearly picks up padding on row 1 and every row after it.
-     */
     @Test
     fun `a padded plane is not read as if it were tightly packed`() {
         val width = 12
@@ -363,11 +224,9 @@ class DwQrLiveFrameTest {
                 )
             }
         }
-        // And the padding value never appears — which is what a linear read would have produced.
         assertFalse("padding leaked into the image", out.any { it == 0x7B.toByte() })
     }
 
-    /** `pixelStride` above 1 is honoured, because "every device does 1" is not a checkable claim. */
     @Test
     fun `a plane with a pixel stride above one is honoured`() {
         val width = 10
@@ -389,34 +248,20 @@ class DwQrLiveFrameTest {
         }
     }
 
-    /**
-     * A FRAME THAT DOES NOT ADD UP IS DROPPED, NOT CRASHED ON.
-     *
-     * Every refusal here is reachable from a real camera implementation, and each one would otherwise
-     * be an ArrayIndexOutOfBounds inside a frame callback on somebody's handset. False is the
-     * analyser's cue to skip the frame; the next one arrives in 33 ms.
-     */
     @Test
     fun `a frame whose strides do not add up is refused rather than read`() {
         val plane = paddedPlane(12, 6, 15)
         val out = ByteArray(64)
 
-        // A buffer shorter than the crop's own last index.
         assertFalse(dwQrCompactLuminance(plane, 15, 1, DwQrCrop(0, 0, 12, 40), ByteArray(12 * 40)))
-        // A crop starting outside the plane.
         assertFalse(dwQrCompactLuminance(plane, 15, 1, DwQrCrop(-1, 0, 4, 4), out))
         assertFalse(dwQrCompactLuminance(plane, 15, 1, DwQrCrop(0, -2, 4, 4), out))
-        // An empty crop.
         assertFalse(dwQrCompactLuminance(plane, 15, 1, DwQrCrop(0, 0, 0, 4), out))
-        // Impossible strides.
         assertFalse(dwQrCompactLuminance(plane, 0, 1, DwQrCrop(0, 0, 4, 4), out))
         assertFalse(dwQrCompactLuminance(plane, 15, 0, DwQrCrop(0, 0, 4, 4), out))
-        // A destination too small — which is what a reused buffer looks like the frame a bigger crop
-        // first arrives.
         assertFalse(dwQrCompactLuminance(plane, 15, 1, DwQrCrop(0, 0, 8, 5), ByteArray(8 * 5 - 1)))
     }
 
-    /** The reused buffer only ever grows, and it is the same array when it does not need to. */
     @Test
     fun `the luminance buffer is reused and only ever grows`() {
         val decoder = DwQrLiveDecoder()
@@ -433,29 +278,11 @@ class DwQrLiveFrameTest {
         assertTrue("the buffer must not be reallocated", expected === actual)
     }
 
-    // ── The whole chain ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * THIS APP'S OWN PRINTER, THIS APP'S OWN LIVE READER, THIS APP'S OWN PARSER — over a padded plane
-     * with a reticle crop, coming out as the record the card names.
-     *
-     * EVERY LINK IS THE SHIPPING ONE. The code comes from [encodeWorkshopCode], the symbol from
-     * [DwQrEncode] at the level cards are printed at, the reticle from [dwQrReticleFraction], the crop
-     * from [dwQrCropInBuffer], the compaction from [dwQrCompactLuminance], the decode from
-     * [DwQrLiveDecoder] with the hints the analyser uses, and the parse from [decodeWorkshopCode] —
-     * which is the same parser the typed box uses, deliberately, so a scanned code and a typed one
-     * can never be judged differently.
-     *
-     * The one thing that is NOT the shipping arrangement is the plane, and it is deliberately made
-     * HARDER than a real one in the way that catches bugs (padded rows) and easier in the ways only a
-     * lens can supply (no blur, no perspective, no glare).
-     */
     @Test
     fun `a live frame of a card this app prints is read back as the record it names`() {
         val encoded = encodeWorkshopCode(DwWorkshopRecordType.PROTOTYPE, "cmsvfnb4y0001qq1bzd2g48lq")
         assertTrue("the fixture must be a real code, or this test asserts nothing", encoded is DwEncodeResult.Ok)
         val code = (encoded as DwEncodeResult.Ok).code
-        // Level Q, which is what every card this app draws uses — see `RecordCodeCard.CODE_ECC`.
         val symbol = DwQrEncode.encode(code, DwQrEccLevel.Q)
 
         val width = 1280
@@ -464,15 +291,12 @@ class DwQrLiveFrameTest {
         val scale = 8
         val plane = planeWithSymbol(symbol, width, height, rowStride, scale)
 
-        // The box the designer is looking at, in the shape a handset in portrait presents.
         val reticle = dwQrReticleFraction(1080, 1920)!!
         val displayed = DwQrCrop(0, 0, width, height)
         val crop = dwQrCropInBuffer(reticle, displayed, 0, width, height)
         assertNotNull("the reticle must produce a crop at this resolution", crop)
         crop!!
 
-        // The symbol must actually be inside the crop, or this test would be asserting that a decoder
-        // reads a blank frame — which it would not, and the test would pass for the wrong reason.
         val extent = (symbol.size + 8) * scale
         assertTrue(
             "the fixture symbol ($extent px) must fit inside the crop (${crop.width} px)",
@@ -494,14 +318,6 @@ class DwQrLiveFrameTest {
         )
     }
 
-    /**
-     * THE DESIGN-WORKSHOP CARD SPECIFICALLY, because it is the one this feature was built for.
-     *
-     * It is the longest code in ordinary use (`DPW1:G:` plus a 25-character cuid plus a four-character
-     * check) and it is the one a person is HANDED, so it is the one that has to read off a live frame
-     * in a courtyard. Asserted separately from the prototype tag above rather than parameterised, so
-     * that a failure names which card stopped working.
-     */
     @Test
     fun `a live frame of a design-workshop card reads back as that workshop`() {
         val workshopId = "cmsik2jg8000eh8xc1lcy661a"
@@ -528,15 +344,6 @@ class DwQrLiveFrameTest {
         )
     }
 
-    /**
-     * ONE ANALYSER, MANY FRAMES, AND THE SHARED READER SURVIVES IT.
-     *
-     * [DwQrLiveDecoder] keeps ONE `MultiFormatReader` and one buffer for the life of a scan, which is
-     * a deliberate departure from what `ZxingQrImageDecoder` does and says. The risk that buys is a
-     * reader carrying state from one frame into the next, and the symptom would be a code decoding to
-     * the wrong text after a while — which is worse than not decoding at all. So: an empty frame, a
-     * real one, an empty one, a DIFFERENT real one, and every answer must be the right one.
-     */
     @Test
     fun `one decoder reads frame after frame without carrying state`() {
         val decoder = DwQrLiveDecoder()
@@ -566,11 +373,6 @@ class DwQrLiveFrameTest {
         assertEquals(artisanCode, decoder.decode(artisanFrame, width, height))
     }
 
-    /**
-     * AN ARTISAN QR CARD READS BACK THROUGH THE SAME CHAIN. The card's payload is `CXA1:…` (the
-     * server-signed token, no record id), drawn by this app's encoder on the printed sheet and read
-     * by the ZXing reference decoder exactly as a DPW1 code is; [ArtisanCardCode] then parses it.
-     */
     @Test
     fun `a CXA1 artisan card round-trips through the encoder and the reference decoder`() {
         val decoder = DwQrLiveDecoder()
@@ -590,7 +392,6 @@ class DwQrLiveFrameTest {
         assertEquals("7K3QM9XA2F", (parsed as ArtisanCardCode.Result.Ok).card.code)
     }
 
-    /** A frame smaller than it claims to be is a null, not an exception. */
     @Test
     fun `the decoder refuses a frame smaller than its own dimensions`() {
         val decoder = DwQrLiveDecoder()
@@ -599,22 +400,6 @@ class DwQrLiveFrameTest {
         assertNull(decoder.decode(ByteArray(100), -1, 10))
     }
 
-    // ── The reticle for a reader that will not be told where to look ─────────────────────────────
-
-    /**
-     * WHAT THESE ADD, AND WHY THEY ARE NOT THE SAME ASSERTIONS TWICE (2026-08-28).
-     *
-     * The live camera is `MlKitQrFrameReader` from 2026-08-28, and ML Kit takes no crop rectangle at
-     * all: it reads the frame and reports where each code was. So the reticle is applied by REFUSING
-     * a sighting outside the box, and the arithmetic that decides it is [dwQrReticleInUprightFrame]
-     * plus [dwQrSightingInReticle] rather than [dwQrCropInBuffer].
-     *
-     * ML Kit CANNOT RUN HERE, and no test in this file pretends otherwise. What CAN be run here is
-     * the whole of the decision it feeds: the space its boxes are reported in, the map from the drawn
-     * box into that space, and the acceptance test. Those are the two failures this file's header
-     * names, in their new clothes — get the space wrong and a code inside the brackets is refused,
-     * which is exactly the defect of 2026-08-27 reintroduced one layer down.
-     */
     @Test
     fun `the upright frame swaps the buffer's sides on a quarter turn and not otherwise`() {
         assertEquals(1280, dwQrUprightWidth(1280, 720, 0))
@@ -627,21 +412,6 @@ class DwQrLiveFrameTest {
         assertEquals(1280, dwQrUprightHeight(1280, 720, 270))
     }
 
-    /**
-     * THE TWO MAPS ARE INVERSES OF EACH OTHER, WHICH IS THE ONE PROPERTY THAT MATTERS.
-     *
-     * [dwQrCropInBuffer] takes the drawn box into the UNROTATED buffer, for a reader handed a
-     * luminance plane. [dwQrReticleInUprightFrame] takes the same drawn box into the UPRIGHT frame,
-     * for a reader that turns the picture itself. If they ever disagreed, the two readers in
-     * `DwQrFrameReader.kt` would be looking at different rectangles for one drawn box — and the
-     * symptom would be that the fallback reads a card the primary refuses, or the reverse, with
-     * nothing anywhere to say which.
-     *
-     * So: take the crop the buffer-space function produces, turn it into the upright frame by hand
-     * using the rotation's own definition, and assert it lands on the rectangle the upright-space
-     * function produced. Asserted under all four rotations with an OFF-CENTRE reticle, because a
-     * centred square maps to itself and would pass with the rotation ignored entirely.
-     */
     @Test
     fun `the buffer map and the upright map describe the same drawn box`() {
         val bufferWidth = 1280
@@ -675,8 +445,6 @@ class DwQrLiveFrameTest {
             val frameWidth = dwQrUprightWidth(bufferWidth, bufferHeight, rotation)
             val frameHeight = dwQrUprightHeight(bufferWidth, bufferHeight, rotation)
 
-            // The buffer crop's own corners, turned into upright pixels by the definition of a
-            // clockwise turn: a point (u, v) in a W by H buffer lands where this says it does.
             fun uprightOf(u: Int, v: Int): Pair<Float, Float> = when (rotation) {
                 90 -> (bufferHeight - v).toFloat() to u.toFloat()
                 180 -> (bufferWidth - u).toFloat() to (bufferHeight - v).toFloat()
@@ -693,10 +461,6 @@ class DwQrLiveFrameTest {
             val expectedTop = corners.minOf { it.second } / frameHeight
             val expectedBottom = corners.maxOf { it.second } / frameHeight
 
-            // Two pixels of tolerance, and it is the SAME slack the rotation test above allows and
-            // for the same reason: every edge of the buffer crop is rounded OUTWARD to whole pixels,
-            // so the two answers cannot be bit-identical and asserting that they were would be
-            // asserting float noise.
             val slackX = 2f / frameWidth
             val slackY = 2f / frameHeight
             assertEquals("rotation $rotation left", expectedLeft, upright.left, slackX)
@@ -706,18 +470,9 @@ class DwQrLiveFrameTest {
         }
     }
 
-    /**
-     * A CENTRED RETICLE IS CENTRED IN THE UPRIGHT FRAME TOO, at the resolution the scanner asks for.
-     *
-     * This is the case a designer actually meets — portrait handset, 1280x720 analysis buffer, a
-     * quarter turn between the two — and it is asserted concretely rather than only through the
-     * inverse property above, so that a failure names a number somebody can hold a phone against.
-     */
     @Test
     fun `the drawn box lands centred in the upright frame on a portrait handset`() {
         val reticle = dwQrReticleFraction(1080, 2337)!!
-        // What FILL_CENTER produces for a 1080x2337 view port over a 1280x720 buffer at a quarter
-        // turn: the full buffer width, a band of its height, centred.
         val displayed = DwQrCrop(0, 72, 1280, 576)
         val box = dwQrReticleInUprightFrame(
             reticle = reticle,
@@ -726,16 +481,12 @@ class DwQrLiveFrameTest {
             bufferWidth = 1280,
             bufferHeight = 720,
         )!!
-        // Centred on both axes of the upright frame: the two margins are equal.
         assertEquals(box.left, 1f - box.right, 2e-3f)
         assertEquals(box.top, 1f - box.bottom, 2e-3f)
-        // And it is a real rectangle rather than the whole frame, or the acceptance test below would
-        // accept everything and this whole apparatus would be decoration.
         assertTrue("the box must be smaller than the frame", box.right - box.left < 0.99f)
         assertTrue("the box must be a usable size", box.right - box.left > 0.2f)
     }
 
-    /** An answer that cannot be computed honestly is null, and null must mean "accept anything". */
     @Test
     fun `an upright box that cannot be computed is null rather than a guess`() {
         val reticle = DwQrFraction(0.2f, 0.2f, 0.8f, 0.8f)
@@ -743,49 +494,25 @@ class DwQrLiveFrameTest {
         assertNull(dwQrReticleInUprightFrame(reticle, displayed, 45, 1280, 720))
         assertNull(dwQrReticleInUprightFrame(reticle, displayed, 0, 0, 720))
         assertNull(dwQrReticleInUprightFrame(reticle, DwQrCrop(0, 0, 0, 0), 0, 1280, 720))
-        // A displayed rectangle that is not inside the buffer is a camera reporting something this
-        // app must not trust into an out-of-bounds two functions later.
         assertNull(dwQrReticleInUprightFrame(reticle, DwQrCrop(0, 0, 1400, 720), 0, 1280, 720))
         assertNull(dwQrReticleInUprightFrame(DwQrFraction(0.8f, 0.2f, 0.2f, 0.8f), displayed, 0, 1280, 720))
-        // And a null box accepts every sighting, which is the safe direction: the box not being known
-        // is a reason to read the frame, never a reason to refuse it.
         assertTrue(dwQrSightingInReticle(DwQrCrop(0, 0, 10, 10), 1280, 720, null))
     }
 
-    /**
-     * THE ACCEPTANCE TEST IS THE CENTRE, AND A CODE OVERFLOWING THE BOX STILL READS.
-     *
-     * This is the assertion that stands directly against the 2026-08-27 defect. A designer whose code
-     * is not reading brings the card CLOSER, which makes it larger than the reticle — and a rule that
-     * required the whole bounding box to sit inside the brackets would refuse exactly that frame. The
-     * centre is what "the code I am pointing at" means, and it is what is asserted.
-     */
     @Test
     fun `a code larger than the box still reads and one beside it does not`() {
         val box = DwQrFraction(left = 0.2f, top = 0.3f, right = 0.8f, bottom = 0.7f)
         val width = 720
         val height = 1280
 
-        // Dead centre, comfortably inside.
         assertTrue(dwQrSightingInReticle(DwQrCrop(300, 580, 120, 120), width, height, box))
-        // OVERFLOWING THE BOX ON ALL FOUR SIDES — the card held close, which must read.
         assertTrue(dwQrSightingInReticle(DwQrCrop(60, 200, 600, 880), width, height, box))
-        // Beside it: a second card on the table, centre well outside the box on x.
         assertFalse(dwQrSightingInReticle(DwQrCrop(620, 580, 90, 90), width, height, box))
-        // Above it: the same, on y.
         assertFalse(dwQrSightingInReticle(DwQrCrop(300, 40, 90, 90), width, height, box))
-        // A reader that found a code but would not say where is still a code.
         assertTrue(dwQrSightingInReticle(null, width, height, box))
         assertTrue(dwQrSightingInReticle(DwQrCrop(0, 0, 0, 0), width, height, box))
     }
 
-    /**
-     * END TO END THROUGH THE REAL NUMBERS: a card inside the drawn box is accepted, one outside is not.
-     *
-     * The reticle is the shipping one, the frame is the resolution the scanner asks for, the rotation
-     * is the portrait quarter turn, and the two sightings are placed by the SAME arithmetic the crop
-     * path uses — so this fails if either map moves relative to the other.
-     */
     @Test
     fun `a sighting inside the drawn box is accepted and one outside it is refused`() {
         val reticle = dwQrReticleFraction(1080, 2337)!!
@@ -804,8 +531,6 @@ class DwQrLiveFrameTest {
             dwQrSightingInReticle(DwQrCrop(centreX - 80, centreY - 80, 160, 160), frameWidth, frameHeight, box),
         )
 
-        // A code whose centre sits above the box by a clear margin — a second card further up the
-        // table, in frame but not aimed at.
         val aboveY = (box.top * frameHeight).toInt() / 2
         assertFalse(
             "a code well outside the drawn box must not be used",

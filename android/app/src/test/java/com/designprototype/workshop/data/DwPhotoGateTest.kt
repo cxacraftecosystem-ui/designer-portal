@@ -5,26 +5,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * **THE GATE, BY VALUE** — which photographs are refused, which are admitted with a word said about
- * them, and every sentence a designer reads either way.
- *
- * WHY THIS IS A UNIT TEST AND NOT A SCREENSHOT. Every judgement below is a decision about work that
- * cannot be redone: a refusal turns away a photograph of an object that will be sold before anyone
- * is back in the cluster, and an admission puts a soft one into a document a ministry receives.
- * There is no Robolectric in this module, so a rule written inside a composable is a rule nothing
- * can exercise — which is exactly why [DwPhotoGate] holds no Android at all.
- *
- * THE SENTENCES ARE ASSERTED AS SENTENCES, not merely as "some message". They are the whole of what
- * a designer has to act on, they are what the web is being asked to copy verbatim, and a wording
- * that drifts is two clients describing one refusal differently.
- */
 class DwPhotoGateTest {
 
-    /**
-     * A photograph with nothing wrong with it: sharp, contrasty, well past the report's own plate
-     * geometry, and unlike anything already attached.
-     */
     private fun goodPhotograph(
         blurScore: Double = 740.0,
         contrast: Double = 48.0,
@@ -39,8 +21,6 @@ class DwPhotoGateTest {
         perceptualHash = perceptualHash,
         elapsedMs = 120,
     )
-
-    // ── What is refused ─────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `a sharp photograph nothing matches is admitted with nothing said about it`() {
@@ -65,14 +45,6 @@ class DwPhotoGateTest {
         )
     }
 
-    /**
-     * THE FLOOR IS PRINTED AS AN INTEGER, NOT AS THE Double IT IS DECLARED AS.
-     *
-     * [DwImageQuality.BLUR_VARIANCE_FLOOR] is `60.0` in Kotlin and `60` in the TypeScript it is a
-     * port of. Interpolated raw, this client would say "a floor of 60.0" about the same calibration
-     * the browser calls 60 — two clients quoting one number differently, in the sentence a designer
-     * is expected to argue with.
-     */
     @Test
     fun `the blur sentence never prints the floor as a decimal`() {
         val message = DwPhotoGate.judge(goodPhotograph(blurScore = 10.0, contrast = 40.0))
@@ -81,20 +53,6 @@ class DwPhotoGateTest {
         assertFalse(message.contains("60.0"))
     }
 
-    /**
-     * THE CONTRAST GUARD IS THE ONLY THING STANDING BETWEEN THIS GATE AND A CORRECT PHOTOGRAPH OF A
-     * FLAT MOTIF, AND IT IS NOW CARRYING A REFUSAL RATHER THAN A WARNING.
-     *
-     * `ImageQuality.kt` records the measurement by name: a perfectly sharp field scaled to a flat
-     * subject — undyed cotton, a smooth metal tool, a plain-dyed cloth, which is much of what these
-     * clusters make — scores a blur variance of 58.98 at a contrast of 9.03. That is BELOW the blur
-     * floor. Without the guard the gate would refuse it, and a designer photographing a plain-dyed
-     * length would be told twenty-five times that their camera had moved.
-     *
-     * This case is asserted here, on the refusal's side of the line, as well as wherever the
-     * predicate itself is tested: raising [DwImageQuality.MIN_CONTRAST_STDDEV] is now a decision
-     * about how often a correct photograph is turned away, and it should fail here when it is made.
-     */
     @Test
     fun `a sharp photograph of a flat subject is admitted even though it scores under the blur floor`() {
         val flat = goodPhotograph(blurScore = 58.98, contrast = 9.03)
@@ -129,8 +87,6 @@ class DwPhotoGateTest {
         )
     }
 
-    // ── Duplicates: the exact one closes the door, the near one does not ────────────────────────
-
     @Test
     fun `a byte-identical file is refused and the message names what it duplicates`() {
         val verdict = DwPhotoGate.judge(
@@ -149,15 +105,6 @@ class DwPhotoGateTest {
         )
     }
 
-    /**
-     * THE NEAR-DUPLICATE IS ADMITTED, AND THIS IS THE ASSERTION THAT KEEPS THE FEATURE USABLE.
-     *
-     * `ImageQuality.kt`'s calibration says two exposures of one object seconds apart land in the low
-     * single digits, INSIDE the threshold of 6 — and two exposures of one object seconds apart is
-     * how twenty-five motifs on one length of cloth get photographed. Refusing here would turn away
-     * correct, wanted, irreplaceable work, and it would do it most often to the designer working
-     * fastest.
-     */
     @Test
     fun `a perceptual-hash match is admitted, with the duplicate still reported`() {
         val verdict = DwPhotoGate.judge(
@@ -174,9 +121,6 @@ class DwPhotoGateTest {
         assertTrue(verdict.admitted)
         assertEquals(DwPhotoGate.GateFaultKind.NEAR_DUPLICATE, verdict.faults.single().kind)
         assertEquals(QualityFlag.DUPLICATE, verdict.faults.single().flag)
-        // The reading and the threshold, because this sentence ends up in an archive row rather
-        // than only on a screen: "looks like the same shot" is an opinion, "1 bit different out of
-        // 64, against a threshold of 6" is evidence somebody can check.
         assertEquals(
             "this looks like the same shot as \"motif-04.jpg\" — 1 bit different out of 64, against " +
                 "a threshold of 6. Two views of one object are worth keeping; two copies of one " +
@@ -185,17 +129,6 @@ class DwPhotoGateTest {
         )
     }
 
-    /**
-     * THE ARM THAT MAKES THE WRITE PATH REAL, ASSERTED AS AN END-TO-END SHAPE RATHER THAN AS A
-     * MESSAGE.
-     *
-     * `frontend/components/media/photoGate.ts` has no near-duplicate arm at all, so every fault its
-     * gate can produce also REFUSES — which means its verdict never carries a fault on a photograph
-     * that was actually uploaded, `CapturedFinding` is never produced, and
-     * `mediaQualityFlagRows` — documented as existing precisely to record "the one fault worth
-     * recording" — is handed nothing, forever. This test is what stops the same hole opening here:
-     * a fault that survives the gate has to reach a row.
-     */
     @Test
     fun `a fault that does not refuse still becomes an archive row`() {
         val verdict = DwPhotoGate.judge(
@@ -252,15 +185,6 @@ class DwPhotoGateTest {
         )
     }
 
-    // ── What is said ────────────────────────────────────────────────────────────────────────────
-
-    /**
-     * THE SCOPE SENTENCE NAMES WHAT IS NOT CHECKED, AND QUOTES NO NUMBER.
-     *
-     * The floors are client constants that move with a re-calibration; a fixed sentence quoting one
-     * goes stale silently, and a stated threshold that is not the enforced threshold is worse than
-     * no sentence at all. Every refusal prints its own reading and its own floor instead.
-     */
     @Test
     fun `the scope sentence names exposure and subject as unchecked and carries no digits`() {
         val sentence = DwPhotoGate.scopeSentence()
@@ -296,10 +220,6 @@ class DwPhotoGateTest {
         assertTrue(lines[1].startsWith("The photograph you just took — it is 640x480, "))
     }
 
-    /**
-     * A NEAR-DUPLICATE PRODUCES NO REFUSAL LINE, because it produced no refusal. A receipt naming a
-     * photograph that was in fact attached is the worst thing this notice could say.
-     */
     @Test
     fun `an admitted fault never appears in the refusal lines`() {
         val nearDuplicate = DwPhotoGate.GateFault(
@@ -314,8 +234,6 @@ class DwPhotoGateTest {
             ).isEmpty()
         )
     }
-
-    // ── The floor, and the bar it is counted against ────────────────────────────────────────────
 
     @Test
     fun `an empty gallery reads none of them, and a full one reads all of them`() {
@@ -341,11 +259,6 @@ class DwPhotoGateTest {
         assertEquals("24 of 25 photographs are attached. 1 more is needed.", progress.words)
     }
 
-    /**
-     * A PHOTOGRAPH BEING CHECKED IS NOT IN THE GALLERY, and the numerator must never quietly include
-     * it. "25 of 25" over a gallery a save would post twenty-three of is a full bar as a receipt for
-     * work that has not happened.
-     */
     @Test
     fun `photographs still being screened are named in their own clause and never counted`() {
         val progress = DwPhotoGate.galleryProgress(
@@ -382,12 +295,6 @@ class DwPhotoGateTest {
         assertEquals(0, negative.percent)
     }
 
-    /**
-     * THE STANDING SENTENCE PROMISES NO SUBMIT BLOCK AND NAMES NO READINESS SCREEN, because neither
-     * is true: `PATCH /design-workshops/{id}` writes SUBMITTED behind an enum check with no
-     * completeness test anywhere. What IS true is what it says — the stage still saves, the score
-     * says incomplete, and the report prints it.
-     */
     @Test
     fun `the floor sentence claims only what is actually enforced`() {
         val sentence = DwPhotoGate.galleryFloorSentence(25, "Traditional motif photographs")
@@ -397,19 +304,10 @@ class DwPhotoGateTest {
         assertTrue(sentence.contains("the stage is scored incomplete"))
         assertFalse(sentence.contains("submit"))
         assertFalse(sentence.contains("readiness"))
-        // The handset's own vocabulary for what has and has not left the phone — the same words the
-        // stage screen's status line uses, so the two cannot disagree about what "saved" means here.
         assertTrue(sentence.contains("Attached is saved on this device"))
         assertTrue(sentence.contains("when this stage syncs"))
     }
 
-    // ── The write path ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * FOUR OF THE SEVEN REGISTRY FLAGS MAY NEVER BE FILLED IN BY A MACHINE. Nothing in this product
-     * measures exposure or subject, and MISSING_VIEW is about a ROW rather than about one file, so
-     * it has no media id to be recorded against.
-     */
     @Test
     fun `only the three measured flags are auto-fillable`() {
         assertEquals(
@@ -452,13 +350,6 @@ class DwPhotoGateTest {
         assertTrue(rows.isEmpty())
     }
 
-    /**
-     * THE NEWEST READING WINS AND THE ROW KEEPS ITS PLACE. The same photograph really is measured
-     * more than once — a stage reopened, a collection row re-expanded — and the reading that
-     * describes the file in hand is the last one taken; two rows about one file read as two separate
-     * problems. Re-ordering the table under a reader because a number was refreshed would be a
-     * second, quieter defect.
-     */
     @Test
     fun `one row per file per flag, newest reading kept, original position held`() {
         val rows = DwPhotoGate.mediaQualityFlagRows(

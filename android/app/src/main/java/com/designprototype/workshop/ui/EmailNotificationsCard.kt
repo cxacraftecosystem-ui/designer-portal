@@ -21,12 +21,6 @@ import com.designprototype.workshop.data.WorkshopRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/**
- * This account's e-mail choices (2026-10-18) — the web's `EmailNotificationsCard`, same switches, same
- * words. Draws NOTHING until the server says mail is on, and nothing at all offline or on an older
- * server that cannot be read: a switch that cannot be saved is worse than none. The hand-in choice is
- * drawn only for an inspector or the approving authority.
- */
 @Composable
 fun EmailNotificationsCard(repository: WorkshopRepository) {
     val scope = rememberCoroutineScope()

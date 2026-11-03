@@ -8,16 +8,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The arithmetic a designer is shown, with a designer's own questions in it.
- *
- * ONE SCORER, and this is what it must agree with: `stage_completeness(..., custom_fields=,
- * custom_values=)` in `backend/app/services/stage_schema.py:1323-1352` and `scoreStageData` in
- * `frontend/lib/designWorkshopStore.ts`. Three surfaces print this number — the stage bar, the
- * 22-stage index and the report's Outstanding column — and the server refuses a submit on its own
- * copy of it, so a rule that differs by one anywhere produces a stage that reads 100% on the form and
- * 422s on submit, with nothing on either surface able to explain the disagreement.
- */
 class DwCustomCompletenessTest {
 
     private val stage = StageDto(
@@ -38,7 +28,6 @@ class DwCustomCompletenessTest {
         ),
     )
 
-    /** A stage with no singleton at all — eight of the twenty-two are shaped like this. */
     private val collectionsOnly = StageDto(
         number = 11, key = "SKETCH_DEVELOPMENT", title = "Sketch development",
         entities = listOf(
@@ -58,8 +47,6 @@ class DwCustomCompletenessTest {
 
     private fun rows(vararg values: Map<String, JsonElement>) =
         mapOf("processStep" to values.toList())
-
-    // ── Counting ────────────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `a required custom field raises the required total and appears in missing`() {
@@ -92,14 +79,6 @@ class DwCustomCompletenessTest {
         assertEquals(100, score.percent)
     }
 
-    /**
-     * BETWEEN THE SINGLETON AND THE COLLECTIONS, AND THE ORDER IS NOT COSMETIC.
-     *
-     * `missing` is printed in order and truncated — the report's Outstanding column and the phone's
-     * report screen take the first three — so whatever this list puts first is what a designer and a
-     * ministry officer actually read. It is also the order the form draws them in, so a "still
-     * missing" link and the form agree about which question comes first.
-     */
     @Test
     fun `custom questions are counted between the singleton and the collections`() {
         val score = computeStageCompleteness(
@@ -115,14 +94,6 @@ class DwCustomCompletenessTest {
         )
     }
 
-    /**
-     * FILED UNDER THE BARE LABEL, like a singleton field and unlike a collection field.
-     *
-     * That is what makes a duplicate LABEL a definition-time refusal on the server rather than a
-     * document disagreeing with itself: two required questions filing the same string collapse into
-     * one row through the de-duplication while `requiredTotal` still counts two. The behaviour is
-     * pinned here so that anybody tempted to prefix the label ("Loom audit: …") sees what it breaks.
-     */
     @Test
     fun `a custom label is filed bare, and two of them collapse in missing while the total counts both`() {
         val score = computeStageCompleteness(
@@ -140,13 +111,6 @@ class DwCustomCompletenessTest {
         assertEquals(1, score.requiredFilled)
     }
 
-    /**
-     * A RETIRED FIELD IS SKIPPED, exactly as a deprecated registry field is.
-     *
-     * It is no longer asked, so counting it would make a stage permanently incomplete because of a
-     * question the designer corrected — and the server skips it too, so counting it here would also
-     * make the phone and the office disagree about one stage of one workshop.
-     */
     @Test
     fun `a retired required field is not counted, filled or not`() {
         val fields = listOf(custom("old", "How many looms?", required = true, retired = true))
@@ -160,13 +124,6 @@ class DwCustomCompletenessTest {
         assertEquals(0, blank.optionalTotal)
     }
 
-    /**
-     * SCORED KEY BY KEY, AND THE CONTAINER IS NEVER TESTED AS A WHOLE.
-     *
-     * `DwValues.isFilled` answers true for any JsonObject with keys, so a bucket holding twenty blank
-     * answers is truthy. A scorer that asked "is there a custom bucket" would report a stage complete
-     * on the strength of the bucket existing.
-     */
     @Test
     fun `a container of blanks is not an answer`() {
         val bucket: Map<String, JsonElement> = mapOf(
@@ -186,7 +143,6 @@ class DwCustomCompletenessTest {
         assertEquals(listOf("A", "B"), score.missing)
     }
 
-    /** `false` and `0` are answers — "this cluster has no power supply" is a finding, not a blank. */
     @Test
     fun `false and zero count as answered, as they do for a registry field`() {
         val score = computeStageCompleteness(
@@ -201,15 +157,6 @@ class DwCustomCompletenessTest {
         assertTrue(score.isComplete)
     }
 
-    // ── The default, and the fan-out ────────────────────────────────────────────────────────────
-
-    /**
-     * A CALLER WITH NO DEFINITION SCORES EXACTLY AS THIS FUNCTION DID BEFORE THE FEATURE EXISTED.
-     *
-     * It cannot invent a higher total and it cannot invent a lower one — which is also why
-     * `StageIndexScreen` refuses the SERVER's score rather than adopting a number computed under a
-     * definition this device does not hold.
-     */
     @Test
     fun `omitting the two new arguments changes nothing`() {
         val before = computeStageCompleteness(stage, mapOf("currentProblems" to JsonPrimitive("x")), emptyMap())
@@ -221,13 +168,6 @@ class DwCustomCompletenessTest {
         assertEquals(1, before.requiredTotal)
     }
 
-    /**
-     * The fan-out reads each stage's questions and each stage's answers, and does not cross them.
-     *
-     * A workshop-wide walk that handed stage 5's bucket to stage 11's fields would score every stage
-     * off one stage's answers — which on a 22-stage index is a column of numbers that all look
-     * plausible.
-     */
     @Test
     fun `the whole-workshop walk pairs each stage's questions with its own answers`() {
         val schema = SchemaResponse(version = "v", stages = listOf(stage, collectionsOnly))
@@ -255,22 +195,15 @@ class DwCustomCompletenessTest {
 
         assertEquals(2, scores.getValue(stage.key).requiredTotal)
         assertEquals(1, scores.getValue(stage.key).requiredFilled)
-        // A collections-only stage whose ONLY required question is the designer's own. This is the
-        // shape eight of the twenty-two stages have, and the one a designer is likeliest to extend.
         assertEquals(1, scores.getValue(collectionsOnly.key).requiredTotal)
         assertEquals(0, scores.getValue(collectionsOnly.key).requiredFilled)
         assertEquals(listOf("Sheets"), scores.getValue(collectionsOnly.key).missing)
 
-        // And with no definition held, the same draft scores as it always did.
         val without = computeWorkshopCompleteness(schema, draft, null).associateBy { it.stageKey }
         assertEquals(1, without.getValue(stage.key).requiredTotal)
         assertEquals(0, without.getValue(collectionsOnly.key).requiredTotal)
     }
 
-    /**
-     * ASSEMBLY, NOT ARITHMETIC. The readiness screen counts nothing of its own, and its address book
-     * can place a custom label so the "still missing" link lands on the section that asks it.
-     */
     @Test
     fun `submission readiness counts the scorer's numbers and can address a custom question`() {
         val schema = SchemaResponse(version = "v", stages = listOf(collectionsOnly))
@@ -288,8 +221,6 @@ class DwCustomCompletenessTest {
 
         val item = readiness.blocking.single { it.label == "Sheets used" }
         assertEquals(collectionsOnly.key, item.stageKey)
-        // The address is the SECTION's rendering identity, which is the string the stage form draws
-        // the section under; anything else lands on a stage with nothing highlighted.
         assertEquals("_custom:sketchAudit", item.address?.entityKey)
         assertEquals("sheets", item.address?.anchorFieldKey)
     }

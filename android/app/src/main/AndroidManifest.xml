@@ -1,75 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- `xmlns:tools` is declared for the two `tools:ignore="AppLinkUrlError"` attributes on the
-     questionnaire-receiving VIEW filters near the bottom of this file. It is a build-time namespace:
-     the tools attributes are stripped from the merged manifest and reach no device. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Reading whether there is a usable network, which this app has always done and has never
-         declared. `ConnectivityObserver.isOnline` (data/Offline.kt) calls `getActiveNetwork` and
-         `getNetworkCapabilities`, and `DwInductionFlusher` now also calls
-         `registerDefaultNetworkCallback`; all three require this permission. It has been arriving by
-         manifest merge from a transitive library, which is the same defect the two undeclared test
-         dependencies in `backend/pyproject.toml` are documented for — it works on every build anybody
-         has made and nothing in this repository asks for it, so a dependency change can remove it and
-         the symptom is a SecurityException in the offline queue.
-
-         A NORMAL permission: not requested at runtime, not shown in the install dialog, no prompt. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Lets `BackgroundSync`'s persisted jobs survive a reboot, so work saved offline is still sent
-         when signal returns after the phone was switched off. A NORMAL permission: no prompt. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- The local alerts after a sync finds new notices (data/AppNotifications.kt). A RUNTIME permission
-         on Android 13+, asked for in context on the Notifications screen, never at launch. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- The camera is WANTED, not REQUIRED, and saying so is what lint's
-         PermissionImpliesUnsupportedChromeOsHardware asked for from the day android-build.yml began
-         running lint. A CAMERA permission with no feature line makes stores and ChromeOS treat
-         `android.hardware.camera` as required. It is not: every QR surface also takes a picked image and
-         a typed code, and a photograph field takes a file, so a handset or Chromebook with no back
-         camera is a reduced app, not an unusable one. This changes nothing on a sideloaded install,
-         which is the only way this app reaches a phone today. -->
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- Questionnaire takes record in a foreground service of type microphone (recording/RecordingService.kt,
-         DESIGN §6.1.1), so a locked screen or an app switch never ends an interview. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <!-- Over-the-air self-update: install the APK the master admin pushed. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!-- Saving a report/dataset into the public Downloads folder, on API 26-28 ONLY.
-
-         On Q and above `persistFileToDownloads` writes through MediaStore, which needs no permission
-         at all. Below Q there is no MediaStore.Downloads collection, so the only public Downloads
-         folder is a raw path under external storage — and writing there without this permission
-         throws SecurityException. minSdk is 26, so 26/27/28 devices really do take that branch: every
-         "Save report" on an Android 8 or 9 handset (which is most of the field fleet) crashed the
-         export with no message a designer could act on.
-
-         maxSdkVersion="28" is not decoration. Left uncapped, the permission stays in the manifest on
-         Q+ where scoped storage makes it a no-op that Play still flags and that users see in the
-         install dialog as "Photos and files" — a scary prompt in exchange for nothing. Capped, the
-         platform strips it entirely above 28, so it exists exactly on the API levels that need it.
-         It is requested at runtime alongside the other dangerous permissions (see
-         requiredAndroidPermissions in MainActivity.kt); the declaration alone grants nothing on 26+. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
-    <!-- Transport: TLS-only. The real policy lives in res/xml/network_security_config.xml (which
-         takes precedence on every supported API level, minSdk 26); usesCleartextTraffic="false"
-         states the same intent for the platform APIs that read the manifest flag directly. The
-         emulator/loopback development hosts stay reachable over HTTP via that file's domain-config. -->
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -89,20 +43,6 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-        <!-- Starts the offline induction flush at process start. IT STORES AND SERVES NOTHING.
-
-             A provider declared here is instantiated by the platform before the first activity, which
-             is the earliest ordinary place code can run in an app with no `Application` subclass —
-             the same mechanism `androidx.startup` and WorkManager use, and the reason this is a
-             provider rather than a hook in `MainActivity`. See `ui/DwInductionFlusher.kt`: a card
-             scanned with no signal has to be sent when signal RETURNS, not when somebody happens to
-             reopen the scanner, and `dwJoinQueuedMessage` promises exactly that.
-
-             `exported="false"` and every data method answers null/0, so this adds no API surface. The
-             authority is namespaced under the application id so two builds can be installed side by
-             side without the "provider authority already in use" install failure. -->
-        <!-- Sends the offline queues while the app is closed, when the platform sees a network. See
-             `data/BackgroundSync.kt`. BIND_JOB_SERVICE means only the system can start it. -->
         <service
             android:name="com.designprototype.workshop.data.OutboxSyncJobService"
             android:exported="false"
@@ -116,16 +56,6 @@
             android:authorities="${applicationId}.inductionflush"
             android:enabled="true"
             android:exported="false" />
-        <!--
-          singleTop below IS LOAD-BEARING for the SEND/VIEW filters this activity now carries. This is
-          a single-activity Compose app: every screen, the signed-in user and the whole navigation
-          stack live in one Activity's composition. Under the default "standard" mode a questionnaire
-          arriving from another phone while the app was already open would build a SECOND MainActivity
-          on top of the first — a second copy of that state, with `onNewIntent` never called, so the
-          delivery would be read by an instance the designer then backs out of. singleTop routes it
-          into the running instance instead, which is what makes `onNewIntent` the place the file is
-          picked up.
-        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -136,48 +66,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!--
-              AN ADMINISTRATOR'S SET-PASSWORD LINK, TAPPED IN A CHAT APP.
-
-              Until this existed the only route into `SetPasswordLinkScreen` was the paste box on the
-              sign-in card: a designer who cannot sign in receives a link, taps it, lands in a
-              browser, and has to come back, open the app, find "I have a set-password link" and
-              paste. This filter offers the app for that tap — on Android 11 and earlier through the
-              chooser, on 12 and later only where the person has approved the domain (see below) —
-              and `takePasswordLink` in `MainActivity.kt` drops the whole URL into that box so the
-              check fires immediately.
-
-              A VERIFIED APP LINK (2026-10-16, security review B5). `android:autoVerify="true"` below asks
-              Android to check `https://designer-repository.vercel.app/.well-known/assetlinks.json` at
-              install time; the file is `frontend/public/.well-known/assetlinks.json`, served by the web
-              app as `application/json` with no redirect, and it names `com.designprototype.workshop` and
-              the SHA-256 of the RELEASE signing certificate, read off the published v0.0.16 APK with
-              `keytool -printcert -jarfile` (no keystore material is in the tree). Verified, a tap on a
-              set-password link opens this app on Android 12 and later without the chooser, and no other
-              app can claim the link. Unverified (an old install, a debug-signed build), the filter
-              still works as before: the chooser up to Android 11, the browser plus the paste box after.
-
-                WHAT STILL HOLDS: verification runs at INSTALL time, so handsets verify on their next
-                install or update after the file is live; a re-keyed release needs its new fingerprint
-                added to the file BEFORE it ships; a fleet on debug-signed APKs needs that
-                certificate listed too.
-
-                AND THE HOST BELOW IS THE PART TO CHECK FIRST IF A TAP DOES NOT OFFER THE APP.
-                `credential_links.link_for` builds every link from the backend's `NEXT_PUBLIC_APP_URL`,
-                whose default in `app/core/config.py` is `http://localhost:3000`. The deploy workflow
-                pins `BACKEND_CORS_ORIGINS` on the server and does NOT pin that variable, so the value
-                a live link carries lives in the `BACKEND_ENV` secret and cannot be read from this
-                tree. The origin named here is the production web app documented in
-                `docs/ENVIRONMENT.md` and admitted by that pinned CORS list. If the two ever differ,
-                this filter matches nothing — which costs nothing and delivers nothing.
-
-              `BROWSABLE` IS CORRECT HERE AND WRONG ON THE FILTERS BELOW. It means "a web browser or
-              a chat app may hand this app a link", which is exactly what this is; the questionnaire
-              VIEW filters are a file arriving from a file manager and carry no host, which is why
-              they carry `tools:ignore="AppLinkUrlError"` and this one does not need it. `path` and
-              not `pathPrefix`: this is one screen, and a prefix would put the app on the chooser for
-              any longer path that happens to start with these characters.
-            -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -188,94 +76,18 @@
                     android:path="/set-password" />
             </intent-filter>
 
-            <!--
-              RECEIVING A QUESTIONNAIRE FROM ANOTHER PHONE, with no internet at either end.
-
-              Until this existed the app could only SEND. A colleague's Quick Share or Bluetooth push
-              landed in Downloads and this app never heard about it, so the designer had to remember
-              the file, open the questionnaire list and re-find it through the document picker. These
-              filters add a direct door for the deliveries they can match, at the cost of no
-              permissions and no APK bytes: the OS owns the radios, so the app declares nothing about
-              Bluetooth or wifi at all.
-
-              ⚠ THEY ARE NOT THE WHOLE OF NEARBY SHARE OR BLUETOOTH, which is what this comment used
-              to claim. Quick Share and Bluetooth OPP save the file and hand over a Uri like
-              content://media/external/downloads/1234 or content://com.android.bluetooth.opp/btopp/12,
-              whose PATH carries no extension — so the pathPattern below misses — and the receiving
-              MediaStore guesses the type from an unknown .dpwq extension, so the custom-subtype
-              filter misses as well. For those two transports the app is not offered as a handler. The
-              filters DO fire for a DocumentsUI-backed open (/document/primary:Download/x.dpwq matches
-              once decoded) and for a file this app exported and shared itself.
-
-              The remedy is the document picker in the receiving card, which is the MAIN door for
-              nearby share and Bluetooth rather than a fallback, validates identically, and works with
-              no signal. Dropping the path gate below is not an alternative: it would put this app on
-              the "open with" list for every unrecognised file on the phone. See
-              `isQuestionnaireBundleDelivery` for the same argument at more length.
-
-              THE SPLIT BETWEEN THE FILTERS IS DELIBERATE and the reasoning is written out at
-              `isQuestionnaireBundleDelivery`, which mirrors it exactly so that what the OS offers and
-              what the app accepts cannot drift apart:
-
-                SEND — our own subtype ONLY. A share sheet is a menu a person reads; putting this app
-                on it for `application/octet-stream` would add a wrong entry for everybody who ever
-                shares an unrecognised file, which is a cost paid by people who will never use this
-                feature.
-
-                VIEW — the broad types as well, but gated on a `.dpwq` path. Opening a file is already
-                aimed at one specific file, so the extension is evidence there rather than noise. This
-                is what catches a DocumentsUI open of a file whose type a provider did not recognise.
-
-              NEITHER FILTER IS VALIDATION. The type string is set by whichever app is sending, so it
-              is untrusted like the rest of the delivery. What a file actually is gets decided by
-              `readQuestionnaireBundle` reading the bytes.
-
-              No exported="true" change and no new permission: the activity is already exported for
-              LAUNCHER, and receiving a file needs neither storage nor Bluetooth permission because
-              the sender hands over a Uri with a read grant attached.
-            -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/vnd.designprototype.questionnaire+gzip" />
-                <!-- Field Repository's bundle (.frwq): both readers accept both (UNIFY A10). -->
                 <data android:mimeType="application/vnd.fieldrepository.questionnaire+gzip" />
             </intent-filter>
-            <!--
-              NO `BROWSABLE` ON EITHER VIEW FILTER, and it was on both until lint said so. BROWSABLE
-              means "a web browser may hand this app a link", which is not what receiving a file is:
-              a file manager, a DocumentsUI open and a download notification all send VIEW under
-              DEFAULT. Declaring it bought nothing, made the activity a candidate for
-              browser-originated intents, and raised `AppLinkUrlError` twice — a BROWSABLE VIEW filter
-              with no host is exactly what that check is for. Removing it loses no delivery.
-            -->
-            <!--
-              `tools:ignore="AppLinkUrlError"` — NOT a suppressed real problem. That check exists for
-              App Links: a VIEW filter meant to open `https://…` needs a scheme and a host, and lint
-              applies the rule to EVERY VIEW+DEFAULT filter carrying a `<data>` element. This filter
-              matches by MIME TYPE, on a Uri handed over by whichever app is sending the file. There
-              is no host to name and no web address involved, so the check's advice cannot be
-              followed, and adding a host would be inventing one. Scoped to these two filters rather
-              than baselined or disabled project-wide, so a genuine App Link added later is still
-              checked.
-            -->
             <intent-filter tools:ignore="AppLinkUrlError">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/vnd.designprototype.questionnaire+gzip" />
-                <!-- Field Repository's bundle (.frwq): both readers accept both (UNIFY A10). -->
                 <data android:mimeType="application/vnd.fieldrepository.questionnaire+gzip" />
             </intent-filter>
-            <!--
-              The same VIEW door for a provider that did not recognise our bytes. `pathPattern` needs
-              the doubled backslash: the manifest unescapes one, leaving `\.` for the matcher, which
-              is what keeps the dot literal rather than "any character".
-
-              `file` is declared beside `content` for form's sake only: passing a file:// Uri between
-              apps has thrown FileUriExposedException since API 24 and minSdk here is 26, so nothing
-              a modern sender does can arrive on it. It costs nothing and is left rather than removed
-              so that an ancient file manager on an Android 8 handset is not newly refused.
-            -->
             <intent-filter tools:ignore="AppLinkUrlError">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -290,13 +102,6 @@
                 <data android:pathPattern=".*\\..*\\.frwq" />
             </intent-filter>
         </activity>
-        <!-- MICROSOFT AND YAHOO SIGN-IN: where the browser tab hands the authorization code back.
-             AppAuth declares this receiver itself for `${appAuthRedirectScheme}`; it is declared
-             again here, replacing that, so the scheme this app answers is written in this file and
-             narrowed to the one host and path the web's `/login/callback` route sends
-             (`com.designprototype.workshop.signin://oidc/callback`). The code is useless without the
-             PKCE verifier, which never leaves the AppAuth request that started the flow, and AppAuth
-             refuses any answer whose `state` is not the one it sent. -->
         <activity
             android:name="net.openid.appauth.RedirectUriReceiverActivity"
             android:exported="true"

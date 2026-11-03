@@ -43,23 +43,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * What the chosen template and the stage-20 switches actually do to the file the handset writes.
- *
- * WHAT THIS PINS. Before this, `buildWorkshopDocument` walked `schema.stages.sortedBy { it.number }`
- * and emitted a table of contents. That meant: all six templates produced the same document; the
- * sections ran in CAPTURE order rather than the reader's; stage 20 and stage 21 printed, so every
- * report ended with the designer's own template choice, accent hex and the export log's SHA-256
- * checksums, submitted to a ministry; there was no cover page at all; and seventeen switches the
- * form saved were inert.
- *
- * The assertions below are about CONTENT and ORDER — what a reader would notice — rather than about
- * block counts, so a legitimate template change on the server (which regenerates the pin in
- * `ReportTemplatePinTest`) does not break them for its own sake.
- */
 class ReportTemplateDocumentTest {
-
-    // ── the registry, cut down to real stage keys ────────────────────────────────────────────────
 
     private fun text(key: String, label: String, role: String = "KEY_VALUE", tier: String = "BASIC") =
         FieldDto(key = key, label = label, type = "TEXT", reportRole = role, tier = tier)
@@ -119,8 +103,6 @@ class ReportTemplateDocumentTest {
         else -> ""
     }
 
-    // ── the reader's order ───────────────────────────────────────────────────────────────────────
-
     @Test
     fun `the sections run in the template's order, not in stage-number order`() {
         val schema = SchemaResponse(
@@ -139,9 +121,6 @@ class ReportTemplateDocumentTest {
             "WORKSHOP_OUTCOMES" to mapOf("result" to JsonPrimitive("Two buyers linked")),
         )
 
-        // The agency format leads with the outcomes and demotes the roster to "Annexure A", which is
-        // the whole reason it is a separate format. Sorted by stage number it would lead with the
-        // workshop setup — which this template does not carry at all.
         val document = build(schema, draft, templateId = "IMPLEMENTING_AGENCY")
         val order = headings(document).filter { it.isNotBlank() }
 
@@ -184,8 +163,6 @@ class ReportTemplateDocumentTest {
         assertFalse(printed.contains("Data Quality & Archive"))
         assertFalse("the export log must not reach the file", printed.contains("Archived to the district office"))
     }
-
-    // ── the cover ────────────────────────────────────────────────────────────────────────────────
 
     private fun coverSchema() = SchemaResponse(
         version = "test",
@@ -263,8 +240,6 @@ class ReportTemplateDocumentTest {
         assertEquals("LETTER", meta.pageSize.name)
     }
 
-    // ── the switches ─────────────────────────────────────────────────────────────────────────────
-
     private fun outcomesSchema() = SchemaResponse(
         version = "test",
         stages = listOf(
@@ -331,8 +306,6 @@ class ReportTemplateDocumentTest {
             printedText(document).contains("Two buyers linked"),
         )
     }
-
-    // ── photographs ──────────────────────────────────────────────────────────────────────────────
 
     private fun photoSchema() = SchemaResponse(
         version = "test",
@@ -402,8 +375,6 @@ class ReportTemplateDocumentTest {
         )
     }
 
-    // ── the capture tier ─────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `the compact summary prints the basic tier and nothing else`() {
         val schema = SchemaResponse(
@@ -434,8 +405,6 @@ class ReportTemplateDocumentTest {
         assertTrue("the archival copy keeps everything", detailed.contains("Loom 14 wove the third sample"))
     }
 
-    // ── a registry newer than this build ─────────────────────────────────────────────────────────
-
     @Test
     fun `a stage no template names is printed at the end and reported, never dropped`() {
         val schema = SchemaResponse(
@@ -463,19 +432,6 @@ class ReportTemplateDocumentTest {
         )
     }
 
-    // ── the honest gaps ──────────────────────────────────────────────────────────────────────────
-
-    // ── the annexures ────────────────────────────────────────────────────────────────────────────
-    //
-    // DETAILED_TECHNICAL is the only template that carries the photographic and completeness
-    // annexures, so it is what these build with. That is the point of building through
-    // `buildWorkshopDocument` rather than calling the renderers: it proves the sections are REACHED
-    // from the template a designer can actually pick, which a test of an emittable block does not.
-
-    /**
-     * A workshop with a photograph, a required field left blank, and a cost sheet whose product
-     * reference points at a row that no longer exists.
-     */
     private fun annexureSchema() = SchemaResponse(
         version = "test",
         stages = listOf(
@@ -527,8 +483,6 @@ class ReportTemplateDocumentTest {
                 stageId = "FINAL_PROTOTYPE_DOCUMENTATION",
                 values = mapOf(
                     "name" to JsonPrimitive("Bandha table runner"),
-                    // "dimensions" is deliberately absent: the completeness annexure has to have an
-                    // outstanding field to name, or it is only being tested on the happy row.
                     "photos" to buildJsonArray {
                         add(JsonPrimitive("m1")); add(JsonPrimitive("m2"))
                     },
@@ -539,7 +493,6 @@ class ReportTemplateDocumentTest {
                 rows = listOf(
                     DraftRow(
                         id = "costSheet#1",
-                        // A cuid pointing at a row that was deleted after this one cited it.
                         values = mapOf("productRef" to JsonPrimitive("cmsik2jg8000eh8xc1lcy661a")),
                     )
                 ),
@@ -563,8 +516,6 @@ class ReportTemplateDocumentTest {
                 "handset drew nothing there:\n" + headings(document),
             headings(document).any { it.contains("Photographic record") },
         )
-        // Three across, and every photograph in the record — not just the two the stage section
-        // above it already printed.
         val contactSheet = document.blocks.filterIsInstance<ImageGridBlock>().last()
         assertEquals(3, contactSheet.columns)
         assertEquals(2, contactSheet.images.size)
@@ -613,10 +564,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `the completeness annexure counts a reference whose row was deleted as unfilled`() {
-        // THE DEFECT THIS EXISTS TO PREVENT, from the server's own record of it: the annexure read
-        // "17. Costing | 1/1 | 100% | Complete" while the same document printed "Product | Not
-        // recorded." for the very field it had counted as filled. The renderer blanks an id whose
-        // row was deleted and a scorer that only checks for a non-empty string does not.
         val document = build(
             annexureSchema(), annexureDraft(emptyMap()),
             templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
@@ -647,8 +594,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `neither annexure is warned about now that both are built`() {
-        // The ledger and the warnings are one claim. A file that carries the photographic record
-        // AND a note saying it does not is worse than either alone.
         val document = build(
             annexureSchema(), annexureDraft(emptyMap()),
             templateId = "DETAILED_TECHNICAL", imageFor = fakeImages,
@@ -663,24 +608,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `every special section is either rendered here or named as unsupported`() {
-        // The completeness check the ledger cannot make on its own: a section that is neither
-        // drawn nor declared is a silent hole in the delivered file.
-        //
-        // THE PROBE DRAFT HAS TO ANSWER THE QUESTION THIS TEST IS ACTUALLY ASKING, which is "does
-        // this build know how to draw the section", not "did this particular workshop fill it in".
-        // Every special section the device builds omits ITSELF when the workshop said nothing it
-        // could print — an acknowledgement with no text, a metric row with no records, a signature
-        // block with nobody to sign — and each of those omissions is deliberate and matches the
-        // server. Probing with an empty draft therefore reports a WORKING section as an unbuilt
-        // one, and the only way to quieten that false alarm is to add the section to
-        // UNSUPPORTED_SECTIONS, i.e. to warn a designer they are losing a section they are in fact
-        // getting. That is the ledger lying in the expensive direction, so each section is given
-        // the one value it needs to have something to say.
-        // COMPLETENESS scores the REGISTRY's stages, and ANNEXURE_MEDIA walks them looking for
-        // photographs, so both report "unbuilt" against an empty schema however well they work.
-        // One stage carrying one required text field and one photograph is the least that lets
-        // either of them have anything to say. MAP is gated on stage 1 naming a state or a district
-        // and CHART on a figure having two categories, so both get the least that satisfies them.
         val schema = SchemaResponse(
             version = "test",
             stages = listOf(
@@ -701,7 +628,6 @@ class ReportTemplateDocumentTest {
                                     key = "coverPhoto", label = "Cover photograph", type = "IMAGE",
                                     tier = "BASIC", reportRole = "GALLERY",
                                 ),
-                                // ANNEXURE_TRANSCRIPTS' one recording (DA-29).
                                 FieldDto(
                                     key = "briefingAudio", label = "Briefing", type = "AUDIO",
                                     tier = "BASIC",
@@ -716,9 +642,6 @@ class ReportTemplateDocumentTest {
             workshopId = "local-test",
             title = "Barpali cluster",
             stages = mapOf(
-                // COVER's author line, SIGNATURES' first signatory, ANNEXURE_MEDIA's one plate, and
-                // MAP's gate — a state and nothing else, which is the case the server says is worth
-                // drawing on its own.
                 "WORKSHOP_SETUP" to StageDraft(
                     stageId = "WORKSHOP_SETUP",
                     values = mapOf(
@@ -727,12 +650,8 @@ class ReportTemplateDocumentTest {
                         "coverPhoto" to JsonPrimitive("media-1"),
                         "briefingAudio" to JsonPrimitive("audio-1"),
                     ),
-                    // CUSTOM_SECTION's one answer, by the same rule as every value above: the
-                    // section omits itself when the designer answered nothing under it, so an empty
-                    // probe would report a working section as an unbuilt one.
                     custom = mapOf("loomsWorking" to JsonPrimitive(12)),
                 ),
-                // ACKNOWLEDGEMENT prints exactly one field and nothing without it.
                 "INTRODUCTORY_ADMIN_DOCUMENTATION" to StageDraft(
                     stageId = "INTRODUCTORY_ADMIN_DOCUMENTATION",
                     values = mapOf(
@@ -740,9 +659,6 @@ class ReportTemplateDocumentTest {
                             JsonPrimitive("The team thanks the weavers of Barpali."),
                     ),
                 ),
-                // SUMMARY_METRICS counts records; with none it has no row to draw. The two rows
-                // together are also CHART's two categories — one alone is a one-bar bar chart, which
-                // the builder correctly refuses to draw.
                 "SKETCH_DEVELOPMENT" to StageDraft(
                     stageId = "SKETCH_DEVELOPMENT",
                     rows = listOf(
@@ -760,18 +676,6 @@ class ReportTemplateDocumentTest {
                 ),
             ),
         )
-        /*
-          CUSTOM_SECTION'S OWN "one value it needs to have something to say", which is a DEFINITION
-          rather than a stage answer.
-
-          It is the one member of this enum that names a thing outside the template — the block it
-          prints, by key — and `TemplateSection`'s constructor refuses a CUSTOM_SECTION that names
-          nothing, deliberately, because such a section prints nothing and says nothing about why.
-          So the probe hands it a key, a matching definition, and (above) an answer under it. With
-          none of those it would draw nothing and this test would demand it be added to
-          UNSUPPORTED_SECTIONS — i.e. demand that every designer be warned they are losing a section
-          they are in fact getting.
-        */
         val customProbe = DwCustomCache(
             workshopId = "x", customSchemaVersion = "d1", complete = true,
             sections = listOf(
@@ -786,8 +690,6 @@ class ReportTemplateDocumentTest {
                 ),
             ),
         )
-        // ANNEXURE_TRANSCRIPTS' copy of the text, which the phone keeps from the server's reads; the
-        // plan below carries stage 20's "include transcripts", the toggle that section obeys.
         val transcriptProbe = com.designprototype.workshop.data.DwTranscriptCache(
             workshopId = "x",
             items = listOf(
@@ -837,15 +739,6 @@ class ReportTemplateDocumentTest {
         }
     }
 
-    // ── the infographics and the map ─────────────────────────────────────────────────────────────
-    //
-    // WHAT THESE PIN. The rasterisers shipped in the APK, both writers dispatched ChartBlock and
-    // MapBlock, and the India boundary rings are an offline asset — and no block was ever
-    // CONSTRUCTED, so the DEFAULT template came off the phone with no figures at all while the
-    // office's copy of the same workshop printed five. These build through `buildWorkshopDocument`
-    // rather than calling the builders directly, for the same reason the annexure tests do: the
-    // defect was never in the drawing, it was in nothing reaching it.
-
     private fun figuresSchema() = SchemaResponse(
         version = "test",
         stages = listOf(
@@ -894,7 +787,6 @@ class ReportTemplateDocumentTest {
         ),
     )
 
-    /** Three sketches, two prototypes, two reviews and two cost sheets — enough for three figures. */
     private fun figuresDraft(settings: Map<String, JsonElement> = emptyMap()) = WorkshopDraft(
         workshopId = "local-test",
         title = "Barpali cluster",
@@ -922,7 +814,6 @@ class ReportTemplateDocumentTest {
                         values = mapOf(
                             "materialCost" to JsonPrimitive(400),
                             "labourCost" to JsonPrimitive(250),
-                            // Entered as zero, which is not the same as entered: it must not appear.
                             "transportCost" to JsonPrimitive(0),
                         ),
                     ),
@@ -954,9 +845,6 @@ class ReportTemplateDocumentTest {
                 "nothing there: ${charts(document).map { it.title }}",
             yield_,
         )
-        // Counted from the records, and only categories that carry a figure — a "Final products 0"
-        // bar would state the workshop produced none when what the record says is that nobody
-        // entered any yet.
         assertEquals(
             listOf("Sketches" to 3.0, "Prototypes" to 2.0),
             yield_!!.series,
@@ -970,9 +858,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `a figure the template asks for twice is drawn once`() {
-        // DCH_STANDARD carries OUTCOME_FIGURES at the front AND the WORKSHOP_OUTCOMES stage section
-        // that owns the same two figures. Printing the yield chart twice makes a reader hunt for the
-        // difference between two identical pictures.
         val document = build(figuresSchema(), figuresDraft())
         assertEquals(
             "the same figure printed more than once: ${charts(document).map { it.title }}",
@@ -996,8 +881,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `a section that refuses figures gets none`() {
-        // PHOTO_CATALOGUE's price list sets includeFigures = false: the cost-by-head figure prints
-        // the maker's material and labour cost beside the price the buyer is being quoted.
         val catalogue = build(figuresSchema(), figuresDraft(), templateId = "PHOTO_CATALOGUE")
         assertTrue(
             "the buyer-facing catalogue handed the buyer the cluster's margin: " +
@@ -1008,9 +891,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `nothing at all is emitted when the record supports no figure`() {
-        // Not the heading, not an empty frame, not a note. A heading over nothing is the commonest
-        // way a generated report looks broken, and this section exists for records that have no
-        // figures in them yet.
         val document = build(outcomesSchema(), outcomesDraft(emptyMap()))
         assertTrue("no figure has data here", charts(document).isEmpty())
         assertTrue(
@@ -1059,11 +939,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `the venue pin comes from the measured fix and from nothing else`() {
-        // The server's own first branch: a coordinate somebody stood at and captured wins and is
-        // never averaged with anything, so a pin drawn here lands where the office's copy puts it.
-        // Where there is no fix the server geocodes the typed address through a place atlas that is
-        // not on this device, and inventing a pin from the village name would put the two copies of
-        // one report in different places.
         val fixed = build(
             mapSchema(),
             mapDraft(
@@ -1082,7 +957,6 @@ class ReportTemplateDocumentTest {
             fixed.caption.contains("Workshop venue: Barpali"),
         )
 
-        // 0,0 is the Gulf of Guinea and is what a form that never obtained a fix writes.
         val unfixed = build(
             mapSchema(),
             mapDraft(
@@ -1096,7 +970,6 @@ class ReportTemplateDocumentTest {
         assertTrue("a zero fix is not a fix: ${unfixed.points}", unfixed.points.isEmpty())
     }
 
-    /** Stage 1's singleton plus the participant roster the artisan pins are read from. */
     private fun rosterMapSchema() = SchemaResponse(
         version = "test",
         stages = listOf(
@@ -1125,21 +998,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `an artisan whose home was surveyed is pinned, and one whose address was only typed is counted`() {
-        /*
-          THE HANDSET DREW NO ARTISAN PINS AT ALL, on a reason that had gone false.
-
-          `renderMap`'s KDoc justified the gap with "the cached artisan record on this device carries
-          a village and no district and no state". Both halves are wrong now: `_artisan_points` reads
-          the ROW's own frozen copy first, and `REFERENCE_HYDRATION["participant.artisanRef"]` copies
-          village, district, state, pincode, address and subjectLocation onto the roster row at save
-          time — all of which this device holds in the draft it is printing from.
-
-          What is genuinely missing is the ATLAS: `WorkshopData.district_points` is 795 anchors
-          averaged over live Location rows and cannot ship in an APK. So a row that STATES a place and
-          drops no pin still cannot be placed here, and is counted in the caption instead — while a
-          row carrying `subjectLocation` needs no atlas at all and is drawn on exactly the coordinate
-          the office draws it on.
-        */
         val document = build(
             rosterMapSchema(),
             WorkshopDraft(
@@ -1163,8 +1021,6 @@ class ReportTemplateDocumentTest {
                                     "subjectLocation" to DwValues.geoOf(21.19580, 83.58720),
                                 ),
                             ),
-                            // The same hamlet, to the metre - one pin that says two, exactly as
-                            // `_fold_points` folds it. Six weavers on one coordinate look like one.
                             DraftRow(
                                 id = "participant#2",
                                 values = mapOf(
@@ -1175,8 +1031,6 @@ class ReportTemplateDocumentTest {
                                     "subjectLocation" to DwValues.geoOf(21.19580, 83.58720),
                                 ),
                             ),
-                            // A stated address and no surveyed pin: the office geocodes it, this
-                            // device cannot, and the caption is where the difference is stated.
                             DraftRow(
                                 id = "participant#3",
                                 values = mapOf(
@@ -1196,17 +1050,6 @@ class ReportTemplateDocumentTest {
         val artisans = map.points.filter { it.kind == MapPointKind.ARTISAN }
         assertEquals("two surveyed rows on one coordinate are one pin: ${map.points}", 1, artisans.size)
         assertEquals(2, artisans.first().count)
-        // THE LABEL IS THE PLACE THE ROW NAMES, never the artisan's name: a coordinate carries no
-        // name, and a map pinned with people is a different figure under the same heading.
-        //
-        // AND IT IS THE FINEST SINGLE PART, NOT THE JOINED ADDRESS. This line used to assert
-        // "Barpali, Bargarh", which pinned a divergence rather than the port: `_artisan_points`
-        // labels a surveyed pin with `place_label` — `next((part for part in stated if part), "")`
-        // — under a comment headed "ONE LABEL GRAMMAR PER FIGURE". Its argument is that every other
-        // pin on this figure is named by the atlas, which returns one token, so a map reading
-        // "Barpali" for five artisans and "Barpali, Bargarh" for the sixth reads as two kinds of
-        // pin. The joined string exists on the server only to be handed to a geocoder, and this
-        // device has no atlas to hand it to.
         assertEquals("Barpali", artisans.first().label)
         assertEquals(21.19580, artisans.first().lat, 1e-9)
         assertEquals(83.58720, artisans.first().lon, 1e-9)
@@ -1219,31 +1062,12 @@ class ReportTemplateDocumentTest {
             "the row this copy cannot place must be counted, not silently dropped: ${map.caption}",
             map.caption.contains("1 participant has no surveyed position"),
         )
-        // AND THE OLD BLANKET SENTENCE IS GONE. It said the home places "are not plotted on this
-        // copy" for every roster row, which is now false for the surveyed ones.
         assertFalse(
             "the caption still claims nothing is plotted: ${map.caption}",
             map.caption.contains("are not plotted on this copy"),
         )
     }
 
-    /**
-     * A ROSTER ROW'S STATE REACHES `highlight` EVEN WHEN NOTHING CAN RESOLVE IT.
-     *
-     * THE SIBLING TEST BELOW PINS STAGE 1'S ANSWER; THIS ONE PINS THE ROSTER'S, and they were not
-     * the same code. `rosterPins` read `canonicalState(state)?.takeIf { … }?.let { states += it }`,
-     * which DROPS a spelling the 36-entry table does not know, where `_artisan_points` writes
-     * `canonical_state(state) or state` and carries the raw name into `facts.states` and on into
-     * `highlight`. The venue arm ten lines below in the same function already did
-     * `canonicalState(state) ?: state`, so the file disagreed with itself.
-     *
-     * WHAT THE DROP COSTS IS AN ADMISSION, not a tint. Neither rasteriser can seed a state it has
-     * no seat for — that is true on both surfaces — but both report the failed fill using the RAW
-     * name out of `highlight` and print "Not tinted: …" on the figure. So the office's copy names
-     * the state nobody could resolve and the handset's copy says nothing at all, on a figure whose
-     * tinted region is its entire content. The state column predates its validator and is nullable;
-     * "Orissa" and "Pondicherry" are in the data, which is why `address._ALIASES` exists.
-     */
     @Test
     fun `a roster row's unresolvable state still reaches the tint list`() {
         val document = build(
@@ -1259,7 +1083,6 @@ class ReportTemplateDocumentTest {
                     "WORKSHOP_PLAN_PARTICIPANTS_OPENING" to StageDraft(
                         stageId = "WORKSHOP_PLAN_PARTICIPANTS_OPENING",
                         rows = listOf(
-                            // An alias the table DOES know, to show the canonical form is preferred.
                             DraftRow(
                                 id = "participant#1",
                                 values = mapOf(
@@ -1269,7 +1092,6 @@ class ReportTemplateDocumentTest {
                                     "subjectLocation" to DwValues.geoOf(21.19580, 83.58720),
                                 ),
                             ),
-                            // And one nothing can resolve. It must survive as typed.
                             DraftRow(
                                 id = "participant#2",
                                 values = mapOf(
@@ -1295,31 +1117,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `the tinted state is keyed by the canonical name the rasteriser can seed`() {
-        // WHAT THIS PINS — AND, JUST AS IMPORTANTLY, WHAT IT DOES NOT. `highlight` is not a
-        // caption, it is a LOOKUP KEY into the 36-entry STATE_SEATS table: `ReportMap.tintStates`
-        // (ReportMap.kt:556) resolves each name to a seat and floods the map from that pixel.
-        //
-        // IT IS THE FIRST OF TWO NETS, NOT THE ONLY ONE, and recording it as the only one here is
-        // exactly how the second gets deleted as dead. `tintStates` seeds from
-        // `canonicalState(name) ?: name` (ReportMap.kt:569) and the server's
-        // `report_map._tint_states` does the identical `canonical_state(name) or name`, so a raw
-        // "Orissa" that reached either rasteriser would still tint Odisha. What this test holds is
-        // the BUILDER's half: the block this handset constructs must equal the block
-        // `report_builder._render_map` constructs for the same workshop, so neither half can be
-        // dropped on the belief that the other already covers it.
-        //
-        // AND ONE VISIBLE THING DOES RIDE ON THE BUILDER'S HALF. Both rasterisers report a failed
-        // fill using the RAW name out of `highlight` and never the canonical one — ReportMap.kt:572
-        // and :579, `missed.append(name)` on the server — and that list is printed on the figure as
-        // "Not tinted: …". So on the fills that do fail (a seat pixel an earlier state already
-        // took, or the 25%-of-land escape budget) an un-canonicalised builder makes the handset's
-        // copy name a state the office's copy names differently, on a figure whose tinted region is
-        // its ENTIRE content, because no fix and no atlas means there is no pin.
-        //
-        // AND THE SPELLING IS REAL. The state column predates its validator and is nullable, so
-        // rows holding "Orissa" and "Pondicherry" exist in the data; that is why `address._ALIASES`
-        // exists on the server and why `canonicalState` ports it. Nothing asserted the builder
-        // actually routes stage 1's typed answer through it.
         val alias = build(mapSchema(), mapDraft(mapOf("state" to JsonPrimitive("  orissa "))))
             .blocks.filterIsInstance<MapBlock>().first()
         assertEquals(
@@ -1329,11 +1126,6 @@ class ReportTemplateDocumentTest {
             alias.highlight,
         )
 
-        // An unrecognised name is carried through AS TYPED, matching the server's
-        // `canonical_state(state) or state`. It cannot tint on either surface — there is no seat
-        // for it and neither rasteriser can invent one — and both NAME it on the figure. Dropping
-        // it instead would leave a reader attributing an untinted map to the data rather than to a
-        // state nobody can resolve.
         val unknown = build(mapSchema(), mapDraft(mapOf("state" to JsonPrimitive("Atlantis"))))
             .blocks.filterIsInstance<MapBlock>().first()
         assertEquals(setOf("Atlantis"), unknown.highlight)
@@ -1341,9 +1133,6 @@ class ReportTemplateDocumentTest {
 
     @Test
     fun `the file says which copy of the report it is`() {
-        // The officer reads the phone's PDF as THE report: same cover, same running foot, a
-        // self-consistent contents page. One line under the cover is what stops a section present in
-        // the office's copy and absent from this one reading as a document somebody altered.
         val document = build(
             annexureSchema(),
             annexureDraft(mapOf("includeTranscripts" to JsonPrimitive(true))),
@@ -1354,13 +1143,10 @@ class ReportTemplateDocumentTest {
             "the file does not say it was made in the field:\n$printed",
             printed.contains("Generated in the field on 04 Mar 2026"),
         )
-        // A document handed to an officer does not narrate a section it lacks (2026-10-10), even
-        // when the designer asked for transcripts.
         assertFalse(
             "the cover line narrates a section this copy does not carry:\n$printed",
             printed.contains("transcripts of the recordings"),
         )
-        // And it shortens by itself: with nothing outstanding it states only where the file was made.
         val nothingOutstanding = build(annexureSchema(), annexureDraft(emptyMap()))
         assertFalse(
             "a report with no outstanding section apologised for one anyway:\n" +
@@ -1381,8 +1167,6 @@ class ReportTemplateDocumentTest {
             document.warnings.any { it.contains("Garamond") },
         )
     }
-
-    // ── the presentation the template asks for ───────────────────────────────────────────────────
 
     @Test
     fun `the same records are a table in one template and cards in another`() {

@@ -76,19 +76,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * "Verify with Aadhaar" on the handset — the web's `components/aadhaar/AadhaarVerifyPanel.tsx`, step
- * for step and word for word: status → consent → method → the method's form → status again.
- *
- * DRAWS NOTHING while the account the handset holds says both Aadhaar features are off — and an
- * account cached before the server sent `features`, or from a server that never does, reads as off
- * ([AadhaarFeatures.of]). Only the methods that are on are offered.
- *
- * The QR is read by the camera scanner this app already ships for workshop codes
- * ([DwQrLiveScanControl]: CameraX with ML Kit, ZXing as the fallback reader) or from a picture with
- * the same ZXing reader; the ZIP is read from the file the person picks. All of it is held in memory
- * for the one request and is never written to disk, the outbox or preferences.
- */
 object AadhaarCopy {
     const val TITLE = "Aadhaar verification"
     const val VERIFY = "Verify with Aadhaar"
@@ -108,7 +95,6 @@ object AadhaarCopy {
     const val VID_HINT =
         "A 16-digit Virtual ID (from UIDAI) keeps the Aadhaar number private. Neither is stored."
 
-    /** The consent notice. The SAME sentences as `frontend/lib/aadhaar.ts`'s `consentPoints`. */
     fun consentPoints(subject: AadhaarSubject): List<String> {
         val whose = if (subject is AadhaarSubject.Self) "your" else "the artisan's"
         return listOf(
@@ -149,7 +135,6 @@ private val WarningGround = Color(0xFFFEF3C7)
 private val RefusedInk = Color(0xFFDC2626)
 private val RefusedGround = Color(0xFFFEE2E2)
 
-/** The status chip, with its word — colour is never the only channel. */
 @Composable
 fun AadhaarStatusChip(status: String?) {
     val label = AadhaarCopy.statusLabel(status) ?: return
@@ -173,7 +158,6 @@ fun AadhaarStatusChip(status: String?) {
 private fun readBytes(context: Context, uri: Uri, limit: Int = 4 * 1024 * 1024): ByteArray? =
     runCatching {
         context.contentResolver.openInputStream(uri)?.use { stream ->
-            // Bounded by hand: InputStream.readNBytes is API 33 and this app runs from 26.
             val out = java.io.ByteArrayOutputStream()
             val buffer = ByteArray(16 * 1024)
             while (true) {
@@ -485,7 +469,6 @@ fun AadhaarVerifyCard(
                 Text(AadhaarCopy.VID_HINT, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
                 val current = issued
                 if (current != null) {
-                    // The owner's six boxes (`OtpCodeField`): digits only, a paste fills all six.
                     OtpCodeField(
                         value = otp,
                         onValueChange = { otp = it },
@@ -550,7 +533,6 @@ private fun MethodRow(icon: @Composable () -> Unit, title: String, note: String,
 
 private fun isAdminRole(role: String?): Boolean = role == "ADMIN" || role == "MASTER_ADMIN"
 
-/** The account's own verification, one level below Settings — the web's card on /settings. */
 @Composable
 fun AadhaarSelfScreen(viewer: UserDto?, onBack: () -> Unit) {
     Column(
@@ -571,10 +553,6 @@ fun AadhaarSelfScreen(viewer: UserDto?, onBack: () -> Unit) {
     }
 }
 
-/**
- * The chip on a user-management row, and an administrator's decision on a name that did not match.
- * Nothing while both features are off or the account has never verified.
- */
 @Composable
 fun AadhaarUserBadge(account: UserDto, viewer: UserDto?) {
     if (!AadhaarFeatures.of(viewer).enabled) return

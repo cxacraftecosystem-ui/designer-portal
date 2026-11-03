@@ -65,31 +65,10 @@ import com.designprototype.workshop.data.accountHasPassword
 import com.designprototype.workshop.data.apiErrorMessage
 import kotlinx.coroutines.launch
 
-/*
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- * GETTING BACK IN, ON THE HANDSET
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Three surfaces, the web's three, with the words in ui/AccountRecoveryCopy.kt:
- *
- *   1. [ForgotPasswordScreen] — drawn by `MainActivity` in place of the sign-in card. One box, one
- *      button, and the server's one answer printed as it is: the same for an address with an account
- *      and one without, so nothing on this screen can branch on which it was.
- *   2. [AccountPasswordScreen] — Settings → Password. Changes the password, or sets a first one for
- *      an account that signs in with Google, Microsoft or Yahoo.
- *   3. [HelpThemBackInActions] — on Manage users, beside the existing "Issue a set-password link" and
- *      "Turn off two-step verification": e-mail them a link, set a temporary password, sign them out
- *      of every device.
- *
- * NONE OF THESE MINTS A SESSION. A link or the forgotten-password e-mail sets a password; the person
- * then signs in and meets the two-step code exactly as any sign-in does.
- */
-
 @Composable
 fun ForgotPasswordScreen(
     repository: WorkshopRepository,
     onBack: () -> Unit,
-    /** The address already typed on the sign-in card, if any — saves typing it twice. */
     initialEmail: String = "",
 ) {
     val scope = rememberCoroutineScope()
@@ -182,7 +161,6 @@ fun ForgotPasswordScreen(
     }
 }
 
-/** Settings → Password. Its own TopAppBar, like the two-step screen beside it. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountPasswordScreen(
@@ -215,7 +193,6 @@ fun AccountPasswordScreen(
 fun AccountPasswordCard(repository: WorkshopRepository) {
     val scope = rememberCoroutineScope()
     var user by remember { mutableStateOf(repository.cachedUser()) }
-    // Re-read once, so an account that gained a password on the web is not offered "Set a password".
     LaunchedEffect(Unit) {
         runCatching { repository.refreshUser() }.onSuccess { user = it }
     }
@@ -231,17 +208,9 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var saved by remember { mutableStateOf<String?>(null) }
-    // ── THE PROVIDER PROOF A FIRST PASSWORD TRAVELS WITH (2026-10-17) ─────────────────────────
-    // The sign-in code paths the sign-in screen uses, run again here: Credential Manager for
-    // Google, AppAuth in a browser tab for Microsoft and Yahoo. Built lazily from the activity,
-    // so an account that already has a password never binds a browser service.
     val activity = LocalContext.current.componentActivity()
     val oidcClient = remember(activity) { activity?.let { lazy { OidcAuthClient(it) } } }
-    // Saveable: the browser tab can outlive this activity (rotation, or the process reclaimed while
-    // it is open), and the nonce is the one thing the result does not carry back.
     var pendingNonce by rememberSaveable { mutableStateOf<String?>(null) }
-    // The proof that went with a send refused only for its two-step code. Sent again with the
-    // corrected code: the server remembers that it already verified, so no second provider trip.
     var heldProof by remember { mutableStateOf<FirstPasswordProof?>(null) }
     val confirmWith = confirmProviderFor(user)
 
@@ -263,11 +232,9 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
             }
             .onFailure { failure ->
                 if (failure is ProviderConfirmationRequired) {
-                    // Stale, or for another mailbox: tapping Set password asks the provider again.
                     heldProof = null
                     error = failure.message
                 } else if (failure is TwoFactorCodeRequired) {
-                    // Only the code is emptied: the passwords and the provider proof were not refused.
                     heldProof = proof
                     error = failure.message
                     code = ""
@@ -355,7 +322,6 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
                 modifier = Modifier.fillMaxWidth()
             )
             if (askCode) {
-                // The six boxes, or a separate box for a recovery code — `TwoStepCodeEntry`.
                 TwoStepCodeEntry(
                     useRecovery = useRecoveryCode,
                     onUseRecoveryChange = { useRecoveryCode = it; error = null },
@@ -404,7 +370,6 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
                         scope.launch { send(null) }
                         return@Button
                     }
-                    // A first password: confirm with the provider first, then send with its proof.
                     heldProof?.let { held ->
                         scope.launch { send(held) }
                         return@Button
@@ -449,14 +414,6 @@ fun AccountPasswordCard(repository: WorkshopRepository) {
     }
 }
 
-/**
- * The three "help them back in" actions this handset lacked, for one row of Manage users. Drawn only
- * when the caller has already decided the administrator may manage [target] — the same test the
- * link and two-step buttons beside it use, which mirrors the server's `assert_may_reset_credentials`.
- *
- * [onChanged] hands back the row as the server now has it (null when nothing came back), so the list
- * can refresh; [onError] carries the server's own sentence.
- */
 @Composable
 fun HelpThemBackInActions(
     repository: WorkshopRepository,
@@ -565,8 +522,6 @@ private fun TemporaryPasswordDialog(
     onDismiss: () -> Unit,
     onSubmit: (String) -> Unit,
 ) {
-    // Never trimmed, and never echoed anywhere once the dialog closes: a password typed for somebody
-    // else is a shared secret, and this box is the one place on the handset it exists.
     var password by remember { mutableStateOf("") }
     var reveal by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
@@ -603,7 +558,6 @@ private fun TemporaryPasswordDialog(
     )
 }
 
-/** The [ComponentActivity] this composition runs in, or null outside one (previews, tests). */
 private tailrec fun Context.componentActivity(): ComponentActivity? = when (this) {
     is ComponentActivity -> this
     is Activity -> null

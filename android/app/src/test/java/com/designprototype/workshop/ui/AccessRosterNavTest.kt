@@ -8,21 +8,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * THE NOTIFICATION: that it reaches an admin, that it reaches nobody else, and that it never lies.
- *
- * The requirement asks that admins and master admins be told when somebody is turned away at the
- * sign-in screen. Neither application has an email sender or a push transport, so the notification
- * is a COUNT on chrome an admin already opens — which makes these three properties the whole of the
- * feature's delivery guarantee, and all three are the kind that go quietly wrong:
- *
- * * the entry is offered to admins only, because `GET /access/roster` is `require_access_manager`
- *   for READS as much as writes — the queue is a list of named people who tried to get in;
- * * the badge lands on that entry and on no other, which is the thing a copy-paste breaks;
- * * a zero draws NOTHING. "0" over a queue that failed to load is a lie an admin acts on by not
- *   opening it, and the count is fetched by a best-effort poll that keeps its last value when the
- *   phone has no signal.
- */
 class AccessRosterNavTest {
 
     private fun user(role: String) =
@@ -61,7 +46,6 @@ class AccessRosterNavTest {
             "an admin browsing as an ordinary user must not carry a list of named strangers around",
             entry.adminSurface
         )
-        // The predicate on the entry is what actually decides; the gate string is documentation.
         assertTrue(entry.can(user("MASTER_ADMIN")))
         assertTrue(entry.can(user("ADMIN")))
         assertFalse(entry.can(user("PROFESSOR")))
@@ -72,7 +56,6 @@ class AccessRosterNavTest {
     fun `an admin sees it only while admin view is on`() {
         assertTrue(isNavItemVisible(entry, user("ADMIN"), adminMode = true))
         assertFalse(isNavItemVisible(entry, user("ADMIN"), adminMode = false))
-        // Entitlement first, admin view second: the toggle can only ever subtract.
         assertFalse(isNavItemVisible(entry, user("RESEARCHER"), adminMode = true))
     }
 
@@ -91,8 +74,6 @@ class AccessRosterNavTest {
 
     @Test
     fun `an empty queue draws no badge at all`() {
-        // Zero also covers "the poll could not ask", which is why it must not render. A confident
-        // "0" over an unread queue is worse than no badge: it is an answer, and it is wrong.
         assertNull(navBadge(entry, 0))
         assertNull(navBadge(entry, -1))
         assertNotNull(navBadge(entry, 1))
@@ -100,8 +81,6 @@ class AccessRosterNavTest {
 
     @Test
     fun `the label is the one an admin is looking for, and is not the designer roster's`() {
-        // Both lists are reachable from this menu and they read alike; the labels are the only thing
-        // separating "may this person reach the app at all" from "is this person empanelled".
         val designerRoster = FIELD_NAV_ITEMS.first { it.destination == NavDestination.DESIGNER_ROSTER }
         assertEquals("Who may sign in", entry.label)
         assertEquals("Designer roster", designerRoster.label)

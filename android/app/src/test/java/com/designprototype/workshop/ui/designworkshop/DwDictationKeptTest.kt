@@ -6,11 +6,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * THE KEPT DICTATION (0.0.4). `POST /design-workshops/{id}/dictate` answers with `mediaId` when the
- * server stored the clip with its transcript; the field then draws the shared transcript row under
- * itself. A deployment that keeps nothing answers no key, and nothing changes.
- */
 class DwDictationKeptTest {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 

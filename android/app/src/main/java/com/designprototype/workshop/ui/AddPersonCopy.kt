@@ -3,13 +3,6 @@ package com.designprototype.workshop.ui
 import com.designprototype.workshop.data.CreateAccountBody
 import com.designprototype.workshop.data.PasswordMode
 
-/*
- * "ADD A PERSON" — the words and rules behind ui/AddPerson.kt, pure so `AddPersonCopyTest` pins them.
- * The server is the judge of every rule here (`POST /users`); these mirror it so the form never
- * offers what would be refused.
- */
-
-/** Every tier, lowest first — the order the server's `ROLE_RANK` ranks them in. */
 val ALL_ROLES = listOf(
     "CROWDSOURCE_VOLUNTEER",
     "FIELD_CONTRIBUTOR",
@@ -24,10 +17,6 @@ val ALL_ROLES = listOf(
     "MASTER_ADMIN",
 )
 
-/**
- * The roles [actorRole] may create, highest first: strictly below their own rank, and ADMIN only for
- * a master admin. MASTER_ADMIN is never offered — nobody ranks above it.
- */
 fun creatableRoles(actorRole: String?, actorIsMaster: Boolean): List<String> {
     val ceiling = if (actorIsMaster) FieldPermissions.RANK_MASTER_ADMIN else FieldPermissions.rank(actorRole)
     return ALL_ROLES
@@ -36,7 +25,6 @@ fun creatableRoles(actorRole: String?, actorIsMaster: Boolean): List<String> {
         .sortedByDescending { FieldPermissions.rank(it) }
 }
 
-/** The default role the form opens on: Researcher where it may be created, else the highest offered. */
 fun defaultNewRole(offered: List<String>): String? =
     if ("RESEARCHER" in offered) "RESEARCHER" else offered.firstOrNull()
 
@@ -51,7 +39,6 @@ const val ADD_PERSON_SEND_LINK = "Email them a link to set a password too"
 const val ADD_PERSON_TEMPORARY_NOTE = "Shown once — copy and send it yourself. They must change it at first sign-in."
 const val OPEN_THEIR_ACCOUNT = "Open their account"
 
-/** Why the form cannot be sent yet, or null. */
 fun addPersonProblem(name: String, email: String, role: String?, mode: String, password: String): String? {
     if (name.isBlank()) return "Enter their full name."
     forgotPasswordEmailProblem(email)?.let { return it }
@@ -60,7 +47,6 @@ fun addPersonProblem(name: String, email: String, role: String?, mode: String, p
     return null
 }
 
-/** The body for the chosen [mode]; keys that do not belong to it are left null, so they are not sent. */
 fun addPersonBody(
     name: String,
     email: String,
@@ -80,7 +66,6 @@ fun addPersonBody(
     sendPasswordLink = if (mode == PasswordMode.NONE && mailAvailable && sendLink) true else null,
 )
 
-/** The line shown after the account is made. */
 fun addPersonDoneLine(name: String, mode: String, linkEmailed: Boolean, linkError: String?): String {
     val base = "$name's account is ready."
     return when {

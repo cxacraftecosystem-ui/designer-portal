@@ -15,13 +15,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The artisan card's parse rules on the handset, held to `shared/artisan-card-vectors.json` — the
- * same file the backend and the web read — and the offline register match a scan relies on.
- */
 class ArtisanCardCodeTest {
 
-    /** The shared table, found by walking up from the module (as `DwTextFormatParityTest` does). */
     private fun vectors(): JsonObject {
         var dir: java.io.File? = java.io.File("").absoluteFile
         while (dir != null) {
@@ -76,7 +71,6 @@ class ArtisanCardCodeTest {
         val old = (encodeWorkshopCode(DwWorkshopRecordType.ARTISAN, "cmsvfnb4y0001qq1bzd2g48lq") as DwEncodeResult.Ok).code
         assertFalse(ArtisanCardCode.looksLikeCard(old))
         assertTrue(decodeWorkshopCode(old) is DwDecodeResult.Ok)
-        // A mistyped card IS meant as a card, and is refused with the server's sentence.
         assertTrue(ArtisanCardCode.looksLikeCard("D-7K3QM-9XA2F-H0"))
     }
 
@@ -98,7 +92,6 @@ class ArtisanCardCodeTest {
         assertEquals("a-own", matchCardInRegister(parsed("D-7K3QM-9XA2F-HQ"), register)?.id)
         assertEquals("a-own", matchCardInRegister(parsed("CXA1:D1:7K3QM9XA2F:QQPZR8FHGZPJXHBM"), register)?.id)
         assertEquals("a-linked", matchCardInRegister(parsed("F-01234-56789-S5"), register)?.id)
-        // An F card never matches a D code that happens to be equal, nor the other way round.
         assertNull(matchCardInRegister(parsed("F-ABCDE-FGHJK-KH"), register))
         assertNull(matchCardInRegister(parsed("D-ZZZZZ-ZZZZZ-2W"), register))
     }
@@ -111,7 +104,6 @@ class ArtisanCardCodeTest {
         val linkedBack = optionToArtisan(artisanToOption(linked))!!
         assertEquals(listOf("0123456789"), linkedBack.linkedCardCodes)
         assertNull(linkedBack.card)
-        // The card rides under underscore keys that no stage field is named, so nothing hydrates from it.
         assertTrue(artisanToOption(own).data.keys.all { it.startsWith("_") })
     }
 

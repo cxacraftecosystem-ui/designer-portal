@@ -14,19 +14,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * **THE TIER 2 RUNTIME IS IN THE PACKAGE AND ANSWERS ON THIS DEVICE.** Runs on the x86_64 emulator in
- * `android-emulator.yml` as well as on a handset — no 2.6 GB model is needed for either half:
- *
- *  1. `liblitertlm_jni.so` loads in this process (`DwTier2Engine.nativeLibraryLoads`), which is what
- *     `DW_TIER2_RUNTIME_PRESENT = true` claims about the build. LiteRT-LM 0.18.0 ships arm64-v8a and
- *     x86_64, so on either of those this must be true.
- *  2. A file that is not a model goes through the real `Engine.initialize()` and comes back as a
- *     [DwTier2LoadFailed] — the exception the verbs panel records as a load failure and falls back to
- *     the cloud on — rather than a crash. The bogus file is written where a verified model would sit
- *     only if nothing is there, and is deleted afterwards; there is no verification marker beside it,
- *     so the app would never have treated it as installed.
- */
 @RunWith(AndroidJUnit4::class)
 class DwTier2RuntimeProbeTest {
 

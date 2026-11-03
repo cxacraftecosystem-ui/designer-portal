@@ -4,15 +4,6 @@ import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/**
- * THE OWNER'S RULE (2026-10-17), held mechanically on the handset as `e2e/form-primitives-rule-unit.spec.ts`
- * holds it on the web: every on/off setting is an [AppToggle], every date a [CalendarField], every six-digit
- * code an [OtpCodeField] — never a bare Material `Switch`, never the word "ON"/"OFF" as a setting's state,
- * never a raw [FieldDateField] outside the primitive that wraps it.
- *
- * A checkbox choosing ROWS (select these three artisans) is legitimate and cannot be told from a setting by
- * a scan, so that half is held by review and the field-repo-frontend skill (§11.11), not here.
- */
 class FormPrimitivesRuleTest {
 
     private val root = File("src/main/java/com/designprototype/workshop")
@@ -22,7 +13,6 @@ class FormPrimitivesRuleTest {
             .filter { it.isFile && it.extension == "kt" && it.name !in allowed }
             .flatMap { file ->
                 file.readLines().mapIndexedNotNull { index, line ->
-                    // Prose is not code: KDoc and block-comment lines quote the old controls by name.
                     val trimmed = line.trimStart()
                     val prose = trimmed.startsWith("*") || trimmed.startsWith("/*") || trimmed.startsWith("//")
                     val code = line.substringBefore("//")

@@ -4,12 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * The handset's half of the 3D model viewer: which stored files are models (the web's
- * `modelFormatOf`, ported), and the address the WebView page is opened with. The web's
- * `e2e/model-viewer-unit.spec.ts` holds [DW_MODEL_FORMATS] to the web's list and the bundled
- * `assets/model-viewer/viewer.js` to the web's sources.
- */
 class DwModelViewerTest {
 
     @Test

@@ -45,12 +45,6 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.time.Instant
 import java.util.UUID
 
-/**
- * The top-bar scanner on a device with the REAL header, the REAL designer services and the REAL
- * offline lookups (REQUIREMENTS_2026-10-20 §6.1): the artisan register this phone cached, and the
- * cards already held in its outbox or in a design-workshop draft's stage. The API is pointed at a closed loopback port, so every network
- * call fails as "no signal" and nothing is signed in or sent.
- */
 @RunWith(AndroidJUnit4::class)
 class TopBarScanRealLookupDeviceTest {
     @get:Rule
@@ -154,7 +148,6 @@ class TopBarScanRealLookupDeviceTest {
     }
 
     private companion object {
-        /** A well-formed Designer Repository card (the shared scan fixture's). */
         const val CARD = "D-7K3QM-9XA2F-HQ"
     }
 }

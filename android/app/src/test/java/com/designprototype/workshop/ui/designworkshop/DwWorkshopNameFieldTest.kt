@@ -17,56 +17,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * "NAME OF WORKSHOP" ON THE HANDSET — the creatable combo, and the four things that make it safe.
- *
- * ── WHAT THIS FIELD IS AND WHY IT GOT A CONTROL AT ALL ────────────────────────────────────────
- *
- * `workshopSetup.workshopTitle` is the design workshop's OWN name. It is promoted onto
- * `DesignWorkshop.title` by `PROMOTED_COLUMNS` and printed on the cover of a document a ministry
- * receives, and a stage entry is a frozen copy that nothing re-resolves — so "Bagru Block Print
- * Workshop 2025" and "Bagru block-printing workshop, 2025" are one fortnight to a reader and two
- * different strings to every group-by, and the one in the file is whichever was typed.
- *
- * The browser answered that with [DwWorkshopNameField]'s twin, `StageWorkshopNameField.tsx`, in the
- * same wave that put the same offer on this client's create dialog. It did not reach the STAGE field
- * on this client, so a designer moving between the two met two different controls for one box — and
- * met the plain one on the client they use in the courtyard, on the field the report cover reads.
- *
- * ── WHY A JUNIT TEST AND NOT A SCREENSHOT ─────────────────────────────────────────────────────
- *
- * `app/build.gradle.kts` carries no `ui-test-junit4` and no Robolectric, so the JVM suite cannot
- * compose a picker and look at it. Every ruling worth pinning was therefore lifted out of the
- * composable into a pure function it calls — the same trade `SearchableSelectEmptyStateTest`,
- * `dwSketchSourceFields` and the report planner already made in this app.
- *
- * ── THE FOUR THINGS BELOW, AND THE DEFECT EACH ONE HOLDS SHUT ─────────────────────────────────
- *
- * 1. [dwOwnWorkshopTitleRole] matches exactly one field in the shipped registry. A predicate that
- *    silently stops matching does not raise, warn or log: it returns false, the ordinary box is
- *    drawn, and the loss is invisible to everything except the designer. A predicate that starts
- *    matching a SECOND field is worse — it would put a list of workshop names on a box about
- *    something else.
- * 2. The create row NAMES THE TERM BACK, and draws nothing at all for an empty box. Without the
- *    first, a designer types a new name and is offered a button that does not say what it will
- *    store; without the second, a surface with no filter box would offer *Use “” as the name*.
- * 3. The name already on the workshop is ALWAYS a row. A picker that cannot draw its own current
- *    value reads as blank, and the obvious repair for a blank box is to answer it again — which on
- *    this field overwrites a true answer with a guess.
- * 4. The offer line states BOTH numbers when the page is cut, and says typing reaches the rest.
- *    R3 and R4: a narrowing nobody announced is absence reading as non-existence, and "Showing 80"
- *    alone leaves a reader guessing whether that is most of their workshops or a sixth of them.
- */
 class DwWorkshopNameFieldTest {
 
-    /** Matches the app's own decoder: the registry carries keys the DTOs here do not model. */
     private val json = Json { ignoreUnknownKeys = true }
 
-    /**
-     * THE SHIPPED ASSET AND NOT THE LIVE SERVER, for the reason `DwPhotoMeasureFieldTest` gives:
-     * `design-workshop-schema.json` is what a handset renders from before it has ever had a
-     * connection, so it is the copy that decides what a courtyard sees.
-     */
     private val schema: SchemaResponse by lazy {
         val asset = File("src/main/assets/design-workshop-schema.json")
         assertTrue(
@@ -81,22 +35,6 @@ class DwWorkshopNameFieldTest {
             stage.entities.flatMap { ent: EntityDto -> ent.liveFields.map { "${ent.key}.${it.key}" to it } }
         }
 
-    // ---------------------------------------------------------------------------------------
-    // 1. The role
-    // ---------------------------------------------------------------------------------------
-
-    /**
-     * A STANDING TRIPWIRE, read off the registry rather than off a memory of it.
-     *
-     * The browser's `ownWorkshopTitleRole` matches on the KEY ALONE and says why that is affordable:
-     * `workshopTitle` is declared once, on `workshopSetup`, and the control refuses nothing, so the
-     * worst outcome of a false positive is a box that offers some names beside it. "Declared once" is
-     * a fact about the registry and not about the code, which is exactly the kind of fact that goes
-     * stale without anything going red — the same way `interviewDocumentedAtWorkshop` arrived with
-     * the sixth reference model while the web's sibling key list said "two".
-     *
-     * So this fails HERE, with the key named, on the day a second entity declares one.
-     */
     @Test
     fun `the role matches exactly one field in the shipped registry`() {
         val matched = allLiveFields.filter { (_, field) -> dwOwnWorkshopTitleRole(field) }.map { it.first }
@@ -108,15 +46,6 @@ class DwWorkshopNameFieldTest {
         )
     }
 
-    /**
-     * THE REFERENCE ROLE'S THREE KEYS ARE NOT THIS ONE, and must never become it.
-     *
-     * `stageFieldRoles.ts` rules that `documentedAtWorkshop`, `craftDocumentedAtWorkshop` and
-     * `interviewDocumentedAtWorkshop` hold a REFERENCED RECORD's `Workshop` title, and that
-     * `workshopSetup.workshopTitle` "is not a reference to a `Workshop` row at all". Two roles over
-     * two different tables; folding them together would put a closed picker of `Workshop` rows on the
-     * one box that has to accept a workshop nobody has filed yet.
-     */
     @Test
     fun `the reference role's keys are not the workshop's own name`() {
         for (key in listOf(
@@ -128,14 +57,6 @@ class DwWorkshopNameFieldTest {
         }
     }
 
-    /**
-     * THE RAW TOKEN, NOT [com.designprototype.workshop.data.DwFieldType.of]'s answer.
-     *
-     * `of` degrades an unrecognised token to TEXT — deliberately, so one new server type cannot blank
-     * 22 stages on a handset that has not updated — and a field whose type this build has never heard
-     * of is not one this build should be putting a workshop list on. A deprecated field gets no input
-     * at all, so it gets no control either.
-     */
     @Test
     fun `the role reads the raw type token and skips a retired field`() {
         assertTrue(dwOwnWorkshopTitleRole(FieldDto(key = "workshopTitle", type = "TEXT")))
@@ -149,36 +70,13 @@ class DwWorkshopNameFieldTest {
         )
     }
 
-    // ---------------------------------------------------------------------------------------
-    // 2. The create row
-    // ---------------------------------------------------------------------------------------
-
-    /**
-     * THE ROW SAYS WHAT IT WILL STORE, IN QUOTATION MARKS AND WITHOUT PARAPHRASE.
-     *
-     * The browser's rule, kept word for word: a reader has to be able to see the exact string that
-     * would be stored — the capitals, the punctuation, the double space they did not mean to type —
-     * and a summary is the one shape that cannot show them. Trimmed on the way in AND on the way out
-     * of the quotes, so what is shown is byte-identical to what is committed: quoting the raw box
-     * while storing a trimmed one shows a name with a trailing space and stores one without.
-     */
     @Test
     fun `the create row quotes the term it will store`() {
         assertEquals("Use “Bagru winter 2026” as the name", dwWorkshopNameCreateLabel("Bagru winter 2026"))
         assertEquals("Use “Bagru winter 2026” as the name", dwWorkshopNameCreateLabel("  Bagru winter 2026 "))
-        // "Use" and never "Create": nothing is created by answering this box.
         assertFalse(dwWorkshopNameCreateLabel("Ajrakh")!!.startsWith("Create"))
     }
 
-    /**
-     * NOTHING TYPED, NOTHING OFFERED — and this is also what keeps the row off the anchored menu.
-     *
-     * [SelectCreateAction]'s contract is that a `null` label draws no row. The anchored menu has no
-     * filter box at all and therefore asks with `""`, so a term-aware action answers null there and
-     * a fixed-label one ("Create a new artisan") answers as it always did. Both halves matter: a
-     * button reading *Use “” as the name* can only do harm, and a record-making action must go on
-     * being offered before a letter is typed.
-     */
     @Test
     fun `an empty box draws no create row, and a fixed label still does`() {
         assertNull(dwWorkshopNameCreateLabel(""))
@@ -189,28 +87,14 @@ class DwWorkshopNameFieldTest {
         assertEquals("Create a new artisan", fixed.label("Ram Kumar"))
     }
 
-    // ---------------------------------------------------------------------------------------
-    // 3. The options
-    // ---------------------------------------------------------------------------------------
-
-    /**
-     * THE NAME ALREADY ON THIS WORKSHOP IS ALWAYS A ROW, AND IT IS FIRST.
-     *
-     * One page is at most eighty titles ordered newest first, so a workshop named two seasons ago is
-     * very often not among them. A picker that cannot draw its own value reads as blank, and the
-     * obvious repair for a blank box is to answer it again. The hint says where the row came from so
-     * nobody reads their own answer as a workshop the server has just offered.
-     */
     @Test
     fun `the stored name is always the first row, with a hint saying where it came from`() {
         val rows = dwWorkshopNameOptions("Kutch spring sitting", listOf("Ajrakh 2026", "Bagru 2025"))
         assertEquals(listOf("Kutch spring sitting", "Ajrakh 2026", "Bagru 2025"), rows.map { it.label })
         assertEquals("already on this workshop", rows.first().hint)
-        // The value stored is the bare title — never the label plus its hint.
         assertEquals("Kutch spring sitting", rows.first().value)
     }
 
-    /** A stored name that IS on offer is not drawn twice: one answer, one row. */
     @Test
     fun `a stored name already on offer is not duplicated`() {
         val rows = dwWorkshopNameOptions("Ajrakh 2026", listOf("Ajrakh 2026", "Bagru 2025"))
@@ -218,20 +102,11 @@ class DwWorkshopNameFieldTest {
         assertNull("the offered row keeps its own shape", rows.first().hint)
     }
 
-    /** An unanswered field adds no row of its own. */
     @Test
     fun `an empty field adds no row`() {
         assertEquals(listOf("Ajrakh 2026"), dwWorkshopNameOptions("  ", listOf("Ajrakh 2026")).map { it.label })
     }
 
-    /**
-     * DEDUPLICATED, TRIMMED, AND IN THE SERVER'S ORDER.
-     *
-     * Only the NAME is stored, so two workshops sharing a title are one answer; offering it twice is
-     * a control that appears to distinguish two answers it cannot. The order is never re-sorted —
-     * `GET /design-workshops` answers newest first, which is the workshop a designer naming one today
-     * almost always means, and alphabetical would bury this season's between two from 2019.
-     */
     @Test
     fun `the offer is deduplicated and keeps the server's order`() {
         val offer = dwWorkshopNamesOnRecord(
@@ -242,14 +117,6 @@ class DwWorkshopNameFieldTest {
         assertEquals(0, offer.withheld)
     }
 
-    /**
-     * A NAME THE FIELD COULD NOT STORE IS WITHHELD AND COUNTED, never silently dropped.
-     *
-     * `DwValues.coerce` refuses an over-length string, so offering one would offer an option that
-     * turns the row into a refused answer on save. It cannot happen with today's titles; the sentence
-     * exists because the day it does, a designer must not be left hunting for a name that is on
-     * screen nowhere and refused by nothing.
-     */
     @Test
     fun `an over-length name is withheld and said out loud`() {
         val offer = dwWorkshopNamesOnRecord(listOf("Ajrakh 2026", "A".repeat(40)), maxLength = 20)
@@ -260,7 +127,6 @@ class DwWorkshopNameFieldTest {
         assertNull(dwWorkshopNamesWithheldLine(0, 20))
     }
 
-    /** `maxLength = 0` is "the registry declared no bound", never "nothing may be stored". */
     @Test
     fun `no declared bound withholds nothing`() {
         val offer = dwWorkshopNamesOnRecord(listOf("A".repeat(400)), maxLength = 0)
@@ -268,18 +134,6 @@ class DwWorkshopNameFieldTest {
         assertEquals(0, offer.withheld)
     }
 
-    // ---------------------------------------------------------------------------------------
-    // 4. The sentence under the box
-    // ---------------------------------------------------------------------------------------
-
-    /**
-     * WHAT THE LIST IS (R3) AND WHAT IT LEFT OUT (R4), and that typing reaches the rest.
-     *
-     * A designer cannot tell "the workshops I can open" from "every workshop there is" by looking at
-     * a dropdown. The type clause is printed only when a type is chosen, because a sentence about a
-     * narrowing that is not applied is a sentence about nothing. The cut prints BOTH numbers or
-     * neither — the browser's rule and this repository's, everywhere.
-     */
     @Test
     fun `the offer line names the scope, the escape and both numbers`() {
         assertEquals(
@@ -297,16 +151,6 @@ class DwWorkshopNameFieldTest {
         )
     }
 
-    /**
-     * THE UNSEARCHED SENTENCE PROMISES THAT TYPING REACHES THE REST, AND IT CAN NOW KEEP THAT.
-     *
-     * It read *"Type a new one if it is not here."* and nothing else — the escape, and not one word
-     * about the box directly above it, which at the time could only filter the
-     * `DW_NAME_OFFER_PAGE_SIZE` rows it had been handed. A designer with 196 workshops read "Showing
-     * 80 of 196", typed the name of one of the other 116, and was told nothing matched: absence read
-     * as non-existence, on the field that names a ministry document. The box is wired to
-     * `GET /design-workshops?search=` now, so the sentence has to invite the typing that reaches it.
-     */
     @Test
     fun `the unsearched line says the box reaches past what is drawn`() {
         assertTrue(
@@ -315,17 +159,6 @@ class DwWorkshopNameFieldTest {
         )
     }
 
-    /**
-     * AND WITH A TERM IN THE BOX IT SAYS THE SEARCH ALREADY WENT EVERYWHERE.
-     *
-     * This is the half that ends the divergence. "Showing 12 of 40" under a SEARCHED box is a
-     * statement about the matches — the server counted them — and under an unsearched one it is a
-     * statement about a page the box could not see past. Same numbers, opposite meanings, and only
-     * these words tell the reader which they are looking at.
-     *
-     * The escape survives into this arm on purpose: a term that matched nothing is still a name the
-     * designer may use, and the create row underneath offers precisely that.
-     */
     @Test
     fun `a searched line says the whole list was searched, and keeps the escape`() {
         assertEquals(
@@ -343,13 +176,6 @@ class DwWorkshopNameFieldTest {
         )
     }
 
-    /**
-     * NO CUT SENTENCE WHERE THERE IS NO CUT, and none from a read that has not answered.
-     *
-     * `total` is 0 while the state is Loading or Failed, and "Showing 0 of 0" over a list that is
-     * still coming is a truncation claim made from a read that never arrived — rule 10 in the one
-     * place this control could still get it wrong.
-     */
     @Test
     fun `an unanswered read states no cut`() {
         assertFalse(dwWorkshopNameOfferLine("", shown = 0, total = 0).contains("Showing"))
@@ -357,20 +183,6 @@ class DwWorkshopNameFieldTest {
         assertFalse(dwWorkshopNameOfferLine("", shown = 12, total = 0).contains("Showing"))
     }
 
-    // ---------------------------------------------------------------------------------------
-    // 5. The sentence under an EMPTY list, which the server search split into two facts
-    // ---------------------------------------------------------------------------------------
-
-    /**
-     * A TERM THAT MATCHED NOTHING IS A FACT ABOUT THE TERM, NOT ABOUT THE ACCOUNT'S ACCESS.
-     *
-     * `workshopListNotice` answers `Listed(count = 0)` with the SCOPE sentence — the one that names
-     * an administrator — because until this box searched the server, that state could only mean this
-     * account is on no design workshop. It can now equally mean the server searched every workshop
-     * the account CAN open and none is called that. Printing the scope sentence for the second tells
-     * a designer their access has been withdrawn on the strength of a misspelt cluster name, which
-     * is the same class of lie as the one this whole control was rewritten to stop.
-     */
     @Test
     fun `an empty answer to a typed term talks about the term`() {
         assertEquals(
@@ -381,8 +193,6 @@ class DwWorkshopNameFieldTest {
                 query = "bagru"
             )
         )
-        // Trimmed, so a trailing space off a predictive keyboard does not make the reader doubt what
-        // they typed — the same rule `pickerEmptyLine` follows for its own echo.
         assertEquals(
             "No workshop name matches “bagru”.",
             dwWorkshopNameNotice(
@@ -393,15 +203,6 @@ class DwWorkshopNameFieldTest {
         )
     }
 
-    /**
-     * AND A READ THAT FAILED STILL SAYS SO, TERM OR NO TERM.
-     *
-     * The single most repeated bug class in this product is a read that failed being reported as a
-     * fact about the repository. Wiring this box to the server opened the shortest path back to it:
-     * a handset in a courtyard answering "no workshop name matches" — a claim about every workshop
-     * the account holds, made from a request that never left the phone. The term is consulted ONLY
-     * on `Listed`, and that ordering is what forecloses it.
-     */
     @Test
     fun `a failed or pending read is never reported as a term that did not match`() {
         val failedOffline = dwWorkshopNameNotice(WorkshopListState.Failed, online = false, query = "bagru")
@@ -411,8 +212,6 @@ class DwWorkshopNameFieldTest {
             assertNotNull(line)
             assertFalse(line!!.contains("No workshop name matches"))
         }
-        // And they are still the app's ONE set of words for those states rather than new ones
-        // written beside them, which is the whole reason `workshopListNotice` exists.
         assertEquals(
             workshopListNotice(WorkshopListState.Failed, WorkshopListKind.DESIGN, false),
             failedOffline
@@ -423,13 +222,6 @@ class DwWorkshopNameFieldTest {
         )
     }
 
-    /**
-     * AN EMPTY BOX OVER AN EMPTY LIST IS UNCHANGED — the scope sentence, which is the true one here.
-     *
-     * This is the state the guard above must not have swallowed: nothing typed, the server answered,
-     * and the answer is none. That genuinely IS "an administrator has put you on no design
-     * workshop", and it has to keep saying so.
-     */
     @Test
     fun `an empty answer with an empty box still names the scope`() {
         assertEquals(
@@ -446,7 +238,6 @@ class DwWorkshopNameFieldTest {
         )
     }
 
-    /** And a list with rows says nothing at all, searched or not — there is nothing to explain. */
     @Test
     fun `a list with rows prints no notice`() {
         assertNull(

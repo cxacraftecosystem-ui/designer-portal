@@ -11,26 +11,15 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The 2026-10-16 offline review's smaller pieces: when a background pass asks to run again, the two
- * outbox additions (app feedback, loose media with its workshop and GPS fix), and the measurement
- * markers riding a form draft. See `docs/ANDROID_OFFLINE_AUDIT.md`.
- */
 class OfflineEverywhereTest {
-
-    // ── BackgroundSync ─────────────────────────────────────────────────────────────────────────
 
     @Test
     fun a_background_pass_retries_only_for_work_a_connection_could_have_moved() {
         assertTrue(backgroundSyncShouldRetry(signedIn = true, waitingAfterPass = 3, online = true))
-        // No network: the job's own network constraint brings it back; a backoff would only spin.
         assertFalse(backgroundSyncShouldRetry(signedIn = true, waitingAfterPass = 3, online = false))
         assertFalse(backgroundSyncShouldRetry(signedIn = true, waitingAfterPass = 0, online = true))
-        // Nobody to send it as: it waits on disk for the next sign-in, it is never sent anonymously.
         assertFalse(backgroundSyncShouldRetry(signedIn = false, waitingAfterPass = 3, online = true))
     }
-
-    // ── App feedback in the outbox ─────────────────────────────────────────────────────────────
 
     @Test
     fun queued_app_feedback_has_a_name_in_the_tray() {
@@ -53,8 +42,6 @@ class OfflineEverywhereTest {
         assertEquals(body, json.decodeFromString(FeedbackUpsertRequest.serializer(), back.payloadJson))
         assertEquals("u1", back.ownerUserId)
     }
-
-    // ── Loose media: workshop and GPS through the outbox ───────────────────────────────────────
 
     private fun media(designWorkshopId: String? = null, location: LocationRequest? = null) = PendingMedia(
         localPath = "/data/outbox/media/a.jpg",
@@ -114,8 +101,6 @@ class OfflineEverywhereTest {
         assertNull(pm.location)
     }
 
-    // ── Measurement markers ride the draft ─────────────────────────────────────────────────────
-
     @Test
     fun an_accepted_measurement_keeps_its_marker_across_a_restored_draft() {
         val marker = buildJsonObject { put("method", JsonPrimitive("PHOTO_GEOMETRY")) }
@@ -126,13 +111,12 @@ class OfflineEverywhereTest {
 
         val body = after.body(mapOf("lengthInches" to "12.4"))!!
         assertEquals("PHOTO_GEOMETRY", body["lengthInches"]!!.jsonObject["method"]!!.jsonPrimitive.content)
-        // And a hand edit after the restore still drops it, exactly as before.
         assertNull(after.body(mapOf("lengthInches" to "12.5")))
     }
 
     @Test
     fun no_accepted_measurement_is_an_empty_draft_field() {
         assertEquals("", DwMeasurementMarkers().toDraft())
-        DwMeasurementMarkers().restoreDraft("not json") // never throws
+        DwMeasurementMarkers().restoreDraft("not json")
     }
 }

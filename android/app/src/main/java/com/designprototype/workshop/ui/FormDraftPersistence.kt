@@ -38,13 +38,6 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * The handle a form holds on its on-disk draft. See [FormDraftStore] for why this exists.
- *
- * [discard] is called by the form the moment its work is safe somewhere else — saved online, or
- * queued in the outbox — and BEFORE it navigates away, so the debounce cannot write the form back
- * after the save. [restoredAt] is non-null when the form opened with a draft from an earlier run.
- */
 class FormDraftHandle internal constructor(
     private val context: Context,
     private val owner: String?,
@@ -52,24 +45,17 @@ class FormDraftHandle internal constructor(
 ) {
     internal val gate = DraftDiscardGate()
 
-    /**
-     * Every write and every clear of this form's file runs under this, in order. Without it a save
-     * that was mid-way through copying a video when Save was pressed could land AFTER the clear, and
-     * the saved form would come back as a "restored" draft next time.
-     */
     internal val io = kotlinx.coroutines.sync.Mutex()
 
     internal var baseline: Map<String, String> = emptyMap()
     internal var restoreFn: (Map<String, String>) -> Unit = {}
 
-    /** Restored values whose boxes the form has not drawn yet; see [formDraftLeftovers]. */
     @Volatile
     internal var leftovers: Map<String, String> = emptyMap()
 
     var restoredAt by mutableStateOf<String?>(null)
         internal set
 
-    /** The work is safe elsewhere: forget the draft, and stop writing it until something new is typed. */
     fun discard() {
         gate.close()
         restoredAt = null
@@ -77,7 +63,6 @@ class FormDraftHandle internal constructor(
         AppScope.io.launch { io.withLock { runCatching { FormDraftStore.clear(context, owner, k) } } }
     }
 
-    /** Put the form back the way it opened and forget the restored draft. */
     fun startOver() {
         restoredAt = null
         leftovers = emptyMap()
@@ -87,15 +72,6 @@ class FormDraftHandle internal constructor(
     }
 }
 
-/**
- * Whether a draft write may still land after the form said its work is safe — saved, queued, or
- * thrown away with "Discard".
- *
- * The first write after [close] is the form's own flush on the way out (or the debounce catching up)
- * and carries the values the form settled on, so it is swallowed and remembered. Anything different
- * typed after that re-opens the gate, so a screen that stays open after a save — the media upload
- * screen, feedback — keeps protecting the next thing typed into it.
- */
 internal class DraftDiscardGate {
     private val closed = AtomicBoolean(false)
 
@@ -123,22 +99,9 @@ internal class DraftDiscardGate {
     }
 }
 
-/** Gallery picks already copied this process, so a draft write does not copy a video twice. */
 private val durableCopies = ConcurrentHashMap<String, String>()
 private val sweptThisProcess = AtomicBoolean(false)
 
-/**
- * Keep this form's unsaved values on disk and give them back after the app was killed.
- *
- * [key] names the form (null disables persistence entirely, e.g. while an edit is still loading).
- * [snapshot] returns every value the form would lose, as strings; a key starting with
- * [URI_FIELD_PREFIX] holds newline-separated content Uris. [restore] puts a restored map back into
- * the form's state, and is also what "Start over" calls with the values the form opened with.
- *
- * Writes are debounced (600 ms) and also flushed when the form leaves composition, so a process kill
- * costs at most the last fraction of a second of typing. A form whose values equal what it opened
- * with keeps no draft at all.
- */
 @OptIn(FlowPreview::class)
 @Composable
 fun rememberFormDraft(
@@ -151,7 +114,6 @@ fun rememberFormDraft(
     val handle = remember(key) { FormDraftHandle(context, owner, key) }
     val currentSnapshot by rememberUpdatedState(snapshot)
     val currentRestore by rememberUpdatedState(restore)
-    // What the form opened with, captured before any restore. Equal to it = nothing to keep.
     val baseline = remember(key) { snapshot() }
     handle.baseline = baseline
     handle.restoreFn = { currentRestore(it) }
@@ -164,8 +126,6 @@ fun rememberFormDraft(
         }
         val draft = withContext(Dispatchers.IO) { runCatching { FormDraftStore.load(context, owner, key) }.getOrNull() }
         if (draft != null && formDraftIsWorthKeeping(draft.fields, baseline)) {
-            // Media that can no longer be opened (a copy reclaimed, a grant that died with the old
-            // process) is dropped here rather than offered as a tile that fails at Save.
             val readable = withContext(Dispatchers.IO) {
                 draft.fields.mapValues { (field, value) ->
                     if (!field.startsWith(URI_FIELD_PREFIX)) value
@@ -181,14 +141,13 @@ fun rememberFormDraft(
         snapshotFlow { currentSnapshot() }
             .debounce(600)
             .collect { values ->
-                // Boxes that have appeared since the restore take what was waiting for them.
                 val waiting = handle.leftovers
                 if (waiting.isNotEmpty()) {
                     val arrived = waiting.filterKeys { it in values.keys }
                     if (arrived.isNotEmpty()) {
                         handle.leftovers = waiting - arrived.keys
                         currentRestore(values + arrived)
-                        return@collect // the restore changes the snapshot, which comes round again
+                        return@collect
                     }
                 }
                 persist(context, owner, key, handle, values + handle.leftovers, baseline)
@@ -196,8 +155,6 @@ fun rememberFormDraft(
     }
     DisposableEffect(key) {
         onDispose {
-            // FLUSHED ON THE WAY OUT, so Back (after the unsaved-changes prompt chose to keep editing
-            // elsewhere) or a navigation inside the debounce window does not lose the last keystrokes.
             val last = runCatching { currentSnapshot() }.getOrNull() ?: return@onDispose
             val waiting = handle.leftovers
             AppScope.io.launch { persist(context, owner, key, handle, last + waiting, baseline) }
@@ -214,7 +171,6 @@ private suspend fun persist(
     values: Map<String, String>,
     baseline: Map<String, String>,
 ) = withContext(Dispatchers.IO) { handle.io.withLock {
-    // Closed by a save or a Discard: the flush on the way out must not write the form back.
     if (!handle.gate.admits(values)) return@withLock
     runCatching {
         if (!formDraftIsWorthKeeping(values, baseline)) {
@@ -231,16 +187,12 @@ private suspend fun persist(
                 }
             }
         }
-        // Re-checked after the copy: a Save that landed while a video was copying wins.
         if (handle.gate.isClosed) return@runCatching
         FormDraftStore.save(context, owner, key, durable)
     }
     Unit
 } }
 
-/**
- * The line a form shows when it reopened with a draft, and the way back to a clean form.
- */
 @Composable
 fun FormDraftRestoredNote(handle: FormDraftHandle) {
     val at = handle.restoredAt ?: return
@@ -259,18 +211,14 @@ fun FormDraftRestoredNote(handle: FormDraftHandle) {
     }
 }
 
-/** "16 Oct, 14:05" in the phone's zone, or the raw stamp if it does not parse. */
 internal fun readableDraftStamp(iso: String): String = runCatching {
     val zoned = java.time.Instant.parse(iso).atZone(java.time.ZoneId.systemDefault())
     java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm").format(zoned)
 }.getOrDefault(iso)
 
-/** A list of strings as one draft field. The separator is a control character nobody types. */
 fun draftList(items: List<String>): String = items.joinToString("\u001F")
 
-/** The inverse of [draftList]. An empty field is an empty list. */
 fun parseDraftList(value: String): List<String> = if (value.isEmpty()) emptyList() else value.split('\u001F')
 
-/** A date field as stored in a draft ("" = no date). */
 fun draftDate(value: String): java.time.LocalDate? =
     value.takeIf { it.isNotBlank() }?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }

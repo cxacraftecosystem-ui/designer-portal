@@ -8,10 +8,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * C28 on the designer portal's handset: the wire shapes decode, the pure rules hold, and the words
- * are the web's — the same checks the documentation portal's handset runs.
- */
 class AnswerDraftsHandsetTest {
     private val json = Json { ignoreUnknownKeys = true }
 

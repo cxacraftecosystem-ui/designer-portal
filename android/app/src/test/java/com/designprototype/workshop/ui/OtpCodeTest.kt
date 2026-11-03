@@ -5,11 +5,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The six-box code on the handset — the owner's rules (2026-10-17), the web's
- * `e2e/otp-code-input-unit.spec.ts` restated: exactly six, digits only, a paste fills all six,
- * Backspace walks back, complete only at six ASCII digits, and no shake under reduced motion.
- */
 class OtpCodeTest {
 
     @Test

@@ -37,137 +37,33 @@ data class UserDto(
     val name: String,
     val role: String,
     val canManageQuestionnaire: Boolean = false,
-    /**
-     * RETIRED GRANTS. The server still serves both columns and `PATCH /users` still accepts them,
-     * so they stay here to decode — but `can_manage_crafts` / `can_manage_workshops` stopped reading
-     * them (deps.py): both powers are Professor-by-rank alone now, because a grant that lifted
-     * someone below the taxonomy over it was invisible in the role column. Nothing in this app may
-     * consult them for a permission decision; the predicates in AppNavigation.kt and MainActivity.kt
-     * are rank-only, and the toggles that set them are gone from the user admin card.
-     */
     val canManageCrafts: Boolean = false,
     val canManageWorkshops: Boolean = false,
     val canReview: Boolean = false,
     val canViewProvenance: Boolean = false,
     val canDownloadDataset: Boolean = false,
     val authProvider: String? = null,
-    /**
-     * WHETHER THIS ACCOUNT MUST BE ASKED ABOUT USAGE RECORDING BEFORE IT MAY USE THE PRODUCT.
-     *
-     * ── WHY IT ARRIVES ON THE ACCOUNT AND NOT FROM A SECOND REQUEST ───────────────────────────
-     *
-     * `auth.serialize_user` is `jsonable_encoder` over the whole `User` row minus the password hash,
-     * plus this one derived field, and it is where **all four doors converge**: `POST /auth/login` on
-     * the password path, the same route on the Google path, `GET /auth/me` and `GET /me`. So a client
-     * that signs in learns the answer in the same payload that gave it a token, a client that
-     * refreshes its session learns it again, and NEITHER CAN BE GIVEN A SESSION WITHOUT BEING TOLD.
-     * That is the plumbing fact that lets the whole consent gate cost the sign-in path nothing.
-     *
-     * ── AND WHY NOTHING HERE MAY COMPUTE IT ───────────────────────────────────────────────────
-     *
-     * `required` folds two facts into one answer — have they agreed, and did they agree to the
-     * CURRENT text — and the version comparison behind the second half is deliberately server-owned.
-     * The moment the web client and this one each fold it for themselves, the two disagree on the
-     * first deploy that bumps `usage.NOTICE_VERSION` while only one of them is redeployed, and only
-     * one of the two then asks. Render [UsageConsentGateDto.required]; never derive it from the four
-     * `usageConsent*` columns beside it.
-     *
-     * NULLABLE, and the null means "this server is older than the consent flow". A handset talking to
-     * a deployment that predates it must read that as "there is no gate here", never as "the gate is
-     * open" or "the gate is shut" — both of which would be a claim about an account nobody has asked.
-     *
-     * The name is `auth.USAGE_CONSENT_GATE_KEY`, which exists as a constant on the server precisely
-     * because two clients branch on it; this is one of the two copies it was written for.
-     */
     val usageConsentGate: UsageConsentGateDto? = null,
-    /**
-     * The four stored columns, straight off the row.
-     *
-     * They reach every client for free (see above) and are read only to SHOW a person their own
-     * answer — the settings screen prints "granted on the 3rd, at sign-in, against notice
-     * 2026-08-30.1" from these. They are never a gate: [usageConsentGate] is.
-     */
     val usageConsent: String? = null,
     val usageConsentAt: String? = null,
     val usageConsentBasis: String? = null,
     val usageConsentVersion: String? = null,
-    /**
-     * WHETHER THIS ACCOUNT MUST CHOOSE A NEW PASSWORD BEFORE IT MAY DO ANYTHING ELSE.
-     *
-     * True when an administrator chose the password — `POST /api/users`, or a password written
-     * through `PATCH /api/users/{id}` for another person, a shared secret by construction — and,
-     * since 2026-10-09, when an administrator requires a change at the next sign-in without touching
-     * the password at all. So it does NOT mean "somebody else typed this", and no screen may say so.
-     *
-     * ── IT ARRIVES FOR FREE, AND UNTIL 2026-08-31 NOTHING READ IT ─────────────────────────────
-     *
-     * `auth.serialize_user` is `jsonable_encoder` over the whole row minus the hash, so this reaches
-     * every client on all four doors — both sign-in paths, `GET /auth/me` and `GET /me` — exactly as
-     * [usageConsentGate] does. The flag was set, carried, and CONSUMED BY NO SCREEN on either client:
-     * an account created with a temporary password signed in, worked normally, and nobody was ever
-     * asked to replace it. `ui/PasswordGate.kt` is this client's half of closing that.
-     *
-     * ── THE DOOR STILL OPENS, AND EVERYTHING BEHIND IT IS REFUSED ─────────────────────────────
-     *
-     * `POST /auth/login` still mints a token for an account carrying this, deliberately: the only
-     * route that can change a password needs a bearer token, so a refusal at the door would be a
-     * demand the account could never satisfy. Since 2026-10-09 every other route outside a short
-     * allow-list answers that token with a gated 401 — see `data/PasswordChangeRequired.kt`.
-     *
-     * NULLABLE, and the null means "this server predates the column". Read it through
-     * [mustChangePasswordBlocks], never as a raw `== true` at a call site: an absent field is neither
-     * "must" nor "need not", and the only safe reading of a deployment that cannot answer is that it
-     * is not asking.
-     */
     val mustChangePassword: Boolean? = null,
-    /**
-     * Whether the account holds a password of its own, derived by the server. Null from a server
-     * older than the field — read it through `accountHasPassword`, never raw.
-     */
     val hasPassword: Boolean? = null,
-    /**
-     * ISO-8601, or null. A null BESIDE a Google account means "has never had a password", which is
-     * the distinction this column exists to make; see schema.prisma. Read by `passwordLinkOffered`,
-     * which decides whether an administrator is offered a set-password link for the account — the
-     * provider alone was the wrong proxy, because a Google sign-in keeps a password the account has.
-     */
     val passwordSetAt: String? = null,
-    /**
-     * The optional features this deployment has switched on — `auth.serialize_user`'s `features`,
-     * the same answer as `GET /api/features`. Cached with the rest of the account by [TokenStore], so
-     * a handset offline for a fortnight keeps the last answer it was given. NULL — a server older
-     * than the key, or an account cached before it — means every optional feature is HIDDEN. See
-     * `ui/aadhaar/AadhaarVerification.kt`.
-     */
     val features: FeaturesDto? = null,
-    /** The account's Aadhaar verification, present only while a verification feature is on. */
     val aadhaarVerifyStatus: String? = null,
     val aadhaarVerifyMethod: String? = null,
     val aadhaarVerifiedAt: String? = null,
     val aadhaarVerifyLast4: String? = null,
     val aadhaarVerifyName: String? = null,
     val aadhaarVerifyNameMatch: Boolean? = null,
-    /** Two-step verification is on. Drives the "Two-step on" badge and the administrator's reset. */
     val twoFactorEnabled: Boolean = false,
-    /**
-     * SIGN-IN HISTORY, for Manage users (2026-10-17): when the account was made, and the first and
-     * the last time it actually got in. ISO-8601 or null; read through `accountSignInLabel`, never
-     * raw — see `ui/AccountSignInCopy.kt` for what a null means for each.
-     */
     val createdAt: String? = null,
     val firstLoginAt: String? = null,
     val lastLoginAt: String? = null
 )
 
-/**
- * `GET /dashboard/stats`.
- *
- * THE TOP-LEVEL TOTALS ARE THE REPOSITORY'S, not the caller's uploads. They used to be filtered by
- * row visibility, so below Professor "Artisans" meant "artisans you entered" while the label said
- * otherwise — an account that had uploaded nothing read a screen of zeroes indistinguishable from an
- * empty repository. Reading is open now, so these are the true totals and the caller's own
- * contribution is answered separately in [mine]. Never render one under the other's label.
- */
 @Serializable
 data class DashboardStats(
     val totalArtisans: Int = 0,
@@ -176,19 +72,10 @@ data class DashboardStats(
     val totalToolRecords: Int = 0,
     val totalMediaFiles: Int = 0,
     val pendingSubmissions: Int = 0,
-    /**
-     * This account's own contribution, same keys as above so both rows render from one template.
-     *
-     * NULLABLE ON PURPOSE: a device can be talking to an API deployed before this block existed, and
-     * a missing `mine` must read as "this server does not answer that question" — hide the row —
-     * rather than as six honest zeroes, which would tell the user their work is gone.
-     */
     val mine: DashboardStatsMine? = null,
-    /** The repository's newest entries across the four record types, newest first, capped at ten. */
     val recentSubmissions: List<DashboardRecentSubmissionDto> = emptyList()
 )
 
-/** The caller's own uploads. Deliberately the SAME field names as [DashboardStats]'s totals. */
 @Serializable
 data class DashboardStatsMine(
     val totalArtisans: Int = 0,
@@ -199,15 +86,6 @@ data class DashboardStatsMine(
     val pendingSubmissions: Int = 0
 )
 
-/**
- * One row of the dashboard's recent-activity list. [type] is the SINGULAR record type — `artisan`,
- * `workshop`, `product`, `tool` — because it names one row, not a search bucket.
- *
- * [title] is whichever name column the record type carries, so it is null for a row that has none.
- * [createdByName] is whose work it is: the list could once only hold the reader's own rows, so it
- * went unshown; now that the list is the repository's, an unattributed title is one nobody can
- * follow up on. Still nullable — the account may have been deleted.
- */
 @Serializable
 data class DashboardRecentSubmissionDto(
     val id: String = "",
@@ -236,33 +114,15 @@ data class ArtisanDto(
     val status: String,
     val craftId: String? = null,
     val craft: CraftDto? = null,
-    /**
-     * The captured coordinate. `GET /artisans` has always sent this — the field was simply not
-     * declared here, so it was discarded at parse time and the artisan list was the one record type
-     * with no position. The map screen needs it; [ArtisanDetailDto] already carried it.
-     *
-     * Deliberately the only thing added: this DTO carries no `aadhaarNumber` or `pehchanCardNumber`
-     * and must not start to. Any screen that plots artisans reads THIS type precisely so that the
-     * identity fields are not in scope to leak.
-     */
     val location: LocationDto? = null,
     val createdById: String? = null,
     val createdAt: String? = null,
-    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
     val completeness: CompletenessDto? = null,
-    /**
-     * The artisan's live QR card (`{code, shortCode, token}`), sent while cards are on. The token
-     * is opaque and signed; it holds no record id. Cached with the register so a scanned card
-     * matches offline (`matchCardInRegister`).
-     */
     val card: ArtisanCardWireDto? = null,
-    /** The last four Aadhaar digits, never more: all a printed card shows. */
     val aadhaarLast4: String? = null,
-    /** The Field Repository card codes this artisan's link holds, so an `F` card matches offline. */
     val linkedCardCodes: List<String> = emptyList(),
 )
 
-/** One artisan card as the register carries it. */
 @Serializable
 data class ArtisanCardWireDto(
     val code: String,
@@ -270,7 +130,6 @@ data class ArtisanCardWireDto(
     val token: String,
 )
 
-/** What a printed card face shows (`GET /artisans/{id}/card` → `face`). */
 @Serializable
 data class ArtisanCardFaceDto(
     val name: String = "",
@@ -281,7 +140,6 @@ data class ArtisanCardFaceDto(
     val photoMediaId: String? = null,
 )
 
-/** `GET /artisans/{id}/card` and the reissue answer. `qrSvg` is ignored: the phone draws its own QR. */
 @Serializable
 data class ArtisanCardDto(
     val artisanId: String,
@@ -302,7 +160,6 @@ data class ArtisanCardReissueRequest(val reason: String, val source: String = "A
 @Serializable
 data class ResolveCardRequest(val input: String, val source: String = "ANDROID", val consent: Boolean = false)
 
-/** The artisan a resolved card names: enough to show and to pick, nothing more. */
 @Serializable
 data class CardArtisanDto(
     val id: String,
@@ -313,12 +170,6 @@ data class CardArtisanDto(
     val aadhaarLast4: String? = null,
 )
 
-/**
- * `POST /artisan-cards/resolve`: FOUND (`via` LOCAL or LINK) with [artisan]; REPLACED with
- * [artisanId]; REMOTE with [issuer] and [needsConsent] (a Field Repository artisan not linked here).
- * A REMOTE answer to a request sent with `consent` also carries the artisan's [match], the same shape
- * `POST /cross-portal/artisans/lookup` returns, so the add-artisan form fills from it.
- */
 @Serializable
 data class ResolveCardDto(
     val status: String,
@@ -338,17 +189,12 @@ data class CraftDto(
     val category: String? = null,
     val place: String? = null,
     val description: String? = null,
-    // The workshop this craft was documented at. Persisted since the workshop-linkage migration
-    // (Craft.workshopId), so it round-trips; still nullable, because a craft may carry no workshop
-    // and every row created before that migration has none.
     val workshopId: String? = null,
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
-    /** The record's version, the base an offline correction is composed against (2026-10-16). */
     val updatedAt: String? = null,
-    // The master-list identity and attributes (REQUIREMENTS_2026-10-20 §2.2-§2.3).
     val slug: String? = null,
     val subCategoryId: String? = null,
     val categoryId: String? = null,
@@ -357,11 +203,9 @@ data class CraftDto(
     val stateOfPractice: List<String> = emptyList(),
     val giStatus: String? = null,
     val isCatchAll: Boolean = false,
-    /** ACTIVE is on the list; LEGACY predates it and waits for review; MERGED folded into another. */
     val status: String? = null,
 )
 
-/** A catalogue row as the [CraftDto] every form and list already reads. */
 fun catalogueCraftDto(craft: CatalogueCraft): CraftDto = CraftDto(
     id = craft.id,
     name = craft.name,
@@ -407,54 +251,8 @@ data class MediaPresignResponse(
     val publicUrl: String? = null
 )
 
-/**
- * `extraMetadata.purpose` on a graph-paper measurement shot, so it never becomes a record's
- * photograph.
- *
- * ── WHAT WENT WRONG ───────────────────────────────────────────────────────────────────────────
- * The grid shot is usually the OLDEST image on a product or a tool — a designer photographs the
- * object on the 1-inch sheet to get its dimensions BEFORE taking any presentable picture of it. The
- * server picks a record's photograph with `createdAt ASC, id ASC`, so the ruled sheet won, and the
- * .docx handed to a Development Commissioner's office showed a page of graph paper captioned as the
- * tool.
- *
- * ── WHY A MARKER AND NOT A RULE ABOUT CAPTIONS ────────────────────────────────────────────────
- * The captions these uploads carry do identify a grid shot, and the server keeps a transitional
- * clause matching them so the photographs ALREADY in the bucket are excluded too. But a caption is
- * prose: it is translated, edited by a reviewer, and re-typed on the handset, and a report that
- * starts printing graph paper again because somebody tidied a sentence is not a failure anybody
- * would connect back to this. A machine-readable purpose written by the uploading client is the
- * durable half; the caption clause is the backfill for what predates it. The filename half of that
- * clause (`grid-…`, `measure-grid-…`) only covers a CAMERA capture — a designer who picks the grid
- * photo out of the gallery keeps its gallery filename — so the marker is the only thing that covers
- * both.
- *
- * ── THE STRING IS A THREE-SURFACE CONTRACT ────────────────────────────────────────────────────
- * The web writes it (`frontend/components/media/GridMeasurement.tsx`'s `MEASUREMENT_GRID_PURPOSE`),
- * this client writes the identical string on its own grid captures, and the server excludes any
- * candidate whose `extraMetadata->>'purpose'` is this value. Change it in one place and the other
- * two stop agreeing SILENTLY — nothing errors, the report just starts printing ruled paper again.
- * If every candidate on a record is excluded the server falls back to the deterministic
- * `createdAt ASC, id ASC`, so a product whose only image is a grid shot still gets a picture rather
- * than a blank.
- */
 const val MEASUREMENT_GRID_PURPOSE: String = "MEASUREMENT_GRID"
 
-/**
- * The `extraMetadata` object a marked file travels with, or NULL for an ordinary upload.
- *
- * ONE BUILDER FOR EVERY PATH THAT SENDS THE MARKER, and there are three: the two arms of
- * `uploadAttachments` (which of them runs depends only on whether the eager pre-upload had finished,
- * i.e. on signal) and `WorkshopRepository.uploadLocalFile`, which replays the offline outbox. Three
- * hand-written `buildJsonObject { put("purpose", …) }` blocks are three chances to spell the key
- * differently, and nothing would fail if one of them did — the report would simply start printing
- * graph paper again for whichever path drifted. See [MEASUREMENT_GRID_PURPOSE] for why the whole fix
- * is one string agreeing across three codebases.
- *
- * A BLANK PURPOSE IS NOT A PURPOSE. It answers null rather than `{"purpose": ""}`, because the
- * server's exclusion compares the value and an empty string matches nothing — sending the key anyway
- * would put a new field on the wire that says nothing at all.
- */
 internal fun mediaPurposeMetadata(purpose: String?): JsonObject? =
     purpose?.takeIf { it.isNotBlank() }
         ?.let { buildJsonObject { put("purpose", JsonPrimitive(it)) } }
@@ -471,42 +269,13 @@ data class MediaCompleteRequest(
     val caption: String? = null,
     val linkedRecordType: String? = null,
     val linkedRecordId: String? = null,
-    /**
-     * THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload is filed under, from that form's own
-     * dropdown. Added 2026-08-28.
-     *
-     * NOT THE SAME AS `linkedRecordType = "designWorkshop"` ABOVE, and deliberately not derived from
-     * it. That pair says which RECORD a file was uploaded against and is written by the upload path
-     * for every stage photograph; this says which workshop a person CHOSE to file a loose file
-     * under. `records.media_relation_data` carries the argument for why deriving one from the other
-     * would break the server's orphan-recovery machinery, which is split precisely on whether a link
-     * has a typed foreign key. A file may carry one, both or neither.
-     *
-     * Null is omitted from the body (`explicitNulls = false`), so every upload that has no workshop
-     * to declare sends exactly the bytes it always sent.
-     */
     val designWorkshopId: String? = null,
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null,
     val processingRequests: List<String> = emptyList(),
-    /**
-     * Free-form metadata stored on the media row — today only `{"purpose": …}`, see
-     * [MEASUREMENT_GRID_PURPOSE].
-     *
-     * THE SERVER HAS ACCEPTED THIS KEY SINCE BEFORE THIS CLIENT SENT IT: `MediaCompleteRequest` in
-     * `backend/app/schemas/media.py` declares `extraMetadata: dict[str, Any] | None`, and
-     * `complete_media_upload` persists it through `payload.model_dump()`.
-     *
-     * DELIBERATELY NOT [EncodeDefault]. `ApiClient.json` leaves `encodeDefaults` at false, so a null
-     * here is simply absent from the body and every upload that has no purpose to declare sends
-     * exactly the bytes it always sent. That is what keeps this a zero-risk addition rather than a
-     * new key on every media upload in the app.
-     */
     val extraMetadata: JsonObject? = null,
 )
-
-// --- S3 multipart upload (large files: chunk for transfer, S3 stitches into one object) ---
 
 @Serializable
 data class MultipartCreateRequest(
@@ -566,8 +335,6 @@ data class MultipartAbortRequest(
     val uploadId: String
 )
 
-// --- Over-the-air app update ---
-
 @Serializable
 data class AppReleaseDto(
     val versionCode: Int = 0,
@@ -575,23 +342,6 @@ data class AppReleaseDto(
     val url: String? = null,
     val notes: String? = null,
     val objectKey: String? = null,
-    /**
-     * HOW MANY BYTES THE PUBLISHED APK IS, so a download can tell "finished" from "stopped".
-     *
-     * `WorkshopRepository.downloadApk` accepted any 2xx and handed whatever arrived to the system
-     * installer; a body that stopped part-way through 66 MB is a successful response with a
-     * truncated file behind it. See `data/AppUpdateIntegrity.kt` for the whole argument, including
-     * why this is a length rather than a hash.
-     *
-     * NULLABLE, AND NULL IS THE ORDINARY CASE ON THIS FLEET. The column arrived with this change, so
-     * every release row published before it carries null, and a phone offered one of those must
-     * download it exactly as it always did — the alternative is a fleet that cannot update off the
-     * build it is on. `Long` and not `Int`: an APK is already 67 MB and the column is a `BigInt?`.
-     *
-     * ADDITIVE ON THE WIRE. `ApiClient.json` ignores unknown keys, so an older APK reading a payload
-     * that carries this is unaffected; a newer APK reading an older server's payload gets null,
-     * which is the same "no claim" this field's absence has always meant.
-     */
     val sizeBytes: Long? = null
 )
 
@@ -602,26 +352,13 @@ data class AppReleasePublishRequest(
     val objectKey: String,
     val url: String? = null,
     val notes: String? = null,
-    /**
-     * The byte count of the APK being published — see [AppReleaseDto.sizeBytes] for what reads it.
-     *
-     * OPTIONAL, and that is a wire-compatibility requirement rather than a convenience: three
-     * publishers exist (this app, `frontend/components/settings/PublishAppUpdatePanel.tsx`, and
-     * `.github/workflows/publish-android.yml`), they ship independently, and the schema on the other
-     * end is `extra="forbid"` in one direction and would be a 422 on a missing REQUIRED field in the
-     * other. A publisher that has not learned this key yet must go on publishing releases; those
-     * rows simply carry no size claim, exactly as every existing row does.
-     */
     val sizeBytes: Long? = null
 )
-
-// --- In-app feedback (quantitative rating + qualitative comment) ---
 
 @Serializable
 data class FeedbackDto(
     val id: String = "",
     val userId: String = "",
-    // Quantitative (each 1–5): overall rating + per-aspect sub-ratings.
     val rating: Int? = null,
     val easeOfUse: Int? = null,
     val reliability: Int? = null,
@@ -629,7 +366,6 @@ data class FeedbackDto(
     val design: Int? = null,
     val features: Int? = null,
     val recommend: Int? = null,
-    // Qualitative free text.
     val comment: String? = null,
     val likeMost: String? = null,
     val improve: String? = null,
@@ -641,39 +377,12 @@ data class FeedbackDto(
     val user: UserDto? = null
 )
 
-/*
- * ═══════════════════════════════════════════════════════════════════════════════════════════════
- *  THE GRIEVANCE / SUGGESTION / RECOMMENDATION REGISTER.
- * ═══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * `FeedbackDto` above is the SATISFACTION SURVEY: one row per account, upserted by `PUT
- * /feedback/me`, revisable for ever. These are the other thing — one row per thing somebody said,
- * created and never overwritten, each carrying where it has got to.
- *
- * WHY BOTH AND NOT ONE. `Feedback.userId` is unique on the server, so a person who reported a bug on
- * Monday and filed a grievance on Friday OVERWROTE the bug report. A register whose second entry
- * destroys the first is not a register, and a standing "how is the app working for you" really is
- * one answer per person. Two shapes, two tables, two DTOs.
- *
- * EVERY CLOSED LIST ARRIVES FROM THE SERVER, LABEL AND ALL — see `FeedbackVocabularyDto`. Nothing in
- * this file holds a list of kinds, and adding one here is the drift that would let the handset and
- * the web describe one submission differently.
- */
-
-/** One member of a served list: the value that is stored, and the words a person reads. */
 @Serializable
 data class FeedbackChoiceDto(
     val value: String = "",
     val label: String = ""
 )
 
-/**
- * Every closed list a report is filed against, from `GET /feedback/vocabulary`.
- *
- * Defaulted to empty lists rather than being non-null, so a response from an older server that does
- * not carry one of them decodes instead of throwing: the screen then draws that dropdown with
- * nothing in it, which is visible and recoverable, where a decoding failure takes the whole screen.
- */
 @Serializable
 data class FeedbackVocabularyDto(
     val kind: List<FeedbackChoiceDto> = emptyList(),
@@ -683,14 +392,6 @@ data class FeedbackVocabularyDto(
     val client: List<FeedbackChoiceDto> = emptyList()
 )
 
-/**
- * One filed report.
- *
- * The `*Label` fields are the SERVER's words for the stored values beside them: render the label,
- * file and filter on the value. That is what lets a report stored under a category since retired
- * still print — the server falls back to the raw key rather than failing — and it is what keeps this
- * client from carrying its own copy of what a GRIEVANCE is called.
- */
 @Serializable
 data class FeedbackReportDto(
     val id: String = "",
@@ -720,7 +421,6 @@ data class FeedbackReportDto(
     val resolvedBy: UserDto? = null
 )
 
-/** The house list envelope for reports, plus the one extra count the two list routes add. */
 @Serializable
 data class FeedbackReportPageDto(
     val items: List<FeedbackReportDto> = emptyList(),
@@ -731,14 +431,6 @@ data class FeedbackReportPageDto(
     val openCount: Int = 0
 )
 
-/**
- * A report being filed.
- *
- * THE LAST FOUR ARE CAPTURED, NEVER ASKED. A bug report that does not say which app, which build and
- * which screen is one nobody can reproduce, and asking a researcher at the end of a field day for
- * their app's version code is asking them to go and find a number they have no reason to know. The
- * screen fills them in from `BuildConfig` and `android.os.Build`; see `FeedbackReportSection`.
- */
 @Serializable
 data class FeedbackReportCreateRequest(
     val kind: String,
@@ -810,21 +502,6 @@ data class AnalyzeMeasurementResponse(
     val status: String? = null,
     val analysis: MeasurementAnalysisDto? = null,
     val message: String? = null,
-    /**
-     * The marker to send back with whatever the designer accepts — `MeasurementProvenance.marker()`,
-     * spliced in at the TOP LEVEL of this response beside [analysis] rather than inside it.
-     *
-     * A RAW [JsonObject] SO IT CAN BE ECHOED VERBATIM, which is what the server asks for: it
-     * documents this as "what a client echoes back, unchanged, when it saves the value it was given",
-     * and deliberately leaves a marker's key set open so a handset relaying a NEWER server's extra
-     * key is not refused mid-deploy. Modelling it as a data class would close that set and turn a
-     * server-side addition into a 422 on every save from a handset a fortnight behind.
-     *
-     * Null on an older deployment — `ignoreUnknownKeys` meant this key was silently dropped here
-     * until 2026-08-27 — and [dwVisionMarker] supplies the bare `VISION_MODEL` marker for that case.
-     * The sibling `provider` / `modelId` / `selfReportedConfidence` / `requiresAcceptance` keys are
-     * deliberately NOT modelled: everything this client does with them, it does through this one.
-     */
     val methodMarker: JsonObject? = null
 )
 
@@ -834,20 +511,6 @@ data class MediaFileDto(
     val originalFilename: String,
     val mediaType: String,
     val mimeType: String? = null,
-    /**
-     * The fetchable object URL — ABSENT WHENEVER THIS ACCOUNT MAY NOT TAKE THE FILE, which is now a
-     * routine state rather than only the sign of an incomplete upload.
-     *
-     * Reading the repository is open to every signed-in account, so every media ROW travels: name,
-     * type, caption, transcript, parent record, uploader. But a URL is not a description of a file, it
-     * IS the file, so the server withholds it (and `objectKey`, from which it can be rebuilt) unless
-     * the caller may download that uploader's data — themselves, a professor or above, a holder of the
-     * dataset-download permission, or someone the uploader granted access to. See
-     * `records._MEDIA_URL_KEYS`.
-     *
-     * So treat null as "not for you" OR "not uploaded yet" and offer no player either way. It is not an
-     * error and must never be reported as one.
-     */
     val url: String? = null,
     val caption: String? = null,
     val transcriptStatus: String? = null,
@@ -855,69 +518,23 @@ data class MediaFileDto(
     val transcriptError: String? = null,
     val transcribeRequested: Boolean? = null,
     val transcribeRequestSource: String? = null,
-    /**
-     * WHEN A PERSON LAST REPLACED THE MACHINE'S WORDS. ISO-8601, or null.
-     *
-     * ── THREE STATES, NOT TWO, AND THE THIRD IS WHY THIS IS A TIMESTAMP ─────────────────────────
-     *
-     * `POST /media/{id}/transcript` is the only route by which a human's words replace a provider's,
-     * and since 2026-08-31 it stamps this column from the SERVER's clock with the SERVER's idea of
-     * who was asking — an edit stamp a client could choose is not an audit stamp, so neither this
-     * nor `transcriptEditedById` is ever on the wire in the other direction.
-     *
-     * **NULL MEANS "NOT STATED" AND NEVER "NEVER EDITED".** Transcripts already in this repository
-     * HAVE been rewritten through that route — it has existed all along — and the column simply did
-     * not exist to record it. Its migration refuses to backfill `false` for exactly that reason. So
-     * a reader gets three answers: edited, not edited, and nothing at all — and only a surface that
-     * holds the MACHINE's own copy to compare against may draw the middle one. This client's
-     * questionnaire form does (`machineText`); every screen that merely displays a stored transcript
-     * does not, and shows the flag only when this is non-null. The web's two read-only surfaces pass
-     * `edited={... ? true : undefined}` for the same reason and in the same words.
-     *
-     * ── THE QUEUE NEVER CLEARS IT ───────────────────────────────────────────────────────────────
-     *
-     * `media_queue` writes `transcriptText` on every provider result, including the refined,
-     * translated pass that lands hours after a quick transcript — and deliberately leaves this
-     * alone, because blanking it would record a designer's corrections as the machine's own words at
-     * the moment they were overwritten. The collision is resolved instead where a person can be
-     * asked: a later transcript is OFFERED against an edited box and never imposed on it. See
-     * `ui/questionnaires/QuestionnaireTranscripts.kt`.
-     */
     val transcriptEditedAt: String? = null,
     val uploadedBy: UserDto? = null,
     val createdAt: String? = null,
     val linkedRecordType: String? = null,
     val linkedRecordId: String? = null,
-    /** A questionnaire take's chips (section, form, artisans, dates, workshop; owner, 31 Oct 2026). */
     val questionnaireChips: com.designprototype.workshop.questionnaire.data.QChips? = null,
-    /** What was said (0.0.6, transcript contract `TranscriptPreview`): speakers as labels, never markdown. */
     val transcriptPreview: com.designprototype.workshop.transcript.data.TranscriptPreviewDto? = null
 )
 
-/**
- * One row of `GET /media/jobs` — the queue that turns an uploaded audio file into a transcript.
- *
- * WHY THIS DTO EXISTS AT ALL. The queue drains itself (the server starts a worker at boot), so
- * transcription worked and nobody noticed the half that did not: a job that used up its attempts
- * stopped in FAILED with the provider's reason in [error] — a field no screen on any client read.
- * The media row simply kept saying "Transcript: FAILED", with no cause, and there was no way to ask
- * for it again from the phone or from the web. Reading these rows is what makes the failure sayable.
- *
- * [mediaFile] arrives through the server's masked encoder with NO viewer, so its `url` is ALWAYS
- * absent here even for a master admin — take the name and the type from it, never the bytes.
- */
 @Serializable
 data class MediaProcessingJobDto(
     val id: String,
-    /** TRANSCRIPTION or MEASUREMENT. */
     val jobType: String,
-    /** QUEUED · PROCESSING · COMPLETED · FAILED · CANCELLED. */
     val status: String,
     val attempts: Int = 0,
     val maxAttempts: Int = 0,
-    /** The reason, verbatim from the provider. The whole point of the row — never hide it. */
     val error: String? = null,
-    /** Backoff gate: a QUEUED job whose runAfter is still ahead is waiting, not stuck. */
     val runAfter: String? = null,
     val completedAt: String? = null,
     val createdAt: String? = null,
@@ -926,7 +543,6 @@ data class MediaProcessingJobDto(
     val requestedBy: UserDto? = null
 )
 
-/** `POST /media/jobs/process` — how much of the queue that manual drain actually moved. */
 @Serializable
 data class MediaQueueRunDto(
     val processed: Int = 0,
@@ -935,93 +551,24 @@ data class MediaQueueRunDto(
 )
 
 
-/* ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE PASSWORD ROUTES: the first-login change, and the administrator's one-off link
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * THE FIELD NAMES ARE THE SERVER'S, checked against `backend/app/schemas/auth.py` and
- * `routes/auth.py::_link_payload` rather than remembered — the discipline [DwDictateDto]'s docstring
- * sets out, and the defect it was written after: a DTO here once declared five keys the endpoint had
- * never sent, and because this client decodes with `ignoreUnknownKeys = true` nothing threw. Every
- * field simply defaulted, and a perfect read reached the designer as a failure.
- */
-
-/**
- * The signed-in account replacing its own password.
- *
- * `currentPassword` IS REQUIRED EVEN WHEN `mustChangePassword` IS SET, and the server is right to
- * insist: the flag means "the password you hold must be replaced", not "anybody holding this handset
- * may replace it". The person always has it — they used it to get the token this call is made with —
- * so the gate screen carries it forward rather than asking twice.
- *
- * Every refusal is a sentence: 400 for a wrong current password (still charged to the account's
- * guessing budget), for a `newPassword` equal to the current one, and for an account with no
- * password; 422 for a length outside 8..200 (`MIN_PASSWORD_LENGTH`/`MAX_PASSWORD_LENGTH` in
- * `ui/PasswordSetupCopy.kt`); 429 when the budget is spent.
- */
 @Serializable
 data class ChangePasswordRequest(
     val currentPassword: String,
     val newPassword: String
 )
 
-/**
- * What a successful change answers in its BODY: `{"ok": true}`, exactly what it has always answered.
- *
- * THE NEW SESSION IS NOT IN HERE, AND MUST NEVER BE. Since 2026-10-09 every session token carries a
- * fingerprint of the password it was opened with, so the change this call makes ends every older
- * session of the account, the one making the call included. The token this handset goes on with is
- * minted after the write and comes back in the [SESSION_TOKEN_HEADER] response header instead,
- * because of every handset already in the field: builds 0.0.6–0.0.15 decode this body as
- * `Map<String, Boolean>`, a string beside `ok` fails that decode after the server has taken the
- * password, and the decoder's message quotes the value — which the gate shows as the reason the
- * change failed. A token in the body would put a live session on screen. Those builds never read
- * the header; they meet one plain 401 at their next request and sign in with the password just
- * chosen.
- *
- * A TYPE WITH `ok` ALONE, and not that map, for the same hazard turned the other way: this client
- * decodes with `ignoreUnknownKeys`, so a key a later server adds — of any type — is skipped instead
- * of turning a change that landed into a failure on screen. Nothing reads `ok`; a 2xx is the
- * success, as it was for the map.
- */
 @Serializable
 data class ChangePasswordResponse(
     val ok: Boolean = false,
 )
 
-/**
- * The response header `POST /auth/change-password` hands the fresh session back in. Mirrors the
- * server's spelling; spelled once here. Read by `WorkshopRepository.changeOwnPassword`, off a 2xx
- * only — see [ChangePasswordResponse] for why it is a header and not a field of the body.
- */
 const val SESSION_TOKEN_HEADER = "X-Session-Token"
 
-/** An administrator asking for a password link for somebody else's account. */
 @Serializable
 data class IssuePasswordLinkRequest(
-    /**
-     * No `purpose` beside it, and that is the server's decision rather than an omission here: the
-     * purpose is derived from whether the account has ever had a password, because the two differ
-     * only in a lifetime and an admin choosing "invite" for a live account would mint a three-day
-     * credential for it.
-     */
     val userId: String
 )
 
-/**
- * One issued link, as the server hands it back.
- *
- * **THERE IS NO `token` FIELD BESIDE `link`, AND ADDING ONE WOULD BE A DEFECT.** The canonical route
- * refuses to return the token separately on the stated grounds that a credential appearing twice in
- * one answer is a credential in two places to keep out of logs. The link contains it; nothing needs
- * it twice, and this client must not take it apart to get at it.
- *
- * `deliveredBy` is `"COPY_LINK"` today — the server sent nothing and the administrator hands the
- * link over themselves, the owner's decision of 2026-08-30 and the reason no mail dependency was
- * added. **Branch on this field, never assume it.** The transport sits behind an interface on the
- * server precisely so adding SES later is a config change, and a screen that hard-codes "copy this"
- * would go on saying so after the mail started going out.
- */
 @Serializable
 data class IssuedPasswordLinkDto(
     val id: String = "",
@@ -1031,44 +578,20 @@ data class IssuedPasswordLinkDto(
     val deliveredBy: String = ""
 )
 
-/** Redeeming a link. Unauthenticated by necessity — the whole point is that the person cannot sign in. */
 @Serializable
 data class SetPasswordRequest(
     val token: String,
     val password: String
 )
 
-/**
- * The body of `POST /auth/set-password/check`: the token, and nothing beside it.
- *
- * In a body because a body is not a request line, and request lines are what proxies and access logs
- * write down — see `WorkshopRepositoryApi.checkPasswordLinkInBody`. Not a map, so the field name is
- * spelled once, here, and a typo is a compile error rather than a 422.
- */
 @Serializable
 data class PasswordLinkCheckRequest(
     val token: String
 )
 
-/**
- * Is this link still good, and if not, in a word the screen can branch on.
- *
- * IT ANSWERS ABOUT THE LINK AND NEVER ABOUT THE ACCOUNT — no email, no name, no role. The route is
- * reachable by anybody with a guess, and a body that named the account would turn a forged-token
- * probe into an account lookup. The screen does not need it: the person knows whose password they
- * are setting.
- */
 @Serializable
 data class PasswordLinkCheckDto(
-    /**
-     * REQUIRED, with no default, and that is the screen's rule rather than a style. A default of
-     * `false` read a 2xx body that did not answer the question — `{}`, a proxy's page that happens to
-     * be JSON — as "this link is dead", printed a refusal and hid the password boxes. Without the
-     * default such a body fails to decode, and a check that could not be read is what
-     * `SetPasswordLinkScreen` treats as "not examined": it offers the form and lets the POST decide.
-     */
     val valid: Boolean,
-    /** The server's own reason WORD — never its sentence. See `dwSetPasswordRefusal`. */
     val reason: String? = null,
     val purpose: String? = null
 )
@@ -1083,10 +606,6 @@ data class UserUpdateRequest(
     val canDownloadDataset: Boolean? = null
 )
 
-/**
- * Who created a record awaiting review. A trimmed shape on purpose: `/review/pending` embeds only
- * id/name/role, so this cannot reuse [UserDto] (whose `email` is required and absent here).
- */
 @Serializable
 data class ReviewCreatorDto(
     val id: String,
@@ -1094,7 +613,6 @@ data class ReviewCreatorDto(
     val role: String? = null
 )
 
-/** One record awaiting review, as surfaced by GET /review/pending. */
 @Serializable
 data class PendingReviewDto(
     val recordType: String,
@@ -1103,70 +621,24 @@ data class PendingReviewDto(
     val place: String? = null,
     val createdAt: String? = null,
     val createdBy: ReviewCreatorDto? = null,
-    // Submitted after its workshop ended: only an admin/master admin may edit or approve it, so the
-    // queue warns before the reviewer discovers it as a 403.
     val needsAdminApproval: Boolean = false
 )
 
-/**
- * The review queue, WITH THE SERVER'S ACCOUNT OF ITS OWN ANSWER.
- *
- * `GET /review/pending` reads at most [cap] rows of each of six record types, newest first, so when
- * a type overflows the rows that fall off are the OLDEST — the most overdue work is exactly what
- * disappears. There is no page 2 to ask for: that route takes no `page`, `pageSize` or search
- * parameter, which is why [truncated] is the whole of what a screen can say about the cut and why
- * saying it is not optional (non-negotiable 10 of the frontend contract, ported here by
- * [com.designprototype.workshop.ui.reviewQueueCutNotice]).
- *
- * [shown] is the length of [items]; [total] is how many rows the same filter actually matches
- * across all six types, counted for real by the server for the types that overflowed. They differ
- * exactly when [truncated] is true, so a screen that prints [shown] where it means [total] reports
- * 200 of 340 as "200 of 200". This DTO carried only `items` and `total` until 2026-08-27 and the
- * repository then discarded even `total`, so the handset could not say the queue had been cut.
- *
- * THE FLAG IS EXACT, NOT GUESSED: the server reads one row beyond the cap and trims, so a queue
- * holding exactly [cap] of a type reports `false` honestly and `items.size == cap` is NOT the test
- * to write instead.
- *
- * Every field is defaulted, so this stays wire-backward-compatible in BOTH directions: a handset a
- * fortnight behind a server that gained these keys ignores them, and a handset carrying this DTO
- * against a server that predates them decodes "nothing was cut" — which is what that server meant —
- * rather than failing the call over an absent flag.
- */
 @Serializable
 data class PendingReviewListDto(
     val items: List<PendingReviewDto> = emptyList(),
-    /** How many rows arrived. Equal to `items.size`; sent so the two clients agree on the word. */
     val shown: Int = 0,
-    /** How many rows the same filter matches across the six record types. */
     val total: Int = 0,
-    /** The per-record-type ceiling the server applied. */
     val cap: Int = 0,
-    /** True when at least one record type overflowed [cap] and its oldest rows were not sent. */
     val truncated: Boolean = false,
-    /**
-     * Where the next, older page starts: pass it back verbatim as `before`. Null when nothing older
-     * is waiting, and always null from a server that predates paging (UX audit 2026-10-16, DA-09).
-     */
     val nextBefore: String? = null
 )
 
-/** Optional reviewer notes sent with approve/reject; MANDATORY on "send for revision" (422 without). */
 @Serializable
 data class ReviewActionRequest(
     val notes: String? = null
 )
 
-/**
- * A reviewer correcting a record in place instead of bouncing it back to its creator.
- *
- * [fields] is validated server-side against the record type's own PATCH schema, so only real columns
- * are accepted and every rule the normal edit path enforces still applies. Send ONLY the keys that
- * actually changed: the API refuses `status`, `extraMetadata`, `workshopId`, `location`, `artisanIds`,
- * `craftIds`, `responses`, `steps`, `recordedAt` and `recordedTimezone` with a 422.
- *
- * The record's status is left ALONE unless [approve] is set — an edit is not an approval.
- */
 @Serializable
 data class ReviewEditRequest(
     val fields: Map<String, String>,
@@ -1178,24 +650,13 @@ data class ReviewEditRequest(
 data class CraftCreateRequest(
     val name: String,
     val localName: String? = null,
-    /** Ignored by the server since the master list (§2.2): the category is the sub-category's. Left null. */
     val category: String? = null,
     val description: String? = null,
     val place: String? = null,
-    /** Required on create (REQUIREMENTS_2026-10-20 §2.3): the craft's place on the list. */
     val subCategoryId: String? = null,
     val stateOfOrigin: List<String>? = null,
     val stateOfPractice: List<String>? = null,
-    /** "GI" or "NON_GI". */
     val giStatus: String? = null,
-    // The workshop this craft was documented at. Every record form ASKS the workshop question — four
-    // of the five open with it, the questionnaire draws it fourth under its own declared order (see
-    // `RecordWorkshopField`), and `CraftForm` mounts `WorkshopField` alone because a Craft has no
-    // `designWorkshopId` column to route to — so the field is sent for craft too. NOTE: the API's
-    // Pydantic base sets `extra="forbid"`, so this key is NOT optional at the wire level — a backend that predates
-    // `CraftCreate.workshopId` rejects the whole request with 422. Ship the two together. When no
-    // workshop is selected the value is null and `explicitNulls = false` omits the key entirely,
-    // which is the backwards-compatible "no workshop named" path.
     val workshopId: String? = null,
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata"
@@ -1205,21 +666,6 @@ data class CraftCreateRequest(
 @Serializable
 data class WorkshopCreateRequest(
     val title: String,
-    /**
-     * Which KIND of workshop this is: `DESIGN_PROTOTYPE` or `OTHER`.
-     *
-     * A Design & Prototype Development Workshop and an ordinary documentation visit are both
-     * `Workshop` rows, and nothing distinguished them — so the design-workshop picker had to offer
-     * every craft-documentation visit ever recorded. Defaults to OTHER, which is what every row
-     * recorded before this column implicitly was, so an older build sending nothing is unchanged.
-     *
-     * [EncodeDefault] because this same model is the body of the update PATCH, which the API reads
-     * with `exclude_unset` — an omitted key means "leave the stored value alone". The request Json
-     * is built with `encodeDefaults = false`, so without this the ONE edit that cannot be saved is
-     * demoting a design-prototype workshop back to OTHER: the value matches the default, the key is
-     * dropped, and the row silently stays DESIGN_PROTOTYPE. Same trap [ArtisanCreateRequest] avoids
-     * by making its flag nullable; the enum keeps its non-null default and forces the key instead.
-     */
     @EncodeDefault
     val workshopType: String = "OTHER",
     val date: String,
@@ -1230,61 +676,11 @@ data class WorkshopCreateRequest(
     val notes: String? = null,
     val artisanIds: List<String>? = null,
     val craftIds: List<String>? = null,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val status: String = "PENDING",
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null,
-    /**
-     * THE IDEMPOTENCY KEY OF ONE QUEUED CREATE — minted once at queue time, sent on every replay, so
-     * a create whose answer was lost lands exactly once.
-     *
-     * ── WHAT IT CLOSES, AND WHY [PendingEntry.createdId] COULD NOT ─────────────────────────────
-     *
-     * `createdId` is proof this handset RECEIVED an answer, so `replayEntry` skips the create when it
-     * is set. The case it cannot see is the one where the answer never arrived: the POST landed, the
-     * row was written, and the reply died in a tunnel. Nothing was learned, the entry is still
-     * queued, and the next pass files a second government record for one save. The web outbox names
-     * the missing piece exactly — *"a few milliseconds of IndexedDB is as small as that window gets
-     * without idempotency keys on the API"* (`frontend/lib/offline.ts`, `persistProgress`) — and this
-     * is it, on both clients, against the same four server routes.
-     *
-     * ── NULL, NOT ABSENT-BY-DEFAULT-VALUE, AND WHY THAT IS THE WHOLE COMPATIBILITY STORY ───────
-     *
-     * `ApiClient.json` is built with `explicitNulls = false`, so a null key is DROPPED from the
-     * encoded body rather than sent as `"clientKey": null`. Three consequences, and all three are
-     * load-bearing:
-     *
-     *   1. AN ONLINE SAVE SENDS NOTHING. The forms construct this request without a key, so a save
-     *      made with a signal is byte-identical to what this build has always sent. Only the outbox
-     *      fills it in ([WorkshopRepository.createFromEntry]).
-     *   2. A CORRECTION SENDS NOTHING, WHICH IS THE SHARP ONE. This same class is the PATCH body —
-     *      `patchBodyWithClearances` encodes it whole — and the SERVER'S UPDATE SCHEMAS DO NOT
-     *      DECLARE `clientKey`. `APIModel` is `extra="forbid"`, so a correction carrying a key would
-     *      be `extra_forbidden`: a 422 read by this queue as a disagreement between BUILDS and
-     *      re-attempted once per app run, for ever, on a prepaid connection. It cannot happen,
-     *      because the key is never written into a correction's payload and a null is dropped — but
-     *      it is the reason this field must never gain a non-null default.
-     *   3. AN ENTRY QUEUED BY AN EARLIER BUILD DECODES WITH NULL and replays exactly as it always
-     *      did, which is the rule every field in [PendingEntry] follows.
-     *
-     * ── THE DEPLOY ORDER THIS DEPENDS ON, STATED BECAUSE IT IS THE ONLY RISK ───────────────────
-     *
-     * A key sent to a server whose `WorkshopCreate` does not declare one is a 422 on the whole save.
-     * That cannot happen in this release train and the reason is structural rather than a promise:
-     * the server half ships FIRST and independently (`deploy-backend.yml` on a push to main), and no
-     * APK carrying this field exists until 0.0.8 is cut and published afterwards. Every handset in
-     * the field today runs 0.0.7, which has never heard of this key. Same shape as
-     * [AppReleasePublishRequest.sizeBytes], which states the same rule for three publishers that ship
-     * independently.
-     */
     val clientKey: String? = null
 )
 
@@ -1295,129 +691,30 @@ data class ArtisanCreateRequest(
     val localName: String? = null,
     val gender: String? = null,
     val phone: String? = null,
-    /** The phone's country code; `phone` is digits only (StandardValues). */
     val phoneCountryCode: String? = null,
     val email: String? = null,
     val place: String,
     val address: String? = null,
     val notes: String? = null,
-    // Identity. `aadhaarNumber` is the repository's deduplication key (UNIQUE in the DB) and travels as
-    // BARE 12 digits — the form's grouped "1234 5678 9012" display is presentation only. The API also
-    // normalises spacing, but sending the clean value keeps the wire form and the stored form identical.
     val aadhaarNumber: String? = null,
-    // Nullable on purpose even though the API's create model defaults it to true: the request Json is
-    // built with `encodeDefaults = false`, so a non-null default would be DROPPED from the payload
-    // whenever it matched — and a PATCH that omits the flag cannot flip a "No" record back to "Yes".
-    // With null as the default, whatever the form sets is always on the wire.
-    /**
-     * ── THE TWO FACTS THE DESIGN WORKSHOP ASKS OF EVERY ARTISAN ──────────────────────────────
-     *
-     * `participant.age` and `participant.experienceYears` are `fromref` fields on the workshop's
-     * participant table — their help text promises the designer the picker fills them in — and the
-     * Artisan table had no column behind either until now. So an artisan IMPORTED into a workshop
-     * arrived with both boxes blank and one ADDED from inside a workshop had nowhere to record
-     * them, and the designer typed both back in from a printout. `experienceYears` is a report
-     * table column, so the blank printed in every submitted report.
-     *
-     * A DATE, NOT AN AGE: the workshop shows an age and the server derives it from this every time
-     * it is read, because an age written down is wrong within a year and nothing would notice.
-     * Sent as `yyyy-MM-dd`; the API accepts a bare date.
-     */
     val dateOfBirth: String? = null,
-    /**
-     * The day the artisan began practising the craft, and the feeder [experienceYears] is derived
-     * from — the same argument [dateOfBirth] makes, one answer later. A stated NUMBER of years is
-     * right on the day it is typed and silently wrong from then on; `participant.experienceYears`
-     * is a table column in every submitted report, so that decay prints. Sent as `yyyy-MM-dd`.
-     *
-     * Null on every row written before 2026-08-23: the migration that added the column deliberately
-     * refuses to guess one from the number, so an empty box on an old record is the expected state.
-     */
     val craftStartDate: String? = null,
-    /**
-     * Years practising the craft AS SOMEBODY STATED IT. 0..90, matching the stage registry's own
-     * bounds exactly. Second of the three answers the server reads, behind the value derived from
-     * [craftStartDate] and ahead of the legacy `extraMetadata` spellings — and still collected,
-     * because an artisan who says "about thirty years" and cannot name a year is the ordinary case.
-     */
     val experienceYears: Int? = null,
-    /**
-     * The MONTHS on top of those years, 0..11, and a remainder rather than a total.
-     *
-     * NOTHING ADDS THE TWO UP. `Artisan.experienceMonths` carries `CHECK (experienceMonths BETWEEN 0
-     * AND 11)` and `ArtisanCreate`/`ArtisanUpdate` bound it identically, because twelve months is a
-     * year the field above already holds. "32 years" and "6 months" are read back exactly as they
-     * were chosen.
-     *
-     * NULL, ABSENT AND 0 ARE THREE ANSWERS, and this client's `explicitNulls = false` is what makes
-     * the first two different on the wire: a null property is OMITTED, which the server reads as
-     * "leave the stored value alone", while an explicit null clears the column — which is why
-     * `experienceMonths` had to be added to `api/routes/artisans._CLEARABLE_COLUMNS` before an
-     * un-answer was reachable at all. See [WorkshopRepository.ARTISAN_CLEARABLE_COLUMNS], which is
-     * this client's mirror of that list and where the key has to appear for a PATCH to clear it.
-     *
-     * ⚠ NO FORM WRITES THIS YET. The artisan form lives in `MainActivity.kt`, which the change that
-     * added this column could not touch; the wire contract is here so the form is a single edit when
-     * that file is next opened. Read it as a column waiting for its control, not as a dead field.
-     */
     val experienceMonths: Int? = null,
     val pehchanCardAvailable: Boolean? = null,
     val pehchanCardNumber: String? = null,
-    // Newline-separated, numbered Do's and Don'ts. Required on the
-    // form; the backend requires them on create (nullable here so an update PATCH stays flexible).
     val dos: String? = null,
     val donts: String? = null,
     val craftId: String? = null,
     val craftName: String? = null,
-    // The workshop this artisan was documented at (see [CraftCreateRequest.workshopId]).
     val workshopId: String? = null,
-    /**
-     * THE DESIGN & PROTOTYPE WORKSHOP this record is filed under. Added 2026-08-28 with the column.
-     *
-     * A SECOND LINK BESIDE [workshopId] AND NOT A REPLACEMENT FOR IT. `workshopId` is the ordinary
-     * field workshop, gated by `WorkshopAssignment`; this is the 22-stage design and prototype
-     * record, gated by `load_workshop_or_404` — creator, admin, or a `DesignWorkshopViewer` grant.
-     * Two tables, two access systems; a record may carry either, both or neither.
-     * `Artisan.designWorkshopId` in schema.prisma carries the whole argument.
-     *
-     * NULL MEANS "LEAVE IT ALONE" AND NOT "UNFILE", and that limitation is inherited rather than
-     * introduced: `ApiClient.json` sets `explicitNulls = false`, so a null field is OMITTED from the
-     * body entirely and the API's `exclude_unset=True` reads an absent key as "do not touch". The
-     * server DOES accept an explicit null as "unfile" ([`records.CLEARABLE_KEYS`]) — the web sends
-     * one — and this client cannot express it, exactly as it cannot for [workshopId] today. Say so
-     * here rather than letting the next reader discover it from a save that reports success and
-     * changes nothing.
-     */
     val designWorkshopId: String? = null,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val status: String = "PENDING",
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null,
-    /**
-     * THE ARTISAN FORM CONTRACT THIS SAVE WAS MADE UNDER — [ARTISAN_FORM_CONTRACT], set by the form
-     * on every save, and the server then requires [dateOfBirth] and [craftStartDate] (2026-10-17).
-     *
-     * NULL BY DEFAULT, AND THAT IS THE OUTBOX'S TRANSITION. A queued entry is decoded back into this
-     * class on replay; one queued by a build that predates the contract has no such key, decodes to
-     * null, is omitted on the wire (`explicitNulls = false`) and lands as the old shape the server
-     * still accepts. A non-null default would stamp every old entry with the new rule on replay.
-     */
     val formContract: Int? = null,
-    /**
-     * THE LIKELY DUPLICATES THE DESIGNER WAS SHOWN AND CALLED DIFFERENT PEOPLE — creates only.
-     *
-     * A list, `[]` when nothing was shown, is what lets the server hold a likely duplicate
-     * (409 `artisan_possible_duplicate`); null — every entry queued by an earlier build, and every
-     * edit — is never held and is omitted on the wire. See `data/PossibleDuplicates.kt`.
-     */
     val duplicateAcknowledged: List<String>? = null
 )
 
@@ -1429,13 +726,6 @@ data class ProductCreateRequest(
     val artisanName: String,
     val productName: String,
     val localName: String? = null,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val productType: String = "OTHER",
     val timeTakenToCompleteProduct: String? = null,
@@ -1443,31 +733,9 @@ data class ProductCreateRequest(
     val lengthInches: Double? = null,
     val breadthInches: Double? = null,
     val heightInches: Double? = null,
-    /**
-     * HOW each of the three dimensions above was measured — see [DwMeasurementMarkers], which is
-     * the only thing that builds one, and `services/measurement_provenance.py` for the shape.
-     *
-     * NOT A COLUMN. `records.merge_field_provenance` pops it and merges it into that dimension's
-     * `{by, byName, at}` stamp, so the row says *a vision model estimated this, and R. Menon accepted
-     * it* instead of asserting R. Menon measured it. Omitting it is legal and means `UNRECORDED`; it
-     * never means `TYPED`, so a typed number correctly sends nothing.
-     *
-     * NO [EncodeDefault], UNLIKE THE STATUS/TYPE FIELDS ABOVE, AND THAT IS THE POINT. Those carry it
-     * so an edit BACK to the default still reaches the server. This one must do the OPPOSITE: with
-     * `encodeDefaults = false` on the request converter a null drops the key entirely, which is what
-     * keeps an unmarked save byte-for-byte identical to what this app sent before the key existed.
-     * Adding [EncodeDefault] here would put `"measurementMethods": null` on every product save.
-     */
     val measurementMethods: JsonObject? = null,
     val costOfMaking: Double? = null,
     val sellingPrice: Double? = null,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val marketDemand: String = "UNKNOWN",
     val rawMaterialsUsed: String? = null,
@@ -1477,25 +745,12 @@ data class ProductCreateRequest(
     val artisanId: String? = null,
     val craftId: String? = null,
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val status: String = "PENDING",
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null,
-    /**
-     * The idempotency key of one queued create. Null on an online save and on every correction; the
-     * outbox fills it in. See [WorkshopCreateRequest.clientKey] for what it closes, why a null must
-     * be dropped rather than sent, and the deploy order the whole change rests on.
-     */
     val clientKey: String? = null
 )
 
@@ -1510,63 +765,19 @@ data class ToolCreateRequest(
     val englishName: String? = null,
     val processUsedIn: String? = null,
     val material: String? = null,
-    /** A code from the shared material list (StandardValues); `material` stays free text. */
     val materialFamily: String? = null,
     val yearsInUse: Int? = null,
     val height: Double? = null,
     val width: Double? = null,
     val lengthInches: Double? = null,
     val breadthInches: Double? = null,
-    /**
-     * The THIRD of the triple, 2026-08-27. `ToolDocumentation` gained `heightInches` that day;
-     * before it, an accepted height reading had nowhere to go but the then-unit-less `height` above,
-     * and the server's own carry recorded that a measured tool height "is recorded as nothing".
-     *
-     * ── AND SINCE 2026-09-15 IT HAS A PARTNER, WHICH REVERSES WHAT THIS COMMENT USED TO SAY ────
-     *
-     * It read: *"`height` above is NOT this and is not being replaced: it holds whatever was typed,
-     * in a unit nothing can name."* `height` is CENTIMETRES now and the two are one measurement in
-     * two units — the forms fill either from the other, by real conversion, on user input only.
-     * Nothing about the WIRE changed: two keys, two columns, two `Decimal(10,2)`s, same names. What
-     * changed is what a client may infer from one about the other, and the answer is still "nothing,
-     * on load": rows saved before the pairing hold genuinely unrelated numbers in the two columns,
-     * and only a keystroke may convert. `width` ↔ [breadthInches] pair the same way; [lengthInches]
-     * has no centimetre partner and gets no new column.
-     */
     val heightInches: Double? = null,
     val thickness: Double? = null,
     val weight: Double? = null,
     val radius: Double? = null,
-    /**
-     * HOW `lengthInches` / `breadthInches` / `heightInches` were measured. Identical in shape and
-     * rules to [ProductCreateRequest.measurementMethods] — read that one for why there is no
-     * [EncodeDefault] on it and why an absent key is the correct answer for a typed number.
-     *
-     * IT MAY NAME ONLY THOSE THREE. The five boxes directly above — [height], [width], [thickness],
-     * [weight], [radius] — are NOT markable, and the server refuses a marker naming one of them by
-     * name rather than dropping it. [height] and [width] are the trap, and the pairing of 2026-09-15
-     * made it a slightly different one: a measurement route DOES now reach them, because an accepted
-     * inch reading fills its centimetre partner. It fills it by CONVERSION, which is arithmetic on a
-     * number already recorded and not a second measurement — so the partner carries no method, and
-     * naming it here would be a 422 on the whole save for a claim nobody made.
-     */
     val measurementMethods: JsonObject? = null,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val maker: String = "UNKNOWN",
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val traditionType: String = "UNKNOWN",
     val replacementCost: Double? = null,
@@ -1574,74 +785,15 @@ data class ToolCreateRequest(
     val remarks: String? = null,
     val artisanId: String? = null,
     val craftId: String? = null,
-    /**
-     * THE CRAFTS AND ARTISANS THIS TOOL IS LINKED TO, PLURAL — and they are not columns.
-     *
-     * The route pops them off the body and writes `ToolCraft` / `ToolArtisan` rows. `craftId` and
-     * `artisanId` above stay, and the server DERIVES them from element 0 whenever these are present
-     * and non-empty: `craftId := craftIds[0]`, `craftName := ", ".join(names, in this order)`,
-     * `artisanId := artisanIds[0]`. `artisanName` and `place` are NOT derived — the body's values
-     * stand, which is what lets a researcher's hand correction to either box survive a save.
-     *
-     * ORDER IS THE CONTRACT, which is why the form holds a `List` and not a `Set`. The server keeps
-     * the order it is sent and makes it readable back through `craftName`; a set's iteration order
-     * would make "the first craft" — the one every existing filter reads — whichever one the
-     * hashing happened to put first.
-     *
-     * `artisanIds` is spelled exactly as [ToolArtisanAssignRequest.artisanIds] and as
-     * [WorkshopCreateRequest.artisanIds] already spell it, because it is the same list of the same
-     * ids meaning the same thing.
-     *
-     * ── NULL MEANS "LEAVE THE LINKS ALONE"; `[]` MEANS "NO LINKS" ────────────────────────────
-     *
-     * NO [EncodeDefault], deliberately, and the reason `maker` carries one does not apply. There the
-     * one edit that could not be saved was the edit BACK to the default, because absent and default
-     * were the same value. Here they are two DIFFERENT instructions and the server refuses to guess:
-     * an absent key leaves the stored rows standing, an empty array deletes them, and an explicit
-     * `null` is a 422 with a field-level message telling the caller to pick one. `ApiClient.json` has
-     * `explicitNulls = false`, so a null here is DROPPED from the encoded body rather than sent — and
-     * that is what makes every one of these safe:
-     *
-     *   · An OUTBOX ENTRY QUEUED BY AN OLDER BUILD has neither key in its stored payload. It decodes
-     *     to null (the default), encodes to nothing, and replays exactly as it does today — no link
-     *     rows on a create, stored links untouched on a correction.
-     *   · A CORRECTION QUEUED BY THIS BUILD carries the lists the designer actually chose, including
-     *     `[]` when they cleared them. The outbox stores what the form built (`offlineFormJson`,
-     *     `encodeDefaults = true`), so a null round-trips through the file as a literal `null`,
-     *     decodes back to null, and is dropped again on the way out. `[]` survives as `[]`.
-     *   · `patchBodyWithClearances` never manufactures a null for either: both are absent from
-     *     `WORKSHOP_LINK_KEYS` and from `Offline.REFERENCE_FIELD_NOUNS`, and neither belongs in
-     *     those — they are not foreign-key columns and the sentence about a dangling reference is
-     *     already carried by `craftId` / `artisanId`, which the form sends beside them.
-     *
-     * ── DEPLOY ORDER ────────────────────────────────────────────────────────────────────────
-     *
-     * The server's `ToolCreate` / `ToolUpdate` are `extra="forbid"`, so an APK that sends these to a
-     * deployment that has not taken them yet is refused with `extra_forbidden` — a 422, which this
-     * outbox will not re-queue. The API must be deployed before this build reaches a handset, the
-     * same ordering [WorkshopCreateRequest.clientKey] records for the same reason.
-     */
     val craftIds: List<String>? = null,
     val artisanIds: List<String>? = null,
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val status: String = "PENDING",
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null,
-    /**
-     * The idempotency key of one queued create. Null on an online save and on every correction; the
-     * outbox fills it in. See [WorkshopCreateRequest.clientKey].
-     */
     val clientKey: String? = null
 )
 
@@ -1653,84 +805,25 @@ data class LocationRequest(
     val accuracy: Double? = null,
     val address: String? = null,
     @SerialName("placeName") val placeName: String? = null,
-    /*
-     * THE STATED ADDRESS — where the SUBJECT is, as a statement by the researcher. Six real columns
-     * on Location (see the backend's LocationInput and migration
-     * 20260727120000_location_stated_address), all six null unless the researcher supplied them: the
-     * API forbids unknown keys but is happy with these absent, and `explicitNulls = false` drops
-     * them from the body.
-     *
-     * [state] and [district] must be canonical names from GET /reference/address — the server
-     * validates against the very lists it serves, and resolves the district WITHIN its state because
-     * several district names belong to two states at once. [pincode] is the bare six digits, no
-     * spaces. [village] is free text, because no closed list of Indian villages exists.
-     */
     val state: String? = null,
     val district: String? = null,
     val village: String? = null,
     val pincode: String? = null,
-    /**
-     * The optional pin the researcher dropped on the SUBJECT'S place.
-     *
-     * Deliberately not [latitude]/[longitude], which mean the DEVICE. Send the pair or neither — the
-     * server refuses half a pin (`_pin_is_a_pair`), because a latitude on its own is 111 km of
-     * meridian stored in the one column that exists to be precise.
-     */
     val subjectLatitude: Double? = null,
     val subjectLongitude: Double? = null,
-    /**
-     * When the device took this reading, ISO 8601 with an offset — the "at" in "captured at".
-     *
-     * A column that has existed on Location since the beginning and that nothing has ever written,
-     * which is why every stored coordinate is undated. A reading with no time on it cannot be told
-     * apart from a reading taken a month later at a desk in another state, and that is exactly the
-     * question the fifteen pilot records leave a reader unable to answer.
-     */
     val capturedAt: String? = null,
-    /**
-     * The stated address AGAIN, in the shape this app used before the four columns above existed.
-     *
-     * Both shapes are sent on every save and neither may be dropped — see the long note at the top
-     * of ui/LocationFields.kt for why, and the server's `lift_stated_address` for the half that
-     * normalises them into one. Kept as a raw [JsonObject] rather than a `Map<String, String>` for
-     * two reasons: a value this client does not understand round-trips through an edit instead of
-     * being dropped on the floor, and a nested blob written by some future writer cannot fail the
-     * decode of a whole artisan list.
-     */
     val extraMetadata: JsonObject? = null
 )
 
-/**
- * `GET /reference/address` — the canonical Indian state / union-territory list and the pincode rule.
- *
- * Fetched rather than hard-coded, deliberately. A list copied into this file would be a second copy
- * of the server's, and the day the two disagree is the day a researcher picks a state the API
- * refuses. The payload is a pure constant server-side, so it costs one request.
- */
 @Serializable
 data class AddressReferenceDto(
     val version: Int = 1,
     val states: List<String> = emptyList(),
     val unionTerritories: List<String> = emptyList(),
-    /** The flat list a single-group dropdown binds to, in the server's own order. */
     val statesAndUnionTerritories: List<String> = emptyList(),
-    /**
-     * The districts of each state, absent on a server older than reference version 2.
-     *
-     * Nullable on purpose rather than defaulted to an empty table: the district dropdown has to be
-     * able to tell "this deployment does not serve districts yet" from "this state genuinely has
-     * none", and only the first of those is worth explaining to the researcher.
-     */
     val districts: AddressDistrictsDto? = null
 )
 
-/**
- * The district list, shipped inside the address reference so a state dropdown and its district
- * dropdown can never hold two different vintages of the same table.
- *
- * [asOf] and [listVersion] travel with the names so an exported dataset can record which vintage it
- * was coded against — districts are created, renamed and merged several times a year.
- */
 @Serializable
 data class AddressDistrictsDto(
     val source: String? = null,
@@ -1738,7 +831,6 @@ data class AddressDistrictsDto(
     val asOf: String? = null,
     val listVersion: Int = 0,
     val count: Int = 0,
-    /** State name to its districts, in the register's own order. */
     val byState: Map<String, List<String>> = emptyMap()
 )
 
@@ -1813,12 +905,6 @@ data class QuestionnaireResponseRequest(
     val notes: String? = null
 )
 
-/**
- * NOTE: there is deliberately no `interviewDate` here. The date of an interview is no longer a form
- * field on either client — the server derives it from `recordedAt` (see the questionnaire route's
- * `derive_interview_date`), which is the moment the interview was actually captured rather than a
- * date a researcher retypes (and mistypes) at the end of a long session. Do not re-add it.
- */
 @Serializable
 data class QuestionnaireInterviewCreateRequest(
     val title: String,
@@ -1828,20 +914,12 @@ data class QuestionnaireInterviewCreateRequest(
     val status: String = "PENDING",
     val artisanIds: List<String> = emptyList(),
     val responses: List<QuestionnaireResponseRequest> = emptyList(),
-    // The workshop this interview was conducted at (see [CraftCreateRequest.workshopId]).
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
     val location: LocationRequest? = null
 )
-
-// ---------------------------------------------------------------------------
-// Read models used by the browse / edit-existing screens. All fields are made
-// optional so partial server payloads never break deserialization. Decimal
-// columns arrive as JSON numbers (FastAPI encodes Decimal as float).
-// ---------------------------------------------------------------------------
 
 @Serializable
 data class LocationDto(
@@ -1852,53 +930,22 @@ data class LocationDto(
     val accuracy: Double? = null,
     val address: String? = null,
     @SerialName("placeName") val placeName: String? = null,
-    /**
-     * The stated address, column by column; see [LocationRequest] for every rule that governs them.
-     *
-     * ALL FOUR OF district/village/subjectLatitude/subjectLongitude WERE MISSING HERE, and their
-     * absence was silent data loss rather than a gap in a read model. `LocationDto.toRequest()`
-     * builds the body an edit re-sends, `attach_location` writes a BRAND NEW Location row from that
-     * body, and `forbid_clearing_location` deliberately does not demand a stated address on update —
-     * so a colleague opening a web-entered record on the phone to fix a phone number PATCHed the
-     * district, the village and the pin away, successfully, with nothing on screen to say so.
-     */
     val state: String? = null,
     val district: String? = null,
     val village: String? = null,
     val pincode: String? = null,
     val subjectLatitude: Double? = null,
     val subjectLongitude: Double? = null,
-    /** When the device took this reading; see [LocationRequest.capturedAt]. */
     val capturedAt: String? = null,
-    /** The pre-column shape of the stated address; see [LocationRequest.extraMetadata]. */
     val extraMetadata: JsonObject? = null
 )
 
-/**
- * A stored location as the body an edit re-sends.
- *
- * ── EVERY FIELD HAS TO BE HERE, AND A FORGOTTEN ONE IS NOT REJECTED, IT IS ERASED ─────────────
- *
- * `attach_location` builds a BRAND NEW `Location` row out of this body on update — it does not
- * patch the stored one — and `forbid_clearing_location` deliberately lets an update through
- * without a stated address, because the records written before those columns existed have none. So
- * anything this omits is silently dropped on the next save. That is exactly how the district, the
- * village and the subject's pin came to be nulled away by a phone opening a web-entered record to
- * correct a phone number, and it is why this is one function rather than one per screen.
- *
- * IT LIVES HERE, BESIDE THE TWO TYPES IT CONVERTS BETWEEN, so a screen does not have to own a copy.
- * `MainActivity` still carries a private twin of this from before there was anywhere shared to put
- * it; the two must not drift, and the private one should be deleted in favour of this by whoever
- * next has that file open.
- */
 fun LocationDto.toLocationRequest(): LocationRequest = LocationRequest(
     latitude = latitude,
     longitude = longitude,
     altitude = altitude,
     accuracy = accuracy,
     address = address,
-    // The read model can carry a place name the row never had; falling back to the address keeps an
-    // edit from blanking the one human-readable label a legacy row has.
     placeName = placeName ?: address,
     state = state,
     district = district,
@@ -1907,36 +954,26 @@ fun LocationDto.toLocationRequest(): LocationRequest = LocationRequest(
     subjectLatitude = subjectLatitude,
     subjectLongitude = subjectLongitude,
     capturedAt = capturedAt,
-    // The pre-column shape of the same four answers, carried through untouched so that a record
-    // written by a phone that predates the columns keeps its only copy of them. A client has no
-    // business deleting a key it does not recognise.
     extraMetadata = extraMetadata
 )
 
 @Serializable
 data class ArtisanDetailDto(
     val id: String,
-    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
     val completeness: CompletenessDto? = null,
     val name: String,
     val localName: String? = null,
     val gender: String? = null,
     val phone: String? = null,
-    /** The phone's country code; `phone` is digits only (StandardValues). */
     val phoneCountryCode: String? = null,
     val email: String? = null,
     val place: String = "",
     val address: String? = null,
     val notes: String? = null,
-    // ALWAYS the mask "XXXX XXXX 9012" since 2026-10-17: the register keeps a fingerprint and the last
-    // four digits, never the number (backend/app/services/aadhaar_fingerprint.py). The edit form shows
-    // the mask and sends it back untouched when the number is not being changed.
     val aadhaarNumber: String? = null,
     val dateOfBirth: String? = null,
-    // The joining date the experience is derived from; see [ArtisanCreateRequest.craftStartDate].
     val craftStartDate: String? = null,
     val experienceYears: Int? = null,
-    /** The months on top of the years; see [ArtisanCreateRequest.experienceMonths]. */
     val experienceMonths: Int? = null,
     val pehchanCardAvailable: Boolean = true,
     val pehchanCardNumber: String? = null,
@@ -1944,9 +981,7 @@ data class ArtisanDetailDto(
     val donts: String? = null,
     val craftId: String? = null,
     val craft: CraftDto? = null,
-    // The workshop this artisan was documented at (see [CraftDto.workshopId]).
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val status: String = "PENDING",
     val location: LocationDto? = null,
@@ -1954,14 +989,9 @@ data class ArtisanDetailDto(
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
-    /** The record's version, the base an offline correction is composed against (2026-10-16). */
     val updatedAt: String? = null,
 )
 
-/**
- * The artisan already holding a searched-for Aadhaar number. Deliberately only the fields that let a
- * researcher recognise the person and go to them — the number itself is never echoed back.
- */
 @Serializable
 data class ArtisanIdentityMatchDto(
     val id: String,
@@ -1971,10 +1001,6 @@ data class ArtisanIdentityMatchDto(
     val workshop: String? = null
 )
 
-/**
- * Body of `POST /artisan-duplicates/check`: what the artisan form knows so far. The Aadhaar travels
- * in the body only; the server fingerprints it and never stores or echoes it.
- */
 @Serializable
 data class DuplicateCheckRequest(
     val name: String,
@@ -1996,7 +1022,6 @@ data class DuplicateCheckRequest(
 @Serializable
 data class DuplicateReasonDto(val code: String, val label: String)
 
-/** A likely duplicate as the server describes it: birth year, never a date or an identifier. */
 @Serializable
 data class DuplicateArtisanDto(
     val id: String,
@@ -2023,11 +1048,6 @@ data class DuplicateCandidateDto(
 @Serializable
 data class DuplicateCheckResponse(val candidates: List<DuplicateCandidateDto> = emptyList())
 
-/**
- * Answer from `GET /artisans/lookup/aadhaar`. "Not found" is the expected, successful answer (the
- * endpoint never 404s), so [found] false with a null [artisan] is the normal case, not an error.
- */
-/** Body of `POST /artisans/lookup/aadhaar`: the typed number, kept out of the URL and its logs. */
 @Serializable
 data class AadhaarLookupRequest(val number: String)
 
@@ -2040,7 +1060,6 @@ data class AadhaarLookupDto(
 @Serializable
 data class ProductDetailDto(
     val id: String,
-    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
     val completeness: CompletenessDto? = null,
     val productName: String = "",
     val localName: String? = null,
@@ -2050,8 +1069,6 @@ data class ProductDetailDto(
     val productType: String = "OTHER",
     val timeTakenToCompleteProduct: String? = null,
     val size: String? = null,
-    // Decimal columns arrive from the API as JSON strings (e.g. "12.5"); typing them Double? broke
-    // list parsing. The forms read them via numToText(). Request DTOs keep Double? (they send numbers).
     val lengthInches: String? = null,
     val breadthInches: String? = null,
     val heightInches: String? = null,
@@ -2065,7 +1082,6 @@ data class ProductDetailDto(
     val artisanId: String? = null,
     val craftId: String? = null,
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val status: String = "PENDING",
     val measurementAnalysisStatus: String? = null,
@@ -2074,45 +1090,15 @@ data class ProductDetailDto(
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
-    /** The record's version, the base an offline correction is composed against (2026-10-16). */
     val updatedAt: String? = null,
 )
 
-/**
- * One row of `ToolCraft` — the join table that lets a documented tool cover SEVERAL crafts.
- *
- * ── WHY THE TABLE EXISTS BESIDE `craftId` RATHER THAN INSTEAD OF IT ───────────────────────────
- *
- * `ToolDocumentation.craftId` and `.craftName` are not retired and are not going to be: every
- * existing filter, index, report, carry-forward and data-browser branch reads that column. It holds
- * the FIRST of the selected crafts and `craftName` holds every selected name joined ", " in link
- * order; this list holds all of them. A client that only knows the scalar therefore keeps working
- * and keeps seeing something true, which is the whole compatibility story of the change.
- *
- * [craft] is the embedded record, sent with the link by the same read that fills the form. It is
- * what lets the tool form draw an honest row for a craft the register could not list — see
- * `ui/RecordPickers.offPageLinkRow`, which falls back to an anonymous sentence only when this is
- * null. Nullable because an older server, or a craft deleted since the save, may not carry one.
- */
 @Serializable
 data class ToolCraftLinkDto(
     val craftId: String,
     val craft: CraftDto? = null
 )
 
-/**
- * One row of `ToolArtisan` — the join table that has always existed and that this client had never
- * read.
- *
- * `GET /tools/{id}/artisans` returns the same set as a flat artisan list, and that route is what the
- * assignment screen uses. This DTO is for the tool FORM, which needs the links as they arrive with
- * the record rather than as a second request: an edit opened with no signal has the record from the
- * offline cache and no opportunity to ask again.
- *
- * `tool.artisanId` / `.artisanName` / `.place` keep the FIRST selected artisan's details, exactly as
- * `craftId` keeps the first craft — and unlike `craftName`, the name and place are NOT re-derived by
- * the server from this list, so a researcher's hand correction to either box survives a save.
- */
 @Serializable
 data class ToolArtisanLinkDto(
     val artisanId: String,
@@ -2122,7 +1108,6 @@ data class ToolArtisanLinkDto(
 @Serializable
 data class ToolDetailDto(
     val id: String,
-    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
     val completeness: CompletenessDto? = null,
     val toolkitName: String = "",
     val localName: String? = null,
@@ -2132,16 +1117,12 @@ data class ToolDetailDto(
     val place: String = "",
     val processUsedIn: String? = null,
     val material: String? = null,
-    /** A code from the shared material list (StandardValues); `material` stays free text. */
     val materialFamily: String? = null,
     val yearsInUse: Int? = null,
-    // Decimal columns arrive as JSON strings; typed String? to keep list parsing from failing.
     val height: String? = null,
     val width: String? = null,
     val lengthInches: String? = null,
     val breadthInches: String? = null,
-    // Its two siblings' twin, added with the column on 2026-08-27. `String?` for the same reason
-    // they are: a Decimal arrives as a JSON string and a Double? here fails the whole list parse.
     val heightInches: String? = null,
     val thickness: String? = null,
     val weight: String? = null,
@@ -2153,41 +1134,9 @@ data class ToolDetailDto(
     val remarks: String? = null,
     val artisanId: String? = null,
     val craftId: String? = null,
-    /**
-     * EVERY craft and artisan this tool is linked to, in the server's own order.
-     *
-     * ── EMPTY IS A REAL ANSWER AND MUST NOT BE READ AS "USE THE SCALAR" ──────────────────────
-     *
-     * The routes send both keys on every tool, always present and never null, so an empty list means
-     * this tool has no link rows. Three things produce one and all three are ordinary: a record
-     * saved before the join table existed and never re-saved since (the migration backfills
-     * `craftLinks` from `craftId`, so this is rarer for crafts than for artisans), a record created
-     * from an outbox entry queued by a build that had never heard of these keys, and a tool that
-     * genuinely names no craft.
-     *
-     * ── SO THE TOOL FORM SEEDS THE SCALAR FIRST AND THEN THESE, WHICH IS NOT THE SAME THING ──
-     *
-     * THIS PARAGRAPH SAID THE OPPOSITE UNTIL 2026-09-16 and is replaced rather than deleted, because
-     * the reasoning in it was half right and the half that was wrong cost a record: *"The tool form
-     * therefore seeds its multi-selects from these lists and falls back to `craftId`/`artisanId`
-     * when they are empty — never the other way round. Reading the scalar FIRST would throw away the
-     * second and third selected craft of every multi-craft tool."* Reading the scalar INSTEAD OF
-     * these lists would throw those away. Reading it first and then appending them, deduplicated,
-     * throws nothing away — and it keeps the record's own `artisanId` in the selection, which the
-     * links alone do not: `POST /tools/{id}/artisans` writes `ToolArtisan` rows without it and
-     * `unassign_tool_artisan` deletes one without touching it, so `artisanLinks` routinely does not
-     * contain `artisanId`. Seeded from the links alone, opening such a tool and saving it repointed
-     * `tool.artisanId` at a different artisan while `artisanName` went on naming the old one. See
-     * `ui/RecordPickers.initialLinkIds`, which is the rule and is where a test can reach it.
-     *
-     * Defaulted rather than nullable so a server that predates the keys decodes to the same empty
-     * list a server that has them sends for an unlinked tool. `ApiClient.json` sets
-     * `coerceInputValues`, so an explicit null would land here as the default too.
-     */
     val craftLinks: List<ToolCraftLinkDto> = emptyList(),
     val artisanLinks: List<ToolArtisanLinkDto> = emptyList(),
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val status: String = "PENDING",
     val measurementAnalysisStatus: String? = null,
@@ -2196,7 +1145,6 @@ data class ToolDetailDto(
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
-    /** The record's version, the base an offline correction is composed against (2026-10-16). */
     val updatedAt: String? = null,
 )
 
@@ -2215,10 +1163,8 @@ data class WorkshopCraftLinkDto(
 @Serializable
 data class WorkshopDetailDto(
     val id: String,
-    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
     val completeness: CompletenessDto? = null,
     val title: String = "",
-    /** See [WorkshopCreateRequest.workshopType]. Defaulted so an older server's payload still decodes. */
     val workshopType: String = "OTHER",
     val place: String = "",
     val description: String? = null,
@@ -2234,7 +1180,6 @@ data class WorkshopDetailDto(
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
-    /** The record's version, the base an offline correction is composed against (2026-10-16). */
     val updatedAt: String? = null,
 )
 
@@ -2258,8 +1203,6 @@ data class ArtisanQuestionnaireDto(
     val artisanId: String,
     val answered: List<ArtisanAnswerDto> = emptyList(),
     val total: Int = 0,
-    // Every interview this artisan belongs to (alone, in a subset, or in a larger set), with its
-    // recordings and the co-artisans — so a group recording surfaces for each member individually.
     val interviews: List<ArtisanInterviewDto> = emptyList()
 )
 
@@ -2283,16 +1226,13 @@ data class InterviewResponseDto(
     val answerText: String? = null,
     val notes: String? = null,
     val answeredBy: UserDto? = null,
-    /** C28: null = typed by a person; MACHINE_SUGGESTED / MACHINE_SUGGESTED_EDITED = drafted from the transcript. */
     val answerOrigin: String? = null
 )
 
 @Serializable
 data class QuestionnaireInterviewDetailDto(
     val id: String,
-    /** The day of the sitting, derived by the server from the recordings; read by the completeness meter. */
     val interviewDate: String? = null,
-    /** Which fields this record still lacks (names only), computed on read — see [RecordCompleteness]. */
     val completeness: CompletenessDto? = null,
     val title: String = "",
     val place: String? = null,
@@ -2301,28 +1241,15 @@ data class QuestionnaireInterviewDetailDto(
     val status: String = "PENDING",
     val artisans: List<WorkshopArtisanLinkDto> = emptyList(),
     val responses: List<InterviewResponseDto> = emptyList(),
-    // The workshop this interview was conducted at (see [CraftDto.workshopId]).
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val location: LocationDto? = null,
     val createdById: String? = null,
     val createdAt: String? = null,
-    /**
-     * The interview's version, answers included: the server moves it whenever an answer is written
-     * (2026-10-17), so a correction queued offline carries it as `expectedUpdatedAt` and is held for
-     * "Review changes" when another interviewer has answered since.
-     */
     val updatedAt: String? = null,
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null
 )
-
-// ---------------------------------------------------------------------------
-// Process documentation: a making/using process tied to a product, with ordered
-// steps that each carry their own media. Steps are sequential (files named 1A,
-// 1B…) or a group of activities (files named 1-G1, 1-G2…).
-// ---------------------------------------------------------------------------
 
 @Serializable
 data class ProcessStepRequest(
@@ -2338,43 +1265,16 @@ data class ProcessStepRequest(
 data class ProcessCreateRequest(
     val name: String,
     val productId: String,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val preProcessAvailable: Boolean = false,
     val notes: String? = null,
-    /**
-     * [EncodeDefault] because this model is ALSO the body of the update PATCH, which the API reads
-     * with `exclude_unset=True` — an omitted key means "leave the stored value alone". The request
-     * Json is built with `encodeDefaults = false` (ApiClient.kt), so without this the ONE edit that
-     * cannot be saved is the edit BACK to the default: the value matches, the key is dropped, the
-     * form shows the new value, the save reports success, and the database never changed.
-     */
     @EncodeDefault
     val status: String = "PENDING",
     val steps: List<ProcessStepRequest> = emptyList(),
-    // The workshop this process was documented at (see [CraftCreateRequest.workshopId]).
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val recordedAt: String? = null,
     val recordedTimezone: String = "Asia/Kolkata",
-    /**
-     * The idempotency key of one queued create. Null on an online save and on every correction; the
-     * outbox fills it in. See [WorkshopCreateRequest.clientKey].
-     *
-     * IT MATTERS MOST ON THIS REQUEST, because a replayed process duplicates its CHILDREN too: the
-     * server writes `ProcessStep` rows after the row itself, so a second landing produced a second
-     * process carrying a second full copy of every step of a making sequence. The server's replay
-     * branch answers from the stored row with its existing step ids — which
-     * [WorkshopRepository.linkTargetFor] needs, since a queued step photograph is addressed by index
-     * into `createdStepIds`.
-     */
     val clientKey: String? = null
 )
 
@@ -2399,15 +1299,12 @@ data class ProcessDetailDto(
     val product: ProductDetailDto? = null,
     val steps: List<ProcessStepDto> = emptyList(),
     val media: List<MediaFileDto> = emptyList(),
-    // The workshop this process was documented at (see [CraftDto.workshopId]).
     val workshopId: String? = null,
-    /** The design & prototype workshop this record is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val createdById: String? = null,
     val createdAt: String? = null,
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
-    /** The record's version, the base an offline correction is composed against (2026-10-16). */
     val updatedAt: String? = null,
 )
 
@@ -2423,33 +1320,7 @@ data class DatasetManifestDto(
     val files: List<DatasetFileDto> = emptyList(),
     val totalFiles: Int = 0,
     val totalMedia: Int = 0,
-    /**
-     * True when ANY table hit the server's per-row cap, so this manifest is a PART of the dataset
-     * presented in the same shape as the whole of it.
-     *
-     * The server has always sent this (`backend/app/api/routes/export.py`, set when EXPORT_TAKE or
-     * MEDIA_TAKE is reached and documented on the route) and this DTO used to drop it on the floor,
-     * so the download said "Saved to Downloads — 4,312/4,312 files" over an archive missing
-     * everything past the cap. Both numbers were true and the sentence was not. A partial archive
-     * that presents itself as complete is worse than a failed one, because nobody goes back for the
-     * rest — the web says exactly that beside its own copy of this warning
-     * (frontend/app/(protected)/sharing/page.tsx).
-     *
-     * Defaulted to false so an older server that omits the key still parses.
-     */
     val truncated: Boolean = false,
-    /**
-     * How many media rows the server could not address at all — a row whose object key or signed URL
-     * could not be produced, as distinct from a table that hit its cap.
-     *
-     * The server OR-s this into [truncated] on purpose (`export.py`: a zip short by an unaddressable
-     * file is exactly as partial as one short by a capped row), so a client that only reads
-     * [truncated] is already warned. It is carried separately because the two states are a different
-     * conversation for whoever has to go and find the missing files.
-     *
-     * Defaulted to 0 so an older server that omits the key still parses. On the streamed path the
-     * same number arrives as `X-Dataset-Skipped`.
-     */
     val skippedMedia: Int = 0
 )
 
@@ -2463,38 +1334,17 @@ data class QuestionnaireInterviewUpdateRequest(
     val artisanIds: List<String>? = null,
     val responses: List<QuestionnaireResponseRequest>? = null,
     val workshopId: String? = null,
-    /** The design & prototype workshop this interview is filed under. See [ArtisanCreateRequest]. */
     val designWorkshopId: String? = null,
     val recordedTimezone: String? = null,
     val location: LocationRequest? = null
 )
-
-// --- Questionnaire completion matrix (artisans x sections) ---
 
 @Serializable
 data class CompletionMatrixDto(
     val sections: List<CompletionSectionDto> = emptyList(),
     val artisans: List<CompletionArtisanDto> = emptyList(),
     val cells: List<CompletionCellDto> = emptyList(),
-    /**
-     * How many questionnaire interviews the CHOSEN WORKSHOP SCOPE cannot see, because they name no
-     * workshop at all.
-     *
-     * The number exists so the failure mode can never be silent again. An interview with no `workshopId`
-     * counts towards no workshop scope — which is correct, it genuinely does not say where it was taken —
-     * but it is also exactly the shape of the bug that had this matrix reporting "nothing was covered at
-     * this workshop" while twenty-five interviews sat in the repository unlinked, leaving only the admin
-     * overrides visible. Zero whenever the scope cannot hide anything: no workshop chosen, or the
-     * unassigned records explicitly included.
-     */
     val unassignedInterviews: Int = 0,
-    /**
-     * True while an admin's mark is keyed on (artisan, section) ALONE, i.e. is not per workshop.
-     *
-     * The server states it rather than leaving each client to work out whether it matters: the workshop
-     * scope narrows the green DERIVED from recordings, but a marked cell keeps its colour under every
-     * scope, and a reader watching a cell stay green as the scope moves deserves to be told why.
-     */
     val overridesAreRepositoryWide: Boolean = false
 )
 
@@ -2517,7 +1367,6 @@ data class CompletionCellDto(
     val artisanId: String,
     val sectionId: String,
     val derived: Boolean = false,
-    // null = no admin override (fall back to `derived`); else COMPLETED | NEEDS_REVIEW | NEEDS_REDO.
     val status: String? = null,
     val setByName: String? = null
 )
@@ -2526,7 +1375,6 @@ data class CompletionCellDto(
 data class CompletionCellRequest(
     val artisanId: String,
     val sectionId: String,
-    // null clears the override.
     val status: String? = null
 )
 
@@ -2548,40 +1396,16 @@ data class AppSettingUpdateRequest(
     val batchTimezone: String? = null
 )
 
-// ---------------------------------------------------------------------------
-// Records that name no workshop — GET /workshops/unmapped and POST /workshops/unmapped/map.
-//
-// WHY THIS EXISTS. Every control that narrows by workshop reads one column, `workshopId`. A record with
-// that column empty counts towards NO workshop scope — while remaining perfectly visible under "All
-// records". Since both clients OPEN scoped to the most recent workshop, the result reads as "nothing was
-// documented here" rather than as a filter excluding data sitting right there. That is exactly what
-// happened: 25 questionnaire interviews and 924 media files, every one recorded at the single workshop in
-// the repository, none carrying its id, and a completion matrix showing nothing but the cells an admin had
-// ticked by hand.
-//
-// The server decides everything. It reads the evidence, it names the rung that decided each row, and it
-// refuses to guess when the evidence is ambiguous — see `backend/app/services/workshop_inference.py`. This
-// client renders the report and presses the button; it never proposes a mapping of its own.
-//
-// Every field defaults, like the map payloads above and for the same reason: an admin screen that cannot
-// decode a new field is a screen that shows nothing at all.
-// ---------------------------------------------------------------------------
-
-/** One row the ladder looked at: where it would be filed, or why it was left alone. */
 @Serializable
 data class WorkshopMappingRowDto(
     val id: String = "",
     val title: String = "",
     val workshopId: String? = null,
     val workshopTitle: String? = null,
-    /** `PARENT` | `ARTISANS` | `WINDOW`, or null when the row could not be settled. */
     val rung: String? = null,
-    /** The server's own sentence for that rung, so both clients word a decision identically. */
     val rungCopy: String? = null,
-    /** `NO_EVIDENCE` | `AMBIGUOUS`, or null when the row WAS settled. */
     val reason: String? = null,
     val reasonCopy: String? = null,
-    /** Every workshop the deciding rung pointed at. More than one is what AMBIGUOUS means. */
     val candidateTitles: List<String> = emptyList()
 )
 
@@ -2606,15 +1430,6 @@ data class WorkshopMappingWorkshopCountDto(
     val count: Int = 0
 )
 
-/**
- * One record type's share of the gap. [singular]/[plural] are the server's own nouns, so the two clients
- * cannot call the same bucket two different things.
- *
- * [rows] is CAPPED by the server — the counts are the answer and the rows are the evidence for
- * spot-checking it — with unresolved rows listed FIRST, because those are what an admin has to act on.
- * [rowsTruncated] says the cap was hit. [applied] is null on the preview and the number actually written
- * on the response to the button.
- */
 @Serializable
 data class WorkshopMappingBucketDto(
     val bucket: String = "",
@@ -2631,26 +1446,15 @@ data class WorkshopMappingBucketDto(
     val applied: Int? = null
 )
 
-/** The body of `POST /workshops/unmapped/{bucket}/{recordId}` — the one workshop an admin named. */
 @Serializable
 data class FileUnmappedRecordBody(
     val workshopId: String,
 )
 
-/**
- * What `DELETE /workshops/unmapped/{bucket}/{recordId}` answers.
- *
- * [mediaKept] IS THE WHOLE REASON THIS ROUTE RETURNS A BODY where every per-type delete answers 204.
- * Every `MediaFile` relation is `onDelete: SetNull`, so deleting a parent record DETACHES its
- * attachments rather than removing them, and a screen that said only "deleted" would be leaving out
- * the half an admin has to act on: nine photographs still in the repository with nothing pointing at
- * them. The count is what lets the sentence be true.
- */
 @Serializable
 data class DiscardUnmappedRecordDto(
     val bucket: String = "",
     val id: String = "",
-    /** The server's own noun for the type, so the two clients cannot word one deletion two ways. */
     val noun: String = "",
     val title: String = "",
     val mediaKept: Int = 0,
@@ -2669,19 +1473,15 @@ data class WorkshopMappingTotalsDto(
     val unassigned: Int = 0,
     val resolved: Int = 0,
     val unresolved: Int = 0,
-    /** Null on the preview; the number of rows actually written on the response to the button. */
     val applied: Int? = null
 )
 
 @Serializable
 data class WorkshopMappingPlanDto(
-    /** The workshops as time spans, so the screen can say what the dates were read as. */
     val workshops: List<WorkshopMappingWindowDto> = emptyList(),
     val buckets: List<WorkshopMappingBucketDto> = emptyList(),
     val totals: WorkshopMappingTotalsDto = WorkshopMappingTotalsDto()
 )
-
-// --- Cross-researcher data access (Sharing) ---
 
 @Serializable
 data class DataAccessTierInfo(val tier: String, val description: String)
@@ -2757,7 +1557,6 @@ data class EntryCommentBody(
     val body: String
 )
 
-/** The author's edit of their own comment (`PATCH /data-access/comments/{id}`). */
 @Serializable
 data class EntryCommentUpdateBody(
     val body: String
@@ -2767,19 +1566,6 @@ data class EntryCommentUpdateBody(
 data class RevisionChange(
     val old: JsonElement? = null,
     val new: JsonElement? = null,
-    /**
-     * Set by `access._redacted_change` on the five columns logged without their value.
-     *
-     * A CONVENIENCE FOR A RENDERER AND NEVER A SECURITY DECISION — the server's own words. The same
-     * key can appear inside a client-written Json column, which is why `records._mask_identity_node`
-     * refuses to believe it and compares the pair against the closed set
-     * `access.REDACTED_PLACEHOLDER_PAIRS` instead. `RecordRevisionRedaction` in
-     * `ui/RecordEditHistory.kt` does the same thing on this client, for the same reason, and
-     * deliberately does not read this field.
-     *
-     * It is modelled here so the DTO is honest about the wire — `ignoreUnknownKeys` was silently
-     * dropping a key the server has always sent — and not so that anything can start trusting it.
-     */
     val redacted: Boolean? = null
 )
 
@@ -2793,42 +1579,18 @@ data class RecordRevisionDto(
     val createdAt: String
 )
 
-// ---------------------------------------------------------------------------
-// Workshop access. ONE row per (workshop, user) carries the whole two-sided
-// conversation: an admin grants/revokes, a user requests and is approved or
-// denied. Only status == "GRANTED" confers access — a PENDING row confers
-// nothing, and DENIED/REVOKED rows are kept as history, never deleted.
-// ---------------------------------------------------------------------------
-
-/**
- * Answer from `GET /workshops/{id}/submission-check` — what submitting a record into ONE workshop
- * would mean for the signed-in user, asked BEFORE the record is sent. The endpoint never 403s; it
- * only reports, so a failure to reach it must never block a save.
- *
- * - [canSubmit] false: the workshop is curated and this user is not on its roster, so a create would
- *   come back 403. Say so at pick time instead of after the form is filled in.
- * - [needsAdminApproval] true: the submission IS accepted, but it is pinned to PENDING and only an
- *   admin or master admin can approve it — a professor cannot. Admins are the approval authority, so
- *   an admin submitting late sees [outOfWindow] true with [needsAdminApproval] false.
- *
- * Only the eight documented keys are modelled; the endpoint also returns accessLevel/requestStatus/
- * restricted/canEdit, which the record forms have no use for (`ignoreUnknownKeys` drops them).
- */
 @Serializable
 data class WorkshopSubmissionCheckDto(
     val workshopId: String? = null,
     val title: String? = null,
     val endDate: String? = null,
-    /** The whole of the end day has passed. */
     val isOver: Boolean = false,
-    /** Submitting now falls outside [startDate, endDate] — before it opened, or after it closed. */
     val outOfWindow: Boolean = false,
     val needsAdminApproval: Boolean = false,
     val assigned: Boolean = true,
     val canSubmit: Boolean = true
 )
 
-/** VIEW < CONTRIBUTE < EDIT. The ladder and its human definitions come from the API. */
 @Serializable
 data class WorkshopAccessLevelDto(
     val level: String,
@@ -2841,7 +1603,6 @@ data class WorkshopAssignmentDto(
     val workshopId: String,
     val userId: String,
     val accessLevel: String = "CONTRIBUTE",
-    // PENDING | GRANTED | DENIED | REVOKED. Anything but GRANTED means no access.
     val status: String = "GRANTED",
     val requestNote: String? = null,
     val decisionNote: String? = null,
@@ -2849,26 +1610,18 @@ data class WorkshopAssignmentDto(
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val user: UserDto? = null,
-    // Present on the cross-workshop views (/access-requests and /access-requests/mine), where a row
-    // has to name the workshop it belongs to; null on a single workshop's roster.
     val workshop: WorkshopDetailDto? = null,
     val assignedBy: UserDto? = null,
     val requestedBy: UserDto? = null,
     val decidedBy: UserDto? = null
 )
 
-/** Legacy whole-set roster replacement (PUT). Still supported; POST/PATCH/DELETE are per-user. */
 @Serializable
 data class WorkshopAssignmentBody(
     val userIds: List<String>,
     val accessLevel: String? = null
 )
 
-/**
- * Ask for access to SEVERAL workshops at once — that is how the need arrives (a researcher joining a
- * project wants the same access to a whole season), and filing them one at a time produces a queue
- * nobody works through. Idempotent per workshop server-side.
- */
 @Serializable
 data class WorkshopAccessRequestBody(
     val workshopIds: List<String>,
@@ -2876,7 +1629,6 @@ data class WorkshopAccessRequestBody(
     val note: String? = null
 )
 
-/** Per-workshop result of a multi-select request: CREATED | ALREADY_PENDING | ALREADY_GRANTED | RE_REQUESTED. */
 @Serializable
 data class WorkshopAccessOutcomeDto(
     val workshopId: String,
@@ -2889,7 +1641,6 @@ data class WorkshopAccessRequestResultDto(
     val requests: List<WorkshopAssignmentDto> = emptyList()
 )
 
-/** Admin answer to a PENDING request: status is GRANTED or DENIED. */
 @Serializable
 data class WorkshopAccessDecisionBody(
     val status: String,
@@ -2897,7 +1648,6 @@ data class WorkshopAccessDecisionBody(
     val note: String? = null
 )
 
-/** Admin grants ONE user access at a level without disturbing the rest of the roster (upsert). */
 @Serializable
 data class WorkshopGrantBody(
     val userId: String,
@@ -2905,19 +1655,12 @@ data class WorkshopGrantBody(
     val note: String? = null
 )
 
-/** Admin changes one roster row: its level, its status (GRANTED | DENIED | REVOKED), or both. */
 @Serializable
 data class WorkshopAssignmentUpdateBody(
     val accessLevel: String? = null,
     val status: String? = null,
     val note: String? = null
 )
-
-// ---------------------------------------------------------------------------
-// Assigned tasks. One row is always exactly ONE assignee; handing the same
-// scope to N people writes N rows sharing a batchId. Scope is five orthogonal
-// dimensions: workshop x recordTypes x artisans x sections x targetCount.
-// ---------------------------------------------------------------------------
 
 @Serializable
 data class TaskArtisanDto(
@@ -2934,21 +1677,11 @@ data class TaskSectionDto(
     val sortOrder: Int = 0
 )
 
-/**
- * A task with its scope already resolved by the server — workshop title, artisan names, section
- * codes and both progress numbers — so a task board renders from this one call.
- *
- * [progressCount] is what the assignee CLAIMS; [derivedCount] is what the database can see them
- * having actually produced. The two answer different questions and the gap between them is the whole
- * point of the accountability view, so neither ever overwrites the other. [derivedCount] is null when
- * the count could not be run, and [percentComplete] is null for an open-ended task (no target).
- */
 @Serializable
 data class TaskDto(
     val id: String,
     val title: String = "",
     val description: String? = null,
-    // OPEN | IN_PROGRESS | DONE | CANCELLED
     val status: String = "OPEN",
     val dueAt: String? = null,
     val completedAt: String? = null,
@@ -2972,47 +1705,27 @@ data class TaskDto(
     val createdBy: UserDto? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
-    // The raw scope-id columns, next to the resolved [artisans]/[sections] above. An admin screen
-    // needs the ids to pre-tick a picker; the resolved rows are only what the server could still find.
     val artisanIds: List<String> = emptyList(),
     val sectionIds: List<String> = emptyList(),
-    // Legacy single-record link ("finish THIS product"), orthogonal to the scope block.
     val recordType: String? = null,
     val recordId: String? = null
 )
 
-/**
- * What an ASSIGNEE may change: where the task stands, and how much of it is done. Scope, due date and
- * reassignment stay with whoever handed the work out — sending anything else is a 403.
- */
 @Serializable
 data class TaskUpdateBody(
     val status: String? = null,
     val progressCount: Int? = null
 )
 
-// ---------------------------------------------------------------------------
-// Task ADMINISTRATION (admin / master admin): hand work out, then hold it to
-// account. Every route behind these DTOs is `require_admin` server-side.
-// ---------------------------------------------------------------------------
-
-/**
- * `user_brief()` — just enough to name a person on a task board, never any privilege material.
- *
- * Distinct from [UserDto] on purpose: the brief carries [roleLabel] ("Master Admin") and carries
- * none of the permission booleans, so it can never be mistaken for an authorisation source.
- */
 @Serializable
 data class TaskUserDto(
     val id: String,
     val name: String = "",
     val email: String? = null,
     val role: String = "",
-    /** Human label for [role] as the server words it — use this, don't re-derive it on the client. */
     val roleLabel: String = ""
 )
 
-/** One entry of the record-type catalogue: `{value:"tool", label:"tool", pluralLabel:"tools"}`. */
 @Serializable
 data class TaskRecordTypeOptionDto(
     val value: String,
@@ -3020,7 +1733,6 @@ data class TaskRecordTypeOptionDto(
     val pluralLabel: String = ""
 )
 
-/** A workshop as the assignment picker shows it (not the full [WorkshopDetailDto]). */
 @Serializable
 data class TaskWorkshopOptionDto(
     val id: String,
@@ -3029,69 +1741,18 @@ data class TaskWorkshopOptionDto(
     val date: String? = null
 )
 
-/**
- * `GET /tasks/options` — every picker the assignment builder needs, in one call.
- *
- * [assignees] is already filtered to the people THIS admin may assign to (strictly below their own
- * tier; the master admin sees everyone but themselves), so the client must never widen it.
- * [artisans] narrows to the workshop when `workshopId` was passed.
- *
- * ── THREE OF THESE LISTS CAN BE CUT, AND THIS DECODER USED TO THROW THE FLAG AWAY ─────────────
- *
- * The server takes 500 assignees, 200 workshops and 500 artisans and says on the wire when it hit
- * one of those ceilings (`TASK_OPTION_USER_LIMIT` / `_WORKSHOP_LIMIT` / `_ARTISAN_LIMIT`; re-check
- * with `grep -n "TASK_OPTION_.*_LIMIT = " backend/app/api/routes/tasks.py`, true 2026-08-27). This class declared none of the three booleans, so kotlinx dropped them at
- * the decoder (`ignoreUnknownKeys = true`, which is what stops an added field crashing an older
- * handset and is therefore also what makes a missing one silent) — an honest "this list was cut"
- * arrived and was discarded one layer above the screen that had to say so.
- *
- * THAT IS A RULE HERE, NOT A PREFERENCE. Non-negotiable 10 of the frontend contract: "**Truncation,
- * caps and skipped work must be stated on screen.** A list that quietly stops is indistinguishable
- * from a place with no records — the single most repeated bug class in this repo." (Quoted from
- * .claude/skills/field-repo-frontend/SKILL.md on 2026-08-27; re-find it with
- * `grep -n "must be stated on screen" .claude/skills/field-repo-frontend/SKILL.md` rather than by
- * line number.) The same document names this exact vocabulary
- * (`rowsTruncated`, `childrenTruncated`, `captureTruncated`, `anchorsTruncated`) among the flags a
- * client must render, and the server chose `truncated` here to match the viewer picker and the
- * reference picker so neither client learns a second word for it.
- *
- * THE FLAGS ARE EXACT, NOT GUESSED. The server reads one row more than the cap and trims, so a list
- * of exactly 500 reports `false` honestly — a screen may state the ceiling as a fact rather than
- * hedging it, and `assignees.size == 500` is NOT the test to write instead.
- *
- * A cut list is narrowed with the `search` parameter on [WorkshopRepositoryApi.taskOptions], which
- * the server folds into the WHERE, so it reaches past the cap. Pair the notice with the box: a
- * truncation sentence with no way to act on it is only a better-worded dead end.
- *
- * Defaulted to `false` so this DTO stays wire-backward-compatible in BOTH directions — a handset
- * carrying it against a server that predates the three keys decodes them as "nothing was cut", which
- * is what that server meant, and cannot fail the call over an absent flag.
- */
 @Serializable
 data class TaskOptionsDto(
     val recordTypes: List<TaskRecordTypeOptionDto> = emptyList(),
     val assignees: List<TaskUserDto> = emptyList(),
     val workshops: List<TaskWorkshopOptionDto> = emptyList(),
     val artisans: List<TaskArtisanDto> = emptyList(),
-    /** True when more than 500 accounts were assignable and the rest were not sent. */
     val assigneesTruncated: Boolean = false,
-    /** True when more than 200 workshops matched and the rest were not sent. */
     val workshopsTruncated: Boolean = false,
-    /** True when more than 500 artisans matched the workshop/term and the rest were not sent. */
     val artisansTruncated: Boolean = false,
     val sections: List<TaskSectionDto> = emptyList()
 )
 
-/**
- * `POST /tasks/batch` — assign ONE scope to several people at once. Writes one row per assignee, all
- * sharing a generated `batchId`.
- *
- * The scope must contain work: `recordTypes` and/or `sectionIds` non-empty, or the API 422s. Empty
- * [artisanIds]/[sectionIds] mean "not narrowed", not "nothing" — and because the JSON encoder skips
- * values equal to their default, an empty list is simply not sent, which is exactly that meaning.
- * [title] is optional: omit it and the server derives a readable one from the scope. [dueAt] is
- * ISO-8601 (e.g. `2026-08-01T00:00:00Z`).
- */
 @Serializable
 data class TaskBatchCreateBody(
     val assigneeIds: List<String>,
@@ -3105,7 +1766,6 @@ data class TaskBatchCreateBody(
     val dueAt: String? = null
 )
 
-/** One member of a batch: who it went to and where they have got to. */
 @Serializable
 data class TaskBatchAssigneeDto(
     val taskId: String,
@@ -3113,22 +1773,10 @@ data class TaskBatchAssigneeDto(
     val status: String = "OPEN",
     val progressCount: Int = 0,
     val derivedCount: Int? = null,
-    /** Null for an open-ended task (no target) that is neither DONE nor CANCELLED. */
     val percentComplete: Int? = null,
     val completedAt: String? = null
 )
 
-/**
- * `GET /tasks/batches` item — one assignment ACTION rolled back up.
- *
- * [batchId] is null for rows written before batching existed and for single-assignee creates; use
- * [key] (the batchId, or `task:{id}`) as the stable list key. The counts always describe the WHOLE
- * batch even when the request filtered by assignee or status — "3 of 5 done" stops meaning anything
- * if the filter silently dropped two of the five.
- *
- * [reportedTotal] is what the assignees CLAIM; [derivedTotal] is what the repository can actually
- * find them having produced (null when the counts could not be run). The gap is the point.
- */
 @Serializable
 data class TaskBatchDto(
     val key: String,
@@ -3146,7 +1794,6 @@ data class TaskBatchDto(
     val sections: List<TaskSectionDto> = emptyList(),
     val targetCount: Int? = null,
     val assigneeCount: Int = 0,
-    /** OPEN / IN_PROGRESS / DONE / CANCELLED -> how many of the batch's rows are in that state. */
     val statusCounts: Map<String, Int> = emptyMap(),
     val doneCount: Int = 0,
     val openCount: Int = 0,
@@ -3157,7 +1804,6 @@ data class TaskBatchDto(
     val assignees: List<TaskBatchAssigneeDto> = emptyList()
 )
 
-/** `POST /tasks/batch` response: the new batch plus every row it wrote. */
 @Serializable
 data class TaskBatchResultDto(
     val batchId: String = "",
@@ -3167,7 +1813,6 @@ data class TaskBatchResultDto(
     val tasks: List<TaskDto> = emptyList()
 )
 
-/** One person's line on the accountability rollup, with their tasks attached. */
 @Serializable
 data class TaskProgressAssigneeDto(
     val user: TaskUserDto? = null,
@@ -3175,7 +1820,6 @@ data class TaskProgressAssigneeDto(
     val statusCounts: Map<String, Int> = emptyMap(),
     val openCount: Int = 0,
     val overdueCount: Int = 0,
-    /** Sum of the quotas they were given; null when none of their tasks carries one. */
     val targetTotal: Int? = null,
     val reportedTotal: Int = 0,
     val derivedTotal: Int? = null,
@@ -3183,12 +1827,6 @@ data class TaskProgressAssigneeDto(
     val tasks: List<TaskDto> = emptyList()
 )
 
-/**
- * `GET /tasks/progress` — the accountability rollup: who has what, and how far along they really are.
- *
- * [truncated] is true when the 2000-row scan window was hit, which makes this a PARTIAL picture; say
- * so rather than presenting it as the whole truth. Assignees arrive busiest-outstanding first.
- */
 @Serializable
 data class TaskProgressReportDto(
     val workshopId: String? = null,
@@ -3202,42 +1840,21 @@ data class TaskProgressReportDto(
     val assignees: List<TaskProgressAssigneeDto> = emptyList()
 )
 
-// ---------------------------------------------------------------------------
-// Managed provider keys (MASTER ADMIN ONLY). Every /secrets route is behind
-// `require_master_admin`, not merely `require_admin`.
-// ---------------------------------------------------------------------------
-
-/**
- * One manageable API key. This shape NEVER carries the value — only a four-character [hint] — so a
- * list screen can be rendered without a credential ever reaching it. Only [ManagedSecretRevealDto]
- * carries plaintext, and fetching it is audit-logged server-side.
- *
- * [source] is `database` (an override is stored here), `environment` (only the deployed env var) or
- * `unset`. [lastStatus] is `UNKNOWN` / `OK` / `FAILED` and only changes when a test is run.
- */
 @Serializable
 data class ManagedSecretDto(
     val key: String,
     val label: String = "",
     val description: String? = null,
-    /** True when the key resolves to something at all — stored override OR environment value. */
     val configured: Boolean = false,
     val source: String = "unset",
-    /** Last four characters of the effective value, so two keys can be told apart safely. */
     val hint: String? = null,
     val lastStatus: String = "UNKNOWN",
     val lastCheckedAt: String? = null,
     val lastError: String? = null,
-    /** Display name (or email) of whoever last saved the override; null for environment values. */
     val updatedBy: String? = null,
     val updatedAt: String? = null
 )
 
-/**
- * `GET /secrets/{key}/reveal` — the eye button, one key at a time. [value] is the value actually in
- * force (the stored override, else the environment value), and null when the key is unset or a
- * stored value can no longer be decrypted.
- */
 @Serializable
 data class ManagedSecretRevealDto(
     val key: String,
@@ -3245,42 +1862,24 @@ data class ManagedSecretRevealDto(
     val source: String = "unset"
 )
 
-/** `PUT /secrets/{key}` — set or rotate one key. Blank is a 422; use DELETE to fall back to the env. */
 @Serializable
 data class ManagedSecretSetBody(
     val value: String
 )
 
-// ---------------------------------------------------------------------------
-// Per-user appearance + accessibility preferences.
-// ---------------------------------------------------------------------------
-
-/**
- * `GET /preferences/me`, `PUT /preferences/me`.
- *
- * The GET returns an EMPTY OBJECT when the account has never saved any — which decodes here to a
- * row with a null [id]. Read that as "this account has no opinion yet" (see [exists]) and keep
- * whatever the device already applied, seeding the server with it, rather than snapping the user
- * back to the defaults below.
- *
- * [theme] is `system` | `light` | `dark`; anything else is a 422 on save.
- */
 @Serializable
 data class PreferencesDto(
     val id: String? = null,
     val userId: String? = null,
     val updatedAt: String? = null,
     val theme: String = "system",
-    /** Force reduced motion. ORs with the OS setting; it can never switch the OS preference off. */
     val reducedMotion: Boolean = false,
     val largerText: Boolean = false,
     val highContrast: Boolean = false
 ) {
-    /** False when the server returned `{}` — the account has no saved row yet. */
     val exists: Boolean get() = id != null
 }
 
-/** `PUT /preferences/me`. Sent WHOLE on every save: an omitted field falls back to off/system. */
 @Serializable
 data class PreferencesUpdateBody(
     val theme: String = "system",
@@ -3289,11 +1888,6 @@ data class PreferencesUpdateBody(
     val highContrast: Boolean = false
 )
 
-// ---------------------------------------------------------------------------
-// Global search.
-// ---------------------------------------------------------------------------
-
-/** Per-bucket match counts for the CURRENT filters — the whole result set, not just this page. */
 @Serializable
 data class SearchTotalsDto(
     val artisans: Int = 0,
@@ -3301,23 +1895,9 @@ data class SearchTotalsDto(
     val products: Int = 0,
     val tools: Int = 0,
     val media: Int = 0,
-    /** The SIXTH bucket. Zero on a server that predates it, and zero for a caller refused it. */
     val designWorkshops: Int = 0
 )
 
-/**
- * `GET /search` — SIX buckets sharing one page/pageSize.
- *
- * Each bucket is its own slice of its own result set, so a page can be full in one bucket and empty
- * in another; [totals] is how many matches each bucket has in total and [pageCount] is the last page
- * of the LONGEST bucket (at least 1, so an empty result still reads as "page 1 of 1"). Every row is
- * already filtered by what the caller is allowed to see.
- *
- * IT WAS FIVE UNTIL 2026-08-31 and the sixth is the one this product is named after. [workshops] is
- * the LEGACY `Workshop` table, a different model entirely; see [SearchRecordTypes.DESIGN_WORKSHOP].
- * Every key added for it defaults to empty, so a build talking to an older server reads exactly what
- * it read before.
- */
 @Serializable
 data class SearchResultsDto(
     val query: String? = null,
@@ -3328,67 +1908,33 @@ data class SearchResultsDto(
     val products: List<ProductDetailDto> = emptyList(),
     val tools: List<ToolDetailDto> = emptyList(),
     val media: List<MediaFileDto> = emptyList(),
-    /** The design workshops that matched — the header rows `workshop_summary` serves elsewhere. */
     val designWorkshops: List<DesignWorkshopDto> = emptyList(),
     val totals: SearchTotalsDto = SearchTotalsDto(),
-    /** Every bucket's matches added together. */
     val total: Int = 0,
     val pageCount: Int = 1,
-    /**
-     * Buckets this account ASKED FOR and may not read. The server drops them from the selection and
-     * NAMES them here rather than answering 0, because a bucket that comes back empty is
-     * indistinguishable from a repository with nothing in it — which is the sentence a researcher
-     * would otherwise carry away. Design-workshop data is Professor and above.
-     */
     val typesRefused: List<String> = emptyList(),
-    /**
-     * What a design-workshop text query actually matched, in the SERVER'S words. Present only when
-     * that bucket was read. Printed as given: a client that wrote its own sentence would be a second
-     * description of one rule, free to drift from the rule that is actually enforced.
-     */
     val designWorkshopSearchScope: String? = null,
-    /**
-     * Which STAGES a workshop matched in, keyed by workshop id — `{"dw_1": ["Stage 5: …"]}`.
-     *
-     * The bucket matches the workshop's own columns OR any answer inside its 22 stages, so a row can
-     * come back for a reason that appears nowhere on the row. Without this the reader would have to
-     * open twenty-two stages to account for the hit. A workshop found by its title alone is ABSENT
-     * from the map rather than carrying an empty list, which would read as "we looked and found
-     * none".
-     */
     val designWorkshopStageMatches: Map<String, List<String>> = emptyMap()
 )
 
-// ---------------------------------------------------------------------------
-// Data browser: a lazily-explorable file-system view over the repository.
-// Gated by the dataset-download permission AND by row visibility.
-// ---------------------------------------------------------------------------
-
-/** One breadcrumb. The server resolves clean names, so never derive these from the path segments. */
 @Serializable
 data class DataCrumbDto(
     val name: String = "",
     val path: String = ""
 )
 
-/** One labelled field of a record folder's info card. Both sides are already display-ready text. */
 @Serializable
 data class DataInfoFieldDto(
     val label: String = "",
     val value: String = ""
 )
 
-/** The info card shown on a record folder (workshop / artisan / product / tool / process / interview). */
 @Serializable
 data class DataFolderInfoDto(
     val title: String = "",
     val fields: List<DataInfoFieldDto> = emptyList()
 )
 
-/**
- * One of the three ways the same repository can be browsed, served with EVERY tree level so the
- * client can offer the other two without a second call. [isDefault] marks the one to open on.
- */
 @Serializable
 data class DataTaxonomyDto(
     val id: String,
@@ -3398,16 +1944,6 @@ data class DataTaxonomyDto(
     @SerialName("default") val isDefault: Boolean = false
 )
 
-/**
- * One row of a tree level. [kind] is `folder` or `file`.
- *
- * A folder carries [recordType] (`workshop`, `artisan`, `product`, `tool`, `process`, `interview`,
- * `craft`, `category`, `taxonomy`, ...) and is opened by re-requesting the tree at its [path].
- * A file is either GENERATED TEXT — [content] holds the whole body inline (details.txt, answers.txt,
- * notes.txt, *.transcript.md), nothing to download — or a real media object, in which case
- * [mediaId] / [mediaType] / [url] / [sizeBytes] are set. [transcriptAvailable] means that media row
- * carries transcript text.
- */
 @Serializable
 data class DataTreeEntryDto(
     val name: String = "",
@@ -3420,19 +1956,11 @@ data class DataTreeEntryDto(
     val sizeBytes: Long? = null,
     val transcriptAvailable: Boolean = false,
     val content: String? = null,
-    /** A recording's transcript files (0.0.6): md and Word, with and without times; subtitles when timed. */
     val transcriptFiles: List<com.designprototype.workshop.transcript.data.DataTranscriptFile> = emptyList()
 ) {
     val isFolder: Boolean get() = kind == "folder"
 }
 
-/**
- * `GET /data/tree?path=` — ONE level of the virtual tree (lazy: only this level's queries run).
- *
- * The root (`path=""`) is not a folder listing but the taxonomy chooser. [info] is populated on
- * record folders and null everywhere else. [truncated] is true when the 500-row per-level cap was
- * hit. [taxonomy] is which taxonomy the current path sits in, and null at the root.
- */
 @Serializable
 data class DataTreeDto(
     val path: String = "",
@@ -3444,15 +1972,6 @@ data class DataTreeDto(
     val taxonomy: String? = null
 )
 
-/**
- * One file of a flattened subtree. [path] is relative to the requested folder and is what a zip
- * entry should be named.
- *
- * Exactly one of [content] (generated text, inline) and [url] (an object to fetch) is meaningful.
- * When [convertToMp4] is true the entry is audio that the SERVER will re-encode: fetch
- * `data/media/{mediaId}/download?format=mp4`, and only fall back to [url] (the original, named
- * [originalPath]) if that fails.
- */
 @Serializable
 data class DataManifestFileDto(
     val path: String = "",
@@ -3464,10 +1983,6 @@ data class DataManifestFileDto(
     val convertToMp4: Boolean = false
 )
 
-/**
- * `GET /data/manifest?path=&include=` — the flattened subtree below a path, for client-side zipping.
- * [truncated] is true when the walk hit its depth/file ceiling.
- */
 @Serializable
 data class DataManifestDto(
     val files: List<DataManifestFileDto> = emptyList(),
@@ -3476,31 +1991,6 @@ data class DataManifestDto(
     val truncated: Boolean = false
 )
 
-// ---------------------------------------------------------------------------
-// Map: WHERE the repository's records are.
-// GET /map/points and GET /map/points/{key}/records.
-//
-// TWO LAYERS, NEVER ADDED TOGETHER. A record has two different true locations: where its craft
-// COMES FROM (the ORIGIN layer, built from the subject's stated address, else the legacy free-text
-// place through the server's town atlas) and where it was RECORDED (the CAPTURE layer, built from
-// the device's GPS fix). One record can appear in both — its craft is from Bagru and it was
-// documented at a Kharagpur workshop — so `summary.originRecords` and `summary.captureRecords` are
-// two denominators over the same corpus. Adding them either double-counts that record or hides one
-// of its two truths; the layer a pin belongs to is [MapPointDto.layer].
-//
-// Every field here has a default, including the ones the server always sends. These payloads are the
-// only thing standing between a phone and a blank map, and a server that gains a summary field must
-// not be able to turn the whole screen into a parse error.
-// ---------------------------------------------------------------------------
-
-/**
- * The five record buckets a pin folds, in the API's PLURAL vocabulary. A fixed five-key object, not
- * a map: the keys are the wire's own closed list, so naming them is what lets a caller read
- * `counts.artisans` instead of guessing at a string key that a typo would silently turn into null.
- *
- * Each defaults to 0 because a bucket the caller did not ask for is simply absent from the payload,
- * and "not counted" draws the same as "none here" on a pin that was never counting it.
- */
 @Serializable
 data class MapCountsDto(
     val artisans: Int = 0,
@@ -3510,31 +2000,6 @@ data class MapCountsDto(
     val media: Int = 0
 )
 
-/**
- * One pin. [key] is what identifies it to `GET /map/points/{key}/records`, and is opaque: it is one
- * of `nation:india`, `state:<State>`, `district:<State>|<District>` or
- * `capture:<cell size>:<lat cell>_<lon cell>`. It contains ':' and '|', so it is URL-encoded on the
- * way back (Retrofit does that — see `WorkshopRepositoryApi.mapPointRecords`). NEVER parse it to derive
- * a label: [label], [region], [state] and [district] are the server's own resolved names.
- *
- * [layer] is `ORIGIN` or `CAPTURE`. [precision] is `SUBJECT_PIN` | `MEASURED` | `TOWN` | `DISTRICT`
- * | `STATE` | `NATION` and [source] is `SUBJECT_PIN` | `STATED_ADDRESS` | `PLACE_TEXT` |
- * `DEVICE_FIX` — together they say how much of this position is a measurement and how much is a
- * lookup, which is the difference between "we stood here" and "we know the district".
- *
- * [latitude]/[longitude] are always sent for a point (the server cannot build one without a
- * position) and are the WEIGHTED MEAN of everything folded in, not the corner of a grid cell.
- *
- * ORIGIN-only: [places] — every finer place name and free-text spelling that folded in, longest
- * first, so grouping to a district moves that detail into the panel instead of losing it;
- * [pinnedRecords] — how many of [total] are positioned by a real coordinate; [fromPlaceText] — how
- * many reached this pin through the legacy prose column, i.e. which records to go and fill in.
- *
- * CAPTURE-only: [fixes] — how many separate GPS fixes this pin stands in for, so "317 records" is
- * not mistaken for one measurement; [spreadMetres] — how much ground they cover; [medianAccuracy] —
- * metres, null when no fix reported one. All three default so an ORIGIN pin, which omits them, is
- * not a decoding failure; branch on [layer], never on `fixes > 0`.
- */
 @Serializable
 data class MapPointDto(
     val key: String = "",
@@ -3555,36 +2020,10 @@ data class MapPointDto(
     val fixes: Int = 0,
     val spreadMetres: Int = 0,
     val medianAccuracy: Double? = null,
-    /**
-     * The finer breakdown of this point, for the list's expandable row. See [MapPointChildDto].
-     *
-     * Empty at DISTRICT level and empty whenever the point holds only ONE child, both decided by the
-     * server: a disclosure whose content restates the row it hangs under is a control that does nothing,
-     * and a reader who opens one learns to stop opening them.
-     */
     val children: List<MapPointChildDto> = emptyList(),
-    /** True when a point holds more children than the server will send. Stated, never silent. */
     val childrenTruncated: Boolean = false
 )
 
-/**
- * One entry inside a point's expandable row — the same place, one administrative level down.
- *
- * WHY POINTS HAVE CHILDREN AT ALL. At NATION level the whole country is a single dot and therefore a
- * single row, and at STATE level a state is one dot and one row. "Tap a pin, the list scrolls to its row"
- * has nowhere to go at those levels: the row a reader lands on is the row they already had. So each point
- * carries the level below it — the states inside the nation, the districts inside the state — and the list
- * renders that as a disclosure. DISTRICT points have none, because a district is the finest unit an Indian
- * address names.
- *
- * [key] is a REAL point key at [level], which is what makes the disclosure navigable rather than
- * decorative: tapping one switches the map to [level] and selects that key, landing on exactly the pin the
- * Detail control would have drawn. [level] is `NATION` | `STATE` | `DISTRICT`, null on an older server.
- *
- * A CAPTURE point's children are tighter GPS clusters rather than administrative units, so their [label]
- * is the layer's own "Recorded here" and [region] is the coordinate — a measured fix has no administrative
- * name to borrow, and lending it one would erase the distinction between the two layers.
- */
 @Serializable
 data class MapPointChildDto(
     val key: String = "",
@@ -3604,14 +2043,6 @@ data class MapPointChildDto(
     val spreadMetres: Int = 0
 )
 
-/**
- * Records the map could NOT place, grouped by what their place column said. Blank, unreadable and
- * "prose the atlas cannot resolve, with no state picked" all land here as one honest bucket rather
- * than as a pin somewhere plausible. [label] is `No place recorded` when there was no text at all.
- *
- * This list must be shown. It is the count of records the map is silently not drawing, and hiding it
- * makes a map of 60 records look like a map of the whole repository.
- */
 @Serializable
 data class MapUnplacedDto(
     val label: String = "",
@@ -3619,14 +2050,6 @@ data class MapUnplacedDto(
     val counts: MapCountsDto = MapCountsDto()
 )
 
-/**
- * The one record the caller asked to see in context (`focusType` + `focusId`). The map still draws
- * the whole filtered corpus — "in context" is meant literally — and this only names which pins hold
- * the record, in [pointKeys], computed by the same ladder at the same level so a focus key always
- * matches a drawn pin. Usually two keys: its origin pin and its capture pin.
- *
- * [type] is the PLURAL bucket name here (`artisans`, ...), matching what the request asked for.
- */
 @Serializable
 data class MapFocusDto(
     val type: String = "",
@@ -3634,28 +2057,9 @@ data class MapFocusDto(
     val title: String = "",
     val place: String? = null,
     val pointKeys: List<String> = emptyList(),
-    /**
-     * False when the current filters — the workshop scope above all — exclude this record, so its
-     * [pointKeys] ring no drawn pin.
-     *
-     * REPORTED RATHER THAN ENFORCED, and that is the whole reason it exists. The server used to resolve
-     * a focused record through the same narrowed clause the pins were built from and 404 when it missed,
-     * which took the ENTIRE map response down: "show this record on the map" from anything older than
-     * the most recent workshop produced an error screen instead of a map with one unringed pin.
-     *
-     * Defaults TRUE so an API that predates the field reads as it always behaved, where being out of
-     * scope was not representable at all.
-     */
     val inScope: Boolean = true
 )
 
-/**
- * How much of the structured address the corpus in play actually holds — the map's own quality,
- * reported so "why is this record at the state capital" has an answer a researcher can act on (go
- * and fill in the district, or drop a pin) instead of looking like a bug.
- *
- * [locations] is the denominator for all four: how many `Location` rows the filtered corpus touches.
- */
 @Serializable
 data class MapAddressCompletenessDto(
     val locations: Int = 0,
@@ -3665,21 +2069,6 @@ data class MapAddressCompletenessDto(
     val withSubjectPin: Int = 0
 )
 
-/**
- * What the map is standing on. [records] is how many records the filters matched at all; [byType]
- * breaks that down over the same five buckets as a pin's counts.
- *
- * [originExcludes] names the buckets that CANNOT reach the origin layer — media has no place column
- * of its own, a photograph inherits the record it belongs to — so the asymmetry is stated rather
- * than left for a reader to notice. [captureTruncated] is true when more locations were in play than
- * the server would read fixes for, i.e. the capture layer is incomplete.
- *
- * [clusterKilometres] is the radius fixes were merged at for the current level, which is what a
- * "Recorded here" pin is really claiming. [anchoredDistricts] / [anchorPins] say how well the server
- * knows where districts ARE and how much of that is measured rather than seeded from the atlas;
- * [anchorsTruncated] means the anchor read hit its ceiling, so some districts fall back to coarser
- * positions.
- */
 @Serializable
 data class MapSummaryDto(
     val records: Int = 0,
@@ -3696,16 +2085,6 @@ data class MapSummaryDto(
     val anchorsTruncated: Boolean = false
 )
 
-/**
- * `GET /map/points` — every pin for the current filters, both layers, plus what would not place.
- *
- * [scope] is `all` (no filter narrowed anything), `filtered`, or `record` (a focus was requested).
- * [level] is the administrative unit the pins are GROUPED at — `NATION` | `STATE` | `DISTRICT` — and
- * [levels] is the vocabulary to build the level toggle from, served so the client's list and the
- * server's cannot drift apart. [types] is which buckets were counted, in the server's own order.
- *
- * [points] is already sorted: biggest first, ties by label.
- */
 @Serializable
 data class MapPointsDto(
     val scope: String = "",
@@ -3716,23 +2095,9 @@ data class MapPointsDto(
     val unplaced: List<MapUnplacedDto> = emptyList(),
     val focus: MapFocusDto? = null,
     val summary: MapSummaryDto = MapSummaryDto(),
-    /**
-     * The level every point's [MapPointDto.children] are keyed at — the level to switch the map to when a
-     * reader drills into one. Null at DISTRICT, where there are no children, and null on an older server.
-     *
-     * Read from the server rather than re-derived here, so this client cannot hold a different idea of the
-     * ladder than the server does.
-     */
     val childLevel: String? = null
 )
 
-/**
- * One record behind a pin. [type] is the PLURAL bucket name (`artisans`, `workshops`, `products`,
- * `tools`, `media`) — the same vocabulary the request's `types` filter uses.
- *
- * Hand-picked columns, and that is the security property: no identity field is in this shape at any
- * rank, so a map cannot leak one however it renders a row.
- */
 @Serializable
 data class MapPointRecordDto(
     val type: String = "",
@@ -3744,144 +2109,39 @@ data class MapPointRecordDto(
     val createdAt: String? = null
 )
 
-/**
- * `GET /map/points/{key}/records` — the records behind ONE pin, fetched on demand so a pin can be
- * navigated FROM rather than only looked at.
- *
- * MUST BE REQUESTED WITH THE SAME FILTERS THE MAP WAS DRAWN WITH, including `level` and the workshop
- * scope. The key alone does not determine the answer: it names an administrative unit, and which
- * records sit in that unit is exactly what the filters decide. [truncated] is true when the
- * per-bucket cap was hit, so [total] is a floor, not the count.
- */
 @Serializable
 data class MapPointRecordsDto(
     val key: String = "",
     val items: List<MapPointRecordDto> = emptyList(),
-    /**
-     * How many rows are IN [items] — not how many records the pin holds.
-     *
-     * [total] is the same number under an older name, kept because clients read it. Do not compare
-     * either against `MapPointDto.total`: that one is the pin's corpus count, this one is the length of
-     * a list capped at [cap] PER RECORD TYPE, so a pin holding 317 files answers with 40 here. A client
-     * that reads the two identically-named fields as the same quantity reports 277 missing records.
-     * [truncated] is the field that actually says which situation this is.
-     */
     val shown: Int = 0,
     val total: Int = 0,
     val cap: Int = 0,
     val truncated: Boolean = false
 )
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-// The DESIGNER tier: the roster that gates its sign-in, and the profile a report prints.
-//
-// TWO TABLES, TWO SHAPES, AND THEY ARE NOT THE SAME FACT — which is why there is no shared base
-// type here even though both carry an `institution`. `DesignerRoster` is the ADMIN's statement that
-// an individual is empanelled and may sign in at all; `DesignerProfile` is the DESIGNER's own
-// statement of who they are, and it is the thing that gets typeset onto the cover of every report
-// they generate. Folding the two into one DTO is how a screen ends up letting an admin rewrite
-// somebody's biography, or letting a designer edit their own permission to log in. Neither is a
-// thing this app may make possible, so the two travel separately all the way down.
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-/**
- * One row of the institution's designer roster, as `GET /designers/roster` serves it.
- *
- * THE ROW USUALLY EXISTS BEFORE THE ACCOUNT DOES. That is the whole point of the table: an admin
- * empanels somebody by email, and the account provisions itself the first time that person signs in
- * with Google. So there is no user id here, [fullName] is whatever the admin typed rather than
- * anything an account confirmed, and [firstSeenAt] is null for exactly as long as the invitation is
- * outstanding — which is the one fact the roster screen exists to show. A null [firstSeenAt] must
- * never be rendered as "never" or as an error; it means "has not accepted yet".
- *
- * EVERY FIELD IS DEFAULTED, without exception. A field phone updates over the air and may be running
- * a build older than the server it is talking to; a non-defaulted field the server has not started
- * sending yet (or has stopped sending) makes kotlinx throw `MissingFieldException` and takes the
- * entire roster screen down over one column nobody was reading.
- */
 @Serializable
 data class DesignerRosterDto(
     val id: String = "",
-    /** Lower-cased server-side on write. The join key to `User.email`. */
     val email: String = "",
     val fullName: String? = null,
     val institution: String? = null,
     val notes: String? = null,
-    /**
-     * False suspends sign-in WITHOUT deleting the history of the empanelment.
-     *
-     * Defaults TRUE so a server that predates the column — or a payload truncated by a proxy — reads
-     * as "this person may sign in", which is the state a roster row is created in. Defaulting to
-     * false would paint every row on the screen as suspended and invite an admin to "restore" people
-     * who were never suspended.
-     */
     val isActive: Boolean = true,
     val revokedAt: String? = null,
-    /** Set the first time an account with this email signs in. Null = the invitation is outstanding. */
     val firstSeenAt: String? = null,
-    /**
-     * THERE IS NO `userId` HERE, and a field for one used to be — always null, because
-     * `roster_payload` (backend/app/services/designers.py:107-121) has never sent one and the
-     * `DesignerRoster` table has no user column to send. The roster screen's "Open designer profile"
-     * action was rendered only `row.userId?.let { … }`, so it rendered for nobody and the admin
-     * editor behind it was unreachable in the shipped APK.
-     *
-     * The account behind a row is resolved the way the web resolves it — by lower-cased EMAIL
-     * against `GET /designers/directory`; see [DesignerDirectoryEntryDto] and
-     * `accountsByEmail`. Do not put the field back: a nullable column that the only producer never
-     * populates reads at every call site as "sometimes present", and that reading is what hid this.
-     */
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val addedById: String? = null,
-    /**
-     * Who empanelled them, when the server joins it — which THIS server does not.
-     *
-     * Kept because it costs nothing and a deployment that starts sending it is then honoured
-     * immediately, but the roster card must not depend on it: `roster_payload` sends [addedById]
-     * alone, so a card that only read this name printed nothing at all. The screen falls back to
-     * looking the id up in the directory it already fetched.
-     */
     val addedByName: String? = null
 )
 
-/**
- * One account from `GET /designers/directory` — the accounts an admin may hand a workshop to.
- *
- * WHY THE ROSTER SCREEN NEEDS IT AT ALL. A roster row is keyed by EMAIL and carries no account id
- * (see [DesignerRosterDto]), while `/designers/{userId}/profile` can only be reached by an id. This
- * endpoint is the only join between the two, and the web's roster page does exactly the same thing
- * with it — `new Map(rows.map((row) => [row.email.toLowerCase(), row.id]))` in
- * `frontend/app/(protected)/admin/designers/page.tsx`. Both clients therefore resolve a row to a
- * person the same way, and neither fabricates an id from the email, which would send an admin to a
- * 404 on a control they were invited to tap.
- *
- * `includeSuspended=true` is what the roster screen asks for, and it must: the row an admin is
- * looking at is very often the SUSPENDED one — the designer who says they cannot sign in — and the
- * whole reason to open their profile from here is to check the empanelment details before restoring
- * them. The default (`false`) hides exactly those people.
- *
- * Narrow on purpose. The payload carries `role`, `institution`, `rosterId`, `rosterActive`,
- * `canSignIn`, `firstSeenAt` and `hasProfile` as well; `ignoreUnknownKeys` drops them. The roster
- * screen already has every one of those facts from the roster row itself, and a second copy of
- * "is this person suspended" arriving by a different route is two answers to one question.
- */
 @Serializable
 data class DesignerDirectoryEntryDto(
     val id: String = "",
-    /** Compared LOWER-CASED. The roster lower-cases on write; `User.email` is not guaranteed to be. */
     val email: String = "",
     val name: String? = null
 )
 
-/**
- * `POST /designers/roster` — empanel somebody.
- *
- * The email is the only required fact and the only one that matters; everything else is the admin's
- * note to themselves about whom they added and why. [fullName] is what the roster screen shows while
- * the invitation is outstanding, because until the person signs in there is no account to read a
- * name from.
- */
 @Serializable
 data class DesignerRosterCreateBody(
     val email: String,
@@ -3891,92 +2151,29 @@ data class DesignerRosterCreateBody(
     val isActive: Boolean = true
 )
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-// THE PLATFORM ALLOW-LIST: who may sign in AT ALL, and the queue of people asking to.
-//
-// NOT THE DESIGNER ROSTER ABOVE, THOUGH THEY SIT NEXT TO EACH OTHER AND READ ALIKE. `DesignerRoster`
-// says who the institution recognises as a DESIGNER; `AccessRoster` says who may reach this
-// application at all, whatever their tier. Two tables, two endpoints, two refusals with two
-// different remedies — an admin who suspends the wrong one takes away something they did not mean
-// to, and the person is told the wrong reason for it. Everything here carries the word `Access`.
-//
-// WHAT AN UNAUTHENTICATED STRANGER CAN PUT IN THIS TABLE IS THE EMAIL ADDRESS AND NOTHING ELSE. A
-// PENDING row is written by the login endpoint only AFTER a password or a Google token has verified;
-// it carries no display name from the identity provider and no free text at all, and one address is
-// one row however many times it is tried. So the queue an admin reads on the phone is a list of
-// addresses, dates and integers, with nowhere in it for a stranger to write a sentence pretending to
-// come from the product. Do not add a field here that renders text an unauthenticated caller
-// supplied; the server does not store one.
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-/**
- * One row of the platform allow-list, as `GET /access/roster` serves it.
- *
- * FOUR STATES, IN [status]: `ACTIVE` admits; `PENDING` is somebody who proved an identity and was
- * turned away, recorded so an administrator can decide; `REJECTED` is an administrator's answer, and
- * it does NOT reopen when the person tries again (their next attempt bumps [attemptCount] and leaves
- * the status alone); `SUSPENDED` is access ended after it was granted.
- *
- * [joinedAt] IS THE "date of joining the platform" THE REQUIREMENT ASKS FOR, and the server writes
- * it once: somebody admitted in 2024, suspended, and restored this morning still joined in 2024. Do
- * not render it as "approved on" — an admin reading a joining date of last Tuesday draws the wrong
- * conclusion about every record that person created.
- *
- * EVERY FIELD IS DEFAULTED, for [DesignerRosterDto]'s reason: a handset updates over the air and may
- * be older than the server it is talking to, and one non-defaulted field the server has not started
- * sending makes kotlinx throw and takes the whole screen down over a column nobody was reading.
- */
 @Serializable
 data class AccessRosterDto(
     val id: String = "",
-    /** Lower-cased server-side. The join key to `User.email`, and the only attacker-supplied value here. */
     val email: String = "",
-    /** ADMIN-TYPED ONLY. Never a display name from Google — see the section note above. */
     val fullName: String? = null,
-    /**
-     * `ACTIVE` / `PENDING` / `REJECTED` / `SUSPENDED`.
-     *
-     * Defaults to PENDING rather than to ACTIVE, which is the opposite of [DesignerRosterDto.isActive]
-     * and deliberately so: an unreadable roster row must not be drawn as somebody who may sign in.
-     * The screen's actions read this, so failing towards "waiting for a decision" costs an admin one
-     * extra look, where failing towards "admitted" would have them believe an unadmitted address is
-     * already in.
-     */
     val status: String = "PENDING",
-    /** The tier a NEW account is created at on first sign-in; an existing account keeps its own. Null = the platform default. */
     val admitRole: String? = null,
     val joinedAt: String? = null,
     val requestedAt: String? = null,
-    /** How many times this address has been refused. Rises on every attempt, including after a rejection. */
     val attemptCount: Int = 0,
     val lastAttemptAt: String? = null,
     val decidedAt: String? = null,
     val decidedById: String? = null,
-    /** Stamped the first time an admitted address actually got in. Null = admitted, never arrived. */
     val firstSeenAt: String? = null,
     val notes: String? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val addedById: String? = null,
-    /** Who added the address and who decided it, in words — joined on the roster list (2026-10-17). */
     val addedByName: String? = null,
     val decidedByName: String? = null,
-    /** On a decision's answer only: the sentence when an existing account kept its role (the sign-in list rule). */
     val accountPromotionHeld: String? = null
 )
 
-/**
- * `GET /access/roster/pending-count` — THE NOTIFICATION, in the only channel either application has.
- *
- * There is no email sender and no push transport in this codebase, so "tell the admins somebody is
- * waiting" is a number on a screen they already open. Its own endpoint precisely so a badge can be
- * drawn without fetching a page of rows — on this client it rides the app-wide poll that already
- * runs while somebody is signed in, so it costs no timer of its own.
- *
- * [capReached] is not decoration. Past [capacity] the server stops RECORDING new requests and tells
- * the person to contact an administrator directly, so a queue that has stopped growing means either
- * nobody is asking or the product has stopped listening — and an admin cannot tell which without it.
- */
 @Serializable
 data class PendingAccessCountDto(
     val pending: Int = 0,
@@ -3984,61 +2181,31 @@ data class PendingAccessCountDto(
     val capReached: Boolean = false
 )
 
-/**
- * How many of this inspector's workshops are handed in and waiting for their review
- * (`GET /design-workshop-inspections/awaiting-count`, 2026-10-18) — the drawer badge on
- * "Workshops to inspect", the web nav's and the desk's number.
- */
 @Serializable
 data class AwaitingInspectionCountDto(val awaiting: Int = 0)
 
-/**
- * `POST /access/roster` — admit an address by hand, before it has an account.
- *
- * ACTIVE IMMEDIATELY, not pending: an admin typing an address into the box IS the approval, and
- * there is nobody else for the request to be routed to. A duplicate answers 409 naming the existing
- * row rather than overwriting it — the row it would overwrite is usually the pending request that
- * records how long the person has been waiting.
- */
 @Serializable
 data class AccessRosterCreateBody(
     val email: String,
     val fullName: String? = null,
-    /** Null means the platform default joining tier — the lowest rung. */
     val role: String? = null,
     val notes: String? = null,
-    /**
-     * Set only when the administrator chose "With a password": the account is created now with this
-     * password instead of at the person's first Google, Microsoft or Yahoo sign-in. Null — and so
-     * absent from the body — otherwise.
-     */
     val password: String? = null,
-    /** Sent only beside [password]: ask them to choose their own at the first sign-in. */
     val mustChangePassword: Boolean? = null
 )
 
-/**
- * `POST /access/roster/{id}/decision` — approve or refuse a waiting request.
- *
- * A DATA CLASS AND NOT A HAND-BUILT JsonObject, unlike [designerRosterUpdateJson]: this body is not
- * applied with `exclude_unset` semantics that a null could corrupt. `decision` is required, and the
- * server reads `role` only on APPROVE and only up to the deciding admin's own tier.
- */
 @Serializable
 data class AccessDecisionBody(
-    /** "APPROVE" or "REJECT". Spelled by [AccessDecision] rather than typed at the call site. */
     val decision: String,
     val role: String? = null,
     val notes: String? = null
 )
 
-/** The two answers an administrator can give, so no call site spells them as strings. */
 object AccessDecision {
     const val APPROVE = "APPROVE"
     const val REJECT = "REJECT"
 }
 
-/** The four states of an [AccessRosterDto], spelled once. Compared against [AccessRosterDto.status]. */
 object AccessStatus {
     const val ACTIVE = "ACTIVE"
     const val PENDING = "PENDING"
@@ -4046,27 +2213,11 @@ object AccessStatus {
     const val SUSPENDED = "SUSPENDED"
 }
 
-/**
- * The signed-in designer's own profile, as `GET /designers/me/profile` serves it — every column of
- * `DesignerProfile` plus the identifiers the client may not write.
- *
- * These twenty-one values are typed once and copied into every report the designer generates, which
- * is the reason the screen that edits them is worth building at all: a cover page that says
- * "Designer:" and nothing after it is a document that cannot be submitted. It was twenty and four of
- * them until 2026-08-25, when the owner's instruction widened `PREFILL_MAP` to carry every writable
- * column into stage 1 and stage 3 rather than only the name, institution, biography and years.
- *
- * [photoMediaId], [signatureMediaId] and [cvMediaId] are MEDIA IDS, resolved through
- * `GET /media/{id}` exactly as a stage field's photograph is — never URLs. A URL stored in a profile
- * column would be a pre-signed link that expires, so a report generated three months later would
- * print a broken image and nothing in the stored row would say why.
- */
 @Serializable
 data class DesignerProfileDto(
     val id: String = "",
     val userId: String = "",
     val displayName: String? = null,
-    /** Written in the local script where the designer wants it that way; printed verbatim. */
     val localName: String? = null,
     val designation: String? = null,
     val institution: String? = null,
@@ -4074,24 +2225,9 @@ data class DesignerProfileDto(
     val qualification: String? = null,
     val specialisation: String? = null,
     val experienceYears: Int? = null,
-    /**
-     * The MONTHS half of the same answer, 0..11, and a REMAINDER rather than a total.
-     *
-     * "5 years" beside "6 months" is what the owner asked the two boxes to say, and the read-back
-     * hands back exactly what was chosen — the server never adds them up and neither does this
-     * client. Twelve is not a bigger month, it is a year the box above already holds, which is why
-     * the column carries `CHECK (experienceMonths BETWEEN 0 AND 11)` and the API bounds it 0..11.
-     *
-     * NULL AND 0 ARE DIFFERENT ANSWERS. Null is "nobody was ever asked"; 0 is "no odd months",
-     * which somebody chose from a picker. Nothing here may default one to the other — a
-     * `= 0` default would put "and no months" on record for every profile written before this
-     * column existed, as though its owner had answered a question they were never shown.
-     */
     val experienceMonths: Int? = null,
-    /** The paragraph that appears as "Designer's profile" in stage 3 of every report. */
     val biography: String? = null,
     val phone: String? = null,
-    /** The phone's country code; `phone` is digits only (StandardValues). */
     val phoneCountryCode: String? = null,
     val email: String? = null,
     val website: String? = null,
@@ -4101,79 +2237,16 @@ data class DesignerProfileDto(
     val pincode: String? = null,
     val photoMediaId: String? = null,
     val signatureMediaId: String? = null,
-    /**
-     * The designer's CV. Usually a PDF, sometimes a .docx or .odt, and sometimes a photograph of a
-     * printed sheet — which is why the screen renders it through a document card rather than an
-     * `Image`, and why nothing here constrains the format: what the file IS belongs to the
-     * `MediaFile` row this id points at.
-     *
-     * NULLABLE WITH A DEFAULT, which is what makes this addition safe in BOTH directions across the
-     * fleet: a handset one release behind that has never heard of the key drops it, and this handset
-     * reading a server that does not yet send it defaults it. No coordination is needed for the
-     * column — unlike the registry change shipping beside it, which moves `registry_version()`.
-     */
     val cvMediaId: String? = null,
     val empanelmentNo: String? = null,
-    /** ISO-8601, and a STRING rather than a date — see [DesignerProfileUpdateBody.empanelmentDate]. */
     val empanelmentDate: String? = null,
-    /**
-     * THE GRACE PATH, ANSWERED BY THE SERVER SO BOTH CLIENTS DRAW THE SAME BANNER.
-     *
-     * True means: this profile has content and no empanelment number. The owner's decision of
-     * 2026-08-30 is that such a profile may go on saving while being asked for the number, and
-     * that a NEW profile cannot be created without one. Computing it here instead — "is
-     * empanelmentNo blank" — would be a second definition of "has content" that disagrees with
-     * the web's the day a column is added, and it is also true of a brand-new empty profile,
-     * which is the case the form REFUSES rather than asks about.
-     *
-     * NULLABLE WITH A DEFAULT, so a handset reading a server that predates the key defaults it
-     * to "no grace" — the strict reading, which is the safe direction: the worst case is a
-     * designer being asked for a number the next save would have let them omit.
-     */
     val empanelmentNoMissing: Boolean? = null,
-    /**
-     * ── THE SECOND ADDRESS ON THIS ROW, AND WHY BOTH OF THEM ARE HERE ──────────────────────────
-     *
-     * `DesignerProfile` is the seventh owner of `Location`, so a designer's DISTRICT and MAP POINT
-     * are stored exactly as an artisan's are — this is the same [LocationDto] `ArtisanDetailDto`
-     * carries, byte for byte, and one renderer serves both.
-     *
-     * THE FOUR FLAT COLUMNS ABOVE DID NOT GO ANYWHERE, and a client that renders only one of the
-     * two shows some designers a blank where their address is. The migration that added the
-     * relation backfilled NOTHING, deliberately: `Location.latitude`/`longitude` are NOT NULL for
-     * all seven owners, so a `Location` row cannot be manufactured for an address that never had a
-     * coordinate without INVENTING the coordinate — which is the precise failure that put fifteen
-     * artisans documented in Rajasthan, Gujarat, Uttarakhand and Andhra Pradesh at a desk in
-     * Kharagpur. So every live row's address is still in `addressLine`/`city`/`state`/`pincode`,
-     * and those four are what the report prefill copies; this carries the district and the point,
-     * which nothing else can hold. The server's `profile_payload` decides that split once and
-     * writes it down; do not re-decide it here.
-     *
-     * [locationId] IS PUBLISHED BESIDE IT so that "this designer has no address row" (null) can be
-     * told from "this response did not load the address row", which are indistinguishable from
-     * [location] alone.
-     */
     val locationId: String? = null,
     val location: LocationDto? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null
 )
 
-/**
- * The body of `PUT /designers/{…}/profile`.
- *
- * NOT SENT THROUGH THE RETROFIT CONVERTER. It is encoded by [designerProfileUpdateJson] into a
- * [JsonObject] instead, and that is not a style choice — it is the only way this screen can clear a
- * field at all. `ApiClient`'s Json is configured `explicitNulls = false`, so a null property is
- * OMITTED from the wire body; the server applies the body with `exclude_unset`, so an omitted key
- * means "leave the stored value alone". Encoded the ordinary way, a designer who deleted the
- * contents of their "Department" box would watch the old department reappear on the next load, every
- * time, with no error and nothing on screen to blame. An explicit JSON `null` is what says "clear".
- *
- * The screen renders EVERY column, so sending every key on every save is correct: there is no field
- * this client left unshown whose value it could be trampling. A future PARTIAL editor must narrow
- * this encoder rather than reuse it.
- */
 data class DesignerProfileUpdateBody(
     val displayName: String? = null,
     val localName: String? = null,
@@ -4182,13 +2255,10 @@ data class DesignerProfileUpdateBody(
     val department: String? = null,
     val qualification: String? = null,
     val specialisation: String? = null,
-    /** Bounded 0..70 by the server, matching the registry's `designerExperience` field it prefills. */
     val experienceYears: Int? = null,
-    /** Bounded 0..11 by the server. A remainder, never a total — see [DesignerProfileDto.experienceMonths]. */
     val experienceMonths: Int? = null,
     val biography: String? = null,
     val phone: String? = null,
-    /** The phone's country code; `phone` is digits only (StandardValues). */
     val phoneCountryCode: String? = null,
     val email: String? = null,
     val website: String? = null,
@@ -4200,65 +2270,15 @@ data class DesignerProfileUpdateBody(
     val signatureMediaId: String? = null,
     val cvMediaId: String? = null,
     val empanelmentNo: String? = null,
-    /**
-     * An ISO-8601 date STRING, matching every other date this API accepts (see
-     * `DesignWorkshopCreateBody.startDate`). A body that took a real date here and a string there
-     * would 422 exactly one of the two screens, for a reason its author could not see from either.
-     */
     val empanelmentDate: String? = null,
-    /**
-     * The designer's stated address and map point, in the SAME [LocationRequest] the six
-     * field-record bodies send. There is exactly one way to send an address to this API.
-     *
-     * ── THIS ONE KEY BREAKS THIS BODY'S "EVERY KEY, ALWAYS" RULE, AND IT HAS TO ────────────────
-     *
-     * Every other property here is written to the wire on every save, with an explicit JSON `null`
-     * for a cleared box, because that is the only way an omitted value can mean "clear it". This
-     * one is OMITTED when null and may NEVER be sent as `null`: the server's
-     * `forbid_clearing_location` answers an explicit null with a 422, and it is right to. Its
-     * `attach_location` writes a BRAND NEW `Location` row on every save and never updates one, so
-     * "clear it" has no honest implementation — it would orphan the stored row and leave the
-     * profile with no district instead of with a corrected address. A designer who moves house
-     * REPLACES their location; nobody deletes one. See [designerProfileUpdateJson].
-     *
-     * A NULL HERE IS THEREFORE "KEEP WHAT IS STORED", which is also exactly what the card produces
-     * when there is no coordinate: a `LocationRequest` cannot exist without one.
-     */
     val location: LocationRequest? = null
 )
 
-/**
- * A text box's contents as the API should read them: the trimmed string, or an explicit JSON `null`
- * when the box is empty.
- *
- * The blank-to-null fold happens HERE and not on the server, because `""` and `null` are different
- * instructions to a nullable column and the difference shows up in the printed report: an empty
- * string satisfies "is this column set?" while carrying nothing to typeset, so a cover page ends up
- * with a designation line that is present, blank, and impossible to distinguish from a layout bug.
- */
 private fun textOrNull(value: String?): JsonElement {
     val trimmed = value?.trim()
     return if (trimmed.isNullOrEmpty()) JsonNull else JsonPrimitive(trimmed)
 }
 
-/**
- * [DesignerProfileUpdateBody] as the wire body, with EVERY key present and cleared fields carrying
- * an explicit JSON `null`.
- *
- * See the note on [DesignerProfileUpdateBody] for why this cannot go through the Retrofit converter:
- * `explicitNulls = false` would drop the very keys that mean "clear this", and the server's
- * `exclude_unset` would then leave the old value in place. The failure is silent and only visible on
- * the next load, which is far enough from the action that nobody connects the two.
- */
-/**
- * The one encoder in this file that DROPS null properties instead of writing them.
- *
- * `LocationRequest` carries fourteen optional columns and the API forbids unknown keys but is happy
- * with these absent, so `explicitNulls = false` is what lets a body name a state and a coordinate
- * without also asserting "and no altitude, and no village". It mirrors `ApiClient`'s own Json, which
- * is what every other location body on this client is already encoded with — a location that
- * serialised differently depending on which screen sent it would be two wire shapes for one object.
- */
 private val locationBodyJson = Json { explicitNulls = false; encodeDefaults = false }
 
 fun designerProfileUpdateJson(body: DesignerProfileUpdateBody): JsonObject = buildJsonObject {
@@ -4270,10 +2290,6 @@ fun designerProfileUpdateJson(body: DesignerProfileUpdateBody): JsonObject = bui
     put("qualification", textOrNull(body.qualification))
     put("specialisation", textOrNull(body.specialisation))
     put("experienceYears", body.experienceYears?.let(::JsonPrimitive) ?: JsonNull)
-    // An UNANSWERED months box is an explicit null, exactly as every other cleared box on this
-    // screen is, and that is what un-answers the question. It is NOT collapsed with 0: the picker
-    // offers "Not stated" as its own row above 0, so the two are separately reachable and the
-    // server stores them separately.
     put("experienceMonths", body.experienceMonths?.let(::JsonPrimitive) ?: JsonNull)
     put("biography", textOrNull(body.biography))
     put("phone", textOrNull(body.phone))
@@ -4288,67 +2304,19 @@ fun designerProfileUpdateJson(body: DesignerProfileUpdateBody): JsonObject = bui
     put("cvMediaId", textOrNull(body.cvMediaId))
     put("empanelmentNo", textOrNull(body.empanelmentNo))
     put("empanelmentDate", textOrNull(body.empanelmentDate))
-    /*
-     * THE ONE KEY THAT IS OMITTED RATHER THAN NULLED, AND THE ONLY EXCEPTION IN THIS FUNCTION.
-     *
-     * Everything above is written on every save so that an emptied box CLEARS the stored value.
-     * `"location": null` does not clear a location: `forbid_clearing_location` answers it with a
-     * 422, so writing it here would make every save from this screen fail for every designer who
-     * has not given a coordinate — which is nearly all of them, because nothing was backfilled.
-     * An ABSENT key is what says "keep the stored address", and that is also the honest reading:
-     * the card cannot produce a `LocationRequest` without a coordinate, so null here means "the
-     * designer has not given a point", never "the designer asked to remove their address".
-     */
     body.location?.let { put("location", locationBodyJson.encodeToJsonElement(it)) }
 }
 
-/**
- * The body of `PATCH /access/roster/{id}` — correcting the admin-typed columns of an allow-list row.
- *
- * BUILT KEY BY KEY, FOR THE SAME REASON [designerProfileUpdateJson] IS: this client is configured
- * with `explicitNulls = false`, so a data class carrying `fullName = null` would encode to `{}` and
- * the server's `exclude_unset` would leave the old value in place. Emptying the Notes box has to be
- * able to mean emptying the notes, and a silent no-op that only shows up on the next load is the
- * worst possible version of that.
- *
- * THERE IS NO `email` KEY AND THERE MUST NEVER BE ONE. The server's PATCH does not accept it, and
- * that is deliberate on both sides: the address IS the gate, so an admin fixing a spelling must not
- * be able to hand one person's admission to a different mailbox — the loser would simply stop being
- * able to sign in, while the row on screen still said they may. Moving an admission to a new address
- * is `follow_email_change`, which happens when an ADMIN edits the account's email, not this.
- *
- * THERE IS NO `status` KEY EITHER. Every transition goes through the decision or suspend endpoint so
- * that the stamps that accompany it — who decided, when, the joining date — are written by one piece
- * of code that cannot forget them.
- */
 fun accessRosterUpdateJson(
     fullName: String? = null,
     role: String? = null,
     notes: String? = null
 ): JsonObject = buildJsonObject {
     put("fullName", textOrNull(fullName))
-    // Null here means "the platform default joining tier", which is a real and choosable answer —
-    // the picker's first option — so it is sent as an explicit null rather than omitted.
     put("role", textOrNull(role))
     put("notes", textOrNull(notes))
 }
 
-/**
- * The body of `PATCH /designers/roster/{id}` — a correction, or a restore.
- *
- * BUILT KEY BY KEY RATHER THAN FROM A DATA CLASS, and the asymmetry with the profile encoder above is
- * deliberate rather than an oversight. [email] is the row's unique join key to `User.email`, and the
- * server applies this body with `exclude_unset`, so a present-and-null `email` would be read as
- * "clear the address" — which on the one column that decides whether a person can sign in is not a
- * risk worth carrying for the convenience of one uniform encoder. It is therefore sent only when the
- * admin actually changed it to something non-blank. The three descriptive columns DO accept an
- * explicit null, because emptying the "Notes" box has to be able to mean emptying the notes.
- *
- * [isActive] is sent only when [suspendOrRestore] is non-null. Suspension is expressed through this
- * key as well as through `DELETE /designers/roster/{id}` because restoring somebody is not an act a
- * DELETE can express, and a screen that could suspend but not restore would push admins toward
- * deleting the row — destroying the record that the person was ever recognised.
- */
 fun designerRosterUpdateJson(
     email: String? = null,
     fullName: String? = null,
@@ -4363,24 +2331,6 @@ fun designerRosterUpdateJson(
     suspendOrRestore?.let { put("isActive", JsonPrimitive(it)) }
 }
 
-// ------------------------------------------------------------------------------------------------
-// CUSTOM QUESTIONNAIRES — the form a designer authored themselves, at /api/questionnaires (PLURAL).
-//
-// EVERY TYPE BELOW CARRIES A `Custom` PREFIX, and that is not a style tic. This file already holds
-// `QuestionnaireSectionDto`, `QuestionnaireQuestionDto` and `QuestionnaireResponseRequest`, which
-// describe the ONE global artisan questionnaire served from /api/questionnaire (SINGULAR) — a
-// different record with the same word for a name, kept apart on the server all the way down to
-// separate tables (see the module docstring on backend/app/api/routes/questionnaire_forms.py). The
-// two shapes are close enough to compile against each other in several places: both have `id`,
-// `prompt`, `sortOrder`, `isActive`. Picking the wrong one out of an import list would therefore
-// build cleanly and fail at runtime as a deserialization error on a screen a designer is standing in
-// a room using. The prefix is what makes the wrong choice visible while it is being made.
-//
-// A designer builds the form in the .xlsx pro-forma on a laptop and answers it on this handset, so
-// the upload half of the API is deliberately absent from this client — see the notes on the screens.
-// ------------------------------------------------------------------------------------------------
-
-/** One row of `GET /questionnaires` — the list, without the sections or the answers. */
 @Serializable
 data class CustomQuestionnaireSummaryDto(
     val id: String,
@@ -4390,57 +2340,18 @@ data class CustomQuestionnaireSummaryDto(
     val ownerName: String? = null,
     val designWorkshopId: String? = null,
     val designWorkshopTitle: String? = null,
-    /**
-     * False means DEACTIVATED, which is what this API has instead of a delete: the questionnaire
-     * leaves every list and every dropdown and its answers stay. A client that read this as "deleted"
-     * and hid the row outright would leave a fortnight of somebody's fieldwork unreachable from the
-     * app that recorded it.
-     */
-    /**
-     * PUBLISHED TO EVERY DESIGNER — the "default questionnaire" an administrator sets up once.
-     *
-     * A designer's list can now contain a form they did not upload, and a row that cannot say why
-     * reads as somebody else's work leaking in. It is also what stops a shared form being drawn as
-     * though it were this designer's to reword: the server refuses a PATCH from anybody but the
-     * owner or an admin, and a control that offers an edit it cannot perform is worse than one that
-     * says whose form this is.
-     *
-     * DEFAULTS FALSE, so a handset a release behind — which on this fleet is a fortnight in a
-     * courtyard — decodes a payload that carries the key and simply treats every form as unshared,
-     * which is exactly how the world looked before the column existed.
-     */
     val isShared: Boolean = false,
     val isActive: Boolean = true,
-    /**
-     * WHAT KIND OF QUESTIONNAIRE THIS IS — `WORKSHOP_INTERVIEW`, `MARKET_SURVEY`, or null for a form
-     * whose designer has not said. It decides which stage of the report its answers are filed under;
-     * see `ui/questionnaires/QuestionnaireKinds.kt` and the server's `questionnaire_kinds.py`.
-     *
-     * DEFAULTS NULL, so a handset a release behind — which on this fleet is a fortnight in a
-     * courtyard — decodes a payload carrying the key and simply treats every form as unclassified,
-     * which is exactly how the world looked before the column existed.
-     */
     val kind: String? = null,
-    /**
-     * The SERVER'S OWN LABEL for [kind], so the two clients cannot word one stored value
-     * differently. Print this rather than looking [kind] up locally wherever a row is in hand; the
-     * local map exists for the picker, which draws before any row does.
-     *
-     * Empty rather than null when absent, so a call site can print it unconditionally — the server
-     * sends "Kind not stated" for an unstated kind rather than an empty string, and an old build
-     * that has never seen the key prints nothing instead of the word "null".
-     */
     val kindLabel: String = "",
     val version: Int = 1,
     val sourceFilename: String? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
-    /** L9: null on every live row; set only in the trash (`deletedOnly`). */
     val deletedAt: String? = null,
     val deletedByName: String? = null,
 )
 
-/** L9 (21 Oct 2026): one sitting in a questionnaire's trash — `GET /questionnaires/{id}/deleted-entries`. */
 @Serializable
 data class DeletedCustomEntryDto(
     val id: String,
@@ -4460,18 +2371,9 @@ data class CustomQuestionDto(
     val helpText: String? = null,
     val isRequired: Boolean = false,
     val sortOrder: Int = 0,
-    /** False = RETIRED. It keeps the answers already recorded against it and must never collect new ones. */
     val isActive: Boolean = true,
     val retiredAt: String? = null,
-    /** Set when this question was reworded after it had answers: the id of the wording that replaced it. */
     val supersededById: String? = null,
-    /**
-     * Whether anybody has answered this question yet, and therefore the single fact the editor has to
-     * consult BEFORE the designer types. A question with answers cannot be reworded in place (the
-     * server supersedes it instead) and cannot be deleted (it retires). Offering a Delete that the
-     * API will convert into something else, and only saying so afterwards, is how a designer comes to
-     * believe the app threw away work it in fact kept.
-     */
     val hasAnswers: Boolean = false,
 )
 
@@ -4495,14 +2397,6 @@ data class CustomAnswerDto(
     val updatedAt: String? = null,
 )
 
-/**
- * One SITTING: a single filled-in copy of the questionnaire.
- *
- * [source] is `"APP"` for a sitting started on a client and `"UPLOAD"` for one the parser lifted out
- * of an answer column in the spreadsheet. Both are ordinary sittings with ordinary answers — the
- * value is worth showing, because it tells a designer where an answer they did not type came from,
- * but nothing in this app may branch on it.
- */
 @Serializable
 data class CustomEntryDto(
     val id: String,
@@ -4516,16 +2410,6 @@ data class CustomEntryDto(
     val answers: List<CustomAnswerDto> = emptyList(),
 )
 
-/**
- * One whole questionnaire: the form, its sittings and their answers, from `GET /questionnaires/{id}`.
- *
- * WHAT `includeRetired` CHANGES, because it is the difference between two screens rather than a
- * detail: asked for, retired questions and retired sections are present in [sections] — which is what
- * the read/edit screen needs, since a retired question still has answers hanging off it and they have
- * to be readable. Not asked for, they are absent, which is what the ANSWER screen needs: a retired
- * question offered for a new answer is a wording the designer deliberately replaced quietly carrying
- * on gathering evidence, and the server refuses the save with a 422 anyway.
- */
 @Serializable
 data class CustomQuestionnaireDto(
     val id: String,
@@ -4534,11 +2418,8 @@ data class CustomQuestionnaireDto(
     val ownerId: String? = null,
     val designWorkshopId: String? = null,
     val isActive: Boolean = true,
-    /** See [CustomQuestionnaireSummaryDto.isShared] — the published default, offered to everyone. */
     val isShared: Boolean = false,
-    /** See [CustomQuestionnaireSummaryDto.kind]. */
     val kind: String? = null,
-    /** See [CustomQuestionnaireSummaryDto.kindLabel]. */
     val kindLabel: String = "",
     val version: Int = 1,
     val sourceFilename: String? = null,
@@ -4546,14 +2427,11 @@ data class CustomQuestionnaireDto(
     val updatedAt: String? = null,
     val sections: List<CustomSectionDto> = emptyList(),
     val questionCount: Int = 0,
-    /** Set while the form is soft-deleted (A13); a deleted form opens read-only with Restore. */
     val deletedAt: String? = null,
     val ownerName: String? = null,
     val entries: List<CustomEntryDto> = emptyList(),
 )
 
-/** `GET /questionnaires/options` — the attach-to-a-workshop dropdown, id and label and nothing else. */
-/** One binding of a form to a workshop (UNIFY U5): exactly one of the two ids is set. */
 @Serializable
 data class FormBindingDto(
     val workshopId: String? = null,
@@ -4561,7 +2439,6 @@ data class FormBindingDto(
     val isPrimary: Boolean = false,
 )
 
-/** `GET /questionnaire/forms/{id}/bindings`. */
 @Serializable
 data class FormBindingsDto(
     val questionnaireId: String = "",
@@ -4574,16 +2451,8 @@ data class CustomQuestionnaireOptionDto(
     val title: String = "",
     val version: Int = 1,
     val designWorkshopId: String? = null,
-    /** See [CustomQuestionnaireSummaryDto.isShared] — the published default, offered to everyone. */
     val isShared: Boolean = false,
-    /**
-     * See [CustomQuestionnaireSummaryDto.kind]. On the OPTIONS payload as well as the list, because
-     * this is what the attach picker on the design-workshop screen draws — and that picker is the
-     * reason the kind exists. A designer running an interview and a market survey at one cluster
-     * sees two rows there, and before this key the only thing telling them apart was the title.
-     */
     val kind: String? = null,
-    /** See [CustomQuestionnaireSummaryDto.kindLabel]. */
     val kindLabel: String = "",
     val attachedElsewhere: Boolean = false,
 )
@@ -4593,31 +2462,16 @@ data class CustomQuestionnaireCreateBody(
     val title: String,
     val description: String? = null,
     val designWorkshopId: String? = null,
-    /**
-     * See [CustomQuestionnaireSummaryDto.kind]. Null is "not stated" and the server accepts it — a
-     * picker sitting on its blank row is a real answer, not an unfilled field.
-     *
-     * THIS BODY IS ALSO WHAT THE OUTBOX STORES for an offline create (`OFFLINE_CUSTOM_QUESTIONNAIRE`
-     * encodes this very object), so the kind survives a fortnight on the handset and is posted with
-     * the questionnaire rather than having to be set again once the row lands.
-     */
     val kind: String? = null,
 )
 
 @Serializable
 data class CustomSectionCreateBody(
     val title: String,
-    /** Left null the server derives a stable code from the title, which is what the pro-forma does. */
     val code: String? = null,
     val sortOrder: Int? = null,
 )
 
-/**
- * A section's title and position. Safe as a TYPED body — unlike the question and questionnaire
- * patches below — because none of these three columns is meaningfully nullable: there is no "clear
- * the title" instruction to express, so nothing here needs to send an explicit JSON null past a
- * converter configured with `explicitNulls = false`.
- */
 @Serializable
 data class CustomSectionPatchBody(
     val title: String? = null,
@@ -4629,12 +2483,6 @@ data class CustomSectionPatchBody(
 data class CustomQuestionCreateBody(
     val prompt: String,
     val helpText: String? = null,
-    /**
-     * DECLARED WITHOUT A KOTLIN DEFAULT, deliberately. The Retrofit converter is configured
-     * `encodeDefaults = false` (ApiClient.kt), so `isRequired: Boolean = false` would be dropped from
-     * the body whenever it was false — which is harmless here only by accident, and stops being
-     * harmless the moment anybody copies this shape into a PATCH. No default, always encoded.
-     */
     val isRequired: Boolean,
     val sortOrder: Int? = null,
 )
@@ -4656,20 +2504,12 @@ data class CustomEntryPatchBody(
 @Serializable
 data class CustomAnswerInputBody(
     val questionId: String,
-    /**
-     * OMITTED WHEN NULL, which the server reads back as null — and that is exactly the instruction
-     * "the designer cleared this box". The converter drops null fields, Pydantic's own default for
-     * this field is null, so the round trip survives the omission. Do not "fix" this by sending an
-     * empty string: `""` is stored as an answer, and the edit-after-answers rule counts a blank
-     * answer as no answer, so the two would drift apart on the one question it matters for.
-     */
     val answerText: String? = null,
     val notes: String? = null,
 )
 
 @Serializable
 data class CustomAnswerBatchBody(
-    /** No default, so an empty batch is still sent as `{"answers": []}` rather than as `{}`. */
     val answers: List<CustomAnswerInputBody>,
 )
 
@@ -4678,10 +2518,6 @@ data class CustomAnswerSaveCountsDto(
     val created: Int = 0,
     val updated: Int = 0,
     val unchanged: Int = 0,
-    /**
-     * M5 (21 Oct 2026): the answers this save did NOT write, each with the server's sentence. The
-     * others in the same batch were saved. Codes: `QUESTION_RETIRED`, `ANSWER_OWNED_BY_OTHER`.
-     */
     val rejected: List<CustomAnswerRejectedDto> = emptyList(),
 )
 
@@ -4695,22 +2531,9 @@ data class CustomAnswerRejectedDto(
 @Serializable
 data class CustomAnswerSaveResultDto(
     val saved: CustomAnswerSaveCountsDto = CustomAnswerSaveCountsDto(),
-    /**
-     * The sitting's answers this account may see: every answer for anybody entitled to the whole
-     * sitting, otherwise only the caller's own (M6). A row missing here was not deleted.
-     */
     val answers: List<CustomAnswerDto> = emptyList(),
 )
 
-/**
- * What `PATCH`/`DELETE` on one question actually did.
- *
- * [action] is one of `updated`, `superseded`, `retired`, `deleted` — FOUR outcomes from two verbs,
- * which is why this is a 200 with a body rather than a 204. [detail] is the server's own sentence
- * explaining a supersede or a retire, written to be shown verbatim; a client that summarised it into
- * "Saved" would leave a designer whose six reworded questions came back as six NEW questions with no
- * way to find out that had happened, or that their answers were safe.
- */
 @Serializable
 data class CustomQuestionEditResultDto(
     val action: String = "",
@@ -4720,20 +2543,6 @@ data class CustomQuestionEditResultDto(
     val questionnaire: CustomQuestionnaireDto? = null,
 )
 
-/**
- * The body of `PATCH /questionnaires/{id}` — rename, re-describe, attach to a workshop, deactivate.
- *
- * A JsonObject and not a data class, for the reason spelled out on [designerProfileUpdateJson]:
- * `designWorkshopId` is the one field here that is meaningfully NULLABLE, because sending an explicit
- * null is how a questionnaire is DETACHED from its workshop. The converter's `explicitNulls = false`
- * would drop that key, the server applies the body with `exclude_unset=True`, and the detach would
- * therefore return 200 having changed nothing — a silent no-op the designer only discovers when the
- * questionnaire is still hanging off the wrong workshop a week later.
- *
- * [changeWorkshop] is what separates "leave the attachment alone" from "detach it": the key is
- * written only when the caller says it is deciding the attachment, and [designWorkshopId] blank then
- * means detach.
- */
 fun customQuestionnaireUpdateJson(
     title: String? = null,
     description: String? = null,
@@ -4744,58 +2553,13 @@ fun customQuestionnaireUpdateJson(
     changeKind: Boolean = false,
     isActive: Boolean? = null,
 ): JsonObject = buildJsonObject {
-    // Sent only when non-blank. `title` has `min_length=1` on the server, so a present-and-empty
-    // title is a 422 on a request the designer thinks is a rename of something else entirely.
     title?.trim()?.takeIf { it.isNotEmpty() }?.let { put("title", JsonPrimitive(it)) }
     if (changeDescription) put("description", textOrNull(description))
     if (changeWorkshop) put("designWorkshopId", textOrNull(designWorkshopId))
-    // [changeKind] for [changeDescription]'s reason and not [designWorkshopId]'s: a blank kind means
-    // "clear it back to not stated" and an omitted key means "leave it alone", which one nullable
-    // argument cannot tell apart. `textOrNull` writes JSON null for a blank, and the server names
-    // `kind` in its clearable columns so that null survives `clean_data` and genuinely clears the
-    // column — without the name there it would answer 200 having changed nothing.
     if (changeKind) put("kind", textOrNull(kind))
     isActive?.let { put("isActive", JsonPrimitive(it)) }
 }
 
-/**
- * The body of `POST /questionnaires/{id}/reuse` — use this questionnaire again, as a template, at
- * another design workshop.
- *
- * ── IT COPIES. THE COPY CARRIES QUESTIONS AND NO FIELDWORK ──────────────────────────────
- *
- * A new questionnaire, a new section tree, a new question tree — and ZERO sittings and ZERO answers.
- * Two rows, two histories: editing the copy does not touch the original and vice versa. The
- * alternative (one questionnaire attached to several workshops) was rejected on the server for a
- * reason worth knowing on the handset too — a sitting has no workshop of its own and the report
- * annexure selects purely on `designWorkshopId`, so it would have printed one workshop's named
- * respondents inside another workshop's ministry submission.
- *
- * ── AN EMPTY BODY IS MEANINGFUL, AND IS THE DEFAULT ─────────────────────────────────
- *
- * `{}` makes an UNATTACHED copy the caller owns, visible only under `ownerId = me` — which is what
- * a designer wants when they are lifting an instrument now and will decide which workshop it serves
- * later. That is why every argument here is optional.
- *
- * [designWorkshopId] OMITTED MEANS "DO NOT ATTACH IT YET"; it does NOT inherit the source's
- * workshop. That is the one place this departs from [customQuestionnaireUpdateJson]'s convention,
- * and deliberately: there is no existing attachment on a row that does not exist yet, and inheriting
- * the source's would make the default outcome "a second copy of this form at the workshop that
- * already has one" — the least likely thing anybody pressing "Reuse at another workshop" wants.
- * It is written only when NON-BLANK, because the server puts `min_length=1` on it: an empty string
- * skipped the route's `if payload.designWorkshopId:` workshop check and travelled on to Prisma as a
- * foreign key, measured as a 500 that invites a retry which cannot work.
- *
- * [title] omitted is filled in by the server as "X (reused)", counted up to "X (reused 2)" against
- * the titles already at the target, so two copies at one workshop are tellable apart in a list.
- * Blank is dropped rather than sent for the same `min_length=1` reason as above.
- *
- * [description] IS A TRI-STATE ON THE WIRE and the server reads it as one through `exclude_unset`,
- * which is why this is a JsonObject and not a data class: the converter's `explicitNulls = false`
- * would drop an explicit null and turn "start it empty" into "carry the source's description
- * across" — a silent no-op the designer discovers weeks later. Leave [changeDescription] false to
- * carry it across; set it true to decide the description, blank meaning empty.
- */
 fun questionnaireReuseJson(
     designWorkshopId: String? = null,
     title: String? = null,
@@ -4807,35 +2571,6 @@ fun questionnaireReuseJson(
     if (changeDescription) put("description", textOrNull(description))
 }
 
-/**
- * What `POST /questionnaires/{id}/reuse` answers: the upload result's shape, plus the id it was
- * copied FROM.
- *
- * DELIBERATELY THE SAME `{questionnaire, report}` SHAPE AS AN UPLOAD, key for key, so
- * [QFormChangeReportDto] types the report and the existing upload-report panel renders it with no
- * second component to keep in step. `report.created` and `report.sections` count what came across;
- * `entriesCreated`, `answersImported` and `answersSkipped` are all 0 and are STATED rather than
- * omitted, because "no answers were copied" and "this report says nothing about answers" read
- * identically and only the first is a fact.
- *
- * `report.provenance.action` is the string `reused` — a THIRD action beside the upload path's
- * `answersImported` / `answersNotImported`, and `report.provenance.reason` is a paragraph the server
- * wrote for a designer to read and must be shown VERBATIM.
- *
- * `report.problems` is present even when empty, and on this route it carries exactly one thing worth
- * catching: an instrument too large to have been copied whole (over the parser's section/question
- * ceilings), whose tail was left behind. The original keeps all of it. A screen that skips an empty
- * problems list is fine; one that skips the list entirely is not.
- *
- * [sourceQuestionnaireId] IS ALWAYS SENT by this route and by no other — an upload has no single
- * source to name, which is why this is a separate class rather than an alias of the upload result:
- * a client cannot then read the id off a response where it does not exist. It is nonetheless
- * NULLABLE WITH A DEFAULT, and that is a deliberate asymmetry with the frontend's required
- * `string`: by the time this body is built the copy is already committed, so a decode that failed
- * over a missing key would show the designer an error for a questionnaire that WAS created, and
- * their retry would leave them owning "(reused 2)" beside it. A null here is a shape to report, not
- * a reason to fail the call.
- */
 @Serializable
 data class QFormReuseResultDto(
     val questionnaire: CustomQuestionnaireDto,
@@ -4843,19 +2578,6 @@ data class QFormReuseResultDto(
     val sourceQuestionnaireId: String? = null,
 )
 
-/**
- * The body of `PATCH /questionnaires/{id}/questions/{questionId}`.
- *
- * A JsonObject for the same reason as the questionnaire patch above, on a different field: the
- * server reads `helpText` out of `model_fields_set`, so clearing the help text needs the key present
- * and null. A typed body would silently leave the old hint under a question the designer just
- * emptied.
- *
- * [prompt] is the field that can turn this request into something other than an edit. Sent on a
- * question that already has answers, the server SUPERSEDES rather than overwrites — see
- * [CustomQuestionEditResultDto]. It is therefore sent only when the caller actually changed the
- * wording, so that ticking "required" on an answered question is not read as a rewording of it.
- */
 fun customQuestionUpdateJson(
     prompt: String? = null,
     helpText: String? = null,
@@ -4869,59 +2591,28 @@ fun customQuestionUpdateJson(
     sortOrder?.let { put("sortOrder", JsonPrimitive(it)) }
 }
 
-// ---------------------------------------------------------------------------------------------
-// A designer's OWN provider keys — `GET /ai/providers`, `GET|PUT|DELETE /me/ai-keys[/…]`
-//
-// SEPARATE FROM [ManagedSecretDto] AND ITS OPPOSITE IN EVERY RESPECT. That one describes the
-// DEPLOYMENT's keys, is master-admin only, and has a reveal endpoint because a master admin
-// sometimes has to compare a stored key against a provider dashboard. These describe ONE PERSON's
-// own key, billed to their own card at their own provider, and there is deliberately no reveal
-// route at all — nobody, administrator included, has any business reading somebody else's personal
-// credential. The last four characters are the most this app can ever show.
-// ---------------------------------------------------------------------------------------------
-
-/**
- * One model a designer can choose, and the honest list of what it can be used for.
- *
- * [tasks] IS NOT DECORATION AND MUST BE RENDERED. It carries the enum names the server uses —
- * PROOFREAD, EXPAND, SUMMARISE, TRANSLATE, TRANSCRIBE, CAPTION — and it is how a designer learns
- * BEFORE choosing that, for instance, no Claude model can transcribe audio. Dropping it from the
- * screen would let somebody paste a Claude key believing their recordings were now on their own
- * account, and find out otherwise from a bill that never arrives.
- */
 @Serializable
 data class AiModelDto(
     val id: String,
     val label: String = "",
     val note: String = "",
     val tasks: List<String> = emptyList(),
-    /** Indicative USD per million tokens. Null for models the provider does not price per token. */
     val inputPricePerMTok: Double? = null,
     val outputPricePerMTok: Double? = null
 )
 
-/** One provider: how to get a key, what it costs, and which models it offers. */
 @Serializable
 data class AiProviderDto(
     val provider: String,
     val label: String = "",
-    /** What a key from this provider starts with, checked before an obviously-wrong paste is sent. */
     val keyPrefix: String? = null,
     val consoleUrl: String = "",
     val pricingUrl: String = "",
-    /** The accordion: how to get a key, one action per step, in the order they will be done. */
     val howTo: List<String> = emptyList(),
     val defaultModel: String = "",
     val models: List<AiModelDto> = emptyList()
 )
 
-/**
- * `GET /ai/providers`.
- *
- * [pricesCheckedOn] TRAVELS WITH EVERY PRICE THIS APP PRINTS. The figures go stale — providers
- * re-price, and some of the current rates are introductory — and a stale price shown as current is
- * a small lie told to somebody deciding how to spend their own money.
- */
 @Serializable
 data class AiCatalogueDto(
     val pricesCheckedOn: String = "",
@@ -4929,22 +2620,14 @@ data class AiCatalogueDto(
     val providers: List<AiProviderDto> = emptyList()
 )
 
-/**
- * One provider row for the signed-in person. Carries no plaintext, ever — see the block comment
- * above on why there is no reveal.
- */
 @Serializable
 data class UserAiKeyDto(
     val provider: String,
     val label: String = "",
-    /** True when a key is stored AND can still be decrypted. */
     val configured: Boolean = false,
-    /** A stored key the server can no longer decrypt: the owner must paste it again. */
     val unreadable: Boolean = false,
     val hint: String? = null,
     val model: String = "",
-    /** False when the saved model is no longer one this app offers — the row says so rather than
-     *  silently correcting it, because the designer's own choice is what is being overridden. */
     val modelKnown: Boolean = true,
     val lastStatus: String = "UNKNOWN",
     val lastCheckedAt: String? = null,
@@ -4952,111 +2635,27 @@ data class UserAiKeyDto(
     val updatedAt: String? = null
 )
 
-/** `PUT /me/ai-keys/{provider}`. Both fields are optional: sending only [model] changes the model
- *  without making somebody find their key again, which is what stops a UI teaching people to keep
- *  a credential somewhere convenient and less safe. */
 @Serializable
 data class UserAiKeySetBody(
     val key: String? = null,
     val model: String? = null
 )
 
-// ---------------------------------------------------------------------------------------------
-// DESIGN REVIEW — the rating ledger: `POST /design-ratings`,
-// `GET /design-ratings/subjects/{subjectId}`, `GET /design-ratings/rounds/{round}`
-//
-// Appended rather than filed beside the other design-workshop DTOs above, deliberately: this file
-// was being edited by two other lanes on the day these landed, and a reorganisation of a
-// 3,400-line shared file is the change most likely to lose somebody else's uncommitted work.
-//
-// ── WHAT THIS WIRE IS, AND THE TWO THINGS IT IS NOT ──────────────────────────────────────────
-//
-// It is a ledger of judgements POINTING AT stage rows. `backend/app/services/design_ratings.py`
-// states both refusals at length and they are worth carrying here, because both are the shortcut a
-// reader of this block will reach for:
-//
-//   * IT IS NOT A SECOND WAY TO ADD A PROTOTYPE. A rating carries no design content. A sketch is a
-//     `sketch` row of stage 11 and a prototype a `prototype` row of stage 13, and that is where
-//     their fields, their plates and their report figures stay.
-//   * IT IS NOT A NEW RANKING MECHANISM. The placed order IS `DwStageEntry.ordinal` — the number
-//     this handset already writes from the row order of [StageDraft.rows] (see `buildStageBody`,
-//     `ordinal = index`). Nothing here writes an ordinal; [RankedSubjectDto.placedPosition] reads
-//     one.
-//
-// ── EVERY RESPONSE FIELD IS NULLABLE-WITH-DEFAULT, AND THAT IS NOT TIDINESS ──────────────────
-//
-// This app ships separately from the API, in both directions: a handset a release BEHIND meets keys
-// it has never heard of (handled by `ignoreUnknownKeys` in data/ApiClient.kt), and a handset a
-// release AHEAD meets a server that does not send a key yet. The second is what defaults are for. A
-// required field here would turn one missing key into a `SerializationException` that takes the
-// whole screen down, on a feature whose entire audience is designers standing in a courtyard.
-//
-// The REQUEST body [DesignRatingBody] is the deliberate exception: its three required fields are
-// values this client always has, and defaulting them would let a future caller post a rating with no
-// subject and no score and be answered with a 422 naming a field the designer never saw.
-//
-// ── AND THE ONE ABSENT KEY THAT IS THE WHOLE PERMISSION RULE ─────────────────────────────────
-//
-// `reviewerId` is OMITTED by the server for a caller who may not have it — see `rating_payload`,
-// which redacts on the way out rather than letting a route trim afterwards, so that no client can
-// render a name that was never sent. It is therefore `String?` here and must stay so: the nullable
-// type is the only thing that stops a later card printing an identity unconditionally.
-// ---------------------------------------------------------------------------------------------
-
-/**
- * One row of the ledger, as `design_ratings.rating_payload` writes it.
- *
- * BOTH CLOCKS TRAVEL, ALWAYS, and a screen that prints one has to say which. [ratedAt] is when the
- * designer judged the piece as their own device recorded it; [createdAt] is when this server first
- * heard about it. On this fleet the two are routinely a fortnight apart — a rating captured in a
- * courtyard reaches the server whenever the phone next finds signal — so collapsing them into "when"
- * credits the sync with the judgement.
- *
- * [mine] is the server's own answer to "did this caller write this row", not something a client
- * derives by comparing ids: the reviewer always sees their own row in full, which is the clause that
- * makes the amend flow work for somebody who may not read the rest of the ledger.
- */
 @Serializable
 data class DesignRatingDto(
     val id: String = "",
     val subjectId: String? = null,
-    /** PEER or POOL. A String and not an enum — see `DwRatingRound.of` for why. */
     val round: String = "",
     val score: Int? = null,
     val comment: String? = null,
     val suggestion: String? = null,
-    /** The courtyard moment, as the rating device recorded it. */
     val ratedAt: String? = null,
-    /** When this server first heard of it. */
     val createdAt: String? = null,
     val updatedAt: String? = null,
     val mine: Boolean = false,
-    /** ABSENT, never blank, when this caller may not know who rated. See the block comment above. */
     val reviewerId: String? = null,
 )
 
-/**
- * One judgement on its way up — the body of `POST /design-ratings`.
- *
- * ONE ROUTE FOR CREATE AND AMEND, because the client cannot know which it is asking for. A phone
- * that captured a rating in a courtyard has no idea whether the server already holds one from the
- * tablet the same designer used yesterday, and asking first would put a round trip in front of every
- * offline capture. The server resolves it to a create, an amendment or a no-op and says which
- * through [DesignRatingSavedDto.replayed].
- *
- * ── [ratedAt] IS THE ONE FIELD A CLIENT CAN GET DANGEROUSLY WRONG ────────────────────────────
- *
- * It is what orders two deliveries of the SAME capture: `rating_plan` refuses a delivery whose
- * `ratedAt` is not newer than the stored row's, and that is the whole of what stops a queued
- * original from undoing an amendment after a tunnel. So it must be the moment the PERSON moved the
- * control, never the moment the request went out. Stamping it at send time defeats the field
- * exactly, and the schema says so in as many words: "Omit it when the rating is typed straight
- * against the server."
- *
- * This handset therefore sends it ONLY from the offline queue path, stamped at the moment of
- * capture; a rating typed with a connection omits it and lets the row's own `createdAt` be the
- * moment. See `WorkshopRepository.submitDesignRating`.
- */
 @Serializable
 data class DesignRatingBody(
     val subjectId: String,
@@ -5067,28 +2666,12 @@ data class DesignRatingBody(
     val ratedAt: String? = null,
 )
 
-/**
- * What `POST /design-ratings` answers with: the stored row, and whether this was a replay.
- *
- * [replayed] TRUE IS A SUCCESS AND MUST NOT BE DRAWN AS A FAILURE. It means the server already held
- * this exact capture — the outbox delivered it twice, which is the ordinary behaviour of a phone
- * with a flaky connection — and the stored row is the answer. A red line here would tell a designer
- * their judgement was lost when it is safely recorded.
- */
 @Serializable
 data class DesignRatingSavedDto(
     val rating: DesignRatingDto = DesignRatingDto(),
     val replayed: Boolean = false,
 )
 
-/**
- * The piece a ledger read was about, as `subject_ledger` names it.
- *
- * [ordinal] is a DISCLOSURE and not a display field: the server sends the raw `DwStageEntry.ordinal`
- * only to the workshop's own party and to admins, because a pool reader shown one opened prototype
- * sitting at ordinal 7 has learned the workshop holds at least eight pieces they may not open. Its
- * PRESENCE is what this client reads it for — see `dwMayArrange`.
- */
 @Serializable
 data class RatingSubjectDto(
     val id: String = "",
@@ -5098,40 +2681,12 @@ data class RatingSubjectDto(
     val ordinal: Int? = null,
 )
 
-/**
- * The aggregate: the mean of the scores on the rows, and how many there were.
- *
- * [score] is null for a piece nobody has rated. NULL IS NOT ZERO — a sketch nobody has got to has
- * not been judged badly, it has not been judged — and every screen over this has to keep the two
- * apart. It arrives rounded to three decimals rather than one, deliberately, so that two pieces on
- * 4.24 and 4.16 do not look tied on a list whose whole job is to order them.
- */
 @Serializable
 data class RatingSummaryDto(
     val score: Double? = null,
     val ratingCount: Int = 0,
 )
 
-/**
- * `GET /design-ratings/subjects/{subjectId}` — who rated this piece, when, and how.
- *
- * ── THE TWO BOOLEANS ARE THE POINT OF THIS RESPONSE ──────────────────────────────────────────
- *
- * [canReadLedger] false with a populated [summary] IS NOT A REFUSAL and must never be rendered as
- * one. It is "you can see the score, not the scorers" — the ordinary state of a peer in a round —
- * and the server sends the flag precisely so a client does not have to guess whether an empty
- * [ratings] list means "nobody rated" or "not yours to see". Guessing is how a designer comes to
- * believe their prototype went unreviewed.
- *
- * [namesShown] says whether the rows that DID arrive carry a reviewer. It is the server's decision
- * for this round — see `POOL_RATINGS_NAME_THEIR_RATER`, an owner call — so the sentence on screen
- * attributes it to the server rather than implying this app withheld something.
- *
- * BOTH DEFAULT TO FALSE, which is the conservative direction for a handset talking to a server that
- * does not send them yet: the screen says less than it might, rather than claiming an entitlement
- * nobody granted. Per-row identity is still read off [DesignRatingDto.reviewerId], which is the fact
- * rather than the flag.
- */
 @Serializable
 data class SubjectLedgerDto(
     val subject: RatingSubjectDto = RatingSubjectDto(),
@@ -5142,31 +2697,6 @@ data class SubjectLedgerDto(
     val namesShown: Boolean = false,
 )
 
-/**
- * One row of `GET /design-ratings/rounds/{round}` — a piece, its score, and BOTH of its positions.
- *
- * ── TWO POSITIONS, AND THE WHOLE FEATURE IS THE GAP BETWEEN THEM ─────────────────────────────
- *
- * The owner asked for "sorted by score by default, with the designer having the final say", which is
- * two orders that have to be visible at once:
- *
- *   * [defaultPosition] is what the ratings say. Derived from the average, then the sample size,
- *     then the placed order, then the id — and unrated pieces sort LAST, because nobody having got
- *     to a sketch is not the same as it scoring nothing.
- *   * [placedPosition] is what the designers say: `DwStageEntry.ordinal`, the number the row arrows
- *     on the stage screen already write.
- *
- * A client that only ever showed the sorted order could not show a designer that they had overruled
- * the scores, which is precisely the judgement being recorded.
- *
- * [myRating] is this caller's own row, sent with the listing so the rating control renders already
- * filled in without a request per piece. It carries no identity decision — it is the caller's own
- * row, which they may always see in full.
- *
- * [ordinal] carries the same disclosure rule as [RatingSubjectDto.ordinal] and this client reads its
- * PRESENCE as one thing only: whether this caller is the workshop's own party or an admin, which is
- * the same set the stage save admits. See `dwMayArrange`.
- */
 @Serializable
 data class RankedSubjectDto(
     val subjectId: String = "",
@@ -5181,16 +2711,6 @@ data class RankedSubjectDto(
     val ordinal: Int? = null,
 )
 
-/**
- * `GET /design-ratings/rounds/{round}` — one round's pieces, in PLACED order.
- *
- * `workshopId` IS REQUIRED FOR BOTH ROUNDS, POOL INCLUDED, and that is structural rather than an
- * unfinished API. The placed order is `DwStageEntry.ordinal`, which orders the rows of ONE
- * collection inside ONE workshop: two prototypes in two workshops can both be ordinal 0, so an
- * arrangement made across a mixed list would have nowhere to be stored. The pool round is the same
- * list read by a WIDER AUDIENCE, not a wider list, and a cross-workshop browse is a different
- * feature with a different answer. Neither client has one.
- */
 @Serializable
 data class RoundRankingDto(
     val workshopId: String = "",
@@ -5198,11 +2718,6 @@ data class RoundRankingDto(
     val round: String = "",
     val items: List<RankedSubjectDto> = emptyList(),
 )
-
-// --- Interview summaries, key quotes and translations (GET /media/{id}/insights) ----------------
-// Read-only on Android. Every field has a default so an older or newer server never breaks decoding;
-// an unknown `state` is treated as nothing to show (see data/TranscriptInsights.kt). The same shape
-// as the Field Repository's.
 
 @Serializable
 data class InsightQuoteDto(
@@ -5262,6 +2777,5 @@ data class MediaBatchDto(
 @Serializable
 data class TranscriptInsightBatchDto(
     val items: Map<String, TranscriptInsightViewDto> = emptyMap(),
-    // True only from a server that honoured `includeTranslation=true`; an older one leaves it out.
     val translationIncluded: Boolean = false
 )

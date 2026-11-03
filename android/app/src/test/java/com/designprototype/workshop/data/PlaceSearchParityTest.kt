@@ -14,41 +14,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * [PlaceSearch] against `frontend/lib/placeSearch.ts`, PINNED BY VALUE.
- *
- * WHY BY VALUE AND NOT BY PROPERTY. This repository has already been bitten twice by a port that was
- * right about the rule and wrong about the answer — Python rounding half to EVEN where naive
- * formatting rounds half away (62% against 63%), and a tokeniser matching `\p{L}` where the original
- * matched `[\p{L}\p{M}]` so every Odia word shattered. A test that asserted "the context is the part
- * after the name" would have passed against all of those. So the two implementations are run over
- * ONE shared table and the outputs are diffed.
- *
- * HOW THE TABLE WAS MADE, so it can be remade. `scripts` were run out of the scratchpad, not checked
- * in, and the steps were: capture six real MapTiler bodies with this build's own key
- * (`api.maptiler.com/geocoding/{Barpali,Bargarh,Bagru,Kutch,Bhuj,Srinagar}.json?...&country=in`);
- * add the hand-written edge cases below; load `frontend/lib/placeSearch.ts` VERBATIM through jiti
- * with `@/lib/api` and `@/lib/offline` aliased to stubs of `ApiError`, `isTransient` and
- * `isUnreachable` copied from `frontend/lib/offline.ts:237-260`; stub `global.fetch` to return each
- * case and record the URL it was asked for; write inputs and answers into
- * `app/src/test/resources/placeSearchParity.json`. The TypeScript is the reference implementation
- * and this file is the diff. 22 parse cases and 10 failure cases.
- *
- * WHAT THE TABLE DELIBERATELY COVERS, because each one is a way a port of this module can be wrong
- * while looking right:
- *
- *   * Every branch of the name/context split, including a `place_name` that does NOT begin with
- *     `text,` (kept whole) and one that begins with `text` but without the comma (also kept whole).
- *   * Features with no usable centre — absent, null, a string, a one-element array — which must be
- *     DROPPED, and the fallback id of a later feature, which must be its index AFTER the drop.
- *   * MapTiler's degenerate bbox (`w == e`, `s == n`) for a village, which the live API returns for
- *     every `place.*` feature and which is what separates a frame from a point.
- *   * URL escaping of the path segment. `java.net.URLEncoder` would write "Kollam / Kerala" as
- *     "Kollam+%2F+Kerala" and search for a plus sign; Odia and Devanagari names must survive as
- *     percent-encoded UTF-8.
- *   * The three failure buckets across ten statuses. Getting 500 into the "no connection" bucket
- *     would send a designer out of the building to look for signal that was never the problem.
- */
 class PlaceSearchParityTest {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -67,12 +32,6 @@ class PlaceSearchParityTest {
         assertEquals(table["minQueryLength"]!!.jsonPrimitive.int, PLACE_SEARCH_MIN_QUERY_LENGTH)
     }
 
-    /**
-     * The URL, character for character.
-     *
-     * Whole-string equality rather than "contains country=in", because the failure this catches is
-     * an encoder difference inside a value, which every looser assertion passes.
-     */
     @Test
     fun `every request URL is byte-identical to the web's`() {
         val key = table.str("key")!!
@@ -89,13 +48,6 @@ class PlaceSearchParityTest {
         assertEquals("URL parity diff:\n" + mismatches.joinToString("\n"), 0, mismatches.size)
     }
 
-    /**
-     * The hits, field by field, including which features were dropped and in what order.
-     *
-     * Doubles are compared with `assertEquals(expected, actual, 0.0)` — an EXACT match. Both sides
-     * parsed the same shortest-round-trip decimal text, so anything other than bit equality here is
-     * a real difference and not a floating-point artefact; a tolerance would hide it.
-     */
     @Test
     fun `every parsed result matches the web's, hit for hit`() {
         val mismatches = mutableListOf<String>()
@@ -107,8 +59,6 @@ class PlaceSearchParityTest {
             val body = case.str("body")!!
 
             if (status != 200) {
-                // The status is decided before the body is looked at, so a 403 carrying MapTiler's
-                // plain-text "Invalid key" is a refusal and never an unreadable-answer error.
                 val expected = case["expectedError"]!!.jsonObject
                 val failure = placeSearchStatusFailure(status)
                 if (failure.status != expected["status"]!!.jsonPrimitive.int) {
@@ -174,7 +124,6 @@ class PlaceSearchParityTest {
         assertEquals("Hit parity diff:\n" + mismatches.joinToString("\n"), 0, mismatches.size)
     }
 
-    /** The three sentences, over every status the table carries. */
     @Test
     fun `every failure message matches the web's`() {
         val mismatches = mutableListOf<String>()
@@ -188,11 +137,6 @@ class PlaceSearchParityTest {
         assertEquals("Failure parity diff:\n" + mismatches.joinToString("\n"), 0, mismatches.size)
     }
 
-    /**
-     * A failure that is not a [PlaceSearchException] at all — a dead socket, DNS with no answer —
-     * lands in the offline bucket, which is what the web's `isUnreachable` returns for anything that
-     * is not an `ApiError`.
-     */
     @Test
     fun `an unwrapped IO failure reads as no connection`() {
         val expected = table["failure"]!!.jsonArray
@@ -203,17 +147,6 @@ class PlaceSearchParityTest {
         assertEquals(expected, describePlaceSearchFailure(IllegalStateException("something else entirely")))
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The half the web has no counterpart for: the camera, and the Leaflet call that performs it
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * A real extent is framed; MapTiler's degenerate village bbox is NOT.
-     *
-     * The degenerate case is taken from the live response for Barpali, where `bbox` is the centre
-     * repeated. Treating it as an extent asks Leaflet to fit a zero-size rectangle, which is a
-     * request for its maximum zoom — a roof, with nothing on screen to say which village it is.
-     */
     @Test
     fun `an area is framed and a village point is not`() {
         val area = PlaceHit(
@@ -251,14 +184,6 @@ class PlaceSearchParityTest {
         assertEquals(cameraForPlace(village), cameraForPlace(noBox))
     }
 
-    /**
-     * THE AXIS ORDER, which is the one thing in this feature that fails silently.
-     *
-     * MapTiler says `[west, south, east, north]`; Leaflet wants `[[south, west], [north, east]]`.
-     * The same four numbers in the wrong order do not throw — they fly the map to a rectangle in the
-     * Indian Ocean. This asserts the exact string, so a reordering is a failing test rather than a
-     * confused designer.
-     */
     @Test
     fun `the Leaflet script puts latitude first and never touches the marker`() {
         val frame = leafletCameraScript(
@@ -277,9 +202,6 @@ class PlaceSearchParityTest {
             point
         )
 
-        // THE LOAD-BEARING RULE, asserted rather than trusted: no camera script may move the marker
-        // or report a coordinate back through the bridge. Either would put a geocoder's guess into a
-        // research record with nobody in the loop.
         for (script in listOf(frame, point)) {
             assertTrue(script, !script.contains("setLatLng"))
             assertTrue(script, !script.contains("AndroidMapBridge"))
@@ -287,13 +209,6 @@ class PlaceSearchParityTest {
         }
     }
 
-    /**
-     * A build with no MapTiler key must degrade, not crash.
-     *
-     * The picker's tiles come from OpenStreetMap and need no key, so a keyless build still has a
-     * working map — which is why the UI hides only the search box. This is the belt to that braces:
-     * a caller that forgot the check gets a refusal it can word, not a request to `key=`.
-     */
     @Test
     fun `a blank key is unavailable and refuses loudly`() {
         assertTrue(placeSearchAvailable("OJJYFRqCD2HD2k3BbXGF"))

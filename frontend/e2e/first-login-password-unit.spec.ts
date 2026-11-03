@@ -277,8 +277,8 @@ test("the handset forgets the door password on every exit", () => {
 
 test("the hint is classified from the header and never from the body", () => {
   expect(SIGN_IN).toContain('export const SIGN_IN_HINT_HEADER = "x-sign-in-hint"');
-  expect(KT_REPO, "the handset records the same rule beside its own classifier").toContain(
-    "THE REFUSAL BODY CARRIES EXACTLY ONE KEY"
+  expect(KT_REPO, "the handset classifies from the header").toContain(
+    "headers()?.get(SIGN_IN_HINT_HEADER)"
   );
   expect(LOGIN, "the web reads it off the response headers").toContain("err.headers?.get(SIGN_IN_HINT_HEADER)");
   expect(KT_MAIN, "the handset reads it off the response headers").toContain("failure.signInHint()");

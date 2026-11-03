@@ -19,29 +19,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The Kotlin template catalogue, diffed against the SERVER'S OWN, by value.
- *
- * `src/test/resources/report_templates_pin.json` is not written by hand and must never be edited by
- * hand. It is dumped straight out of `backend/app/services/report_templates.py`,
- * `report_theme.py` and `design_workshops.py` inside the running API container:
- *
- *     docker cp scratchpad/gen_pin.py design-workshop-api:/tmp/gen_pin.py
- *     docker exec design-workshop-api sh -c 'cd /app && python /tmp/gen_pin.py /tmp/pin.json'
- *     docker cp design-workshop-api:/tmp/pin.json android/app/src/test/resources/report_templates_pin.json
- *
- * WHY BY VALUE AND NOT BY PROPERTY. A test that checked "the catalogue has six templates and each
- * has a cover section" passes against a port whose DCH sections are in the wrong order, whose photo
- * catalogue numbers its headings, or whose compact summary caps at ADVANCED — every one of which is
- * a different document from the office's for the same workshop, and none of which anybody would see
- * without opening the two files side by side. The pin carries 6 templates, 116 sections, 38
- * `apply_report_settings` cases and the accent, font, template-id, palette, cover-meta and date
- * arithmetic besides, and the whole of each is compared.
- *
- * WHAT TO DO WHEN THIS FAILS. Regenerate the pin from the server first. If the server has changed,
- * the port follows it; if it has not, the port is wrong. The one thing that must not happen is
- * editing the JSON to match the Kotlin.
- */
 class ReportTemplatePinTest {
 
     private val pin: JsonObject by lazy {
@@ -54,15 +31,11 @@ class ReportTemplatePinTest {
         Json.parseToJsonElement(stream!!.bufferedReader().use { it.readText() }).jsonObject
     }
 
-    // ── reading the pin ──────────────────────────────────────────────────────────────────────────
-
     private fun JsonElement.stringOrNull(): String? =
         if (this is JsonNull) null else jsonPrimitive.contentOrNull
 
     private fun JsonElement?.settings(): Map<String, JsonElement>? =
         if (this == null || this is JsonNull) null else jsonObject.toMap()
-
-    // ── the catalogue ────────────────────────────────────────────────────────────────────────────
 
     private fun assertTheme(where: String, expected: JsonObject, actual: ReportTheme) {
         assertEquals("$where accent", expected["accent"]!!.jsonPrimitive.content, actual.accent)
@@ -126,12 +99,6 @@ class ReportTemplatePinTest {
             "$where figures",
             expected["figures"]!!.jsonArray.map { it.jsonPrimitive.content }, actual.figures,
         )
-        // READ CONDITIONALLY, WHICH IS THE ONE PLACE THIS FILE DOES NOT INSIST ON A KEY. The fixture
-        // in the tree predates `custom_key` and cannot be regenerated in a checkout with no API
-        // container, so demanding the key would fail every one of the 116 pinned sections over a
-        // field none of them has an opinion about. The day the pin is regenerated with the
-        // CUSTOM_SECTION cases (see `applyReportSettings agrees with the server …`) this starts
-        // comparing without anybody having to remember to come back for it.
         expected["custom_key"]?.let {
             assertEquals("$where custom_key", it.jsonPrimitive.content, actual.customKey)
         }
@@ -211,32 +178,6 @@ class ReportTemplatePinTest {
         }
     }
 
-    // ── the settings arithmetic ──────────────────────────────────────────────────────────────────
-
-    /**
-     * ── THE HOLE THIS TEST STILL HAS, WRITTEN DOWN WHERE THE NEXT READER WILL SEE IT ──────────────
-     *
-     * `grep -c CUSTOM_SECTION report_templates_pin.json` returns 0. None of the 38 pinned cases
-     * passes a custom-section definition, so the one test whose stated purpose is "the two catalogues
-     * agree by value" reports agreement on a code path it has never exercised — which is exactly how
-     * the placement divergence shipped green: the handset drew a designer's questions inline at
-     * level 2 inside the stage while the server splices them as level-1 sections after it, and
-     * dropped them entirely for a template that does not print the anchor stage.
-     *
-     * The Kotlin side of the pin is now ready for those cases: [applyReportSettings] takes the
-     * definition, [assertSection] compares `custom_key` the moment the fixture carries it, and the
-     * `custom_sections` input below is read the moment the generator emits it. What is missing is the
-     * fixture, which is dumped from the running API container (see this class's KDoc) and cannot be
-     * regenerated in a checkout with no Docker. THREE CASES ARE WANTED, and each pins a different
-     * half of `apply_report_settings`' rule:
-     *
-     *   1. two sections on ONE printed stage — pins the walk-past that stops the second section
-     *      being inserted ahead of the first and reversing the designer's own sort order;
-     *   2. a section whose stage the template never carries (PHOTO_CATALOGUE) — pins the back
-     *      annexure BEFORE the completeness section, and its `page_break_before`;
-     *   3. a section whose stage is named in `excludedStages` — pins that the splice runs AFTER the
-     *      exclusion filter, so the block is not stranded behind a stage section that was removed.
-     */
     @Test
     fun `applyReportSettings agrees with the server over the whole case table`() {
         val cases = pin["apply_report_settings"]!!.jsonArray
@@ -249,9 +190,6 @@ class ReportTemplatePinTest {
             val photos = case["include_photographs"]!!.let {
                 if (it is JsonNull) null else it.jsonPrimitive.boolean
             }
-            // Only `key`, `title`, `stage_key` and `sort_order` are read by the function under test,
-            // and only those four are serialised by the generator — the rest of a definition is the
-            // renderer's business and would make the fixture a copy of the custom-sections payload.
             val custom = case["custom_sections"]?.takeIf { it !is JsonNull }?.jsonArray?.map {
                 val item = it.jsonObject
                 DwCustomSectionDto(
@@ -321,8 +259,6 @@ class ReportTemplatePinTest {
         }
     }
 
-    // ── the cover and the running furniture ──────────────────────────────────────────────────────
-
     @Test
     fun `reportMetaFor agrees with the server's report_meta`() {
         pin["report_meta"]!!.jsonArray.forEach { raw ->
@@ -344,8 +280,6 @@ class ReportTemplatePinTest {
                 record = record,
                 templateId = case["template_id"]!!.jsonPrimitive.content,
                 settings = case["settings"].settings(),
-                // The server stamps the clock here and the pin drops the field; nothing else in
-                // ReportMeta is derived from it, so the comparison is complete without it.
                 generatedAt = "",
             )
             val expected = case["result"]!!.jsonObject
@@ -405,14 +339,8 @@ class ReportTemplatePinTest {
         }
     }
 
-    // ── the trap that is invisible from the Kotlin side ──────────────────────────────────────────
-
     @Test
     fun `a boolean stored as the string false keeps its section, as it does on the server`() {
-        // Called out on its own because it is the one place a reasonable-looking port silently
-        // disagrees. `bool("false")` is TRUE in Python, so the server keeps the table of contents;
-        // kotlinx's `booleanOrNull` answers false for the same value and would take it away. One
-        // record, two files, one with a contents page and one without.
         val kept = applyReportSettings(
             reportTemplate("DCH_STANDARD"),
             mapOf("includeTableOfContents" to JsonPrimitive("false")),
@@ -434,8 +362,6 @@ class ReportTemplatePinTest {
 
     @Test
     fun `nothing saved returns the template untouched, by identity`() {
-        // The "silent where nobody asked" guarantee, which is what stops this feature restyling
-        // every report the app has ever generated the moment it ships.
         val template = reportTemplate("DETAILED_TECHNICAL")
         assertTrue(template === applyReportSettings(template, null))
         assertTrue(template === applyReportSettings(template, emptyMap()))

@@ -62,12 +62,10 @@ import androidx.media3.ui.PlayerView
 import coil3.ImageLoader
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
-// An extension in Coil 3, not a builder member as it was in Coil 2, so it needs its own import.
 import coil3.request.crossfade
 import coil3.video.VideoFrameDecoder
 import kotlinx.coroutines.delay
 
-/** A Coil loader that can decode a frame from a video file/URL for use as a thumbnail. */
 @Composable
 fun rememberMediaImageLoader(): ImageLoader {
     val context = LocalContext.current
@@ -79,7 +77,6 @@ fun rememberMediaImageLoader(): ImageLoader {
     }
 }
 
-/** Full-screen, type-aware media viewer: image, video (ExoPlayer) or audio (inline transport). */
 @Composable
 fun MediaViewerDialog(uri: Uri, mediaType: String, onSave: (() -> Unit)? = null, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -105,8 +102,6 @@ fun MediaViewerDialog(uri: Uri, mediaType: String, onSave: (() -> Unit)? = null,
             }
             Row(modifier = Modifier.align(Alignment.TopEnd)) {
                 if (onSave != null) {
-                    // A worded tonal button, not a bare white glyph on the photograph (owner, 2026-10-17:
-                    // "the buttons for retry and download on media card are not clearly visible").
                     MediaActionButton(
                         label = "Download",
                         icon = Icons.Filled.Download,
@@ -137,12 +132,6 @@ fun VideoPlayer(uri: Uri, modifier: Modifier = Modifier) {
     DisposableEffect(Unit) {
         onDispose { player.release() }
     }
-    // PLAYBACK STOPS WHEN THE APP STOPS BEING SEEN, and since 2026-10-09 that is the platform's rule
-    // as well as this file's. The app targets API 37, and Android 17 silences a hidden app's audio
-    // unless a foreground service is playing it — without an error, so a player left running keeps
-    // "playing" into nothing, may be frozen, and can resume out loud when the app is thawed,
-    // possibly hours later. This app plays media only inside its own viewer and has no such
-    // service, so the honest behaviour is to pause on ON_STOP and let the person press Play again.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { player.pause() }
     AndroidView(
         modifier = modifier
@@ -158,7 +147,6 @@ fun VideoPlayer(uri: Uri, modifier: Modifier = Modifier) {
     )
 }
 
-/** Inline audio transport: play/pause + scrubber, backed by MediaPlayer. */
 @Composable
 fun AudioPlayer(uri: Uri, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -187,8 +175,6 @@ fun AudioPlayer(uri: Uri, modifier: Modifier = Modifier) {
     DisposableEffect(Unit) {
         onDispose { runCatching { player.release() } }
     }
-    // Paused on ON_STOP for the reason `VideoPlayer` gives; `playing` goes false with it, so the
-    // button says Play when the person comes back rather than claiming a sound nobody can hear.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
         if (playing) {
             runCatching { player.pause() }
@@ -234,8 +220,6 @@ fun AudioPlayer(uri: Uri, modifier: Modifier = Modifier) {
                     runCatching { player.seekTo(target) }
                 },
                 enabled = ready && durationMs > 0,
-                // The tinted track, not surface-100: this row's own ground IS surface-100, so the
-                // unplayed track used to be 1.00:1 against it — the voice note with no bar at all.
                 colors = FieldProgressDefaults.sliderColors()
             )
             Text("${formatMs(positionMs)} / ${formatMs(durationMs)}", color = Body, style = MaterialTheme.typography.bodySmall)
@@ -250,13 +234,8 @@ private fun formatMs(ms: Int): String {
     return "%d:%02d".format(m, s)
 }
 
-/**
- * Live recording cue: a blinking red dot, "Recording" + elapsed time, and a WhatsApp-style
- * amplitude waveform driven by MediaRecorder.getMaxAmplitude().
- */
 @Composable
 fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, paused: Boolean = false) {
-    // Reduced motion gets a steady dot, and "Paused" never fades below readable (UX audit DA-22).
     val reduceMotion = LocalAppPreferences.current.reducedMotion
     val transition = rememberInfiniteTransition(label = "rec")
     val blink by transition.animateFloat(
@@ -265,7 +244,6 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
         animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
         label = "blink"
     )
-    // Dedicated slow blink for the "Paused" cue (~1.1s per half-cycle).
     val pausedBlink by transition.animateFloat(
         initialValue = 1f,
         targetValue = 0.6f,
@@ -275,9 +253,6 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
     val amplitudes = remember { mutableStateListOf<Float>() }
     var elapsedMs by remember { mutableStateOf(0L) }
 
-    // The elapsed counter keeps its accumulated value across pause/resume. While recording we anchor
-    // `start` to (now - elapsedMs) so, after a pause, counting continues from exactly where it stopped
-    // instead of restarting at 00:00. Pausing simply cancels this effect, freezing elapsedMs.
     LaunchedEffect(paused) {
         if (paused) return@LaunchedEffect
         val start = System.currentTimeMillis() - elapsedMs
@@ -307,13 +282,11 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
                 .background(dotColor.copy(alpha = dotAlpha), CircleShape)
         )
         if (paused) {
-            // Slowly blinking "Paused" label, with the (frozen) elapsed time alongside.
             Text("Paused", color = Body.copy(alpha = if (reduceMotion) 1f else pausedBlink), style = MaterialTheme.typography.bodySmall)
             Text(formatMs(elapsedMs.toInt()), color = Body, style = MaterialTheme.typography.bodySmall)
         } else {
             Text("Recording  ${formatMs(elapsedMs.toInt())}", color = Body, style = MaterialTheme.typography.bodySmall)
         }
-        // The app's one accent, not the logo's coral as a second one.
         val waveColor = MaterialTheme.colorScheme.primary
         Canvas(
             modifier = Modifier
@@ -338,7 +311,6 @@ fun RecordingIndicator(getAmplitude: () -> Int, modifier: Modifier = Modifier, p
     }
 }
 
-/** A tappable media row that opens the in-app viewer; reused for captured and saved media. */
 @Composable
 fun MediaThumb(
     uri: Uri,
@@ -347,35 +319,13 @@ fun MediaThumb(
     subtitle: String?,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
-    /**
-     * The thumbnail could not be drawn.
-     *
-     * ONE REASON THIS EXISTS, AND IT IS NOT A SPINNER. `MediaFile.url` is about to become a
-     * 15-minute signature (`MEDIA_PRESIGNED_READS` on the API), and a handset that cached a payload
-     * yesterday is holding a string that has silently stopped working. Coil reports that as a load
-     * failure with a throwable and no status, which is exactly why the caller — not this row —
-     * decides what it means: see `MediaUrlRefresh`, which treats "I could not tell" as one refresh
-     * and never as two.
-     *
-     * DEFAULTED TO NULL so every existing call site behaves precisely as it did: a thumbnail that
-     * fails to draw is still a dark square with the filename beside it, which is what a row with no
-     * readable bytes has always looked like here.
-     */
     onLoadError: (() -> Unit)? = null,
-    /**
-     * The ink of a coloured tile this row sits on (the upload form's "files ready" card), or null.
-     * On a tile the row drops its own surface and takes the tile's ink: the name in it, the size in
-     * the tile's muted ink, and "Open" as the same outlined button as the card's Download and Clear
-     * batch — theme purple on the purple tile all but vanished (smoke test 2026-10-17, dp/58).
-     */
     onTile: Color? = null
 ) {
     val loader = rememberMediaImageLoader()
     Row(
         modifier = modifier
             .fillMaxWidth()
-            // Themed (UX audit 2026-10-16, DA-13): a fixed near-black row under Canvas-coloured text read
-            // as nothing in dark mode, where Canvas is itself near-black.
             .background(onTile?.copy(alpha = 0.08f) ?: MaterialTheme.field.surface100, RoundedCornerShape(10.dp))
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,

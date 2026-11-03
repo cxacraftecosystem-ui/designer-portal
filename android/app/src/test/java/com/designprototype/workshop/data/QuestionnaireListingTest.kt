@@ -11,32 +11,11 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
 
-/**
- * The questionnaire list must reach the row a viewer grant added, and that row is always the LAST one.
- *
- * ── WHAT THIS PINS, AND THE LIVE READING IT WAS WRITTEN FROM ───────────────────────────────────────
- *
- * `QuestionnaireListScreen` asked for one page of 50 and ignored `total`. Signed in against the
- * running API as designer@example.org, with one `DesignWorkshopViewer` grant on
- * cmsik2jg8000eh8xc1lcy661a, `GET /api/questionnaires?pageSize=100` answers `total: 3` ordered
- * `createdAt desc`:
- *
- *   [0] oracle-probe        2026-08-08T01:39:26  owned by designer@example.org
- *   [1] oracle-real         2026-08-08T01:39:14  owned by designer@example.org
- *   [2] Shape probe renamed 2026-08-07T13:49:54  owned by a THIRD account, attached to the granted
- *                                                workshop — the only row the grant adds, and LAST
- *
- * and `mineOnly=true` answers `total: 2` with that row gone, which is what proves the grant is what
- * put it there. The position is structural, not an accident of this database: a grant is issued
- * against a workshop that already exists, so the form hanging off it is older than anything the
- * grantee has built, and `createdAt desc` puts older last. The window is when it becomes visible.
- */
 class QuestionnaireListingTest {
 
     private fun row(id: String, title: String = id) =
         CustomQuestionnaireSummaryDto(id = id, title = title)
 
-    /** `total` rows, ids "q-0"… , served in pages exactly as the API does. */
     private fun server(
         total: Int,
         pageSize: Int = DW_LIST_PAGE_SIZE,
@@ -52,14 +31,8 @@ class QuestionnaireListingTest {
         )
     }
 
-    // ── The defect itself ────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `the granted questionnaire that sorts last is in the list`() {
-        // A season's fieldwork: 120 of the designer's own forms, and the colleague's form the grant
-        // added sorting dead last because it is the oldest. Before the walk existed the screen held
-        // rows 0-49 and the designer was told their colleague's questionnaire did not exist while the
-        // API was answering 200 for it.
         val listing = drive(server(total = 121))
 
         assertEquals(121, listing.items.size)
@@ -73,9 +46,6 @@ class QuestionnaireListingTest {
 
     @Test
     fun `one page of fifty cannot reach it — the behaviour this replaces`() {
-        // The old screen, reproduced exactly: one request, pageSize 50, `.items`, `total` discarded.
-        // Pinned so that a future "simplification" back to a single request fails here with its
-        // consequence named rather than silently re-hiding the row.
         val onePage = server(total = 121, pageSize = 50)(1, 50)
 
         assertEquals(50, onePage.items.size)
@@ -88,9 +58,6 @@ class QuestionnaireListingTest {
 
     @Test
     fun `a designer under the ceiling still costs exactly one request`() {
-        // Paging must not tax the ordinary case: a second request is sent only when the server has
-        // already said there is a second page, so a designer with 12 forms on a metered rural
-        // connection pays exactly what they paid before.
         var calls = 0
         val listing = drive { page, size -> calls++; server(total = 12)(page, size) }
 
@@ -99,13 +66,8 @@ class QuestionnaireListingTest {
         assertFalse(listing.truncated)
     }
 
-    // ── The hazards of offset paging over a live table ───────────────────────────────────────────
-
     @Test
     fun `a row repeated across pages is rendered once`() {
-        // A questionnaire uploaded between the two requests shifts the ordering down and page 2
-        // re-sends page 1's last row. Two identical cards is worse than one missing row: a designer
-        // cannot tell which of them holds the sitting they recorded this morning.
         val pages = listOf(
             PageResponse(listOf(row("a"), row("b")), total = 3, page = 1, pageSize = 2, pages = 2),
             PageResponse(listOf(row("b"), row("c")), total = 3, page = 2, pageSize = 2, pages = 2),
@@ -118,8 +80,6 @@ class QuestionnaireListingTest {
 
     @Test
     fun `an over-reported total ends the walk at the first empty page`() {
-        // A questionnaire deactivated between the count and the fetch leaves `total` ahead of what the
-        // server can serve. Without the empty-page stop the client re-asks for nothing until the cap.
         var calls = 0
         val listing = drive { page, _ ->
             val items = if (page == 1) listOf(row("a"), row("b")) else emptyList()
@@ -154,8 +114,6 @@ class QuestionnaireListingTest {
         assertEquals(listOf("a"), listing.items.map { it.id })
     }
 
-    // ── The connection, which in a village is the ordinary case ──────────────────────────────────
-
     @Test
     fun `a connection that dies after page one keeps page one`() {
         val listing = drive { page, size ->
@@ -170,9 +128,6 @@ class QuestionnaireListingTest {
 
     @Test
     fun `cancellation is not mistaken for a dropped connection`() {
-        // The list screen's effect is keyed on the search box, so every keystroke cancels the walk in
-        // flight. Caught like a network failure, the abandoned keystroke's rows would render and the
-        // banner would claim a truncated list when nothing had gone wrong.
         var thrown: Throwable? = null
         try {
             drive { page, size ->
@@ -190,9 +145,6 @@ class QuestionnaireListingTest {
 
     @Test
     fun `a failure on the very first page is not swallowed`() {
-        // The screen sets `offline` from this throwing. A questionnaire lives only on the server, so a
-        // swallowed first-page failure renders as "you have not built one yet" — which sends a designer
-        // off to rebuild a form they already uploaded.
         var thrown: Throwable? = null
         try {
             drive { _, _ -> throw java.io.IOException("no route to host") }
@@ -202,19 +154,8 @@ class QuestionnaireListingTest {
         assertTrue("page 1 must propagate so the screen can say it is offline", thrown is java.io.IOException)
     }
 
-    // ── Parity with the proven walk ──────────────────────────────────────────────────────────────
-
     @Test
     fun `the generic walk decides identically to the design-workshop walk it generalises`() {
-        // WHY THIS EXISTS. `walkDesignWorkshopPages` is left alone rather than rewired onto
-        // `walkPagedListing`, so for a while there are two implementations of one four-rule policy —
-        // and two copies of a rule are a rule that drifts. Pinned BY VALUE over a shared case table
-        // rather than by inspection: each case is driven through BOTH and the outcomes diffed, so a
-        // change to either that alters a stop condition, the de-duplication or the truncation flag
-        // fails here by name.
-        //
-        // The cases are the hazards themselves: an ordinary short list, an exact multiple of the page
-        // size, an over-reported total, a duplicate across pages, a blank id, and a list past the cap.
         val cases = listOf(
             "short list" to listOf(Triple(listOf("a", "b"), 2, 1)),
             "exact multiple" to listOf(Triple((0 until 100).map { "r$it" }, 100, 1)),
@@ -268,17 +209,6 @@ class QuestionnaireListingTest {
         )
     }
 
-    // ── Driving the suspend walkers from a plain JUnit test ──────────────────────────────────────
-
-    /**
-     * Runs [walkPagedListing] to completion on this thread.
-     *
-     * `kotlin.coroutines.startCoroutine` from the STDLIB rather than `runBlocking`, so this test adds
-     * no `kotlinx-coroutines-test` dependency to `app/build.gradle.kts` — a shared build file other
-     * agents are working around. Every `fetch` below is synchronous, so the walker never actually
-     * suspends; [checkNotNull] turns a future test that DID suspend into a named failure rather than a
-     * mysterious null.
-     */
     private fun drive(
         fetch: (Int, Int) -> PageResponse<CustomQuestionnaireSummaryDto>,
     ): PagedListing<CustomQuestionnaireSummaryDto> {
@@ -298,7 +228,6 @@ class QuestionnaireListingTest {
             .getOrThrow()
     }
 
-    /** The same, for the walk this one generalises, so the parity case table can drive both. */
     private fun driveDesignWorkshops(
         fetch: (Int, Int) -> DesignWorkshopPageDto,
     ): DesignWorkshopListing {

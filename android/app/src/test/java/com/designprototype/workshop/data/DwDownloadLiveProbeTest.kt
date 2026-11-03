@@ -11,52 +11,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
-/**
- * **THE READOUT'S NUMBERS AGAINST A REAL SOCKET, A REAL CLOCK AND A REAL FILE ON DISK.**
- *
- * ── WHAT THIS ADDS THAT [DwDownloadTest] CANNOT ───────────────────────────────────────────────
- *
- * `DwDownloadTest` drives [DwTransferMeter] off a clock written out by hand and proves the arithmetic.
- * Every one of its byte counts is a literal. **A fabricated progress readout does not fail that kind of
- * test** — it fails when the number fed to the meter turns out not to be the number arriving, or when
- * the projection turns out not to describe what then happened. Both of those need a real transfer.
- *
- * So this pulls 71 MB over the network into a temporary file and, at every sample, compares the figure
- * the card would draw against `File.length()` — a reading taken here, from the filesystem, which the
- * meter never sees. Then it aborts the transfer, resumes it with a `Range` header through the app's own
- * [dwResumePlan] / [dwRangeHonoured] / [dwParseContentRangeStart], and hashes the assembled file
- * against the digest the host publishes for it.
- *
- * ── WHAT IT IS HONEST ABOUT NOT BEING ─────────────────────────────────────────────────────────
- *
- * **The byte-pumping loop here is this test's, not the app's.** `DwAsrModelController.download` needs a
- * `Context`, `SystemClock` and a `Dispatchers.Main` that no desktop JVM has, and it is driven on a
- * handset by `DwAsrModelTransferProbeTest` instead. What is under test here is everything that decides
- * a number — the meter, the window, the stability rule, the resume plan, the range check and the
- * wording — under conditions no fixture can imitate: a rate that varies because a network varies, and
- * a file whose length is the ground truth.
- *
- * ── WHY IT IS OFF UNLESS ASKED FOR ────────────────────────────────────────────────────────────
- *
- * It costs 71 MB and needs the internet, and a unit suite that fails on a train is a unit suite people
- * stop running. It skips itself unless `DW_LIVE_DOWNLOAD_PROBE=1`:
- *
- *   DW_LIVE_DOWNLOAD_PROBE=1 ./gradlew :app:testDebugUnitTest \
- *     --tests '*DwDownloadLiveProbeTest*' -i
- *
- * The trace goes to stdout, and the trace is half the point.
- */
 class DwDownloadLiveProbeTest {
 
-    /**
-     * **EVERY CLAUSE OF THE OWNER'S LINE, CHECKED AGAINST SOMETHING THE CODE DID NOT PRODUCE.**
-     *
-     *  * *how much has arrived* — against `length()` of the file being written;
-     *  * *the speed* — against a rate recomputed here from two `length()` readings and a clock;
-     *  * *the expected duration* — against how long the transfer **actually went on to take** from
-     *    that sample, which is knowable only afterwards and is therefore the one figure that cannot
-     *    be satisfied by construction.
-     */
     @Test
     fun theLiveReadoutAgreesWithTheFileOnDiskAndItsEtaWithWhatHappened() {
         assumeTrue("Set DW_LIVE_DOWNLOAD_PROBE=1 to spend 71 MB on this.", enabled())
@@ -72,10 +28,6 @@ class DwDownloadLiveProbeTest {
                 PROBE_BYTES, target.length(),
             )
 
-            // ---- 1. The byte count IS the file ------------------------------------------------
-            // `length()` is stat'd after the readout is taken, so it may legitimately be one buffer
-            // ahead. The direction that matters is the other one: the readout must never claim more
-            // than is on the disk, because that is the direction that inflates a bar.
             trace.rows.forEach { row ->
                 assertTrue(
                     "The readout claimed ${row.readout.receivedBytes} with ${row.onDisk} on disk.",
@@ -88,7 +40,6 @@ class DwDownloadLiveProbeTest {
                 )
             }
 
-            // ---- 2. The speed, recomputed here ------------------------------------------------
             var compared = 0
             trace.rows.zipWithNext().forEach { (a, b) ->
                 val span = b.atMillis - a.atMillis
@@ -97,10 +48,6 @@ class DwDownloadLiveProbeTest {
                 val mine = moved * 1000.0 / span
                 val theirs = b.readout.bytesPerSecond ?: return@forEach
                 compared++
-                // A factor of eight either way. The meter smooths over five seconds by design and
-                // this is an instantaneous figure over a quarter of one, so they must agree in
-                // magnitude and cannot agree closely. A fabricated rate — a constant, a
-                // total-over-elapsed, or a number off a different quantity — misses by far more.
                 assertTrue(
                     "Card ${theirs.toLong()} B/s where this test measured ${mine.toLong()} B/s.",
                     theirs in (mine / 8.0)..(mine * 8.0),
@@ -108,7 +55,6 @@ class DwDownloadLiveProbeTest {
             }
             assertTrue("No comparable speed samples.", compared >= 3)
 
-            // ---- 3. The ETA against what actually happened ------------------------------------
             val endedAt = trace.rows.last().atMillis
             val etas = trace.rows.mapNotNull { row ->
                 val said = row.readout.secondsRemaining ?: return@mapNotNull null
@@ -126,7 +72,6 @@ class DwDownloadLiveProbeTest {
                 median in 0.25..4.0,
             )
 
-            // ---- 4. And no ETA where the window said it could not be projected ---------------
             trace.rows.forEach { row ->
                 if (row.readout.stability == DwRateStability.ERRATIC) {
                     assertNull(
@@ -145,30 +90,16 @@ class DwDownloadLiveProbeTest {
         }
     }
 
-    /**
-     * **STOP IT PART-WAY, RESUME IT, AND HASH WHAT THE TWO ATTEMPTS STITCHED TOGETHER.**
-     *
-     * The resume is decided by [dwResumePlan] and admitted only by [dwRangeHonoured] — the app's own
-     * functions, over a real `206` and a real `Content-Range`. Then the assembled file is hashed. A
-     * resume that appended at the wrong offset produces a file of exactly the right LENGTH and the
-     * wrong digest, which is why the length check alone was never the guard.
-     *
-     * The last part corrupts one byte of the finished file — keeping its length — and confirms
-     * [dwAsrVerify] refuses it. That is the check standing between a substituted 71 MB graph and a
-     * native executor, and it is the reason a length is never treated as evidence.
-     */
     @Test
     fun anInterruptedTransferResumesFromItsPrefixAndTheAssembledFileHashesCorrectly() {
         assumeTrue("Set DW_LIVE_DOWNLOAD_PROBE=1 to spend 71 MB on this.", enabled())
         val target = File.createTempFile("dw-live-resume", ".bin").also { it.delete() }
         try {
-            // ---- Attempt one, stopped on purpose --------------------------------------------
             val first = fetch(target, from = 0L, stopAfterBytes = 9_000_000L)
             val prefix = target.length()
             println("stopped with $prefix bytes on disk after ${first.millis} ms")
             assertTrue("The abort left nothing to resume from.", prefix in 9_000_000L..12_000_000L)
 
-            // ---- The decision, through the app's own function --------------------------------
             val acceptsRanges = headAcceptsRanges()
             println("HEAD says Accept-Ranges: bytes = $acceptsRanges")
             assertTrue("This fixture was chosen because the host honours ranges.", acceptsRanges)
@@ -177,7 +108,6 @@ class DwDownloadLiveProbeTest {
                 dwResumePlan(prefix, PROBE_BYTES, acceptsRanges),
             )
 
-            // ---- Attempt two, from the prefix -----------------------------------------------
             val second = fetch(target, from = prefix, stopAfterBytes = null)
             second.rows.take(3).forEach { println("resumed: " + it.render()) }
             println("assembled ${target.length()} bytes; second attempt took ${second.millis} ms")
@@ -190,7 +120,6 @@ class DwDownloadLiveProbeTest {
                 "A resume must land on exactly the published length.",
                 PROBE_BYTES, target.length(),
             )
-            // THE ASSERTION THE WHOLE RESUME RESTS ON: the two halves fit.
             assertEquals(
                 "The stitched file does not hash to the digest the host publishes for it.",
                 PROBE_SHA256, sha256(target),
@@ -199,7 +128,6 @@ class DwDownloadLiveProbeTest {
                 DwAsrVerification.VERIFIED,
                 dwAsrVerify(PROBE_SHA256, sha256(target)),
             )
-            // The resumed readout counts the prefix in the percentage and not in the rate.
             second.rows.firstOrNull()?.let { row ->
                 println("first reading of the resumed attempt: " + dwTransferLine(row.readout))
                 assertTrue(
@@ -208,7 +136,6 @@ class DwDownloadLiveProbeTest {
                 )
             }
 
-            // ---- One byte wrong, same length, and the verifier must refuse it ---------------
             val good = sha256(target)
             java.io.RandomAccessFile(target, "rw").use { raf ->
                 val at = target.length() / 2
@@ -230,13 +157,8 @@ class DwDownloadLiveProbeTest {
         }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The transport. This much is the test's own; everything it feeds is the app's
-    // -----------------------------------------------------------------------------------------
-
     private data class Row(
         val atMillis: Long,
-        /** `length()` of the file, stat'd here. The meter is never told this number. */
         val onDisk: Long,
         val readout: DwTransferReadout,
     ) {
@@ -248,10 +170,6 @@ class DwDownloadLiveProbeTest {
 
     private class Trace(val rows: List<Row>, val millis: Long, val rangeHonoured: Boolean)
 
-    /**
-     * Pull bytes, feed the shipped meter, and sample both it and the filesystem every 250 ms — the
-     * same interval `DwAsrModelController.publishProgress` throttles composition to.
-     */
     private fun fetch(target: File, from: Long, stopAfterBytes: Long?): Trace {
         val connection = (URL(PROBE_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -269,8 +187,6 @@ class DwDownloadLiveProbeTest {
             println("resume asked for bytes=$from-, got $code " +
                 "Content-Range=${connection.getHeaderField("Content-Range")} honoured=$honoured")
         }
-        // The meter counts THIS attempt's bytes and knows what was already there — the distinction the
-        // class doc is about, and the one a resumed download reads "100%" without.
         val meter = DwTransferMeter(totalBytes = PROBE_BYTES, resumedFromBytes = if (honoured) from else 0L)
         val rows = mutableListOf<Row>()
         val startedAt = System.nanoTime()
@@ -290,8 +206,6 @@ class DwDownloadLiveProbeTest {
                     if (at - lastSampleAt >= 250L) {
                         lastSampleAt = at
                         val readout = meter.observe(moved, at)
-                        // Flushed before the file is stat'd, so `length()` is a fair comparison rather
-                        // than a measure of how much is still in a stream buffer.
                         output.flush()
                         rows += Row(at, target.length(), readout)
                     }
@@ -304,7 +218,6 @@ class DwDownloadLiveProbeTest {
         return Trace(rows, nowMillis(), honoured)
     }
 
-    /** What `serverAcceptsRanges` asks, asked the same way. */
     private fun headAcceptsRanges(): Boolean = runCatching {
         val connection = (URL(PROBE_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "HEAD"
@@ -332,15 +245,6 @@ class DwDownloadLiveProbeTest {
     private fun enabled(): Boolean = System.getenv("DW_LIVE_DOWNLOAD_PROBE") == "1"
 
     private companion object {
-        /**
-         * A 71 MB public Hugging Face LFS object, chosen as a **transport fixture** and nothing else.
-         *
-         * Four properties, each measured before being written here: `https://`; `Accept-Ranges: bytes`
-         * on a HEAD; a real `206` with `Content-Range: bytes 1000000-1000099/71082637` for a range
-         * request; and a digest the host itself publishes (`api/models/…?blobs=true` → `lfs.sha256`),
-         * so the figure this test checks against is the host's statement about the bytes it serves
-         * rather than a hash of a local copy that was trusted for being local.
-         */
         const val PROBE_URL = "https://huggingface.co/csukuangfj/" +
             "sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/" +
             "encoder-epoch-99-avg-1-chunk-16-left-64.int8.onnx"

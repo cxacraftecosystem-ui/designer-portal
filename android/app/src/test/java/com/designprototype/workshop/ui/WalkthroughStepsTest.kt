@@ -8,134 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * THE WALKTHROUGH'S CONTENT, HELD TO THE WEB'S JOURNEY AND TO ITS OWN RULES.
- *
- * ── WHY THIS FILE EXISTS, WHICH IS NOT A GENERAL ARGUMENT FOR TESTING COPY ───────────────────────
- *
- * The list this suite reads replaces twelve steps whose opening card said "Ten steps, in this order"
- * and "it is the same ten steps in the same order on the web" — while the list held twelve and the
- * web taught nineteen. One sentence, wrong in two directions, on the first thing a new researcher
- * ever reads, and it stayed wrong for months. Nothing caught it and nothing could: the steps were
- * `private` inside a seventeen-thousand-line `MainActivity`, and while a shelf of `*ParityTest`
- * files already held the two clients together on dashboards, money, rounding and text formatting,
- * not one of them could see this list — a `private` value is invisible to the whole test source
- * set. `WalkthroughSteps.kt` is `internal` rather than `private` for exactly one reason — so
- * that this file can read it — and the codebase has been here before: `internal fun navBadge` was
- * widened for a suite that then went unwritten, and its own KDoc records that a named test which
- * does not exist is worse than no citation, because the next reader takes the rule as covered.
- *
- * ── THE FOUR FAILURES BEING GUARDED, ALL OF THEM INVISIBLE BY INSPECTION ─────────────────────────
- *
- * 1. THE HANDSET FALLING BEHIND THE WEB AGAIN. Nine web steps — the entire design-workshop arc —
- *    had no counterpart here at all, and the way that happened was not a decision: a step was added
- *    on one client and the other was never opened. `every subject the web walkthrough teaches has a
- *    step here` fails the build instead.
- * 2. A NUMBER TYPED INTO A TITLE. "1. Workshop" … "10. View Data" were literals, so inserting a step
- *    silently renumbered nothing and every title after the insertion became a lie. Pinned by
- *    `no step title carries its own number`.
- * 3. A COUNT TYPED INTO A SENTENCE — the original defect, from the other end. Pinned by
- *    `the opening card counts the journey rather than claiming a number`.
- * 4. A STEP POINTING AT A DOOR THAT IS NO LONGER THERE. Each step carries a [NavDestination] and the
- *    dialog borrows that row's label for its "Open …" button. Drop a row from `FIELD_NAV_ITEMS` and
- *    the button silently degrades to "Open the screen this step teaches" on a surface whose entire
- *    job is teaching a newcomer what things are called. Pinned by `every step that offers a door
- *    names a menu row that exists`.
- *
- * ── THE WEB'S STEPS ARE READ OFF `steps.ts`, AND THIS FILE USED TO ARGUE THE OPPOSITE ────────────
- *
- * [WEB_GUIDE_STEPS] was a hand-copied array of nineteen ids under a paragraph explaining why reading
- * the web's own file would be worse. THE SNAPSHOT ROTTED, in the exact shape the paragraph did not
- * consider, and it is worth setting out because it is the third time this repository has paid for
- * the same mistake:
- *
- *   By the time anybody looked, the web taught TWENTY-TWO. The three it had gained were `scan`,
- *   `design-workshop-questionnaires` and `design-workshop-inspection` — and those were precisely the
- *   three that `WalkthroughSteps.kt` had shipped under ids of its own invention (`scan-code`,
- *   `questionnaires`, `design-workshop-inspections`), believing them handset-only. So the snapshot
- *   was missing exactly the three ids that would have exposed the divergence. Both files agreed, in
- *   writing, on a fact neither had rechecked. The one-directional assertion below covered nineteen
- *   of twenty-two, and all three could have been DELETED from the handset with the suite still green.
- *
- * A snapshot is correct on the day it is typed and silently rots after it — which is the very defect
- * `the opening card counts the journey rather than claiming a number` exists to catch, one file over,
- * applied to a count instead of to a list. The register now has ONE copy, and it is the web's.
- *
- * ── THE TWO OBJECTIONS THAT PARAGRAPH RAISED, ANSWERED WITH WHAT IS ACTUALLY IN THE TREE ─────────
- *
- * "The failure mode of a frontend refactor is an Android test that cannot compile" — it is not. This
- * is a file read at RUNTIME, not an import; nothing here is on the compiler's path, and a moved or
- * renamed `steps.ts` fails one assertion with a message naming the path it looked for.
- *
- * "A CI job that builds only `android/` breaks for reasons nothing in `android/` can fix" — the job
- * does not build only `android/`. `.github/workflows/android-build.yml` runs a plain
- * `actions/checkout@v4` with no sparse filter, so the whole monorepo is on disk and this path
- * resolves there exactly as it does locally.
- *
- * And the pattern is already settled in this module rather than being introduced here:
- * `DashboardTileParityTest` reads `frontend/app/(protected)/dashboard/page.tsx` at runtime through
- * the same walk-up helper, for the same reason, and its own KDoc records what that costs. This file
- * borrows both the helper and the honesty.
- *
- * ── THE ONE HONEST GAP, WHICH IS REAL AND IS NOT CLOSED HERE ─────────────────────────────────────
- *
- * A pull request touching only `frontend/` does not run this suite: `android-build.yml`'s
- * `pull_request` filter is the `android` tree, its own path, and a few named frontend files. So a
- * web-side step added in a frontend-only PR is caught when the Android job next runs on `main`, not
- * on the PR that added it. That is strictly better than the snapshot, which never caught it at all,
- * and widening the filter is that workflow's decision rather than this file's.
- *
- * ── AND THE ASSERTION IS STILL ONE-DIRECTIONAL, FOR THE ORIGINAL REASON ──────────────────────────
- *
- * Every subject the web teaches must be taught here; this handset may teach MORE. That is the
- * direction the damage runs in — a handset behind the web sends a designer looking for a screen they
- * were never told about — and equality would make the web catching up an Android failure. What is no
- * longer true is the old parenthetical listing four Android-only subjects: three of them were the
- * drift described above, and exactly ONE is genuinely this app's own, `offline`, which is the one
- * subject a browser cannot teach.
- *
- * ── AND THE PARITY HALF IS THE DESIGNER'S DECK, WHILE THE RULES HALF IS EVERY DECK ──────────────
- *
- * There are two walkthroughs in this APK since 2026-09-15 and `steps.ts` is the register for exactly
- * one of them — the designer's. So the four assertions above the fold still read
- * [walkthroughJourney] by name, because a deck the web keeps in a different file cannot be held to
- * this one, and widening them would make the inspector's three cards look like three subjects
- * missing from the web.
- *
- * EVERY RULE THE LIST SETS ITSELF, THOUGH, IS A RULE ABOUT A DECK AND NOT ABOUT THAT DECK. A number
- * typed into a title, a count typed into an opening card, a door pointing at a menu row that is gone
- * — each is exactly as wrong on the second deck as on the first, and a second deck that inherited
- * none of them is a second deck with no contract at all. Those assertions walk
- * [WALKTHROUGH_DECKS], so a third deck is covered on the day it is registered rather than on the day
- * somebody remembers to widen a test. `WalkthroughDecksTest` is what holds the inspector deck to the
- * web's own inspector file, which is the parity half this suite structurally cannot do.
- */
 class WalkthroughStepsTest {
 
-    /**
-     * The subjects `frontend/components/guide/steps.ts` teaches, in its own order, read from the file.
-     *
-     * IDS AND NEVER SENTENCES. `WalkStep.id` is documented as the one field stable enough to compare
-     * while the prose on both clients is still being edited; pin a test to a title and it fails the
-     * next time somebody improves a sentence, which trains everybody to ignore the test. The ids on
-     * this side are kept equal to the web's expressly so this list can be the join — and when three
-     * of them were NOT, this array being a hand-copy is what hid it. See the KDoc above.
-     *
-     * ── THE ANCHOR, AND WHY IT IS THIS ONE ───────────────────────────────────────────────────────
-     *
-     * `GuideStep` objects are elements of one array literal, so their `id` sits at exactly four
-     * spaces of indent. Nothing else in that file does: a nested field is deeper, a top-level
-     * declaration is shallower, and a line of prose inside a comment block starts with a space and an
-     * asterisk. That is not a lucky coincidence to lean on quietly — it is the same anchor the web's
-     * own documentation uses to count its steps, quoted in `steps.ts` itself as the way to answer
-     * "how many are there", so it is a shape that file has already committed to keeping.
-     *
-     * The scan starts at the `GUIDE_STEPS` declaration rather than at the top of the file, so a
-     * helper array declared above it can never contribute an id. The test named "the parser found
-     * the web's step list" fails loudly if either half of that stops holding, because a regex that
-     * silently matches nothing would make every assertion in this file vacuously green — which is
-     * the failure mode of every source-reading test and the one that wastes a morning.
-     */
     private val WEB_GUIDE_STEPS: List<String> by lazy {
         val source = webGuideSource()
         val start = source.indexOf("export const GUIDE_STEPS")
@@ -146,25 +20,8 @@ class WalkthroughStepsTest {
             .toList()
     }
 
-    // ── Parity with the web ──────────────────────────────────────────────────────────────────────
-
     @Test
     fun `the parser found the web's step list`() {
-        /*
-         * WITHOUT THIS, EVERY PARITY ASSERTION BELOW IS VACUOUSLY GREEN the day `steps.ts` is
-         * reformatted, renamed or moved: `WEB_GUIDE_STEPS` comes back empty, "every subject the web
-         * teaches has a step here" iterates nothing and passes, and the suite reports parity while
-         * checking none. `WalkthroughSurfaceTest` opens with the same guard for the same reason and
-         * says what it costs: the failure would be read as "the wiring is fine" when the parser is
-         * the thing that is broken.
-         *
-         * The floor is a floor and not the current count, deliberately. Pinning the exact number
-         * would put a THIRD copy of the register in this file — the very defect this file was
-         * rewritten to remove — and would fail every time the web legitimately adds a step, which is
-         * the one event this suite is supposed to welcome rather than resist. Ten is comfortably
-         * below the ten-step records arc alone, so it can only trip on a parser that has genuinely
-         * stopped working.
-         */
         assertTrue(
             "$WEB_GUIDE_PATH parsed to ${WEB_GUIDE_STEPS.size} step ids — the anchor this file " +
                 "scans for has stopped matching, so every parity assertion below is now checking " +
@@ -197,17 +54,6 @@ class WalkthroughStepsTest {
 
     @Test
     fun `the web's steps appear here in the web's own order`() {
-        // Filtered rather than compared whole, because this app teaches one subject of its own that
-        // the web has no counterpart for — `offline`. What must hold is that the SHARED subjects
-        // read in the same sequence, since the order is the actual lesson: a stage's reference
-        // pickers are empty if the records were never made, and a tag tied on at the end is a tag
-        // tied on from memory.
-        //
-        // This assertion was passing while the two clients genuinely disagreed. The snapshot it
-        // filtered against did not contain `design-workshop-questionnaires`, so the step Android
-        // taught eighth and the web teaches fifteenth was excluded from the comparison by the very
-        // omission that made it wrong. Reading the web's file is what turned that from an invisible
-        // divergence into a red test, and the handset's list was reordered to match.
         val shared = walkthroughJourney.map { it.id }.filter { it in WEB_GUIDE_STEPS }
         assertEquals(
             "the two clients teach the same subjects in different orders, which is worse than a " +
@@ -218,20 +64,8 @@ class WalkthroughStepsTest {
         )
     }
 
-    // ── The rules the list sets itself ───────────────────────────────────────────────────────────
-
     @Test
     fun `no two steps share an id`() {
-        // Everything above and `walkthroughStepNumber` below join on the id. A duplicate does not
-        // fail anything loudly; it makes `indexOfFirst` answer for the wrong step, so a parity
-        // check quietly stops covering one of the two and reports a pass.
-        //
-        // ACROSS EVERY DECK AND NOT WITHIN ONE, since there are two. `walkthroughFacets` looks a
-        // step's field list up by id in one flat register, and the card that draws a step has no
-        // idea which deck it came from — so one id in two decks would draw one deck's form labels
-        // on the other deck's card, which is the same failure as a duplicate inside a deck with a
-        // longer way to travel. The web's own deck spec asserts exactly this, in its words:
-        // "every anchor is unique across all three decks, not merely within one".
         val ids = WALKTHROUGH_DECKS.flatMap { deck -> deck.steps.map { it.id } }
         assertEquals(
             "a duplicated id makes every id-based check answer for the wrong step, silently",
@@ -243,11 +77,6 @@ class WalkthroughStepsTest {
 
     @Test
     fun `no step title carries its own number`() {
-        // The shipped list read "1. Workshop · Record workshop" … "10. View Data · Browse records"
-        // as literals. Insert a step at position three and the seven titles after it are wrong, the
-        // compiler is happy, the screen renders, and only a human re-reading the whole file finds
-        // it. The position is derived from the list instead — see `walkthroughStepNumber` — so this
-        // asserts that nobody has quietly gone back to typing it.
         val numbered = Regex("""^\s*\d+\s*[.)]""")
         WALKTHROUGH_DECKS.flatMap { it.steps }.forEach { step ->
             assertFalse(
@@ -261,12 +90,6 @@ class WalkthroughStepsTest {
 
     @Test
     fun `the opening card counts the journey rather than claiming a number`() {
-        // The original defect, pinned from both ends: the sentence must contain the REAL size, and
-        // it must not contain the size of the deck it is part of. If somebody re-types the number
-        // and the list then grows, the first assertion fails on the very next step that is added.
-        //
-        // PER DECK, because there are two numbers that can rot rather than one, and the second deck
-        // is the one where a copied opening card would say twenty-three over three cards.
         WALKTHROUGH_DECKS.forEach { deck ->
             val intro = deck.steps.first()
             assertNull(
@@ -301,10 +124,6 @@ class WalkthroughStepsTest {
                 deck.journey,
                 deck.steps.subList(1, deck.steps.size - 1)
             )
-            // THREE IS THE SMALLEST SHAPE `WalkthroughJourney` DRAWS — it returns early below that
-            // and renders a blank full-screen window with a Skip button on it, which is not a
-            // failure any other assertion in this file would notice. The web pins the same floor for
-            // the same structural reason, its journey indexing `steps[0]` unguarded.
             assertTrue(
                 "“${deck.id}” has ${deck.steps.size} cards; the journey draws nothing under three",
                 deck.steps.size >= 3
@@ -314,9 +133,6 @@ class WalkthroughStepsTest {
 
     @Test
     fun `only the journey is numbered, and it is numbered from one`() {
-        // Two denominators, deliberately different: a numbered step says which STEP it is, the two
-        // ends say which PAGE they are. Collapsing them would put a reader at "Step 1 of 25" on a
-        // card that says there are twenty-three.
         WALKTHROUGH_DECKS.forEach { deck ->
             assertNull(walkthroughStepNumber(deck, deck.steps.first()))
             assertNull(walkthroughStepNumber(deck, deck.steps.last()))
@@ -327,9 +143,6 @@ class WalkthroughStepsTest {
                     walkthroughStepNumber(deck, step)
                 )
             }
-            // AND A DECK NUMBERS ITS OWN STEPS AND NOBODY ELSE'S. `walkthroughStepNumber` read the
-            // designer's journey out of a global until the second deck landed, which answered null
-            // for every card of that deck; this is the assertion that the parameter is being used.
             WALKTHROUGH_DECKS.filter { it.id != deck.id }.forEach { other ->
                 other.journey.forEach { step ->
                     assertNull(
@@ -341,15 +154,8 @@ class WalkthroughStepsTest {
         }
     }
 
-    // ── The doors ────────────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `every step that offers a door names a menu row that exists`() {
-        // The dialog borrows the row's own label — never a string typed here — so that the button
-        // and the drawer row a designer then goes looking for say the same words by construction.
-        // A destination dropped from the menu does not break the build: the button falls back to
-        // "Open the screen this step teaches", which is a third name for a screen on the one
-        // surface whose whole job is teaching a newcomer the first two.
         WALKTHROUGH_DECKS.flatMap { it.steps }.forEach { step ->
             val destination = step.destination ?: return@forEach
             assertNotNull(
@@ -362,10 +168,6 @@ class WalkthroughStepsTest {
 
     @Test
     fun `the two ends open nothing`() {
-        // Null means exactly one thing on this field: there is no screen to open. The opening card
-        // and the closing checklist are not features and must not grow a button that implies they
-        // are — and neither may point at the walkthrough itself, which would be a door back into
-        // the room the reader is standing in.
         WALKTHROUGH_DECKS.forEach { deck ->
             assertNull(
                 "“${deck.id}”'s opening card is not a feature",
@@ -383,18 +185,8 @@ class WalkthroughStepsTest {
         )
     }
 
-    // ── The shape of a step ──────────────────────────────────────────────────────────────────────
-
     @Test
     fun `every step of the journey ends on the thing that goes wrong`() {
-        // The body's contract is four blocks in one paragraph — what you are doing, why the dataset
-        // needs it, what the screen asks for, and the caution — and the caution is the half that
-        // costs a return trip when it is missed. It is also the half that gets dropped when a step
-        // is written in a hurry, because the other three can be read off the form and this one
-        // cannot: it has to come from something that actually went wrong for somebody.
-        //
-        // EVERY DECK'S JOURNEY. The caution is the half a skimmer still takes in, and a deck added
-        // later without this contract is a deck of four blocks with the fourth one missing.
         WALKTHROUGH_DECKS.flatMap { it.journey }.forEach { step ->
             assertTrue(
                 "“${step.title}” has no “Watch out” — the one part of a step that cannot be " +
@@ -406,8 +198,6 @@ class WalkthroughStepsTest {
 
     @Test
     fun `every step wears a glyph and says what it is`() {
-        // The icon is how a designer finds the drawer row they just read about — they are looking
-        // for the picture — so a step without one sends them reading thirty-one labels instead.
         WALKTHROUGH_DECKS.flatMap { it.steps }.forEach { step ->
             assertNotNull("“${step.title}” has no icon to find its row by", step.icon)
             assertTrue("a step with no words is not a step", step.title.isNotBlank())
@@ -416,43 +206,14 @@ class WalkthroughStepsTest {
     }
 }
 
-// ── Reading the web's own step list ─────────────────────────────────────────────────────────────
-
-/** The one place this path is written. Named in failure messages so a move reports itself. */
 private const val WEB_GUIDE_PATH = "frontend/components/guide/steps.ts"
 
-/**
- * `steps.ts`, read from wherever the test runner started.
- *
- * NOT STRIPPED OF COMMENTS, and that is a decision rather than an omission. The two Kotlin-reading
- * suites in this module strip first, because they search for code that is also DISCUSSED in prose
- * above it and a count of call sites would otherwise come back several times too high. Nothing of
- * the kind applies here: the anchor is an id at exactly four spaces of indent inside an array
- * literal, and a comment line in that file begins with a space and an asterisk or with two slashes,
- * so no comment can present a line in that shape. Adding a TypeScript comment stripper would be a
- * second parser to keep correct in exchange for nothing — and `DashboardTileParityTest` records that
- * getting the nesting rule backwards between the two languages "does not fail loudly: it silently
- * hands the parser a slab of prose or a slab of code".
- */
 private fun webGuideSource(): String =
     repoFile(
-        // The `..`-prefixed candidate is what lets this reach OUT of `android/` and into `frontend/`.
-        // A Gradle test worker's working directory is not something to depend on, so both are tried
-        // at every level of the walk rather than assuming which one the runner started in.
         "../$WEB_GUIDE_PATH",
         WEB_GUIDE_PATH,
     ).readText(Charsets.UTF_8).replace("\r\n", "\n")
 
-/**
- * A file of this repository, found by walking up from wherever the test runner started.
- *
- * MISSING IS A FAILURE, LOUDLY, AND NEVER A SKIP. A test that quietly passed when it could not find
- * its subject would prove nothing on the day somebody moves that subject — which is the one day it
- * is most needed, and the day its silence would be read as parity. Same helper and same reasoning as
- * `DashboardTileParityTest`, which reads the dashboard grid out of `frontend/` the same way; it is
- * copied rather than shared because that one is private to its own file and lifting it would put a
- * test helper into the production tree for the benefit of two callers.
- */
 private fun repoFile(vararg relative: String): File {
     var dir: File? = File(".").absoluteFile
     while (dir != null) {

@@ -50,24 +50,8 @@ import java.io.File
 import java.io.FileInputStream
 import java.net.URLEncoder
 
-/**
- * A stored 3D model, turned on the handset — THE WEB'S OWN VIEWER, in a WebView.
- *
- * `frontend/lib/modelViewerCore.ts` draws a model on the web; `frontend/scripts/
- * build-android-model-viewer.mjs` bundles that same module with three.js into
- * `assets/model-viewer/viewer.js`, and this composable hosts it. One viewer, two clients: a format
- * that draws on a laptop draws here, with the same loaders, the same framing and the same refusals.
- *
- * NOTHING IS DOWNLOADED UNTIL SOMEBODY ASKS, as on the web: the first state is a button. The model is
- * fetched into the document-preview cache by the caller's [fetch] (the same cache a PDF's first page
- * is drawn from), then served to the page by [WebViewAssetLoader] from an https origin inside the
- * app — so the page reads one local file and nothing in the WebView touches the network.
- */
-
-/** The formats this viewer draws. `frontend/lib/modelFormats.ts#MODEL_FORMATS`, ported in order. */
 internal val DW_MODEL_FORMATS: List<String> = listOf("glb", "gltf", "stl", "obj", "ply", "3mf", "fbx", "usdz")
 
-/** `modelFormats.ts#MODEL_MIME_TYPES`, ported. */
 private val DW_MODEL_MIME_TYPES: Map<String, String> = mapOf(
     "model/gltf-binary" to "glb",
     "model/gltf+json" to "gltf",
@@ -82,7 +66,6 @@ private val DW_MODEL_MIME_TYPES: Map<String, String> = mapOf(
     "model/x-ply" to "ply",
 )
 
-/** The format of a stored file, or null when it is not a 3D model. `modelFormatOf`, ported. PURE. */
 internal fun dwModelFormatOf(name: String?, mimeType: String?): String? {
     val lower = name?.trim()?.lowercase().orEmpty()
     val dot = lower.lastIndexOf('.')
@@ -93,16 +76,12 @@ internal fun dwModelFormatOf(name: String?, mimeType: String?): String? {
     return DW_MODEL_MIME_TYPES[mimeType?.trim()?.lowercase().orEmpty()]
 }
 
-/** "GLB", "glTF", "3MF". `modelFormatLabel`, ported. */
 internal fun dwModelFormatLabel(format: String): String = if (format == "gltf") "glTF" else format.uppercase()
 
-/** The in-app origin the viewer page and the model are served from. */
 internal const val DW_MODEL_VIEWER_ORIGIN = "https://appassets.androidplatform.net"
 
-/** The one path the page may read the model from; the handler below answers nothing else. */
 internal const val DW_MODEL_VIEWER_MODEL_PATH = "/model/current"
 
-/** The page's address for one format. PURE, so the query the page reads is pinned by a test. */
 internal fun dwModelViewerPageUrl(format: String): String =
     "$DW_MODEL_VIEWER_ORIGIN/assets/model-viewer/index.html?src=" +
         URLEncoder.encode(DW_MODEL_VIEWER_MODEL_PATH, "UTF-8") + "&format=" + URLEncoder.encode(format, "UTF-8")
@@ -114,7 +93,6 @@ private sealed interface ModelPhase {
     data class Failed(val message: String) : ModelPhase
 }
 
-/** The bridge the page reports through. Called on a WebView thread, so it posts back to the view. */
 private class ModelViewerHost(private val view: WebView, private val onStatus: (String, String) -> Unit) {
     @JavascriptInterface
     fun onStatus(state: String, message: String) {
@@ -127,7 +105,6 @@ private fun modelWebView(context: Context, model: File, format: String, onStatus
     val loader = WebViewAssetLoader.Builder()
         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
         .addPathHandler("/model/") { path ->
-            // ONLY the one model this card is showing. Any other path under /model/ answers nothing.
             if ("/model/$path" == DW_MODEL_VIEWER_MODEL_PATH && model.exists()) {
                 WebResourceResponse("application/octet-stream", null, FileInputStream(model))
             } else {
@@ -144,11 +121,9 @@ private fun modelWebView(context: Context, model: File, format: String, onStatus
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                 loader.shouldInterceptRequest(request.url)
 
-            // The page never navigates; anything that tries is refused rather than opened in here.
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
         }
         addJavascriptInterface(ModelViewerHost(this, onStatus), "DwModelViewerHost")
-        // A drag on the model turns it rather than scrolling the stage underneath.
         setOnTouchListener { touched, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN) touched.parent?.requestDisallowInterceptTouchEvent(true)
             false
@@ -157,13 +132,6 @@ private fun modelWebView(context: Context, model: File, format: String, onStatus
     }
 }
 
-/**
- * The viewer card.
- *
- * @param format one of [DW_MODEL_FORMATS].
- * @param localFile the model's bytes on this handset, when it was just picked here.
- * @param fetch downloads the stored model and answers the local copy, or null when it could not.
- */
 @Composable
 internal fun DwModelViewer(
     format: String,

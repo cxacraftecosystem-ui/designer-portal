@@ -5,7 +5,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.time.ZoneOffset
 
-/** Manage users says how an account signs in, not only whether a password is set (2026-10-17). */
 class AccountSignInCopyTest {
 
     private val utc = ZoneOffset.UTC
@@ -48,7 +47,6 @@ class AccountSignInCopyTest {
     @Test
     fun never_signed_in_is_said_only_where_it_can_be_known() {
         assertEquals("Never signed in", accountLastSignIn(user(created = "2026-09-10T08:00:00Z"), utc))
-        // Created before first sign-ins were recorded: it may well have signed in, so it is not claimed.
         assertEquals("No sign-in recorded", accountLastSignIn(user(created = "2026-08-01T08:00:00Z"), utc))
         assertEquals("No sign-in recorded", accountLastSignIn(user(created = null), utc))
     }

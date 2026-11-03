@@ -8,25 +8,6 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
 
-/**
- * Aadhaar verification — the wire half. The screens are `ui/aadhaar/AadhaarVerification.kt`.
- *
- * ── HIDDEN UNLESS THE SERVER SAYS OTHERWISE ───────────────────────────────────────────────────
- *
- * Both methods sit behind server-side switches that default OFF. The answer rides on the account
- * (`UserDto.features`), which [TokenStore] caches, so the handset knows it offline and a handset that
- * has never been told — an older server, a session cached before the key existed — shows nothing.
- *
- * ── THE PHONE NEVER CHECKS A SIGNATURE, AND KEEPS NOTHING ─────────────────────────────────────
- *
- * The QR text, the ZIP and the share code go to the server over TLS, which verifies UIDAI's signature
- * against its pinned certificates. Nothing is written to disk, to the outbox or to preferences:
- * verification is an online act (it needs the server's certificates and leaves an audit row), so it
- * is deliberately not queued for later the way a record save is.
- *
- * A SEPARATE RETROFIT INTERFACE, built on [ApiClient.retrofit] — the same stack, interceptors and
- * session signals as everything else — so this feature adds no line to `WorkshopRepositoryApi`.
- */
 @Serializable
 data class FeaturesDto(
     val aadhaarOfflineVerification: Boolean = false,
@@ -34,7 +15,6 @@ data class FeaturesDto(
     val aadhaarOnlineEkyc: Boolean = false,
 )
 
-/** What a screen may draw. Everything false is the default and the answer for a missing key. */
 data class AadhaarFeatures(val offline: Boolean, val online: Boolean) {
     val enabled: Boolean get() = offline || online
 
@@ -51,8 +31,6 @@ data class AadhaarFeatures(val offline: Boolean, val online: Boolean) {
     }
 }
 
-/** `services/aadhaar/records.summary` on the server. Fields beyond the first four are withheld from
- *  readers outside an artisan's circle, so every one is optional here. */
 @Serializable
 data class AadhaarSummaryDto(
     val status: String? = null,
@@ -144,14 +122,11 @@ interface AadhaarApi {
     suspend fun decideArtisan(@Path("id") id: String, @Body body: AadhaarDecisionRequest): AadhaarSummaryDto
 }
 
-/** Who a verification is about. */
 sealed interface AadhaarSubject {
     data object Self : AadhaarSubject
     data class Artisan(val id: String) : AadhaarSubject
 }
 
-/** The calls, routed by subject, so a screen never spells a path. Consent is always sent true:
- *  the screens call these only after the person ticked the box. */
 class AadhaarClient(private val api: AadhaarApi) {
     suspend fun read(subject: AadhaarSubject): AadhaarSummaryDto = when (subject) {
         AadhaarSubject.Self -> api.readSelf()
@@ -230,7 +205,6 @@ class AadhaarClient(private val api: AadhaarApi) {
     }
 }
 
-/** A Secure QR's text is a long decimal integer. Anything else is not one, said before it is sent. */
 fun looksLikeSecureQr(text: String): Boolean {
     val digits = text.filterNot { it.isWhitespace() }
     return digits.length > 200 && digits.all { it.isDigit() }

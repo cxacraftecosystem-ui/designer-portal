@@ -8,10 +8,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The handset's copy of `designers.prefill_from_profile`: every mapped column reaches its stage box,
- * and a stage only ever takes these values into EMPTY boxes.
- */
 class DesignerPrefillTest {
 
     private val full = DesignerProfileDto(
@@ -186,7 +182,6 @@ class DesignerPrefillTest {
     }
 }
 
-/** The Kotlin map is the Python `designers.PREFILL_MAP`, pair for pair and in order. */
 class DesignerPrefillParityTest {
     @Test
     fun the_handset_map_matches_the_backend_map() {

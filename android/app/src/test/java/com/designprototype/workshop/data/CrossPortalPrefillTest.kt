@@ -7,9 +7,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * C27 on the handset: the lookup answer decodes, fills the right boxes, and says the web's words.
- */
 class CrossPortalPrefillTest {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -126,7 +123,6 @@ class CrossPortalPrefillTest {
         assertTrue(card.contains("onClick = { confirmUnlink = true }"))
     }
 
-    /** Answers `POST /artisan-cards/resolve` with [reply]; every other call is unused here. */
     private class FakeCrossPortalApi(private val reply: ResolveCardDto) : CrossPortalApi {
         var sent: ResolveCardRequest? = null
         override suspend fun status() = CrossPortalStatusDto(enabled = true)
@@ -153,7 +149,6 @@ class CrossPortalPrefillTest {
         assertTrue(found is CrossPortalCardAnswer.Match)
         assertEquals("fr1", (found as CrossPortalCardAnswer.Match).match.remoteArtisanId)
         assertEquals("Meena Devi", CrossPortalPrefill.from(found.match).name)
-        // Asked by the card, with the consent the designer ticked, exactly as the web's lookupByCard.
         assertEquals(ResolveCardRequest("F-ABCDE-FGHJK-MN", source = "ANDROID", consent = true), api.sent)
     }
 
@@ -173,7 +168,6 @@ class CrossPortalPrefillTest {
             .flatMap { sequenceOf(File(it, "src/main/java/com/designprototype/workshop/MainActivity.kt"), File(it, "android/app/src/main/java/com/designprototype/workshop/MainActivity.kt")) }
             .first { it.isFile }
             .readText()
-        // The scanned card travels to the add-artisan form, never an empty one (REQUIREMENTS_2026-10-20 §6.1).
         assertTrue(main.contains("screen = Screen.Create(EntryMode.ARTISAN, fromCard = target.card)"))
         assertTrue(main.contains("fromCard = s.fromCard,"))
         assertTrue(main.contains("cardInput = fromCard,"))

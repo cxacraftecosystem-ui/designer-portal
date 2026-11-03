@@ -6,15 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * THE PROPERTY, NOT THE PROSE. The review queue pages now (UX audit 2026-10-16, DW-06 / DA-09), so
- * its notice is a count:
- *
- *  1. A queue whose every record is on screen says NOTHING.
- *  2. A partly loaded queue gives both numbers, and never describes the server's limits or admits
- *     that old records "cannot" be reached — "Load older" reaches them.
- *  3. It never prints arithmetic that contradicts itself.
- */
 class ReviewQueueCopyTest {
 
     @Test

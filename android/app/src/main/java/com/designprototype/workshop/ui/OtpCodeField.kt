@@ -39,14 +39,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * The pure rules of a six-digit code, the web's `components/ui/otpCode.ts` restated — pinned by
- * `OtpCodeTest`, so one sequence of keys leaves the same six boxes on both clients.
- *
- * DIGITS ONLY, ASCII ONLY: a typed letter, space, hyphen or full-width "１" is refused and the code
- * does not change; the same characters inside a PASTE (or an SMS autofill) are stripped, because
- * "123 456" and "123-456" are how authenticators and messages print a code. Never more than six.
- */
 object OtpCode {
     const val LENGTH = 6
 
@@ -54,11 +46,6 @@ object OtpCode {
 
     fun isComplete(value: String): Boolean = value.length == LENGTH && value.all { it in '0'..'9' }
 
-    /**
-     * What the field holds after the text box reported [incoming], given it held [previous].
-     * Returns [previous] unchanged when the edit was ONE non-digit character typed (refused); otherwise
-     * every digit, in order, at most six — which covers typing, Backspace, and a paste of the whole code.
-     */
     fun accept(previous: String, incoming: String): String {
         val digits = onlyDigits(incoming)
         val typedOneNonDigit = incoming.length == previous.length + 1 && digits.length == onlyDigits(previous).length
@@ -66,34 +53,14 @@ object OtpCode {
         return digits.take(LENGTH)
     }
 
-    /** The accessible name of box [index] (zero-based): "Digit 3 of 6". */
     fun digitLabel(index: Int): String = "Digit ${index + 1} of $LENGTH"
 
-    /** What TalkBack hears for the whole row: the label, then how far along the code is. */
     fun spoken(label: String, value: String): String =
         if (value.isEmpty()) "$label, 6 boxes, empty" else "$label, ${value.length} of $LENGTH digits entered"
 
-    /** The refusal shake's offsets in dp, or empty under reduced motion (the red is the whole signal). */
     fun shake(reducedMotion: Boolean): List<Float> = if (reducedMotion) emptyList() else listOf(0f, -6f, 6f, -6f, 6f, 0f)
 }
 
-/**
- * `OtpCodeField` — the ONE six-digit code entry on the handset. The web's twin is `OtpCodeInput`.
- *
- * Six separate boxes, digits only, in Plus Jakarta Sans ([FieldDisplayFontFamily], bundled in
- * res/font, the owner's choice for the code) with tabular figures so the digits sit still. Typing
- * advances, Backspace walks back, a paste or an SMS autofill of the code fills all six, and
- * [onComplete] fires once when the sixth digit lands. [isError] paints every box red; bumping
- * [errorKey] shakes the row once — never under the app's or the system's reduced motion.
- *
- * ONE TEXT FIELD UNDER SIX DRAWN BOXES, deliberately, rather than six fields: the keyboard, paste,
- * autofill and Backspace across boxes then come from the platform instead of six focus hand-offs, and
- * TalkBack meets one editable field whose description says how many digits are in — each box also
- * carries "Digit n of 6" for exploration by touch. `KeyboardType.NumberPassword` opens the number pad
- * with no suggestions strip; nothing is masked, because the boxes draw the digits themselves.
- *
- * A recovery code is NOT a six-digit code and never goes in here.
- */
 @Composable
 fun OtpCodeField(
     value: String,
@@ -150,7 +117,6 @@ fun OtpCodeField(
                 },
             decorationBox = { inner ->
                 Box {
-                    // The real text is transparent and sits underneath: it owns the caret, paste and IME.
                     Box(Modifier.height(1.dp)) { inner() }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         repeat(OtpCode.LENGTH) { index ->

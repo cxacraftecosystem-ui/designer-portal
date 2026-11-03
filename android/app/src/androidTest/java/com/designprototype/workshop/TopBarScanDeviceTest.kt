@@ -28,10 +28,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * On a device (REQUIREMENTS_2026-10-20 §6.3): the header's scan button opens the top-bar sheet, and a
- * typed DPW1 code is answered with Open. The record lookup is faked, so nothing is signed in or sent.
- */
 @RunWith(AndroidJUnit4::class)
 class TopBarScanDeviceTest {
     @get:Rule

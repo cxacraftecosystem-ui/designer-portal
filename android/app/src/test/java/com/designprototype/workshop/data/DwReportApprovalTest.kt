@@ -7,27 +7,14 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * THE SANCTIONING AUTHORITY'S SIGN-OFF AS THE HANDSET READS IT — decoded, frozen, and printed.
- *
- * The handset takes no decision here (approving, sending back and handing on are the web's), so what
- * can go wrong on this side is reading: a server that grew the keys must decode on an older build and
- * an older server must decode on this one; a report the authority signed off must be said to be
- * closed and a designer's own submission from before 2026-09-13 must NOT be; and the Certification
- * lines must be the server's, word for word, or the phone's copy and the office's copy of one approved
- * report disagree about who approved it.
- */
 class DwReportApprovalTest {
 
-    /** Configured exactly as `ApiClient` configures the converter Retrofit actually uses. */
     private val json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false
         isLenient = true
         coerceInputValues = true
     }
-
-    // ── Decoding ─────────────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `a list row from a server that predates the sign-off decodes with every new key empty`() {
@@ -96,22 +83,16 @@ class DwReportApprovalTest {
         assertTrue(authority.byApprovingAuthority)
     }
 
-    // ── The freeze ───────────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `an approved report and a handed-on one are frozen, and nothing else is`() {
         assertTrue(dwIsFrozen("APPROVED", null))
         assertTrue(dwIsFrozen("SUBMITTED", "2026-10-10T08:00:00+00:00"))
-        // THE LEGACY ROW. `SUBMITTED` meant the designer's own submission until 2026-09-13 and nothing
-        // was backfilled, so a SUBMITTED row with no hand-on is still its designers' to reopen.
         assertFalse(dwIsFrozen("SUBMITTED", null))
         assertFalse(dwIsFrozen("SUBMITTED", ""))
         for (open in listOf("DRAFT", "IN_PROGRESS", "COMPLETE", "PRE_SUBMISSION", "NEEDS_REVISION", "ARCHIVED")) {
             assertFalse("$open must not be frozen", dwIsFrozen(open, null))
         }
-        // A status from a newer server is not guessed at: the server refuses what it refuses.
         assertFalse(dwIsFrozen("SOME_FUTURE_STATE", "2026-10-10T08:00:00+00:00"))
-        // The wire token's case is not the screen's business.
         assertTrue(dwIsFrozen(" approved ", null))
     }
 
@@ -145,23 +126,18 @@ class DwReportApprovalTest {
         assertEquals(DW_FROZEN_APPROVED_SENTENCE, DwReportFreeze.sentenceFor(id))
         assertEquals("Ritu Menon", DwReportFreeze.signOffFor(id)?.approvedByName)
 
-        // The approval withdrawn: the report is back in its designers' hands and must print nothing.
         DwReportFreeze.rememberRead(id, DesignWorkshopDetailDto(id = id, status = "NEEDS_REVISION"))
         assertNull(DwReportFreeze.sentenceFor(id))
         assertNull(DwReportFreeze.signOffFor(id))
     }
 
-    // ── The Certification lines ──────────────────────────────────────────────────────────────────
-
     @Test
     fun `no sign-off is read off a report that is not approved or handed on`() {
         assertNull(dwReportSignOffOf(null))
         assertNull(dwReportSignOffOf(DesignWorkshopDetailDto(status = "PRE_SUBMISSION")))
-        // A legacy SUBMITTED row: nobody approved it here, whatever columns it carries.
         assertNull(
             dwReportSignOffOf(DesignWorkshopDetailDto(status = "SUBMITTED", approvedAt = "2026-10-09T10:15:00+00:00"))
         )
-        // APPROVED with no moment is a payload this build cannot print honestly.
         assertNull(dwReportSignOffOf(DesignWorkshopDetailDto(status = "APPROVED")))
     }
 
@@ -221,7 +197,6 @@ class DwReportApprovalTest {
     fun `the approving roles have the contract's labels, and any other role is its words, as the server prints it`() {
         assertEquals("Ministry Admin", dwApproverRoleLabel("MINISTRY_ADMIN"))
         assertEquals("Master Admin", dwApproverRoleLabel("MASTER_ADMIN"))
-        // An approver whose role has since changed: `str.title()` on the server, word for word here.
         assertEquals("Regional Director", dwApproverRoleLabel("REGIONAL_DIRECTOR"))
         assertEquals("Admin", dwApproverRoleLabel("ADMIN"))
         assertNull(dwApproverRoleLabel(null))

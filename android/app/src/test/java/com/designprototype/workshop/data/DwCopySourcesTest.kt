@@ -8,11 +8,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * C9 (2026-10-17): the handset's half of "start a stage from an earlier workshop" — the same four
- * stages as the server, copies fill EMPTY boxes only, a copied box is pending until edited or kept,
- * and a stage with no copies sends the body every server has always accepted.
- */
 class DwCopySourcesTest {
 
     @Test

@@ -9,34 +9,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * OPENING AN EDIT THAT ALREADY HAS SOMETHING IN IT, PINNED.
- *
- * ── WHY THIS IS A TEST AND NOT A LOOK AT THE SCREEN ──────────────────────────────────────────────
- *
- * Every failure below renders perfectly. The form draws, every card is in its place, the header
- * counts are right — and the researcher's own answers and their own recordings are behind a closed
- * card they have no reason to open, because the screen gives no sign that anything is in there. That
- * is the owner's complaint word for word (*"already existing entries and media do not show up in the
- * respective sections"*) and it was never a fetching bug: the data was in hand both times.
- *
- * There is no Compose renderer in this project's unit tests, so a rule left inside `QuestionnaireForm`
- * — a 700-line composable in a 21,000-line file — is exercised only by somebody holding a phone,
- * looking at an interview they already know the contents of.
- *
- * ── THE RULES, AND WHAT BREAKING EACH ONE COSTS ──────────────────────────────────────────────────
- *
- * 1. **A section with a typed answer opens.** Break it and this test's subject is the whole
- *    complaint: an interview whose answers are all present reads as blank.
- * 2. **A section whose ONLY content is a recording opens.** This is the important one. These
- *    sections are captured as a single whole-section take with the answer boxes hidden, so the
- *    best-conducted sittings have ZERO response rows — a rule that counted only answers would leave
- *    exactly those looking untouched.
- * 3. **A section nobody touched stays shut**, or the reveal is just "open everything" and the
- *    twenty-section instrument composes every input on a handset for nothing.
- * 4. **Hidden answer boxes still SHOW a recorded answer** — without touching the preference, which
- *    is the reader's own choice about capture and stays exactly as they set it.
- */
 class QuestionnaireEditRevealTest {
 
     private fun question(id: String, sectionCode: String, order: Int, active: Boolean = true) =
@@ -71,8 +43,6 @@ class QuestionnaireEditRevealTest {
     private val sectionK = section("K", question("k1", "K", 1))
     private val instrument = listOf(sectionD, sectionF, sectionK)
 
-    // ── 1. Answers ───────────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `a section holding a typed answer is opened`() {
         val revealed = questionnaireSectionsToReveal(
@@ -85,10 +55,6 @@ class QuestionnaireEditRevealTest {
 
     @Test
     fun `a rich-text answer counts, because the column may hold a document`() {
-        // The web turned this box into a formatted editor, so the column holds `{"blocks":…}` for any
-        // answer somebody bolded a word in. Comparing the raw string against "" would call that
-        // content (it is), but a rule that only checked `isNullOrBlank` on a DOCUMENT WITH NO WORDS
-        // in it would open a section over an empty document. Flattening is what tells them apart.
         val document = """{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"She dyes it in indigo","marks":["BOLD"]}]}]}"""
         val revealed = questionnaireSectionsToReveal(
             sections = instrument,
@@ -100,9 +66,6 @@ class QuestionnaireEditRevealTest {
 
     @Test
     fun `a note on its own is content`() {
-        // `notes` is the researcher's own words typed against that question — the merge route treats
-        // it beside `answerText` for exactly this reason. A section whose only content is a note
-        // would otherwise stay shut over it.
         val revealed = questionnaireSectionsToReveal(
             sections = instrument,
             responses = listOf(InterviewResponseDto(questionId = "k1", notes = "Asked again after the tea break.")),
@@ -121,13 +84,8 @@ class QuestionnaireEditRevealTest {
         assertTrue(revealed.isEmpty())
     }
 
-    // ── 2. Recordings, which on this instrument are the interview ────────────────────────────────
-
     @Test
     fun `a whole-section take opens its section although nothing was typed`() {
-        // THE CASE THE WHOLE FEATURE IS FOR. Sections are recorded in one take with the answer boxes
-        // hidden, so a correctly conducted sitting has NO responses at all and many recordings. A
-        // reveal that read only responses would leave the best interviews looking empty.
         val revealed = questionnaireSectionsToReveal(
             sections = instrument,
             responses = emptyList(),
@@ -148,9 +106,6 @@ class QuestionnaireEditRevealTest {
 
     @Test
     fun `a recording whose section title was reworded afterwards still opens its section`() {
-        // The prefix fallback in `questionnaireCaptionBelongsToSection`. Without it, editing a
-        // section's title orphans every clip recorded under the old wording — into the catch-all,
-        // while the section it belongs to stays shut.
         assertTrue(questionnaireCaptionBelongsToSection("Section audio: D The black pottery of Nizamabad", sectionD))
         val revealed = questionnaireSectionsToReveal(
             sections = instrument,
@@ -162,8 +117,6 @@ class QuestionnaireEditRevealTest {
 
     @Test
     fun `general media belonging to no section opens nothing`() {
-        // It is drawn by the "Other saved recordings & media" catch-all, which is outside every
-        // section card and needs no card opened to be read.
         assertFalse(questionnaireCaptionBelongsToSection("Field media for Interview with Giriraj", sectionD))
         val revealed = questionnaireSectionsToReveal(
             sections = instrument,
@@ -173,8 +126,6 @@ class QuestionnaireEditRevealTest {
         assertTrue(revealed.isEmpty())
     }
 
-    // ── 3. What stays shut ───────────────────────────────────────────────────────────────────────
-
     @Test
     fun `sections nobody touched stay closed`() {
         val revealed = questionnaireSectionsToReveal(
@@ -182,7 +133,6 @@ class QuestionnaireEditRevealTest {
             responses = listOf(InterviewResponseDto(questionId = "d1", answerText = "Forty years.")),
             savedMedia = listOf(clip("Section audio: K Section K")),
         )
-        // D by its answer and K by its recording — and F, which this sitting never reached, shut.
         assertEquals(setOf("sec-D", "sec-K"), revealed)
     }
 
@@ -193,8 +143,6 @@ class QuestionnaireEditRevealTest {
 
     @Test
     fun `a section whose questions have all been retired is never revealed`() {
-        // `QuestionnaireForm` draws a section only when it has an ACTIVE question, so naming a
-        // retired one would put an id in the expanded set that no control on the screen can clear.
         val retired = section("Z", question("z1", "Z", 1, active = false))
         val revealed = questionnaireSectionsToReveal(
             sections = listOf(retired),
@@ -203,8 +151,6 @@ class QuestionnaireEditRevealTest {
         )
         assertTrue(revealed.isEmpty())
     }
-
-    // ── 4. Showing a recorded answer without touching the preference ─────────────────────────────
 
     @Test
     fun `the switch off always gives the editor`() {
@@ -217,10 +163,6 @@ class QuestionnaireEditRevealTest {
 
     @Test
     fun `hidden boxes still show an answer that was recorded`() {
-        // THE SECOND HALF OF THE COMPLAINT. `hideAnswers` defaults TRUE, so before this rule a
-        // researcher opening their own interview could not see a single answer they had typed — on
-        // any screen, at all — and the preference is NOT flipped to fix that: the words are drawn
-        // read-only instead, and the switch goes on meaning what it says.
         assertEquals(
             QuestionnaireAnswerDisplay.RECORDED,
             questionnaireAnswerDisplay(hideAnswers = true, current = "She learnt it from her mother."),
@@ -229,8 +171,6 @@ class QuestionnaireEditRevealTest {
 
     @Test
     fun `hidden boxes draw nothing when nothing was typed`() {
-        // The capture screen this default was chosen for is untouched: no boxes, no plates, just the
-        // record button.
         assertEquals(QuestionnaireAnswerDisplay.NONE, questionnaireAnswerDisplay(hideAnswers = true, current = ""))
         assertEquals(QuestionnaireAnswerDisplay.NONE, questionnaireAnswerDisplay(hideAnswers = true, current = null))
         assertEquals(QuestionnaireAnswerDisplay.NONE, questionnaireAnswerDisplay(hideAnswers = true, current = "  \n "))
@@ -240,8 +180,6 @@ class QuestionnaireEditRevealTest {
     fun `a stored document is shown as words and never as its braces`() {
         val document = """{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"She dyes it in indigo","marks":["BOLD"]}]}]}"""
         assertEquals(QuestionnaireAnswerDisplay.RECORDED, questionnaireAnswerDisplay(hideAnswers = true, current = document))
-        // What the read-only plate prints. `{"blocks":[{"kind":"PARAGRAPH"… in the place an artisan's
-        // answer belongs is the defect `questionnaireAnswerPlain` exists to end.
         assertEquals("She dyes it in indigo", questionnaireAnswerPlain(document))
     }
 }

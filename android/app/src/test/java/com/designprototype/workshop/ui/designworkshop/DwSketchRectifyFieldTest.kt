@@ -12,35 +12,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * What "straighten a photographed sketch into a plate" is OFFERED ON, pinned against the bundled
- * registry.
- *
- * ── WHY THIS TEST EXISTS AT ALL ───────────────────────────────────────────────────────────────
- *
- * `DwSketchRectifyTest` proves the arithmetic against the same constructions the web spec uses. What
- * it cannot prove — and what this repository has now got wrong repeatedly, including four whole
- * modules R8 deleted from a release APK because nothing reached them — is that anything REACHES it.
- * The panel is composed only where [dwOffersSketchRectify] returns true, and that function is three
- * declaration lookups: a renamed field, a changed type token or a label reworded past the regex does
- * not raise, does not warn and does not log. It returns false, the panel is not composed, and a
- * feature that took a week is invisible on the one screen it was written for.
- *
- * IT PINS THE SHIPPED ASSET AND NOT THE LIVE SERVER, for the same reason [DwPhotoMeasureFieldTest]
- * does: `design-workshop-schema.json` is what a handset renders from before it has ever had a
- * connection, so it is the copy that decides what a courtyard sees.
- *
- * ── AND WHY THE REFUSALS ARE TESTED AS HARD AS THE OFFER ──────────────────────────────────────
- *
- * The panel writes into the field it is drawn under. Offered on the wrong field it would be a control
- * that puts a PNG where the registry expects something else — and offered on `sketch.image` it would
- * be a control that DETACHES the photograph, because a single-valued IMAGE field replaces its value
- * when something is attached to it. That is the outcome docs/MEDIA_PIPELINE.md §5 exists to forbid,
- * so "not offered on the image field" is not a tidiness assertion; it is the safety property.
- */
 class DwSketchRectifyFieldTest {
 
-    /** Matches the app's own decoder: the registry carries keys the DTOs here do not model. */
     private val json = Json { ignoreUnknownKeys = true }
 
     private val schema: SchemaResponse by lazy {
@@ -59,51 +32,21 @@ class DwSketchRectifyFieldTest {
     private fun siblingsOf(stageKey: String, entityKey: String): Map<String, FieldDto> =
         entityOf(stageKey, entityKey).liveFields.associateBy { it.key }
 
-    /**
-     * Stage 11's sketch is the pairing this was written for, and the offer lands on `lineArtFile`.
-     *
-     * The entity declares `image` — required, the photograph of the sheet — and `lineArtFile`, "An
-     * SVG or vector export, if one was produced". A photograph to read and a separate slot to put the
-     * derived plate in. If either key is renamed, this fails here rather than in a courtyard.
-     */
     @Test
     fun `the offer lands on the sketch's line-art file and nowhere else on that entity`() {
         val siblings = siblingsOf("SKETCH_DEVELOPMENT", "sketch")
         val offered = siblings.values.filter { dwOffersSketchRectify(it, siblings) }.map { it.key }
         assertEquals(listOf("lineArtFile"), offered)
 
-        // THE SAFETY PROPERTY. Offered on `image`, the panel would attach the plate to a
-        // single-valued IMAGE field, which REPLACES its value — detaching the photograph that is the
-        // record. See the class header and docs/MEDIA_PIPELINE.md §5.
         assertFalse(dwOffersSketchRectify(siblings.getValue("image"), siblings))
     }
 
-    /** The photograph the plate is made from comes from the entity's image fields, in form order. */
     @Test
     fun `the sketch's own photograph is the source`() {
         val siblings = siblingsOf("SKETCH_DEVELOPMENT", "sketch")
         assertEquals(listOf("image"), dwSketchSourceFields(siblings).map { it.key })
     }
 
-    /**
-     * EXACTLY TWO FIELDS IN THE WHOLE REGISTRY GET THE OFFER, and both are named here rather than
-     * counted, because the value of this test is that a change to the list has to be argued for.
-     *
-     * Stage 11's `sketch.lineArtFile` is the case the feature was written for. Stage 16's
-     * `finalProduct.lineDrawing` ("Vector / line drawing") is the second, and it looks at first like a
-     * false positive: a line drawing for a finished product is often a CAD export this panel has
-     * nothing to do with. It is kept because it is just as often a technical drawing made on paper and
-     * photographed, and because the web's `offersSketchRectify` reaches the same two places from the
-     * same regex — two clients offering a feature in different places is worse than either choice.
-     *
-     * EVERY OTHER FILE FIELD IN THE REGISTRY IS REFUSED, and the refusals are the load-bearing half:
-     * a PNG of a straightened sheet has no business being written into a sanction letter, a
-     * questionnaire, a designer's CV, a measurement sheet, a 3D model or a checksum manifest. They
-     * are deliberately not listed one by one. The body below sweeps EVERY field of EVERY entity in
-     * the bundled asset and asserts the offered set is exactly those two, so a name list up here
-     * asserts nothing the test does not — it only goes stale, which it did: it read "the other six
-     * FILE fields" until `designerCv` and `surveyDocument` landed and neither appeared in it.
-     */
     @Test
     fun `exactly two fields in the bundled registry offer it`() {
         val found = mutableListOf<String>()
@@ -126,15 +69,6 @@ class DwSketchRectifyFieldTest {
         )
     }
 
-    /**
-     * Every image field of a qualifying entity is offered as a source, in the order the form renders
-     * them — three of them on stage 16's final product.
-     *
-     * NOTHING TRIES TO PICK ONE, for the same reason [dwOffersPhotoMeasure] does not: which photograph
-     * is of a sheet of paper and which is of the object is a fact about what somebody pointed a camera
-     * at, and a designer choosing from a list of their own photographs beats any guess this file could
-     * make.
-     */
     @Test
     fun `every image field of a qualifying entity is a possible source`() {
         assertEquals(
@@ -143,14 +77,6 @@ class DwSketchRectifyFieldTest {
         )
     }
 
-    /**
-     * A file field that looks like a plate destination but has no photograph to make one FROM gets
-     * nothing.
-     *
-     * This is the second of the two conditions and the one that matters: the offer is a promise that
-     * something can be produced, and a straightening panel over an entity with no image is a promise
-     * with no input.
-     */
     @Test
     fun `a plate destination with no photograph on the entity is not offered`() {
         val siblings = listOf(
@@ -161,13 +87,6 @@ class DwSketchRectifyFieldTest {
         assertFalse(dwOffersSketchRectify(siblings.getValue("lineArtFile"), siblings))
     }
 
-    /**
-     * The name test reads the key AND the label, folded to letters.
-     *
-     * `lineArtFile` and "Line art / vector file" both have to match, because a registry is free to
-     * express the same thing either way — and a field whose key is opaque but whose label says
-     * "vector plate" is exactly the case a key-only test would miss.
-     */
     @Test
     fun `the destination is recognised from either the key or the label`() {
         val photo = FieldDto(key = "image", label = "Sketch image", type = "IMAGE")
@@ -179,15 +98,10 @@ class DwSketchRectifyFieldTest {
         assertTrue(offered(FieldDto(key = "f13", label = "Vector export", type = "FILE")))
         assertTrue(offered(FieldDto(key = "artworkFile", label = "Artwork", type = "FILE")))
 
-        // A file field that is plainly something else. A false positive here is cheap — a panel
-        // nobody presses — but it is still a control offering to put a PNG somewhere it does not go.
         assertFalse(offered(FieldDto(key = "consentForm", label = "Signed consent", type = "FILE")))
         assertFalse(offered(FieldDto(key = "invoice", label = "Invoice PDF", type = "FILE")))
 
-        // Right name, wrong type: an IMAGE field called "line art" is still a field that replaces its
-        // own value, so it is refused on the type before the name is ever consulted.
         assertFalse(offered(FieldDto(key = "lineArtFile", label = "Line art", type = "IMAGE")))
-        // A retired field is never a destination, whatever it is called.
         assertFalse(
             offered(FieldDto(key = "lineArtFile", label = "Line art", type = "FILE", deprecated = true))
         )

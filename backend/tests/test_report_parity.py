@@ -429,8 +429,7 @@ def test_both_pdf_renderers_wrap_every_string_they_draw(pdf_kt):
     toc = pdf_kt[pdf_kt.index("private fun blockToc"):]
     toc = toc[:toc.index("private fun blockHeading")]
     assert "wrap(runsOf(label" in toc, "PdfWriter.blockToc draws a contents entry it has not wrapped"
-    furniture = pdf_kt[pdf_kt.index("private fun drawFurniture"):]
-    furniture = furniture[:furniture.index("\n    // -- drawing helpers")]
+    furniture = _kotlin_function(pdf_kt, "drawFurniture")
     assert "wrap(runsOf(meta.headerText)" in furniture, "PdfWriter draws an unwrapped running head"
     assert "wrap(runsOf(meta.footerText)" in furniture, "PdfWriter draws an unwrapped running foot"
 

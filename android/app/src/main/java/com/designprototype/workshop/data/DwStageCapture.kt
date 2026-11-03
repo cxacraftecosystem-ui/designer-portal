@@ -10,14 +10,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
-/*
- * Stage capture that fills itself in (owner decisions of 2026-10-17): numbering a new row (C6), the
- * counts that replace typed boxes (C7, C8), and the server's one-tap suggestions (A14, A16, B10,
- * C6, C7, C10). The handset's ports of `stage_schema.next_auto_number`, `app/services/stage_computed.py`
- * and the payload of `app/services/stage_assist.py`; the web's are `lib/autoNumber.ts`,
- * `lib/stageComputed.ts` and `lib/stageAssist.ts`. Pure, so it runs with no signal.
- */
-
 private fun JsonElement?.text(): String = when (this) {
     null, JsonNull -> ""
     is JsonPrimitive -> contentOrNull.orEmpty()
@@ -33,7 +25,6 @@ private fun JsonElement?.isBlankValue(): Boolean = when (this) {
 
 private fun JsonElement?.toIntOrNull(): Int? = text().trim().toDoubleOrNull()?.toInt()
 
-/** A row's two identities: the server's `_entryId` and this device's `_clientKey`/row id. */
 fun dwRowKeys(values: Map<String, JsonElement>, rowId: String? = null): Set<String> =
     listOfNotNull(values["_entryId"].text().ifBlank { null }, values["_clientKey"].text().ifBlank { null }, rowId).toSet()
 
@@ -42,7 +33,6 @@ object DwAutoNumber {
 
     fun format(prefix: String, n: Int): String = "$prefix-${n.toString().padStart(2, '0')}"
 
-    /** The number a NEW row takes in [field], or null when it numbers nothing. */
     fun nextNumber(field: FieldDto, rows: List<Map<String, JsonElement>>, scope: JsonElement? = null): JsonElement? {
         if (field.autoNumber.isBlank()) return null
         val within = field.autoNumberWithin
@@ -59,7 +49,6 @@ object DwAutoNumber {
         return JsonPrimitive(format(field.autoNumber, maxOf(highest, considered.size) + 1))
     }
 
-    /** `start` plus `day - 1` days, as yyyy-mm-dd, or null. */
     fun dateOfDay(start: String?, day: JsonElement?): String? {
         val n = day.toIntOrNull() ?: return null
         if (n < 1) return null
@@ -70,12 +59,6 @@ object DwAutoNumber {
         }
     }
 
-    /**
-     * [next] values with every auto-numbered or auto-dated box filled where the rules allow: a row
-     * that is NEW (its id is not in [previous]) or whose scope was just chosen, blank boxes only.
-     * Rows are numbered in order so a batch of ten reads S-04 … S-13. An existing number is never
-     * touched.
-     */
     fun apply(
         entity: EntityDto,
         previous: List<Pair<String, Map<String, JsonElement>>>,
@@ -96,8 +79,6 @@ object DwAutoNumber {
                 val scopeChanged = within.isNotBlank() && old != null && old[within].text() != values[within].text()
                 if (old != null && !scopeChanged) continue
                 if (within.isNotBlank() && values[within].isBlankValue()) continue
-                // The rows before this one as numbered so far, and the EXISTING rows after it — never
-                // the other new rows still to come, or a batch would skip numbers.
                 val others = out.map { it.second } + next.drop(index + 1).filter { it.first in before }.map { it.second }
                 val value = nextNumber(field, others, if (within.isNotBlank()) values[within] else null) ?: continue
                 values = values + (field.key to value)
@@ -122,10 +103,6 @@ object DwStageComputed {
     fun absentDays(row: Map<String, JsonElement>): Set<String> =
         (row["absentDays"] as? JsonArray).orEmpty().mapNotNull { it.toIntOrNull()?.toString() }.toSet()
 
-    /**
-     * Days attended typed before the tick-list existed and never ticked since: no `absentDays` list
-     * and a stored `attendedDays`. Never read back as "All present" (`is_legacy_attendance`).
-     */
     fun isLegacyAttendance(row: Map<String, JsonElement>): Boolean =
         row["absentDays"] !is JsonArray && row["attendedDays"].text().isNotBlank()
 
@@ -149,13 +126,11 @@ object DwStageComputed {
         )
     }
 
-    /** The schedule's day numbers, else [fallback] (the server's 1..duration). */
     fun workshopDays(schedule: List<Map<String, JsonElement>>, fallback: List<Int>): List<Int> {
         val numbers = schedule.mapNotNull { it["dayNumber"].toIntOrNull() }.filter { it in 1..366 }.distinct().sorted()
         return numbers.ifEmpty { fallback }
     }
 
-    /** Stage 1's duration: the stored box, else start to end inclusive (`setup_duration`). */
     fun setupDuration(setup: Map<String, JsonElement>?): Int? {
         if (setup == null) return null
         setup["durationDays"].toIntOrNull()?.takeIf { it > 0 }?.let { return minOf(it, 366) }
@@ -169,17 +144,14 @@ object DwStageComputed {
         }
     }
 
-    /** 1..duration from stage 1, the server's fallback when the schedule has no rows. */
     fun setupDays(setup: Map<String, JsonElement>?): List<Int> = setupDuration(setup)?.let { (1..it).toList() }.orEmpty()
 
-    /** Stage 1's start date as yyyy-mm-dd, or null. */
     fun setupStart(setup: Map<String, JsonElement>?): String? = try {
         LocalDate.parse(setup?.get("startDate").text().take(10)).toString()
     } catch (_: DateTimeParseException) {
         null
     }
 
-    /** Mark the row present or absent on [day], keeping the stored list sorted. */
     fun withAttendance(row: Map<String, JsonElement>, day: Int, present: Boolean): Map<String, JsonElement> {
         val absent = absentDays(row).toMutableSet()
         if (present) absent.remove(day.toString()) else absent.add(day.toString())
@@ -190,10 +162,8 @@ object DwStageComputed {
 @Serializable
 data class DwAssistSuggestionDto(
     val id: String = "",
-    /** FILL | ADD_ROWS */
     val kind: String = "",
     val entityKey: String = "",
-    /** The row a FILL targets (`_entryId` or `_clientKey`); null for the stage's singleton. */
     val rowKey: String? = null,
     val title: String = "",
     val detail: String = "",
@@ -218,7 +188,6 @@ data class DwAssistSittingDto(
     val respondents: List<String> = emptyList(),
 )
 
-/** `GET /design-workshops/{id}/stages/{stageKey}/assist`. */
 @Serializable
 data class DwStageAssistDto(
     val stageKey: String = "",
@@ -230,7 +199,6 @@ data class DwStageAssistDto(
 )
 
 object DwStageAssist {
-    /** The values of a FILL that still land on a blank box (all of them for a `replaces` FILL). */
     fun fillValues(suggestion: DwAssistSuggestionDto, target: Map<String, JsonElement>?): Map<String, JsonElement> =
         suggestion.values.filter { (key, _) -> suggestion.replaces || target?.get(key).isBlankValue() }
 
@@ -240,7 +208,6 @@ object DwStageAssist {
     ): Pair<String, Map<String, JsonElement>>? =
         suggestion.rowKey?.let { key -> rows.firstOrNull { (id, values) -> key in dwRowKeys(values, id) } }
 
-    /** Whether the suggestion still has something to do against the form as it stands. */
     fun stillApplies(
         suggestion: DwAssistSuggestionDto,
         singleton: Map<String, JsonElement>,
@@ -262,7 +229,6 @@ object DwStageAssist {
     }
 }
 
-/** A15: the stage name logged last for a prototype, by log date then position. */
 fun dwLastStageName(prototypeKeys: Set<String>, logs: List<Map<String, JsonElement>>): String {
     var bestDate = ""
     var best = ""
@@ -278,13 +244,6 @@ fun dwLastStageName(prototypeKeys: Set<String>, logs: List<Map<String, JsonEleme
     return best
 }
 
-/**
- * Stage 3's assist as the handset can work it out with no signal (C6/C7): the workshop days and the
- * start date from the cached stage 1 draft, and "Fill the schedule" — the server's
- * `schedule_suggestions`, row for row. The server's answer stays the authority when there is one;
- * this only fills what it left empty, and stands in whole when it is null (offline, or a workshop
- * never sent to the server). Every other stage gets [assist] back untouched.
- */
 fun dwLocalStageAssist(
     stageKey: String,
     assist: DwStageAssistDto?,
@@ -304,7 +263,6 @@ fun dwLocalStageAssist(
     )
 }
 
-/** "Fill the schedule": one row per workshop day not yet scheduled, dated from the start. */
 fun dwFillTheSchedule(start: String?, duration: Int, schedule: List<Map<String, JsonElement>>): DwAssistSuggestionDto? {
     if (start == null || duration <= 0) return null
     val have = schedule.mapNotNull { it["dayNumber"].toIntOrNull() }.toSet()
@@ -317,7 +275,6 @@ fun dwFillTheSchedule(start: String?, duration: Int, schedule: List<Map<String, 
     }
     if (rows.isEmpty()) return null
     val plural = if (rows.size == 1) "day" else "days"
-    // `_short_date`'s "5 Oct 2026", in English whatever the handset's language.
     val shortDate = first.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.ENGLISH))
     return DwAssistSuggestionDto(
         id = "schedule:fill",
@@ -329,7 +286,6 @@ fun dwFillTheSchedule(start: String?, duration: Int, schedule: List<Map<String, 
     )
 }
 
-/** The `jsonPrimitive` content of [value] or "", for display. */
 fun dwDisplayText(value: JsonElement?): String = when (value) {
     null, JsonNull -> ""
     is JsonArray -> value.joinToString(", ") { runCatching { it.jsonPrimitive.content }.getOrDefault(it.toString()) }
@@ -337,7 +293,6 @@ fun dwDisplayText(value: JsonElement?): String = when (value) {
     else -> value.toString()
 }
 
-/** The computed boxes that differ from what the screen holds (C7/C8). */
 data class DwComputedPatch(
     val singleton: Map<String, JsonElement> = emptyMap(),
     val rows: Map<String, List<Pair<String, Map<String, JsonElement>>>> = emptyMap(),
@@ -345,12 +300,6 @@ data class DwComputedPatch(
 
 private fun JsonElement?.asCount(): Int? = text().trim().toDoubleOrNull()?.toInt()
 
-/**
- * What to write so every computed count equals its rows: the roster's totals and days attended on
- * stage 3 (counted here, offline), the survey's responses on stage 8 and the completions and
- * certificates on stage 19 (from the server's answer). Nothing for a count that cannot be formed,
- * which leaves a value typed on an older workshop where it was.
- */
 fun dwComputedPatch(
     stageKey: String,
     assist: DwStageAssistDto?,
@@ -390,7 +339,6 @@ fun dwComputedPatch(
         var dirty = false
         val next = collections[entityKey].orEmpty().map { (rowId, row) ->
             val value = compute(rowId, row)
-            // A counted participant carries its tick-list, so it is never read back as a typed one.
             val stamp = entityKey == "participant" && row["absentDays"] !is JsonArray
             if (value == null || (row[fieldKey].asCount() == value && !stamp)) rowId to row
             else {

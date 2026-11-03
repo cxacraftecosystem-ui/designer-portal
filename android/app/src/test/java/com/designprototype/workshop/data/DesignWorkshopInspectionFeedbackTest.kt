@@ -9,14 +9,6 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
-/**
- * THE INSPECTOR'S NOTE ON THE HANDSET: the conflict rules, the refusals, the duplicate guard, the
- * review queue's split, and the store that keeps notes and reads on the phone.
- *
- * Every rule here decides whether an officer's sentence reaches a designer's desk, is held for its
- * author, or waits — and none of the three may ever be "gone". So each is pinned as a pure function
- * with no network, and the store is driven over a real directory.
- */
 class DesignWorkshopInspectionFeedbackTest {
 
     @get:Rule
@@ -43,8 +35,6 @@ class DesignWorkshopInspectionFeedbackTest {
         draftedStatus = status,
     )
 
-    // ── The conflict rule ───────────────────────────────────────────────────────────────────────
-
     @Test
     fun `a note goes when the report is still the round it was written about`() {
         assertEquals(DwInspectionNoteCheck.Send, dwInspectionNoteCheck(note(), "PRE_SUBMISSION", 2))
@@ -52,7 +42,6 @@ class DesignWorkshopInspectionFeedbackTest {
 
     @Test
     fun `a second officer's send-back on an already sent-back report still goes, as on the web`() {
-        // The server answers this with a 200 and a row; holding it would lose a colleague's note.
         val check = dwInspectionNoteCheck(note(kind = DwInspectionNoteKind.SEND_BACK), "NEEDS_REVISION", 2)
         assertEquals(DwInspectionNoteCheck.Send, check)
     }
@@ -82,8 +71,6 @@ class DesignWorkshopInspectionFeedbackTest {
     fun `an approved report holds the note`() {
         assertTrue(dwInspectionNoteCheck(note(), "APPROVED", 2) is DwInspectionNoteCheck.Hold)
     }
-
-    // ── What a send's failure means ─────────────────────────────────────────────────────────────
 
     @Test
     fun `no answer, a signed-out phone and a fault on the far side all wait rather than refuse`() {
@@ -122,8 +109,6 @@ class DesignWorkshopInspectionFeedbackTest {
         assertEquals(1, Regex("kept here").findAll(sentence).count())
     }
 
-    // ── A lost answer does not file twice ───────────────────────────────────────────────────────
-
     private fun row(actor: String, text: String, recordedAt: String?) = DwInspectionFeedbackDto(
         id = "f-${text.hashCode()}",
         round = 2,
@@ -134,7 +119,6 @@ class DesignWorkshopInspectionFeedbackTest {
 
     @Test
     fun `a note already on the register by its device moment is recognised, whatever the spelling of the moment`() {
-        // `…Z` goes out, `…+00:00` with microseconds comes back.
         val register = listOf(row("u-inspector", "Stage 4 names the wrong cluster.", "2026-10-10T09:15:00.123000+00:00"))
         assertTrue(dwInspectionNoteAlreadyFiled(note(), register))
     }
@@ -151,8 +135,6 @@ class DesignWorkshopInspectionFeedbackTest {
             dwInspectionNoteAlreadyFiled(note(), listOf(row("u-inspector", "Stage 4 names the wrong cluster.", null)))
         )
     }
-
-    // ── The box ─────────────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `an empty note and an over-long one are refused with a sentence, a real one is not`() {
@@ -209,8 +191,6 @@ class DesignWorkshopInspectionFeedbackTest {
         assertEquals("An officer no longer named", dwFeedbackAuthor(DwInspectionFeedbackDto(actorName = " ")))
     }
 
-    // ── The review queue ────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `the queue puts handed-in reports first, sent-back ones under them, and counts the rest`() {
         val queue = dwInspectionReviewQueue(
@@ -227,8 +207,6 @@ class DesignWorkshopInspectionFeedbackTest {
         assertEquals(listOf("c"), queue.notHandedIn.map { it.id })
     }
 
-    // ── The store ───────────────────────────────────────────────────────────────────────────────
-
     private fun store() = DwInspectionStore(File(folder.root, "inspections"))
 
     @Test
@@ -238,7 +216,6 @@ class DesignWorkshopInspectionFeedbackTest {
         store.add(note(id = "n-2"))
         store.update(note(id = "n-1").copy(held = "moved on"))
         assertEquals(listOf("moved on", null), store.notes().map { it.held })
-        // An update for a note no longer queued does not resurrect it.
         store.remove("n-2")
         store.update(note(id = "n-2"))
         assertEquals(listOf("n-1"), store.notes().map { it.id })

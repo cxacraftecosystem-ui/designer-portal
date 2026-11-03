@@ -75,32 +75,6 @@ import com.designprototype.workshop.data.apiErrorMessage
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 
-/*
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- * TWO-STEP VERIFICATION (TOTP) ON THE HANDSET
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Three surfaces, the web's three, with the web's words:
- *
- *   1. [TwoStepChallengeForm] — the sign-in's second step, drawn by `MainActivity` in place of the
- *      sign-in card after ANY first factor (password, Google, Microsoft, Yahoo) answered a challenge.
- *   2. [TwoStepVerificationScreen] — the account's own switch, reached from Settings.
- *   3. The administrator's "Turn off two-step verification", on the users card in `MainActivity`.
- *
- * The server does the work (`backend/app/services/two_factor.py`): it checks and SPENDS the code, and
- * it draws the QR square. What lives here is the pure logic the tests pin — which box a code belongs
- * in ([TwoFactorCode]), whether a URI is one an authenticator should be handed, and reading the
- * server's SVG ([QrSvg]) — and the screens.
- *
- * THE PHONE IS USUALLY THE DEVICE WITH THE AUTHENTICATOR ON IT, which is why setup here offers "Open in
- * authenticator app" (ACTION_VIEW on the otpauth URI) and "Copy key" before the square: a person cannot
- * scan a QR code that is on the same screen as the camera they would scan it with.
- *
- * OFFLINE: asked only at an online sign-in. A session already cached on this handset keeps working,
- * because the second step is a property of opening a session, not of using one.
- */
-
-/** Which kind of code a string is, by SHAPE — the server's `code_kind` and the web's `codeKind`. */
 object TwoFactorCode {
     enum class Kind { AUTHENTICATOR, RECOVERY }
 
@@ -113,26 +87,14 @@ object TwoFactorCode {
         }
     }
 
-    /**
-     * The URI to hand an authenticator app, or null when this is not one.
-     *
-     * Only `otpauth://totp/…` is ever launched: the string arrives from the network, and an
-     * ACTION_VIEW on whatever a response happened to carry would let it open anything on the phone.
-     */
     fun authenticatorUri(otpauthUri: String): String? {
         val trimmed = otpauthUri.trim()
         return if (trimmed.startsWith("otpauth://totp/", ignoreCase = false) && "secret=" in trimmed) trimmed else null
     }
 
-    /** The key in groups of four, which is how an authenticator's manual-entry box is easiest to type. */
     fun grouped(secret: String): String = secret.chunked(4).joinToString(" ")
 }
 
-/**
- * The server's QR square, read. The server sends exactly one `viewBox="0 0 N N"` and one `<path d=…>`
- * made of `M`, `h`, `v` and `z` only (`two_factor.qr_svg`), which is what lets this app draw it with
- * Compose's own path parser instead of shipping an SVG renderer.
- */
 object QrSvg {
     data class Drawing(val size: Int, val pathData: String)
 
@@ -148,7 +110,6 @@ object QrSvg {
     }
 }
 
-/** The square, drawn black on its own white ground whatever the theme — a scanner needs the contrast. */
 @Composable
 fun QrSquare(svg: String, modifier: Modifier = Modifier) {
     val drawing = remember(svg) { QrSvg.parse(svg) }
@@ -170,19 +131,8 @@ private fun copyText(context: Context, label: String, text: String): Boolean = r
     clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
 }.isSuccess
 
-/**
- * The server's sentence for a finished challenge (`two_factor.CHALLENGE_DEAD_DETAIL`), matched exactly:
- * the one refusal after which the form has nothing left to offer but signing in again.
- */
 const val CHALLENGE_ENDED_DETAIL = "This sign-in has timed out. Sign in again."
 
-/* ── 0. The code entry every two-step form shares ─────────────────────────────────────────────── */
-
-/**
- * The six boxes ([OtpCodeField]) for an authenticator code and — where one is also accepted — a
- * SEPARATE text box for a recovery code, reached by "Use a recovery code instead". The web's
- * `TwoStepCodeEntry`. Switching kind empties the box: half a code of one kind is not half the other.
- */
 @Composable
 fun TwoStepCodeEntry(
     useRecovery: Boolean,
@@ -241,15 +191,11 @@ fun TwoStepCodeEntry(
     }
 }
 
-/* ── 1. The sign-in's second step ─────────────────────────────────────────────────────────────── */
-
 @Composable
 fun TwoStepChallengeForm(
     repository: WorkshopRepository,
     challengeToken: String,
-    /** The account, signed in. The caller settles whatever else sign-in owes (consent, a password). */
     onSignedIn: suspend (UserDto) -> Unit,
-    /** Back to the sign-in card; the challenge is dropped. Nobody was signed in. */
     onCancel: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -340,17 +286,6 @@ fun TwoStepChallengeForm(
     }
 }
 
-/* ── 2. The account's own switch ──────────────────────────────────────────────────────────────── */
-
-/**
- * What the "Two-step verification" switch shows — the web's `twoStepSwitchView` (lib/twoStepSwitch.ts),
- * row for row, pinned by `TwoStepSwitchTest`.
- *
- * THE RULE THE OWNER REPORTED BROKEN (2026-10-17): it reads On ONLY when the server says it is on —
- * `/enable` accepted a code. A setup in progress reads "Setting up…" and is not checked; a setup the
- * server still holds from an earlier visit reads Off with "start again"; never On, and never a request
- * for a code nobody saved.
- */
 object TwoStepSwitch {
     enum class Phase { IDLE, SETUP, CODES, DISABLE, REGENERATE }
 
@@ -358,7 +293,6 @@ object TwoStepSwitch {
 
     private val dayFormat = java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.UK)
 
-    /** "17 Oct 2026" from the server's ISO instant, or null when it is not one. */
     fun onSince(iso: String?): String? = iso?.let { text ->
         runCatching { java.time.OffsetDateTime.parse(text).atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDate() }
             .recoverCatching { java.time.LocalDateTime.parse(text.removeSuffix("Z")).toLocalDate() }
@@ -388,24 +322,13 @@ object TwoStepSwitch {
         listOf(onSince(status.enabledAt)?.let { "On since $it" } ?: "On", recoveryCodesLeft(status.recoveryCodesRemaining))
             .joinToString(" · ")
 
-    /**
-     * Away this long in the background, a setup is abandoned rather than paused for a look at the
-     * authenticator app. The web's `SETUP_AWAY_LIMIT_MS` (lib/twoStepSwitch.ts) is the same number.
-     */
     const val AWAY_LIMIT_MILLIS: Long = 5L * 60L * 1000L
 
-    /**
-     * Leaving setup DISCARDS the unconfirmed key: Cancel, switching it back off, Back, leaving the
-     * screen, and coming back after more than [AWAY_LIMIT_MILLIS] in the background. A SHORT trip to
-     * the background does not — the person is very likely in their authenticator app reading the code.
-     * The server's 15-minute limit covers the case where they never come back at all.
-     */
     enum class Leave { CANCEL, SWITCH_OFF, SCREEN_CLOSED, BACKGROUNDED }
 
     fun leavingDiscards(leave: Leave, awayMillis: Long = 0L): Boolean =
         if (leave == Leave.BACKGROUNDED) awayMillis > AWAY_LIMIT_MILLIS else true
 
-    /** Back from the background in setup, the server no longer holds the key: setup is over. */
     fun setupExpired(phase: Phase, status: TwoFactorStatusDto?): Boolean =
         phase == Phase.SETUP && status != null && !status.enabled && !status.pending
 }
@@ -447,11 +370,6 @@ fun TwoStepVerificationScreen(
     }
 }
 
-/**
- * The card: an [AppToggle] labelled "Two-step verification" whose state is the SERVER's, plus whichever
- * step is open under it — setup (key, QR, six boxes), the recovery codes (shown once, until "I've saved
- * them"), or a code to turn it off / make new codes.
- */
 @Composable
 fun TwoStepVerificationCard(repository: WorkshopRepository) {
     val context = LocalContext.current
@@ -470,8 +388,6 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
     suspend fun load() {
         runCatching {
             var answer = repository.twoFactorStatus()
-            // A setup left over from an earlier visit and never finished: it is Off, and with no setup
-            // on THIS screen nobody can finish it, so forget the key now rather than keep it.
             if (!answer.enabled && answer.pending && !inSetup) {
                 runCatching { repository.cancelTwoFactorSetup() }
                 answer = answer.copy(pending = false)
@@ -491,9 +407,6 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
         error = null
     }
 
-    // Back from the background: away longer than AWAY_LIMIT_MILLIS, the setup is abandoned and its key
-    // discarded. A shorter trip (very likely to the authenticator app) keeps it; the status is re-read,
-    // and a setup the server has expired meanwhile is over too — the switch drops to Off and says so.
     val lifecycleOwner = context as? androidx.lifecycle.LifecycleOwner
     DisposableEffect(lifecycleOwner) {
         var stoppedAt: Long? = null
@@ -527,7 +440,6 @@ fun TwoStepVerificationCard(repository: WorkshopRepository) {
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
 
-    // Leaving the screen mid-setup discards the unconfirmed key — on a scope that outlives this card.
     DisposableEffect(Unit) {
         onDispose {
             if (inSetup && TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.SCREEN_CLOSED)) {

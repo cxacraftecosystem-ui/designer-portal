@@ -14,27 +14,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.time.Instant
 
-/**
- * THE LAST COPY OF A READ-ONLY LIST, SO A SCREEN OPENED WITH NO SIGNAL SHOWS IT INSTEAD OF FAILING.
- *
- * The rule (owner, 2026-10-16): a read-only screen shows the last cached data offline. The pattern is
- * the one [WorkshopRepository.customQuestionnaireCached] set, generalised:
- *
- *  * LIVE FIRST, ALWAYS. A successful read is returned and written to disk; the cache is never
- *    preferred to an answer the server can give.
- *  * THE DISK ONLY WHEN NOTHING REACHED THE SERVER — no signal, a dropped socket, a 408/429, a 5xx.
- *    When the server ANSWERED no (401/403/404/422), that answer stands: serving a copy over it would
- *    show somebody a list their access to was just withdrawn, from the app's own pocket.
- *  * IT SAYS SO. The result carries [CachedRead.cachedAt] and the screen prints when the copy is from
- *    ([readCacheNotice]). A copy presented as live is worse than an error.
- *  * PER ACCOUNT. One directory per signed-in account (hashed, like [FormDraftStore]), and every copy
- *    is deleted at sign-out ([evictAll]) — a cache is not anybody's work, so nothing is lost, and a
- *    shared phone does not show the next person the last one's lists.
- *
- * Only for screens whose rows are plain data. Screens that hold their own rules about not degrading
- * to the device (the DESIGNER tier's rosters and profiles — see `WorkshopRepository`) are deliberately
- * not routed here.
- */
 data class CachedRead<T>(val value: T, val cachedAt: String? = null) {
     val fromCache: Boolean get() = cachedAt != null
 }
@@ -57,10 +36,6 @@ object ReadCache {
         return File(File(root, FormDraftStore.ownerSegment(ownerUserId)), "$safe.json")
     }
 
-    /**
-     * [fetch] live; on success keep a copy, on a connectivity-class failure serve the copy if there is
-     * one, otherwise rethrow exactly what [fetch] threw.
-     */
     suspend fun <T> read(
         context: Context,
         key: String,
@@ -117,7 +92,6 @@ object ReadCache {
         }
     }
 
-    /** The copy and when it was fetched, or null for none / unreadable / a newer build's file. */
     internal fun <T> load(root: File, ownerUserId: String?, key: String, serializer: KSerializer<T>): Pair<T, String>? =
         synchronized(lock) {
             val file = fileFor(root, ownerUserId, key)
@@ -129,30 +103,18 @@ object ReadCache {
             }.getOrNull()
         }
 
-    /**
-     * Every account's copies, deleted on [Dispatchers.IO] (a directory walk never runs on the caller's
-     * thread). Called at sign-out. The cache is this one process-wide object, so there is exactly one
-     * lock and one directory to empty.
-     */
     suspend fun evictAll(context: Context) = withContext(Dispatchers.IO) {
         synchronized(lock) { runCatching { root(context).deleteRecursively() } }
         Unit
     }
 }
 
-/**
- * Whether [error] means "nothing reached the server" (serve the copy) rather than "the server said
- * no" (show the refusal). The same split as `customQuestionnaireCached` and the outbox's `isTransient`,
- * minus 401: a session that has ended is a refusal to show, not a reason to show yesterday's list.
- * Pinned by `ReadCacheTest`.
- */
 internal fun readCacheMayServe(error: Throwable): Boolean = when (error) {
     is HttpException -> error.code() == 408 || error.code() == 429 || error.code() >= 500
     is IOException -> true
     else -> false
 }
 
-/** The line a screen shows above a list served from [ReadCache]. */
 fun readCacheNotice(cachedAt: String?): String {
     val stamp = cachedAt?.let { iso ->
         runCatching {

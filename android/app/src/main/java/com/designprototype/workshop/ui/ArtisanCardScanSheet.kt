@@ -41,25 +41,10 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.optionToArtisan
 import kotlinx.coroutines.launch
 
-/**
- * Scan or type an artisan QR card, and hand back who it names.
- *
- * One sheet for every place a card is read on the phone: the search header's QR button, the artisan
- * pickers on the record forms, and the stage's artisan reference field. The camera (ML Kit, on the
- * device), a picked picture and the typed short code all go through one [WorkshopRepository.resolveArtisanCard],
- * which matches the register this phone cached first, so a card resolves with no signal. A card that
- * matches nothing offline comes back [CardResolution.Pending]; a picker keeps it and the sync links it.
- *
- * The QR holds no personal data and no record id; a mistyped short code is refused before anything
- * is asked.
- */
-
-/** The artisan register as this phone last cached it (`loadArtisanRegister`), card codes included. */
 suspend fun cachedArtisanRegister(context: Context): List<ArtisanDto> =
     DwReferenceStore.load(context, DwReferenceStore.cacheKey(REGISTER_ARTISAN, "ALL", "", ""))
         ?.items?.mapNotNull(::optionToArtisan).orEmpty()
 
-/** A scanned card's answer as a sentence for a refusal line, or null for the outcomes that act. */
 fun cardResolutionMessage(resolution: CardResolution): String? = when (resolution) {
     is CardResolution.Found -> null
     is CardResolution.Replaced -> CARD_REPLACED
@@ -68,11 +53,9 @@ fun cardResolutionMessage(resolution: CardResolution): String? = when (resolutio
     is CardResolution.Refused -> resolution.message
 }
 
-/** Resolve [input] against the cached register, then the server. */
 suspend fun resolveScannedCard(context: Context, repository: WorkshopRepository, input: String): CardResolution =
     repository.resolveArtisanCard(input, cachedArtisanRegister(context))
 
-/** The 48dp QR button that opens [ArtisanCardScanSheet]. */
 @Composable
 fun ArtisanCardScanButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     IconButton(onClick = onClick, enabled = enabled, modifier = modifier.size(48.dp)) {
@@ -80,12 +63,6 @@ fun ArtisanCardScanButton(onClick: () -> Unit, modifier: Modifier = Modifier, en
     }
 }
 
-/**
- * @param acceptPending true where a picker can keep an offline scan as `card:<shortCode>`; the
- *   search header passes false, because there is nothing to open until the card resolves.
- * @param onResolved the artisan's id and name; the sheet closes.
- * @param onPending the offline card a picker keeps; the sheet closes.
- */
 @Composable
 fun ArtisanCardScanSheet(
     repository: WorkshopRepository,

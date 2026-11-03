@@ -6,16 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.File
 
-/**
- * The pure half of two-step verification on the handset: which box a code belongs in, which URIs may
- * be handed to an authenticator, and reading the server's QR square.
- *
- * The shape rule is the server's `two_factor.code_kind` and the web's `codeKind`, and the three must
- * agree character for character — a recovery code typed by somebody who has lost their phone is the
- * worst moment for one client to disagree. The challenge sentence is read off the backend source, so
- * a wording change there fails here instead of silently leaving the form waiting on a code it can no
- * longer use.
- */
 class TwoStepVerificationTest {
 
     @Test

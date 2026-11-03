@@ -56,42 +56,16 @@ import androidx.compose.ui.window.PopupProperties
 import com.designprototype.workshop.data.FieldDto
 import com.designprototype.workshop.ui.field
 
-/*
- * A FIELD'S EXTENDED HELP: HOLD THE BOX TO READ IT (owner, 2026-10-21).
- *
- * The "i" toggle that used to sit at the end of the caption row cost a 48dp row under ninety-nine
- * boxes whose caption was nothing but that "i" — white space between every field on the stage form.
- * The details are now opened by a long press anywhere on the field, and shown in a card anchored
- * to it; Back, a tap outside or the card's close button dismisses it. TalkBack reaches the same
- * card through a "Show help" custom action on the caption (or, with no caption, a focusable
- * "About <label>" line drawn only while touch exploration is on).
- */
-
-/** The words of the help gesture, one table, pure so `DwFieldHelpTest` holds them without a device. */
 internal object DwFieldDetails {
-    /** The card's pane title and the screen-reader caption for a field with no help line. */
     fun label(fieldLabel: String): String = "About $fieldLabel"
 
     const val ACTION_LABEL = "Show help"
     const val CLOSE_LABEL = "Close help"
 
-    /** Whether a field has anything to disclose. Whitespace is nothing. */
     fun has(field: FieldDto): Boolean = field.details.isNotBlank()
 
-    /**
-     * How long a hold opens the help, from the platform's long-press timeout.
-     *
-     * A little SHORTER than the platform's, so the help wins the race against the text box's own
-     * long press (text selection, the paste menu): once it has fired, the rest of the gesture is
-     * consumed and the box never sees a long press at all. Never under 300 ms, which is still a
-     * deliberate hold rather than a slow tap.
-     */
     fun holdMillis(longPressTimeoutMillis: Long): Long = (longPressTimeoutMillis - 80L).coerceAtLeast(300L)
 
-    /**
-     * Where the card goes: under the field when it fits, over it when that fits, otherwise pinned to
-     * the bottom of the window. Horizontally it starts at the field's edge, kept inside the window.
-     */
     fun cardOffset(
         anchorLeft: Int,
         anchorTop: Int,
@@ -114,10 +88,6 @@ internal object DwFieldDetails {
     }
 }
 
-/**
- * Who pressed: a control INSIDE a field that has its own long press (the dictation microphone's
- * language menu) marks the down it saw, and the field's hold leaves that gesture alone.
- */
 internal class DwHoldClaim {
     @Volatile
     var claimedDownAt: Long = -1L
@@ -125,10 +95,8 @@ internal class DwHoldClaim {
 
 internal val LocalDwHoldClaim = compositionLocalOf<DwHoldClaim?> { null }
 
-/** Opens the help of the field being drawn, or null where the field has none. Read by [FieldCaption]. */
 internal val LocalDwFieldHelp = compositionLocalOf<(() -> Unit)?> { null }
 
-/** Mark a control whose own long press must win over the field's help. */
 internal fun Modifier.dwClaimsHold(): Modifier = composed {
     val claim = LocalDwHoldClaim.current
     if (claim == null) {
@@ -143,10 +111,6 @@ internal fun Modifier.dwClaimsHold(): Modifier = composed {
     }
 }
 
-/**
- * The hold itself, watched on the Initial pass so it sees the gesture before the box does, and never
- * consuming anything until it fires: a tap, a scroll or a drag reaches the field untouched.
- */
 private fun Modifier.dwHoldForHelp(claim: DwHoldClaim, onHold: () -> Unit): Modifier =
     pointerInput(claim) {
         val hold = DwFieldDetails.holdMillis(viewConfiguration.longPressTimeoutMillis)
@@ -167,7 +131,6 @@ private fun Modifier.dwHoldForHelp(claim: DwHoldClaim, onHold: () -> Unit): Modi
             }
             if (ended != null || claim.claimedDownAt == down.uptimeMillis) return@awaitEachGesture
             onHold()
-            // The rest of this gesture is the help's: no tap, selection or menu underneath.
             do {
                 val event = awaitPointerEvent(PointerEventPass.Initial)
                 event.changes.forEach { it.consume() }
@@ -175,10 +138,6 @@ private fun Modifier.dwHoldForHelp(claim: DwHoldClaim, onHold: () -> Unit): Modi
         }
     }
 
-/**
- * Wraps one field: holding anywhere on it opens its details in a card anchored to it. A field
- * without details is drawn exactly as before, with no gesture attached.
- */
 @Composable
 internal fun DwFieldHelpHost(
     field: FieldDto,
@@ -238,7 +197,6 @@ private fun DwFieldHelpCard(field: FieldDto, widthPx: Int, onDismiss: () -> Unit
     Popup(
         popupPositionProvider = position,
         onDismissRequest = onDismiss,
-        // Focusable, so the system Back closes the card before it reaches the screen.
         properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
     ) {
         val width = with(density) { widthPx.toDp() }
@@ -280,7 +238,6 @@ private fun DwFieldHelpCard(field: FieldDto, widthPx: Int, onDismiss: () -> Unit
     }
 }
 
-/** True while a screen reader is exploring by touch; tracks the setting as it changes. */
 @Composable
 internal fun rememberTouchExplorationEnabled(): Boolean {
     val context = LocalContext.current
@@ -296,11 +253,6 @@ internal fun rememberTouchExplorationEnabled(): Boolean {
     return enabled
 }
 
-/**
- * The caption's half of the help, for a screen reader: the help line carries a "Show help" action,
- * and a field with no help line gets a focusable "About <label>" line while touch exploration is on.
- * Nothing extra is drawn for anybody else.
- */
 @Composable
 internal fun DwHelpCaptionText(help: String, field: FieldDto, openHelp: () -> Unit) {
     val screenReader = rememberTouchExplorationEnabled()

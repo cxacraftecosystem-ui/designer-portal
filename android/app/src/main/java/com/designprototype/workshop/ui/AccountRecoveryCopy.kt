@@ -2,16 +2,6 @@ package com.designprototype.workshop.ui
 
 import com.designprototype.workshop.data.UserDto
 
-/*
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- * GETTING BACK IN — the words and the small rules behind ui/AccountRecovery.kt
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Pure functions and constants, so `AccountRecoveryCopyTest` can pin every one of them without a
- * device. The web says the same things in `app/forgot-password/page.tsx`,
- * `components/settings/ChangePasswordCard.tsx` and the users and access screens.
- */
-
 const val FORGOT_PASSWORD_HEADING = "Forgot your password?"
 
 const val FORGOT_PASSWORD_INTRO = "Enter your sign-in email. If it has a password, we'll send a reset link (single use, valid 2 hours)."
@@ -20,14 +10,8 @@ const val FORGOT_PASSWORD_TWO_STEP_NOTE = "You'll still need your authenticator 
 
 const val FORGOT_PASSWORD_NO_EMAIL_NOTE = "No email? Ask an admin for a link."
 
-/** Shown only if a server answers 200 with no sentence of its own. The server's words win. */
 const val FORGOT_PASSWORD_FALLBACK = "If that address has an account, a reset link is on its way."
 
-/**
- * What is wrong with the typed address before it is sent, or null. As shallow as the access screen's
- * check — one '@' with something either side — because the server is the judge of an address and a
- * stricter rule here would refuse real ones.
- */
 fun forgotPasswordEmailProblem(email: String): String? {
     val cleaned = email.trim()
     if (cleaned.isEmpty()) return "Enter your email address."
@@ -37,11 +21,8 @@ fun forgotPasswordEmailProblem(email: String): String? {
     return if (looksUsable) null else "That does not look like an email address."
 }
 
-/** The server's one answer, verbatim; the fallback only when it sent none. */
 fun forgotPasswordShown(serverMessage: String?): String =
     serverMessage?.trim()?.takeIf { it.isNotEmpty() } ?: FORGOT_PASSWORD_FALLBACK
-
-// ── Settings → Password ─────────────────────────────────────────────────────────────────────────
 
 fun passwordCardTitle(hasPassword: Boolean): String =
     if (hasPassword) "Change your password" else "Set a password"
@@ -61,7 +42,6 @@ fun passwordSavedLine(hadPassword: Boolean): String =
         "Password set. Sign in with email and password, or as before."
     }
 
-/** "Google", "Microsoft" or "Yahoo"; a generic phrase for anything else. */
 fun providerLabel(authProvider: String?): String = when (authProvider?.trim()?.uppercase()) {
     "GOOGLE" -> "Google"
     "MICROSOFT" -> "Microsoft"
@@ -69,25 +49,17 @@ fun providerLabel(authProvider: String?): String = when (authProvider?.trim()?.u
     else -> "another sign-in"
 }
 
-/**
- * Under the set-password boxes: a first password is confirmed by signing in with the account's
- * provider again when Set password is tapped (2026-10-17). Plain words, the provider named.
- */
 fun firstPasswordConfirmNote(provider: String?): String =
     "When you tap Set password, sign in with ${providerLabel(provider)} again to confirm it's you."
 
-/** The provider sign-in was closed or failed before it answered. */
 fun firstPasswordConfirmCancelled(provider: String?): String =
     "Signing in with ${providerLabel(provider)} didn't finish, so no password was set. Try again."
 
-/** Setting a first password on an account with two-step verification on needs a current code. */
 fun firstPasswordNeedsCode(hasPassword: Boolean, user: UserDto?): Boolean =
     !hasPassword && user?.twoFactorEnabled == true
 
 const val FIRST_PASSWORD_CODE_LABEL = "Code from your authenticator app"
 const val FIRST_PASSWORD_CODE_NOTE = "Two-step verification is on for your account."
-
-// ── Users → Help them back in ───────────────────────────────────────────────────────────────────
 
 const val HELP_THEM_BACK_IN_HEADING = "Help them back in"
 
@@ -100,7 +72,6 @@ fun temporaryPasswordIntro(name: String): String =
 fun temporaryPasswordSetLine(name: String): String =
     "Temporary password set for $name."
 
-/** Length rules for a password typed for somebody else, or null when it may be sent. */
 fun temporaryPasswordProblem(password: String): String? {
     val length = password.codePointCount(0, password.length)
     return when {
@@ -118,15 +89,8 @@ fun signOutEverywhereBody(name: String): String =
 
 fun signedOutEverywhereLine(name: String): String = "$name has been signed out of every device."
 
-/**
- * May "Email them a password link" be offered? Only where mail is sent at all, and only on the
- * accounts a copied link is offered for — `passwordLinkOffered`, the same test the button beside it
- * uses — so the two deliveries of one act can never disagree about whom it is for.
- */
 fun emailLinkOffered(target: UserDto, mailAvailable: Boolean): Boolean =
     mailAvailable && passwordLinkOffered(target)
-
-// ── Access list → How will they sign in? ────────────────────────────────────────────────────────
 
 enum class AccessSignIn { PROVIDER, PASSWORD }
 
@@ -142,7 +106,6 @@ fun accessSignInNote(method: AccessSignIn): String = when (method) {
         "Account is created now with this password. Send it to them yourself."
 }
 
-/** Why the add form cannot be sent yet, or null. A password account needs a name and a password. */
 fun accessAddProblem(method: AccessSignIn, password: String, fullName: String): String? {
     if (method == AccessSignIn.PROVIDER) return null
     if (fullName.isBlank()) return "Enter their full name."

@@ -26,18 +26,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.CalendarMonth
-// The walkthrough's own glyph, and it must stay this one: `FIELD_NAV_ITEMS` gives the Walkthrough
-// row `Icons.Filled.Explore`, and a settings row that led to the same place behind a different
-// picture would be a second sign on one door.
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
-// The usage-recording row's glyph. A document under a shield rather than a chart, because the row
-// leads to a CONSENT and its withdrawal — the figures behind it are the smaller half. A chart glyph
-// here would read as the admin's aggregate, which is a different screen at a different rank.
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Security
@@ -85,122 +79,39 @@ import com.designprototype.workshop.ui.designworkshop.rememberDwLanguagePacks
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
-/*
- * Appearance + accessibility — this ACCOUNT's own two settings, mirroring the pair of cards the web
- * shows every signed-in user on /settings (frontend/components/settings/PersonalSettingsCards.tsx).
- *
- * The contract is four values (theme, reduceMotion, largerText, highContrast) and it lives in three
- * places that must agree, exactly as on the web (frontend/lib/preferences.ts):
- *
- *   - [AppPreferencesStore] (SharedPreferences), so the choice applies on the very first frame,
- *     before the network — the Android twin of localStorage + the pre-hydration boot script;
- *   - the running composition, via [LocalAppPreferences] / the `darkTheme` argument of
- *     [DesignWorkshopTheme];
- *   - GET/PUT /preferences/me, so the choice follows the account onto another device.
- *
- * Order of authority is the same as the web's: the stored value paints first, the server row lands
- * last and only corrects it. An empty `{}` from the GET (decoded as `null` by
- * WorkshopRepository.myPreferences) means "this account has no opinion yet" — seed the server from this
- * device rather than snapping the user back to the defaults.
- *
- * ── THREE PANELS THE WEB'S /settings HAS AND THIS SCREEN DOES NOT, AND WHY EACH IS NOT A GAP ─────
- *
- * Written down because "there is no Android counterpart" reads as work outstanding, and a reader who
- * comes here looking for one of these should find the argument rather than start building it. Said
- * precisely and not one tier more, which is the failure mode this repository's frontend contract
- * spends a section on: over-claiming a gap sends every later reader hunting for something that is
- * not missing.
- *
- * 1. **`GetTheAppPanel`** — the web's "download the Android APK" card. On the handset this IS the
- *    app. The honest equivalent is the in-app update check, which already exists (`MainActivity`'s
- *    update watcher), and a second door onto it here would be one room with two signs.
- *
- * 2. **The upload half of `PublishAppUpdatePanel`** — pushing a signed APK from the browser. That
- *    panel's own docstring is the argument: the person holding the signed APK has just built it and
- *    is at a laptop, and the flow it replaced forced them to sideload onto a phone first. Rebuilding
- *    the upload on the phone would recreate the exact problem the web panel was written to end.
- *    Android's own "Push update to all" — which publishes the build the publisher is running — is
- *    the correct handset shape and stays as it is.
- *
- * 3. **"Request workshop access"** — present on the web's /settings and absent from this screen.
- *    This one is not a gap in either direction: it lives on this app's dashboard tile
- *    (`EntryMode.WORKSHOP_ACCESS`), and `frontend/app/(protected)/workshop-access/page.tsx` records
- *    that **Android had this arrangement first and the web was changed to match**. Moving it here to
- *    "restore parity" would put the two clients out of step in the other direction.
- *
- * The one real gap the same audit found — the web's `/settings/usage` — is not on this screen at all
- * and should not be: it is the CROSS-ACCOUNT aggregate at `require_usage_reader`, so it is
- * `AdminHubEntry.USAGE` in the admin hub, where this app already keeps the web's `ADMIN_LINKS`. What
- * belongs here is the account's own half of that feature, which is the "Usage recording" row below.
- */
-
-// ---------------------------------------------------------------------------------------------
-// The contract
-// ---------------------------------------------------------------------------------------------
-
-/** `theme` — follow the device. */
 const val THEME_SYSTEM: String = "system"
 
-/** `theme` — always the paper-white canvas. */
 const val THEME_LIGHT: String = "light"
 
-/** `theme` — always the purple-tinted dark surfaces. */
 const val THEME_DARK: String = "dark"
 
-/** The only three values PUT /preferences/me accepts; anything else is a 422. */
 val THEME_CHOICES: List<String> = listOf(THEME_SYSTEM, THEME_LIGHT, THEME_DARK)
 
-/**
- * How much "Larger text" scales type by: 112.5%, the same `font-size` bump
- * `:root[data-larger-text="true"]` applies in frontend/app/globals.css. Both clients therefore grow
- * by the same amount rather than merely both "getting bigger".
- */
 const val LARGER_TEXT_SCALE: Float = 1.125f
 
-/**
- * One account's appearance + accessibility choices — the whole `/preferences/me` contract, plus the
- * two derived values the rest of the app needs.
- *
- * [theme] is the CHOICE (`system` included), never the resolved light/dark; call [resolveDarkTheme]
- * for that. The default is what a device with no stored row and no server row uses.
- */
 @Immutable
 data class AppPreferences(
     val theme: String = THEME_SYSTEM,
-    /** Force reduced motion. ORs with the OS setting; it can never switch the OS preference off. */
     val reducedMotion: Boolean = false,
     val largerText: Boolean = false,
     val highContrast: Boolean = false
 ) {
-    /**
-     * Multiplier for `Density.fontScale`. 1f normally, [LARGER_TEXT_SCALE] when "Larger text" is on.
-     * [ProvideAppPreferences] applies it; nothing else should have to.
-     */
     val fontScale: Float get() = if (largerText) LARGER_TEXT_SCALE else 1f
 
     companion object {
-        /** `system` + everything off — the state before the device or the account has an opinion. */
         val Default: AppPreferences = AppPreferences()
     }
 }
 
-/**
- * Resolve a theme CHOICE against the device to the boolean [DesignWorkshopTheme] wants.
- *
- * Deliberately not `@Composable` so it can be called from an Activity, a store read, or a test —
- * pass `isSystemInDarkTheme()` (or `Configuration.uiMode`) as [systemDark] at the call site.
- */
 fun resolveDarkTheme(theme: String, systemDark: Boolean): Boolean = when (theme) {
     THEME_DARK -> true
     THEME_LIGHT -> false
     else -> systemDark
 }
 
-/** Coerce anything (a stale store value, an older server row) into a theme the API will accept. */
 fun normalizeThemeChoice(value: String?): String =
     if (value != null && value in THEME_CHOICES) value else THEME_SYSTEM
 
-/** The server row as the app's own holder. */
 fun PreferencesDto.toAppPreferences(): AppPreferences = AppPreferences(
     theme = normalizeThemeChoice(theme),
     reducedMotion = reducedMotion,
@@ -208,24 +119,7 @@ fun PreferencesDto.toAppPreferences(): AppPreferences = AppPreferences(
     highContrast = highContrast
 )
 
-// ---------------------------------------------------------------------------------------------
-// Device-local copy — so the choice applies before the network (or even login) wakes up
-// ---------------------------------------------------------------------------------------------
-
-/**
- * The last-applied preferences, on this device.
- *
- * Read it SYNCHRONOUSLY in `MainActivity.onCreate` before `setContent` — that is what stops the app
- * flashing light before the account's dark choice arrives, and it is the only reason this exists
- * separately from the server row. Its own file, so signing out (which clears
- * `field_repository_auth`) does not throw the theme away.
- */
 class AppPreferencesStore(context: Context) {
-    // Pre-rebrand name, kept deliberately. A SharedPreferences name is the file name of an XML
-    // document that already exists on every installed device, and asking for a different one hands
-    // back an empty file instead of failing — so renaming it would not migrate a single stored
-    // preference, it would silently reset every user's theme and reduced-motion choice on update.
-    // The full argument is written out in TokenStore.kt, where the cost is far higher.
     private val store = context.applicationContext
         .getSharedPreferences("field_repository_preferences", Context.MODE_PRIVATE)
 
@@ -245,24 +139,16 @@ class AppPreferencesStore(context: Context) {
             .apply()
     }
 
-    /** Forget this device's copy. Sign-out does NOT need this — the look is a device courtesy. */
     fun clear() {
         store.edit().clear().apply()
     }
 
-    /**
-     * When this device's copy was last changed without the server confirming it (epoch ms), or null
-     * when the server has it (2026-10-16). This is the queued change: [syncAppPreferences] sends it at
-     * the next sync, and it wins over the server's row when it is newer than that row's `updatedAt` —
-     * last write wins, by timestamp.
-     */
     fun pendingSince(): Long? = store.getLong(KEY_PENDING_SINCE, 0L).takeIf { it > 0L }
 
     fun markPending(at: Long = System.currentTimeMillis()) {
         store.edit().putLong(KEY_PENDING_SINCE, at).apply()
     }
 
-    /** Clear the queued change, but only if it is still the one [at] names (a newer one stays). */
     fun clearPending(at: Long?) {
         if (at == null || pendingSince() == at) store.edit().remove(KEY_PENDING_SINCE).apply()
     }
@@ -276,14 +162,6 @@ class AppPreferencesStore(context: Context) {
     }
 }
 
-/**
- * Reconcile this device's [local] copy with the account, once, after sign-in.
- *
- * Returns what the app should now apply: the server row when there is one, otherwise [local] —
- * having first seeded the account with it, so the look this device already had is what follows the
- * user to their next device. Writes the result to [store] when one is given. Never throws: a
- * failure leaves [local] applied and is silent, exactly like the web provider's `.catch`.
- */
 suspend fun syncAppPreferences(
     repository: WorkshopRepository,
     local: AppPreferences,
@@ -292,10 +170,6 @@ suspend fun syncAppPreferences(
     val remote = runCatching { repository.myPreferences() }.getOrNull()
     val pending = store?.pendingSince()
     if (remote == null || localPreferencesWin(pending, remote.updatedAt)) {
-        // No saved row, an unreachable server, or a change made on this device (offline, usually)
-        // that is NEWER than the server's row (2026-10-16). Send the device copy: the same
-        // whole-object PUT every toggle makes. A failure changes nothing, and the change stays
-        // queued for the next sync instead of being undone by the server's older row.
         runCatching { repository.savePreferences(local.toBody()) }
             .onSuccess { store?.clearPending(pending) }
         return local
@@ -306,11 +180,6 @@ suspend fun syncAppPreferences(
     return resolved
 }
 
-/**
- * Last write wins, by timestamp: does a change queued on this device at [pendingSince] (epoch ms)
- * beat the server's row, last written at [remoteUpdatedAt] (ISO-8601)? Nothing queued never wins; a
- * row with no readable timestamp always loses to a queued change. Pinned by `PreferencesSyncTest`.
- */
 internal fun localPreferencesWin(pendingSince: Long?, remoteUpdatedAt: String?): Boolean {
     if (pendingSince == null) return false
     val remoteAt = remoteUpdatedAt?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
@@ -318,7 +187,6 @@ internal fun localPreferencesWin(pendingSince: Long?, remoteUpdatedAt: String?):
     return pendingSince > remoteAt
 }
 
-/** The whole-object shape PUT /preferences/me wants. Kept private: screens go through the helpers. */
 private fun AppPreferences.toBody(): PreferencesDto = PreferencesDto(
     theme = normalizeThemeChoice(theme),
     reducedMotion = reducedMotion,
@@ -326,27 +194,8 @@ private fun AppPreferences.toBody(): PreferencesDto = PreferencesDto(
     highContrast = highContrast
 )
 
-// ---------------------------------------------------------------------------------------------
-// Reading the choices from anywhere in the tree
-// ---------------------------------------------------------------------------------------------
-
-/**
- * The preferences in force. Provided by [ProvideAppPreferences]; read it wherever a screen needs to
- * skip an animation ([AppPreferences.reducedMotion]) or thicken a border
- * ([AppPreferences.highContrast]).
- */
 val LocalAppPreferences = staticCompositionLocalOf { AppPreferences.Default }
 
-/**
- * Publish [preferences] to the tree and apply "Larger text" to it.
- *
- * Scaling `Density.fontScale` is the Compose equivalent of the web bumping the root `font-size`:
- * every `sp` in the app grows by [LARGER_TEXT_SCALE] and every `dp` stays put, so type gets bigger
- * without the layout breaking. Multiplying the INHERITED scale (rather than assigning) keeps the
- * user's own Android font-size setting intact — this only ever adds to it.
- *
- * Wrap the app content with it, inside [DesignWorkshopTheme].
- */
 @Composable
 fun ProvideAppPreferences(preferences: AppPreferences, content: @Composable () -> Unit) {
     val base = LocalDensity.current
@@ -360,13 +209,8 @@ fun ProvideAppPreferences(preferences: AppPreferences, content: @Composable () -
     )
 }
 
-// ---------------------------------------------------------------------------------------------
-// The screen
-// ---------------------------------------------------------------------------------------------
-
 private data class ThemeOption(val value: String, val label: String, val helper: String, val icon: ImageVector)
 
-/** Wording verbatim from THEME_OPTIONS in frontend/components/settings/PersonalSettingsCards.tsx. */
 private val THEME_OPTIONS = listOf(
     ThemeOption(
         value = THEME_SYSTEM,
@@ -395,11 +239,6 @@ private data class AccessibilityOption(
     val write: (AppPreferences, Boolean) -> AppPreferences
 )
 
-/**
- * Wording verbatim from ACCESSIBILITY_OPTIONS on the web, with ONE edit: the high-contrast helper
- * drops the web's "and a thicker keyboard focus ring" clause, since a phone has no keyboard focus
- * ring to thicken. Every label is unchanged.
- */
 private val ACCESSIBILITY_OPTIONS = listOf(
     AccessibilityOption(
         label = "Reduce motion",
@@ -421,47 +260,18 @@ private val ACCESSIBILITY_OPTIONS = listOf(
     )
 )
 
-/**
- * Appearance + accessibility, the two cards every account owns.
- *
- * [current] is the state in force (the caller's single source of truth); every change is reported
- * through [onChanged] FIRST so it applies instantly, and only then written to the account — the
- * web's "applies instantly, then catches the server up" order. The caller owns persisting to
- * [AppPreferencesStore]; this screen owns the network.
- *
- * On entry it reconciles with the account once: a saved row replaces [current] via [onChanged], and
- * `{}` (never saved) seeds the account from this device instead.
- */
 @Composable
 fun AppearanceScreen(
     repository: WorkshopRepository,
     current: AppPreferences,
     onChanged: (AppPreferences) -> Unit,
     onBack: () -> Unit,
-    /**
-     * Open the phone's own speech and AI settings. See the row at the bottom of this screen for why
-     * four cards became one navigation.
-     */
     onOpenSpeechAndAi: () -> Unit,
     onOpenMyAiKeys: () -> Unit,
-    /**
-     * Open this account's own usage-recording answer, its record and the withdrawal. See the row
-     * near the bottom of this screen for why a settings page carries it at all.
-     */
     onOpenUsageRecording: () -> Unit,
-    /** Open this account's own two-step verification. */
     onOpenTwoStepVerification: () -> Unit,
-    /** Open Settings → Password: change it, or set a first one. */
     onOpenPassword: () -> Unit = {},
-    /**
-     * Re-open the first-run walkthrough. See the row at the bottom of this screen for why a settings
-     * page carries it at all.
-     */
     onOpenWalkthrough: () -> Unit,
-    /**
-     * Open this account's Aadhaar verification. NULL — and then no row is drawn at all — unless the
-     * server has an Aadhaar method switched on; see `ui/aadhaar/AadhaarVerification.kt`.
-     */
     onOpenAadhaar: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -471,33 +281,18 @@ fun AppearanceScreen(
     var saveJob by remember { mutableStateOf<Job?>(null) }
     val systemDark = isSystemInDarkTheme()
 
-    // THE MONDAY SUMMARY (data/WeeklyDigestPreference.kt): read once, drawn only for reviewers and
-    // officials. Optimistic: the switch moves at once and goes back if the save fails.
     var digest by remember { mutableStateOf<WeeklyDigestPreferenceDto?>(null) }
     var digestSaving by remember { mutableStateOf(false) }
     var digestError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { digest = repository.weeklyDigestPreference() }
 
-    // One-shot reconcile with the account. Keyed on Unit: `current` changes on every toggle and
-    // re-running this would fight the user.
     val prefsContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val prefsStore = remember { AppPreferencesStore(prefsContext) }
-    // A change queued on this device that is newer than the server's row is sent rather than
-    // overwritten (see syncAppPreferences).
     LaunchedEffect(Unit) {
         val resolved = syncAppPreferences(repository, current, prefsStore)
         if (resolved != current) onChanged(resolved)
     }
 
-    /*
-     * THE ROW'S SUMMARY, AND THE TWO THINGS IT IS CAREFUL NOT TO COST.
-     *
-     * `active = true` binds a `SpeechRecognizer` — one IPC handshake, on a screen a designer
-     * navigated to deliberately — which is what lets the row answer "can this phone dictate in a
-     * courtyard" before it is tapped. It does NOT take a device probe and it does NOT hash 365 MB:
-     * the model's state comes from [DwAsrModelRun], the process-wide reading the dictation ladder
-     * already keeps warm, so this screen pays for none of it.
-     */
     val packs = rememberDwLanguagePacks(active = true)
     val modelStatus = DwAsrModelRun.status()
     val speechSummary = dwSpeechSummaryLine(
@@ -507,19 +302,14 @@ fun AppearanceScreen(
             .flatMap { id -> DW_TIER1_CATALOGUE.filter { it.modelId == id } }
             .flatMap { plan -> DW_DICTATION_LANGUAGES.map { it.tag }.filter { plan.servesLanguage(it) } }
             .toSet(),
-        // `cannotAsk` is non-null exactly on the handsets the platform will not answer for, which is
-        // the distinction between "no packs" and "we were not able to ask".
         canAsk = packs.cannotAsk == null,
     )
 
-    /** Apply locally, then PUT the whole object. Last write wins: an in-flight save is cancelled. */
     fun apply(next: AppPreferences) {
         if (next == current) return
         onChanged(next)
         error = null
         saveJob?.cancel()
-        // QUEUED FIRST, with its time: if the PUT never lands (no signal), the change is sent at the
-        // next sync and wins over the server's older row instead of being undone by it.
         val changedAt = System.currentTimeMillis()
         prefsStore.markPending(changedAt)
         saveJob = scope.launch {
@@ -528,7 +318,6 @@ fun AppearanceScreen(
                 .onSuccess { prefsStore.clearPending(changedAt) }
                 .onFailure {
                     if (it is kotlinx.coroutines.CancellationException) return@onFailure
-                    // Kept on this device either way; the words say whether it is waiting for signal.
                     error = if (!repository.isOnline(prefsContext)) {
                         "Saved on this phone; syncs when online."
                     } else {
@@ -548,9 +337,6 @@ fun AppearanceScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            // The same arrow the shared header draws on every other screen. This screen is hosted
-            // outside that header (it owns its viewport), so it repeats the control rather than
-            // inventing a second shape for it.
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
@@ -573,7 +359,6 @@ fun AppearanceScreen(
             )
         }
 
-        // ---- Appearance -----------------------------------------------------------------------
         PreferenceCard {
             PreferenceCardHeading(Icons.Filled.Palette, "Appearance")
             Text(
@@ -597,7 +382,6 @@ fun AppearanceScreen(
             }
         }
 
-        // ---- Accessibility --------------------------------------------------------------------
         PreferenceCard {
             PreferenceCardHeading(Icons.Filled.Accessibility, "Accessibility")
             Text(
@@ -616,27 +400,8 @@ fun AppearanceScreen(
             SaveStatusLine(saving = saving, error = error)
         }
 
-        // This account's e-mail choices — the web Settings card. Draws nothing while mail is off.
         EmailNotificationsCard(repository)
 
-        /*
-         * ---- ONE ROW INTO SPEECH & AI -----------------------------------------------------------
-         *
-         * FOUR CARDS STOOD HERE. Measured on the handset's own view hierarchy: "Offline dictation
-         * languages" 170 words, "Offline speech engine" 176, "Offline speech model" 188 or more,
-         * and "AI on this phone" 156 plus a nineteen-row coverage list of 1,207 — roughly 2,300
-         * words below two cards about a colour scheme.
-         *
-         * They are one row now, and the row carries a SHORT TRUE STATE SUMMARY rather than a chevron
-         * and a hope: a designer wants to know whether this phone can dictate in a courtyard, and
-         * `dwSpeechSummaryLine` answers it in a clause before they tap. The cards themselves live on
-         * [SpeechAndAiScreen], which is where the numbers and the controls are.
-         *
-         * WHY A SUB-SCREEN RATHER THAN JUST SHORTER CARDS. Because these two cards belong to the
-         * ACCOUNT and follow a designer to any handset they sign in on, and everything below the row
-         * belongs to THIS PHONE and follows nobody. That distinction used to be made by a paragraph
-         * inside the pack card; a screen boundary makes it without a word.
-         */
         SettingsRow(
             icon = Icons.Filled.RecordVoiceOver,
             title = "Speech & AI",
@@ -644,15 +409,6 @@ fun AppearanceScreen(
             onClick = onOpenSpeechAndAi,
         )
 
-        /*
-         * ON THIS SIDE OF THE BOUNDARY BECAUSE A KEY FOLLOWS THE ACCOUNT, NOT THE HANDSET.
-         * The row above leads to what THIS PHONE can do offline; this one leads to a
-         * credential stored on the server against this account, which applies on every
-         * device the designer signs in on and on the web. It is deliberately NOT in the
-         * admin hub beside the deployment's keys: those are the organisation's, this is
-         * the person's own, and confusing the two is how somebody ends up paying for work
-         * they did not do.
-         */
         SettingsRow(
             icon = Icons.Filled.VpnKey,
             title = "My AI keys",
@@ -691,37 +447,6 @@ fun AppearanceScreen(
             }
         }
 
-        /*
-         * ---- USAGE RECORDING ---------------------------------------------------------------------
-         *
-         * ON THIS SIDE OF THE BOUNDARY FOR THE SAME REASON THE AI-KEY ROW IS: the answer belongs to
-         * the ACCOUNT and follows the person to every device they sign in on and to the web. It is
-         * emphatically NOT the admin hub's "Usage" tile, which is the aggregate across every account
-         * at `require_usage_reader`; this is one person's own answer, their own record, and the way
-         * to take the answer back.
-         *
-         * WHY A SETTINGS ROW AND NOT ONLY A SIGN-IN CHECKBOX. Agreeing is a condition of using the
-         * product, asked at a turnstile nobody can get past without answering. That is defensible for
-         * exactly one reason and it is not that it is documented: it is that the agreement can be
-         * withdrawn, at no cost, by the person who gave it. If the withdrawal lived only on the web,
-         * then for the designers who work from a phone in a courtyard — most of them, and the ones
-         * the recording is mostly about — the turnstile would be one-way, and "you can withdraw at
-         * any time" would be a sentence about somebody else's device.
-         *
-         * THE SUMMARY DOES NOT STATE THE ANSWER, and that is deliberate rather than lazy. Every other
-         * row here carries a true state summary because it can compute one for free; this one's state
-         * is `GET /usage/consent`, a network read, and a row that said "Agreed" from a stale cached
-         * account — or said nothing at all with no signal — would be the row telling somebody their
-         * consent stands at the moment they came here to check it. So it says what the screen IS, and
-         * the screen itself says what the answer is and whether it could reach the server to find out.
-         */
-        /*
-         * ---- TWO-STEP VERIFICATION ------------------------------------------------------------------
-         *
-         * The ACCOUNT's, like the two rows around it: once on, every sign-in to this account — here,
-         * on another phone, on the web — asks for the code. Its summary says what it is rather than
-         * whether it is on, for the usage row's reason: the state is a network read.
-         */
         SettingsRow(
             icon = Icons.Filled.Key,
             title = "Password",
@@ -752,36 +477,6 @@ fun AppearanceScreen(
             )
         }
 
-        /*
-         * ---- READ THE WALKTHROUGH AGAIN ---------------------------------------------------------
-         *
-         * The walkthrough opens itself once, on the first launch after signing in, and then never
-         * again on this handset — a device-local flag, on purpose, so it is not a wall a returning
-         * designer has to dismiss every morning. The cost of that decision is that the ONE surface
-         * which teaches the order the work happens in is, by design, the one surface a person cannot
-         * get back to by waiting. So it has to be reachable on demand, permanently, and this is the
-         * second of the two places it is.
-         *
-         * NOT A SECOND WALKTHROUGH AND NOT A SECOND DESTINATION. This row hands back the same
-         * `NavDestination.WALKTHROUGH` the menu's own ungated root chip does; it is one more door
-         * onto one room. The web reaches its `/guide` from five places for the same reason, and
-         * `NavEntry.label` already fixes what both clients call it. A row here that opened anything
-         * else — a second "Getting started", a "Tour" — would be the two-answers-to-one-question
-         * failure this codebase deletes in writing.
-         *
-         * WHY SETTINGS AND NOT A DASHBOARD TILE. The dashboard's only route into the walkthrough is a
-         * text button inside the `if (!canCreateRecords)` block, so a Researcher and everybody above
-         * them has no dashboard route at all — which is the gap this row closes. A tile would have
-         * been the more visible fix and it is not available: `DashboardTileParityTest` reads the web
-         * dashboard off disk and asserts the two grids tile for tile, so a tile added to one client
-         * alone fails the build. Settings is where this app already keeps the rows that lead
-         * somewhere rather than toggle something, and it is where somebody looking for help looks.
-         *
-         * The summary says what the walkthrough IS rather than that it exists, because a row reading
-         * "Walkthrough >" makes a designer open it to find out whether they wanted it — the same
-         * argument `SettingsRow` makes for itself, and the reason the Speech & AI row above carries a
-         * measured state summary instead of a chevron and a hope.
-         */
         SettingsRow(
             icon = Icons.Filled.Explore,
             title = "Walkthrough",
@@ -791,17 +486,6 @@ fun AppearanceScreen(
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Pieces. Local copies on purpose: the app's card/back-pill helpers are private to MainActivity.kt.
-// ---------------------------------------------------------------------------------------------
-
-/**
- * A settings row that leads somewhere, with **a true state summary under its title**.
- *
- * The summary is the whole point of the shape. A row reading "Speech & AI ›" makes a designer open a
- * screen to discover whether they needed to; a row reading "2 of 19 languages work offline · speech
- * model installed" has already answered the question most of them had.
- */
 @Composable
 internal fun SettingsRow(
     icon: ImageVector,
@@ -847,12 +531,6 @@ internal fun SettingsRow(
     }
 }
 
-/**
- * The app's standard record card, restated here (MainActivity's `RecordCard` is file-private).
- *
- * `internal` rather than private since 2026-08-12: `SpeechAndAiScreen` draws the same two cards and a
- * second copy of a card shape is how two screens in one settings menu come to look like two apps.
- */
 @Composable
 internal fun PreferenceCard(content: @Composable ColumnScope.() -> Unit) {
     ElevatedCard(
@@ -868,7 +546,6 @@ internal fun PreferenceCard(content: @Composable ColumnScope.() -> Unit) {
     }
 }
 
-/** The web's card heading: a brand-tile icon chip beside a display-face title. */
 @Composable
 internal fun PreferenceCardHeading(icon: ImageVector, title: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -890,14 +567,6 @@ internal fun PreferenceCardHeading(icon: ImageVector, title: String) {
     }
 }
 
-/*
- * `DwDeviceTierSettings` LIVED HERE AND HAS MOVED to `SpeechAndAiScreen.kt`, shortened, as
- * `DwDeviceTierBody`. This file is about the two settings that belong to the ACCOUNT and follow a
- * designer to any handset; everything it used to carry below those two belongs to THIS PHONE. The
- * screen boundary now makes that distinction, which a paragraph inside a card used to have to.
- */
-
-/** One theme choice: a bordered row that tints and outlines in the action colour when selected. */
 @Composable
 private fun ThemeChoiceRow(option: ThemeOption, selected: Boolean, onSelect: () -> Unit) {
     val shape = MaterialTheme.shapes.medium
@@ -936,7 +605,6 @@ private fun ThemeChoiceRow(option: ThemeOption, selected: Boolean, onSelect: () 
     }
 }
 
-/** One accessibility switch: label + helper on the left, the switch on the right, whole row tappable. */
 @Composable
 private fun AccessibilitySwitchRow(
     label: String,
@@ -944,11 +612,9 @@ private fun AccessibilitySwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    // The shared `AppToggle`: the row owns the gesture (Role.Switch, 48dp) and the switch is decoration.
     AppToggle(label = label, description = helper, checked = checked, onCheckedChange = onCheckedChange)
 }
 
-/** The web's status line: an error if there is one, else saving/saved. */
 @Composable
 private fun SaveStatusLine(saving: Boolean, error: String?) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

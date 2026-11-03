@@ -19,14 +19,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * THE HANDSET'S PORT OF THE RECORD COMPLETENESS METER (2026-10-18), against the one shared table.
- *
- * `shared/record-completeness.json` is byte-identical in both portals and read unmodified by the
- * server's `test_record_completeness.py` and the web's `record-completeness-unit.spec.ts`. This proves
- * the Kotlin evaluator gives the same answer on the shared vectors, that the APK's bundled copy is the
- * shared file, that a newer table wins over an older one, and what a missing-field chip does.
- */
 class RecordCompletenessTest {
 
     private fun shared(): File {

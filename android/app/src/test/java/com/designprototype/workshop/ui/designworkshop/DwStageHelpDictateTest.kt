@@ -9,19 +9,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * DW-14 (UX audit 2026-10-16), owner ruling 2026-10-17, on the handset.
- *
- *  1. Every field's `help` is one short line; the rest is `details`, opened by holding the field
- *     (owner, 2026-10-21 — the "i" row under every box is gone).
- *  2. The screen reader reaches the details through a "Show help" action on the caption.
- *  3. Dictate is a 48dp microphone in the box's trailing icon, named "Dictate", with the language in
- *     a menu from the caret beside it (or a long press) — no "English (India)" text button.
- *
- * The registry half reads the SHIPPED asset — a dump of what the API serves — through the app's own
- * decoder, so it also proves `details` survives the trip into [FieldDto]. The web's
- * `e2e/stage-help-dictate-unit.spec.ts` and the backend's `test_stage_help_copy.py` hold the same rule.
- */
 class DwStageHelpDictateTest {
 
     private val schema: SchemaResponse by lazy {
@@ -75,16 +62,9 @@ class DwStageHelpDictateTest {
         assertTrue(help.contains("customActions = listOf(action)"))
         val reference = source("ui/designworkshop/DwReferenceField.kt")
         assertEquals(2, Regex("FieldCaption\\(field\\)").findAll(reference).count())
-        // The microphone keeps its own long press (the language menu).
         assertTrue(source("ui/designworkshop/DwDictation.kt").contains(".dwClaimsHold()"))
     }
 
-    /**
-     * Every field type that carries `details` in the shipped asset must reach [FieldCaption], or its
-     * help is unreachable by screen reader on the handset while the web shows it. Read off the renderer's `when (type)`:
-     * a branch either draws the caption itself, hands it to a widget as `helpRow`, or calls a helper
-     * whose own body draws it.
-     */
     @Test
     fun `every field type with details reaches FieldCaption`() {
         val renderer = source("ui/designworkshop/FieldRenderer.kt").replace("\r\n", "\n")
@@ -115,7 +95,6 @@ class DwStageHelpDictateTest {
         assertTrue(withDetails.containsAll(listOf("RICH_TEXT", "GEO")))
         val missing = withDetails.filter { type -> branches[type]?.let(::reaches) != true }
         assertEquals("these types drop the help caption", emptyList<String>(), missing)
-        // The two widgets that draw their own help take the caption in its place.
         assertTrue(source("ui/designworkshop/RichTextEditor.kt").contains("helpRow()"))
         assertTrue(source("ui/designworkshop/DwLocationField.kt").contains("helpRow()"))
         assertEquals(2, Regex("helpRow = \\{ FieldCaption\\(field\\) \\}").findAll(renderer).count())
@@ -144,7 +123,6 @@ class DwStageHelpDictateTest {
         assertTrue(dictation.contains(".size(DwDictationAdornment.TARGET_DP.dp)"))
         assertFalse("the old text button that printed the language", dictation.contains("contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)"))
         assertFalse(dictation.contains("label = \"Dictation language\","))
-        // And it is still drawn in the box's trailing icon on the ordinary text field.
         val renderer = source("ui/designworkshop/FieldRenderer.kt")
         assertTrue(renderer.contains("trailingIcon = if (!canDictate) null else {"))
     }

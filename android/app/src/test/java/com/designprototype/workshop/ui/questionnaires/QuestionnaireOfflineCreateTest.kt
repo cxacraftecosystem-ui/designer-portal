@@ -8,11 +8,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * M12 (audit 21 Oct 2026): a questionnaire created offline must stop using its temporary id once
- * it has uploaded, and an answer screen opened on a saved copy must leave read-only when the signal
- * returns.
- */
 class QuestionnaireOfflineCreateTest {
 
     private val detail by lazy {
@@ -53,7 +48,6 @@ class QuestionnaireOfflineCreateTest {
             .substringBefore("val loaded = form")
         assertTrue(watcher.contains("repository.isOnline(appContext)"))
         assertTrue(watcher.contains("cachedNotice = null"))
-        // The typing on screen is never overwritten by the reload.
         assertTrue(watcher.contains("!in answers"))
     }
 }

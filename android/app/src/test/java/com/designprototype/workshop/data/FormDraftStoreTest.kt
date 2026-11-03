@@ -10,13 +10,6 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
-/**
- * The on-disk draft every record form now keeps until Save (see [FormDraftStore]).
- *
- * What these pin is the promise to the person holding the phone: what they typed comes back after the
- * app is killed, it comes back only to THEM on a shared phone, a damaged file never costs them the
- * typing, and opening a form and closing it again leaves nothing behind.
- */
 class FormDraftStoreTest {
     @get:Rule
     val folder = TemporaryFolder()
@@ -42,7 +35,6 @@ class FormDraftStoreTest {
 
         assertNull(FormDraftStore.load(root, "user-2", "craft:new"))
         assertNull(FormDraftStore.load(root, null, "craft:new"))
-        // Signing back in as the owner — nothing was deleted by somebody else's session.
         assertEquals("Bandhani", FormDraftStore.load(root, "user-1", "craft:new")?.fields?.get("name"))
     }
 
@@ -64,7 +56,6 @@ class FormDraftStoreTest {
         FormDraftStore.save(root, "u", "product:new", mapOf("productName" to "first"))
         FormDraftStore.save(root, "u", "product:new", mapOf("productName" to "second"))
         assertEquals("second", FormDraftStore.load(root, "u", "product:new")?.fields?.get("productName"))
-        // No temp file is left beside it.
         val dir = FormDraftStore.fileFor(root, "u", "product:new").parentFile!!
         assertTrue(dir.listFiles()!!.none { it.name.endsWith(".writing") })
     }
@@ -112,11 +103,9 @@ class FormDraftStoreTest {
     fun nothing_typed_keeps_no_draft_and_an_absent_box_equals_an_empty_one() {
         val baseline = mapOf("name" to "", "place" to "Kutch")
         assertFalse(formDraftIsWorthKeeping(baseline, baseline))
-        // An interview's questions arrive after the screen: new, EMPTY boxes are not typing.
         assertFalse(formDraftIsWorthKeeping(baseline + ("a:q1" to ""), baseline))
         assertTrue(formDraftIsWorthKeeping(baseline + ("a:q1" to "yes"), baseline))
         assertTrue(formDraftIsWorthKeeping(mapOf("name" to "R", "place" to "Kutch"), baseline))
-        // Clearing a prefilled box IS a change.
         assertTrue(formDraftIsWorthKeeping(mapOf("name" to "", "place" to ""), baseline))
     }
 

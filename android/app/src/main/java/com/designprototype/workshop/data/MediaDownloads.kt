@@ -10,26 +10,8 @@ import androidx.annotation.RequiresApi
 import java.util.Calendar
 import java.util.TimeZone
 
-/**
- * SAVING A FILE THE DESIGNER IS STILL UPLOADING — from the copy this phone already holds.
- *
- * Every row that shows a file on its way to the server (a stage's attachment rows, the record forms'
- * capture cards, the questionnaire's recorded clips, the refused-outbox tray, a dictation being
- * sent) offers Download, and Download reads the LOCAL bytes: the file in the workshop's media
- * directory, the picker's `content://` handle, or the outbox's private copy. So a designer can keep
- * their own recording whatever the connection is doing, and the upload is never asked to wait —
- * nothing here touches a transfer, a queue entry or a staged object; it only reads.
- *
- * [saveToDownloads] is the same name the documentation portal's twin uses, and the web's helper is
- * `downloadLocalMedia`, so the two apps can share this code without a rename.
- *
- * The naming rules are pure and pinned by `MediaDownloadsTest`; they match
- * `frontend/lib/localMediaDownload.ts` rule for rule, so a file saved from either client lands under
- * the same name.
- */
 object MediaDownloads {
 
-    /** Exact matches only: `application/vnd.foo-pdf` must not become a `.pdf`. */
     private val EXTENSION_BY_MIME: Map<String, String> = mapOf(
         "audio/webm" to "webm",
         "audio/ogg" to "ogg",
@@ -72,13 +54,11 @@ object MediaDownloads {
         "model/gltf-binary" to "glb",
     )
 
-    /** Names a picker or recorder gives a file nobody named. Treated as absent. */
     private val PLACEHOLDER_NAMES = setOf("blob", "untitled")
 
     private val UNSAFE_NAME = Regex("[\\\\/:*?\"<>|\\u0000-\\u001f]+")
     private val EXTENSION = Regex("\\.[A-Za-z0-9]{1,8}$")
 
-    /** `audio/webm;codecs=opus` → `audio/webm`. The codec is not part of the container's name. */
     fun baseMimeType(mimeType: String?): String =
         mimeType.orEmpty().substringBefore(';').trim().lowercase()
 
@@ -98,7 +78,6 @@ object MediaDownloads {
         }
     }
 
-    /** `2026-10-16-143005`, in the phone's own clock — the moment a person would say they recorded it. */
     fun fileDateStamp(millis: Long, zone: TimeZone = TimeZone.getDefault()): String {
         val c = Calendar.getInstance(zone).apply { timeInMillis = millis }
         return "%04d-%02d-%02d-%02d%02d%02d".format(
@@ -111,15 +90,6 @@ object MediaDownloads {
         )
     }
 
-    /**
-     * The name a local file is saved under.
-     *
-     * - Its own name when it has one, made safe for a file system, with the mime type's extension
-     *   added only when the name carries none.
-     * - Otherwise `voice-note-<date>.<ext>` for a recording (`video-`, `photo-` or `file-` for the
-     *   rest), dated from [capturedAtMillis] when known and from [nowMillis] when not.
-     * - `.bin` only when neither the name nor the mime type says anything about the bytes.
-     */
     fun downloadFileName(
         displayName: String?,
         mimeType: String?,
@@ -143,16 +113,6 @@ object MediaDownloads {
     }
 }
 
-/**
- * Copy [source] into the public Downloads collection through MediaStore and return the new row's
- * Uri, which is what "Open" hands to a viewer. API 29 and up only: below that there is no
- * Downloads collection, and the caller asks the person where to save through the system's Create
- * document screen instead (see `rememberMediaDownloader`), which needs no storage permission.
- *
- * The IS_PENDING handshake is the one `WorkshopRepository.persistFileToDownloads` uses: other apps
- * never see a half-written file, and a copy that fails part-way is deleted rather than left behind.
- * Blocking — call it off the main thread.
- */
 @RequiresApi(Build.VERSION_CODES.Q)
 fun saveToDownloads(context: Context, source: Uri, displayName: String, mimeType: String): Uri {
     val resolver = context.contentResolver
@@ -175,7 +135,6 @@ fun saveToDownloads(context: Context, source: Uri, displayName: String, mimeType
     return target
 }
 
-/** Stream [source]'s bytes into [target]. Reading leaves the source untouched for the upload. */
 fun copyMediaInto(context: Context, source: Uri, target: Uri) {
     val resolver = context.contentResolver
     val input = resolver.openInputStream(source)
@@ -187,10 +146,6 @@ fun copyMediaInto(context: Context, source: Uri, target: Uri) {
     }
 }
 
-/**
- * The name a `content://` handle's provider gives its file, or the last path segment of anything
- * else; null when neither says anything. Blocking (a provider query) — cheap, but not free.
- */
 fun mediaDisplayNameOf(context: Context, uri: Uri): String? {
     if (uri.scheme == "content") {
         runCatching {

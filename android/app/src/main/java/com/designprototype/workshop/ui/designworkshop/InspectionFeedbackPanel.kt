@@ -64,27 +64,12 @@ import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/**
- * THE FEEDBACK BOX ON THE HANDSET — the register, the box, and the notes waiting on this phone.
- *
- * The web's `FeedbackPanel` in `design-workshop-inspections/[id]/page.tsx`, with one difference that
- * is the reason this panel exists on a phone: a note is KEPT ON THE PHONE FIRST and then sent. With a
- * connection that is the same as the web — it is on the record a moment later. Without one it waits,
- * and when it goes it is checked against the report as it then stands (`dwInspectionNoteCheck`). A
- * note that is held back or refused stays here, with the reason beside it, until its author re-files
- * it, puts it back in the box, or discards it.
- *
- * TWO BUTTONS, BECAUSE THEY ARE TWO ACTS — the server's rule and the web's. The second moves the
- * report onto its designers' desks, so it is behind a confirmation that says so.
- */
 @Composable
 internal fun InspectionFeedbackPanel(
     repository: WorkshopRepository,
     record: DwInspectionDetailDto,
     stages: List<StageDto>,
-    /** A newer read of this workshop, from a note that just went or a check that just ran. */
     onRecord: (DwInspectionDetailDto) -> Unit,
-    /** Bumped by the screen when it has just read the workshop, so the queued list is re-read. */
     refreshKey: Int,
 ) {
     val context = LocalContext.current
@@ -103,9 +88,6 @@ internal fun InspectionFeedbackPanel(
     var clearing by remember { mutableStateOf(false) }
     val viewerId = remember(repository) { repository.cachedUser()?.id }
 
-    // THE NOTE BEING TYPED, ON DISK (2026-10-16). `rememberSaveable` above survives Android recycling
-    // the process in the background but not a swipe-away, a force-stop or an update; this survives
-    // all of them. Cleared the moment the note is handed to `fileInspectionNote`, which owns it after.
     val noteDraft = com.designprototype.workshop.ui.rememberFormDraft(
         key = "inspection-note:${record.id}",
         snapshot = { mapOf("note" to note, "stageKey" to stageKey) },
@@ -195,7 +177,6 @@ internal fun InspectionFeedbackPanel(
                 group.rows.forEach { row -> key(row.id) { RegisterRow(row, stageTitles) } }
             }
 
-            // ── What is waiting on this phone ───────────────────────────────────────────────────
             if (queued.isNotEmpty()) {
                 Text(
                     "On this phone, not yet on the record",
@@ -239,7 +220,6 @@ internal fun InspectionFeedbackPanel(
                 }
             }
 
-            // ── The box ─────────────────────────────────────────────────────────────────────────
             when {
                 !record.mayRecordFeedback -> Text(
                     "You can't file suggestions on this workshop.",
@@ -250,7 +230,6 @@ internal fun InspectionFeedbackPanel(
                 !underReview -> InspectionNotice(DW_NOT_UNDER_REVIEW_SENTENCE, warning = true)
 
                 else -> {
-                    // C5: the web's "Checked, no corrections", the same words. Online only.
                     AppToggle(
                         label = DW_CLEARANCE_LABEL,
                         checked = record.myClearedAt != null,
@@ -293,7 +272,6 @@ internal fun InspectionFeedbackPanel(
                         enabled = !busy,
                         onSelect = { stageKey = it }
                     )
-                    // Short labels so the pair stays on one line in two equal halves at 360dp.
                     ActionRow {
                         OutlinedButton(
                             onClick = { file(DwInspectionNoteKind.SUGGESTION) },
@@ -376,7 +354,6 @@ internal fun InspectionFeedbackPanel(
     }
 }
 
-/** One suggestion on the record. Never a guess at a name, never a raw stage key where a title exists. */
 @Composable
 private fun RegisterRow(row: DwInspectionFeedbackDto, stageTitles: Map<String, String>) {
     Column(
@@ -400,7 +377,6 @@ private fun RegisterRow(row: DwInspectionFeedbackDto, stageTitles: Map<String, S
     }
 }
 
-/** A note written on this phone: waiting to go, or held with the reason beside it. */
 @Composable
 private fun QueuedNoteCard(
     item: DwQueuedInspectionNote,

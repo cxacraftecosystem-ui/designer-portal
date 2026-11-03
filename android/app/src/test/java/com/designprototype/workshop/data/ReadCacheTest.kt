@@ -19,10 +19,6 @@ import retrofit2.Response
 import java.io.IOException
 import java.net.UnknownHostException
 
-/**
- * A read-only screen opened with no signal shows the last list this phone read, says that it is a
- * copy and from when — and never shows a copy over an answer the server actually gave.
- */
 class ReadCacheTest {
     @get:Rule
     val folder = TemporaryFolder()

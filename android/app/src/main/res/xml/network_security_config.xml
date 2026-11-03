@@ -1,52 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Transport policy for the app. The production API is HTTPS through CloudFront
-  (d3ekigkotd1xa2.cloudfront.net) and media is HTTPS through S3, both with publicly-trusted
-  certificates, so neither needs an entry here.
-
-  CERTIFICATE TRANSPARENCY AND ENCRYPTED CLIENT HELLO ARE ON WITHOUT AN ENTRY HERE, since the app has
-  targeted API 37 (2026-10-09): Android 17 checks that a server certificate was publicly logged, and
-  tries ECH, on every connection by default. Both production hosts' certificates come from public CAs,
-  which log them, so neither needs a `<certificateTransparency>` or `<domainEncryption>` element. The
-  platform turns CT checking off by itself wherever a `user` or inline trust anchor is in force, which
-  is what keeps the debug-overrides below working with a proxy certificate.
-
-  Cleartext (plain HTTP) is permitted ONLY for the loopback/emulator development hosts below. It is
-  deliberately NOT permitted for any production host: an http:// API call would expose the bearer
-  token and every field record to anyone on the network path, and would be trivially modifiable in
-  flight. (The direct EC2 origin that used to be listed here as a manual fallback was removed because it
-  is a PRODUCTION host reachable only over plaintext HTTP. NOTE WHOSE BOX IT IS: 15.207.145.174 /
-  ec2-15-207-145-174…compute.amazonaws.com is the FIELD REPOSITORY's elastic IP, the sibling
-  product this portal was split out of — not this portal's api box, which is 13.206.216.18. It is
-  named here only as the thing that was removed. Unlabelled sibling identity is a documented defect
-  class in this repository — two instances of it were live user-facing bugs on 2026-08-22 — and
-  `docs/tools/check-docs.mjs` now sweeps for it. Bypass CloudFront only by putting TLS in front of the origin.)
-
-  Developing against a backend on your LAN (a real phone, not the emulator): add your machine's
-  private IP as another <domain> below TEMPORARILY, alongside apiBaseUrl=http://<ip>:8000/api/ in
-  local.properties, and do not commit either change.
--->
 <network-security-config>
-    <!-- Everything not named below: TLS required, and only the OS certificate store is trusted.
-         Omitting <certificates src="user"/> means a user-installed CA (a corporate MITM root, or a
-         Charles/mitmproxy certificate someone was talked into installing) cannot silently decrypt
-         the app's traffic. Debug builds re-enable it in debug-overrides so proxy debugging still
-         works there. -->
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
 
-    <!-- Development hosts only: the emulator's host-machine alias and loopback. -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">10.0.2.2</domain>
         <domain includeSubdomains="true">127.0.0.1</domain>
         <domain includeSubdomains="true">localhost</domain>
     </domain-config>
 
-    <!-- Applies ONLY to builds with android:debuggable=true (never to a release APK), so inspecting
-         traffic with a proxy during development does not require weakening the shipped policy. -->
     <debug-overrides>
         <trust-anchors>
             <certificates src="system" />

@@ -9,13 +9,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * The purple "N file(s) attached" card, in light AND dark (release smoke 2026-10-17, dp-final/26 and
- * 47). Light mode drew "Clear attachments" in the theme's purple on the purple tile; dark mode drew
- * the title and status line in the theme's dark canvas colours on the tile; and the "Upload failed"
- * line was the scheme's error red, about 2:1 there. Every word on the tile now takes the tile's own
- * ink, and this measures each pair at WCAG AA: 4.5:1 for text, 3:1 for a button's outline.
- */
 class BrandTileContrastTest {
     private fun contrast(a: Color, b: Color): Double {
         val la = a.luminance().toDouble()
@@ -34,11 +27,9 @@ class BrandTileContrastTest {
             val ratio = contrast(ink, tile)
             assertTrue("$theme $name on the tile is $ratio, needs 4.5:1", ratio >= 4.5)
         }
-        // The on-tile outlined button ("Clear attachments", "Show fewer"): the ink at 70% over the tile.
         val outline = tokens.onBrandTile.copy(alpha = 0.7f).compositeOver(tile)
         val edge = contrast(outline, tile)
         assertTrue("$theme on-tile outline is $edge, needs 3:1", edge >= 3.0)
-        // The failed line still has to read as an error, not as more tile ink.
         assertTrue("$theme errorOnBrandTile must be red", tokens.errorOnBrandTile.red > tokens.errorOnBrandTile.blue)
     }
 

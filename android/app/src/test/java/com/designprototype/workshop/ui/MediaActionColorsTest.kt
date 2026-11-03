@@ -5,11 +5,6 @@ import androidx.compose.ui.graphics.luminance
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The Retry / Download buttons on every media card must be clearly visible (owner, 2026-10-17). The
- * button's edge must stand out from the card and from surface-50 at 3:1 or better (WCAG 1.4.11), and
- * its ink must read on its own ground at 4.5:1 or better (WCAG 1.4.3), in light AND dark.
- */
 class MediaActionColorsTest {
     private fun contrast(a: Color, b: Color): Double {
         val la = a.luminance().toDouble()

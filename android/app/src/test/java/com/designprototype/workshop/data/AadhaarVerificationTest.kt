@@ -8,11 +8,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * Aadhaar verification on the handset: hidden unless the server switched it on (including for an
- * account cached before the server ever sent `features`), the consent words the same as the web's,
- * and the wire shapes the server's.
- */
 class AadhaarVerificationTest {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
@@ -64,7 +59,6 @@ class AadhaarVerificationTest {
         val web = webSource("frontend/lib/aadhaar.ts")
         for (subject in listOf(AadhaarSubject.Self, AadhaarSubject.Artisan("a1"))) {
             for (point in AadhaarCopy.consentPoints(subject)) {
-                // The web builds the first sentence around ${whose}; compare the fixed tail.
                 val fixed = point.substringAfter("identity against UIDAI")
                 assertTrue("web lacks: $fixed", web.contains(fixed))
             }

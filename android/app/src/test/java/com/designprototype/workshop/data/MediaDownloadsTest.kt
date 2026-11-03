@@ -6,11 +6,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * The name a file saved by Download lands under, and the extension its mime type earns. The same
- * cases as `frontend/e2e/local-media-download-unit.spec.ts`, so both clients save one file under one
- * name.
- */
 class MediaDownloadsTest {
 
     private val zone: TimeZone = TimeZone.getTimeZone("Asia/Kolkata")
