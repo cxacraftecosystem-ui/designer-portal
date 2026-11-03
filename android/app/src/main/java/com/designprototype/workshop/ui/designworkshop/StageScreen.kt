@@ -1304,7 +1304,15 @@ private fun StageScreenBody(
                         // discipline — and it is what lets the AI media verbs tell "this file is on
                         // the server" from "these bytes are only here". See [DwMediaItem].
                         remoteMediaId = descriptor.remoteMediaId,
+                        transcribe = descriptor.transcribe,
                     )
+                }
+            },
+            setTranscribe = { id, on ->
+                scope.launch {
+                    WorkshopDraftStore.setTranscribe(appContext, workshopId, id, on)?.let { changed ->
+                        mediaIndex = mediaIndex + (id to changed)
+                    }
                 }
             },
             attach = { uris: List<Uri>, field: FieldDto, onAttached: (List<String>) -> Unit ->

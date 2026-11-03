@@ -853,6 +853,8 @@ data class MediaFileDto(
     val transcriptStatus: String? = null,
     val transcriptText: String? = null,
     val transcriptError: String? = null,
+    val transcribeRequested: Boolean? = null,
+    val transcribeRequestSource: String? = null,
     /**
      * WHEN A PERSON LAST REPLACED THE MACHINE'S WORDS. ISO-8601, or null.
      *

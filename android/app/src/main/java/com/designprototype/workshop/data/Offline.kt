@@ -1,5 +1,6 @@
 package com.designprototype.workshop.data
 
+import com.designprototype.workshop.transcript.data.TranscribeChoices
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -1966,7 +1967,7 @@ object OfflineOutbox {
             overrideBaseName = overrideBaseName,
             batchIndex = batchIndex,
             stageStep = stageStep,
-            processing = processing,
+            processing = processing ?: TranscribeChoices.processingFor(uri.toString(), inferMediaType(mimeType)),
             linkedType = linkedType,
             stepIndex = stepIndex,
             purpose = purpose

@@ -1,5 +1,8 @@
 package com.designprototype.workshop
 
+import com.designprototype.workshop.transcript.data.TranscribeChoices
+import com.designprototype.workshop.transcript.ui.TranscribeChoiceItem
+import com.designprototype.workshop.transcript.ui.TranscribeChoiceRows
 import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.data.interviewAnswersToSend
@@ -7914,6 +7917,7 @@ private class MediaCaptureState {
         stagedProgress = stagedProgress - uri
         stagedFailed = stagedFailed - uri
         purposes = purposes - uri
+        TranscribeChoices.forget(uri.toString())
     }
 
     fun reset() {
@@ -7938,6 +7942,7 @@ private fun rememberMediaCaptureState(): MediaCaptureState = remember { MediaCap
 private fun MediaCaptureState.draftFields(slot: String): Map<String, String> = mapOf(
     "${com.designprototype.workshop.data.URI_FIELD_PREFIX}$slot" to uris.joinToString("\n"),
     "purposes:$slot" to purposes.entries.joinToString("\n") { "${it.key}\t${it.value}" },
+    "transcribe:$slot" to uris.filter { TranscribeChoices.isOn(it.toString()) }.joinToString("\n"),
     "location:$slot" to (location?.let { offlineFormJson.encodeToString(it) } ?: ""),
 )
 
@@ -7951,6 +7956,10 @@ private fun MediaCaptureState.restoreDraft(slot: String, values: Map<String, Str
             val parts = line.split('\t')
             if (parts.size == 2) Uri.parse(parts[0]) to parts[1] else null
         }.filter { it.first in uris }.toMap()
+    }
+    values["transcribe:$slot"]?.let { text ->
+        val ticked = text.split('\n').filter { it.isNotBlank() }.toSet()
+        uris.forEach { uri -> if (uri.toString() in ticked) TranscribeChoices.set(uri.toString(), true) }
     }
     values["location:$slot"]?.let { text ->
         location = text.takeIf { it.isNotBlank() }?.let {
@@ -8261,6 +8270,7 @@ private suspend fun uploadAttachments(
                     location = media.location,
                     batchIndex = index + 1,
                     customSegment = customSegment,
+                    processingRequests = TranscribeChoices.processingFor(uri.toString(), staged.mediaType),
                     extraMetadata = purpose
                 )
             } else {
@@ -10423,8 +10433,24 @@ private fun MediaCaptureSection(
                     ) { Text("Clear attachments") }
                 }
             }
+            UriTranscribeChoices(media.uris)
         }
     }
+}
+
+@Composable
+private fun UriTranscribeChoices(uris: List<Uri>, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val items = remember(uris) {
+        uris.map { uri ->
+            TranscribeChoiceItem(
+                key = uri.toString(),
+                name = com.designprototype.workshop.data.mediaDisplayNameOf(context, uri) ?: uri.lastPathSegment ?: "File",
+                typeOrMime = context.contentResolver.getType(uri),
+            )
+        }
+    }
+    TranscribeChoiceRows(items, modifier)
 }
 
 /**
@@ -14782,7 +14808,8 @@ private fun ProcessForm(
                                 caption = "Process step ${serverStep.name}",
                                 location = local.media.location,
                                 batchIndex = fileIndex + 1,
-                                customSegment = segment
+                                customSegment = segment,
+                                processingRequests = TranscribeChoices.processingFor(uri.toString(), staged.mediaType)
                             )
                         } else {
                             repository.uploadMedia(
@@ -15618,6 +15645,7 @@ private fun MediaWithTranscript(
     }
 
     val isVideo = media.mediaType.equals("VIDEO", ignoreCase = true)
+    val isTimed = isAudio || isVideo
     // The transcript viewer (DESIGN_2026-10-31 §3) wherever the pipeline answers; the plain
     // transcript below wherever it does not (the switch is off, or the file predates it).
     val legacyTranscript: @Composable () -> Unit = {
@@ -15725,24 +15753,29 @@ private fun MediaWithTranscript(
                     onApplied = { newText -> transcriptText = newText }
                 )
             }
-            if (isAdmin && isAudio && repository != null) {
+            if (isAdmin && isTimed && repository != null) {
                 TranscribeNowButton(transcribing = transcribing, hasExisting = true) { transcribeNow() }
             }
         }
-        transcribing || (isAudio && (status == null || status in processing)) -> {
+        transcribing || (isTimed && (status in processing || (status == null && media.transcribeRequested == true))) -> {
             // Still processing — show a buffer icon; the transcript appears here once it's ready.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 Text(if (transcribing) "Transcribing now…" else "Transcribing audio…", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
         }
-        isAudio && status in done -> {
+        isTimed && status in done -> {
             Text("Transcript complete — no speech detected.", color = Muted, style = MaterialTheme.typography.bodySmall)
             if (isAdmin && repository != null) {
                 TranscribeNowButton(transcribing = transcribing, hasExisting = false) { transcribeNow() }
             }
         }
-        isAudio -> {
+        isTimed && status == null -> {
+            if (isAdmin && repository != null) {
+                TranscribeNowButton(transcribing = transcribing, hasExisting = false) { transcribeNow() }
+            }
+        }
+        isTimed -> {
             Text(
                 "Transcript: ${liveStatus ?: "—"}" + (media.transcriptError?.let { " — $it" } ?: ""),
                 color = Muted,
@@ -15755,7 +15788,7 @@ private fun MediaWithTranscript(
     }
     Unit
     }
-    if (isAudio || isVideo) TranscriptEntry(mediaId = media.id, audio = null, legacy = legacyTranscript) else legacyTranscript()
+    if (isTimed) TranscriptEntry(mediaId = media.id, audio = null, legacy = legacyTranscript) else legacyTranscript()
 }
 
 /** Admin "Transcribe now" / "Re-transcribe" action — runs transcription on the spot via the settings mode. */
@@ -18763,6 +18796,7 @@ private fun AndroidMediaForm(
         snapshot = {
             mapOf(
                 "${com.designprototype.workshop.data.URI_FIELD_PREFIX}selected" to selectedUris.joinToString("\n"),
+                "transcribe:selected" to selectedUris.filter { TranscribeChoices.isOn(it.toString()) }.joinToString("\n"),
                 "title" to mediaTitle, "caption" to caption, "linkedMode" to (linkedMode?.name ?: ""),
                 "linkedEntryId" to linkedEntryId,
                 "location" to (location?.let { offlineFormJson.encodeToString(it) } ?: ""),
@@ -18772,6 +18806,7 @@ private fun AndroidMediaForm(
             v["${com.designprototype.workshop.data.URI_FIELD_PREFIX}selected"]?.let {
                 selectedUris = com.designprototype.workshop.data.formDraftUriList(it).map(Uri::parse)
             }
+            v["transcribe:selected"]?.split('\n')?.filter { it.isNotBlank() }?.forEach { TranscribeChoices.set(it, true) }
             mediaTitle = v["title"] ?: mediaTitle
             caption = v["caption"] ?: caption
             v["linkedMode"]?.let { name -> EntryMode.entries.firstOrNull { it.name == name }?.let { linkedMode = it } }
@@ -19055,6 +19090,7 @@ private fun AndroidMediaForm(
                     }
                 }
             }
+            UriTranscribeChoices(selectedUris)
         }
         localMessage?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
         if (uploading) {
