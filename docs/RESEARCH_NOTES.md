@@ -1263,7 +1263,7 @@ system font scale, via `rememberTextMeasurer()` — the face, weight and font sc
 It replaced arithmetic that priced text at "~7.5 dp a character" and then padded every threshold
 upward to cover the guess.
 
-**MEASURED (cited)** — reported in the source at `AppNavigation.kt:502-516`, on one handset in
+**MEASURED (cited)** — reported in the source at `AppNavigation.kt:182-185`, on one handset in
 landscape. I did **not** re-run these on a device; reproducing them requires an emulator or handset
 session that was out of scope.
 
