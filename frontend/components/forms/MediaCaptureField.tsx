@@ -5,6 +5,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Camera, FolderOpen, Mic, Square, Video } from "lucide-react";
 
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
+import { TranscribeChoices } from "@/components/transcript/TranscribeChoices";
 import { downloadLocalMedia } from "@/lib/localMediaDownload";
 import { RecordingStrip } from "@/components/media/Waveform";
 import {
@@ -256,9 +257,10 @@ export function MediaCaptureField({
   files,
   onFilesChange,
   title = "Attach media",
-  description = "Photos, video, audio and files link to this record automatically. Audio is queued for transcription after upload.",
+  description = "Photos, video, audio and files link to this record automatically.",
   allowDocuments = true,
   allowedTypes,
+  transcribeChoice = true,
   accept,
   attachedImages,
   stagingOwnerId,
@@ -270,6 +272,7 @@ export function MediaCaptureField({
   description?: string;
   allowDocuments?: boolean;
   allowedTypes?: MediaType[];
+  transcribeChoice?: boolean;
   /**
    * THE CHOOSER'S LIST, STATED BY THE CALLER, FOR A CARD THE BUCKETS ABOVE ARE WIDER THAN.
    *
@@ -766,6 +769,7 @@ export function MediaCaptureField({
       >
         {duplicateNotice}
       </p>
+      {transcribeChoice ? <TranscribeChoices files={files} /> : null}
       {previewItems.length ? (
         <div className="grid gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">

@@ -1548,7 +1548,7 @@ export function ProcessForm({
             files={preFiles}
             onFilesChange={setPreFiles}
             title="Attach media"
-            description="Audio is transcribed after upload."
+            description="Photos, video, audio and files."
             /*
               A STAGING OWNER THAT OUTLIVES THIS CARD, because this card is the one media control in
               the four record forms that can go away while the files it attached stay.
@@ -1675,7 +1675,7 @@ export function ProcessForm({
                 files={step.files}
                 onFilesChange={(files) => updateStep(step.key, { files })}
                 title="Attach media"
-                description="Audio is transcribed after upload."
+                description="Photos, video, audio and files."
               />
             </div>
           ))}

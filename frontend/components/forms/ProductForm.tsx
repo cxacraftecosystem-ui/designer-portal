@@ -669,7 +669,6 @@ export function ProductForm({
             // photograph as one uploaded on the spot, and a marker only the online path writes
             // would leave the offline half of the fleet still printing ruled paper.
             extraMetadata: { purpose: MEASUREMENT_GRID_PURPOSE },
-            transcribeAudio: false
           })),
           {
             files: mediaFiles,
@@ -695,7 +694,6 @@ export function ProductForm({
                   recordedAt,
                   recordedTimezone,
                   extraMetadata: measurePhoto.isGrid ? { purpose: MEASUREMENT_GRID_PURPOSE } : undefined,
-                  transcribeAudio: false
                 }
               ]
             : [])
@@ -759,7 +757,6 @@ export function ProductForm({
             // MEASUREMENT_GRID_PURPOSE. Last and not excluded: a product whose only image is this
             // grid shot still gets a picture rather than a blank.
             extraMetadata: { purpose: MEASUREMENT_GRID_PURPOSE },
-            transcribeAudio: false
           });
         } catch {
           /* keep the saved record even if a grid photo fails to store */
@@ -790,7 +787,6 @@ export function ProductForm({
             recordedAt,
             recordedTimezone,
             extraMetadata: measurePhoto.isGrid ? { purpose: MEASUREMENT_GRID_PURPOSE } : undefined,
-            transcribeAudio: false
           });
         } catch {
           /* keep the saved record even if the measurement frame fails to store */

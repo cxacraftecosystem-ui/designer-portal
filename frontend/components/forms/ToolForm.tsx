@@ -1365,7 +1365,6 @@ export function ToolForm({
             // photograph as one uploaded on the spot, and a marker only the online path writes
             // would leave the offline half of the fleet still printing ruled paper.
             extraMetadata: { purpose: MEASUREMENT_GRID_PURPOSE },
-            transcribeAudio: false
           })),
           ...stageFiles.map((file, index) => ({
             files: [stageStepFile(file, index, payload.toolkitName)],
@@ -1374,7 +1373,6 @@ export function ToolForm({
             location,
             recordedAt,
             recordedTimezone,
-            transcribeAudio: false
           })),
           {
             files: mediaFiles,
@@ -1400,7 +1398,6 @@ export function ToolForm({
                   recordedAt,
                   recordedTimezone,
                   extraMetadata: measurePhoto.isGrid ? { purpose: MEASUREMENT_GRID_PURPOSE } : undefined,
-                  transcribeAudio: false
                 }
               ]
             : [])
@@ -1477,7 +1474,6 @@ export function ToolForm({
             // MEASUREMENT_GRID_PURPOSE. Last and not excluded: a tool whose only image is this
             // grid shot still gets a picture rather than a blank.
             extraMetadata: { purpose: MEASUREMENT_GRID_PURPOSE },
-            transcribeAudio: false
           });
         } catch {
           /* keep the saved record even if a grid photo fails to store */
@@ -1512,7 +1508,6 @@ export function ToolForm({
             recordedAt,
             recordedTimezone,
             extraMetadata: measurePhoto.isGrid ? { purpose: MEASUREMENT_GRID_PURPOSE } : undefined,
-            transcribeAudio: false
           });
         } catch {
           /* keep the saved record even if the measurement frame fails to store */
