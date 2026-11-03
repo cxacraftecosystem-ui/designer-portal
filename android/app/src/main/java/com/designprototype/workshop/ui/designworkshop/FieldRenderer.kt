@@ -183,6 +183,7 @@ data class DwMediaItem(
      * else, exactly as `DraftMedia.remoteMediaId` documents.
      */
     val remoteMediaId: String? = null,
+    val transcribe: Boolean? = null,
 )
 
 /**
@@ -250,6 +251,7 @@ class DwMediaBridge(
      * photograph into the wrong workshop with two of them open in the back stack.
      */
     val newCaptureFile: (String) -> File,
+    val setTranscribe: (String, Boolean) -> Unit = { _, _ -> },
 )
 
 /**

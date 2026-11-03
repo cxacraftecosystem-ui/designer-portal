@@ -1,5 +1,8 @@
 package com.designprototype.workshop.ui.designworkshop
 
+import com.designprototype.workshop.transcript.data.UploadTranscribe
+import com.designprototype.workshop.transcript.ui.TranscribeChoiceItem
+import com.designprototype.workshop.transcript.ui.TranscribeChoiceRows
 import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.data.userMessage
 
@@ -1139,6 +1142,17 @@ internal fun DwMediaCaptureCard(
             if (item != null) {
                 DwMediaAiVerbsRow(item = item, enabled = enabled)
             }
+        }
+        val transcribeItems = ids.mapNotNull { id ->
+            media.resolve(id)?.takeIf { it.remoteMediaId == null && UploadTranscribe.eligible(it.mediaType) }
+        }
+        if (transcribeItems.isNotEmpty()) {
+            TranscribeChoiceRows(
+                items = transcribeItems.map { TranscribeChoiceItem(it.id, it.displayName, it.mediaType) },
+                enabled = enabled,
+                isOn = { key -> transcribeItems.firstOrNull { it.id == key }?.transcribe == true },
+                onChange = { key, on -> media.setTranscribe(key, on) },
+            )
         }
 
         // Blur, resolution and duplicate advice about photographs that are ALREADY here. It sits

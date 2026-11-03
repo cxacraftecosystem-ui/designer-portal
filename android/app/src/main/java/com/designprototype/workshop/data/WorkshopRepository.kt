@@ -1,5 +1,7 @@
 package com.designprototype.workshop.data
 
+import com.designprototype.workshop.transcript.data.TranscribeChoices
+import com.designprototype.workshop.transcript.data.UploadTranscribe
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
@@ -7177,7 +7179,7 @@ class WorkshopRepository(
         onProgress: ((sent: Long, total: Long) -> Unit)?
     ): MediaFileDto {
         val resolvedProcessing = processingRequests
-            ?: if (mediaType == "AUDIO") listOf("TRANSCRIPTION") else emptyList()
+            ?: TranscribeChoices.processingFor(uri.toString(), mediaType)
         val filename = mediaFilename(
             recordType = linkedRecordType,
             recordName = titleHint,
@@ -7592,8 +7594,7 @@ class WorkshopRepository(
             overrideBaseName = overrideBaseName,
             originalName = "media" + (staged.extension?.let { ".$it" } ?: "")
         )
-        val resolvedProcessing = processingRequests
-            ?: if (staged.mediaType == "AUDIO") listOf("TRANSCRIPTION") else emptyList()
+        val resolvedProcessing = processingRequests ?: emptyList()
         val media = completeUpload(
             MediaCompleteRequest(
                 originalFilename = filename,
@@ -9379,6 +9380,7 @@ class WorkshopRepository(
         longitude: Double?,
         workshopTitle: String?,
         batchIndex: Int = 1,
+        transcribe: Boolean? = null,
         /**
          * Called as the bytes leave, `(sent, total)`, or null to send them silently.
          *
@@ -9437,7 +9439,7 @@ class WorkshopRepository(
                 // (`enqueue_stage_transcriptions`), and both paths are idempotent — a clip that
                 // already has a job is skipped — so asking here costs nothing and covers the case
                 // where the stage is held back behind another file.
-                processingRequests = if (mediaType == "AUDIO") listOf("TRANSCRIPTION") else emptyList()
+                processingRequests = UploadTranscribe.processingFor(transcribe, mediaType)
             ),
             target.checksum
         )
@@ -9940,8 +9942,7 @@ internal fun pendingMediaCompleteRequest(
     linkedRecordType = linkedRecordType.blankToNull(),
     linkedRecordId = linkedRecordId.blankToNull(),
     recordedAt = recordedAt,
-    processingRequests = pm.processing
-        ?: if (pm.mediaType == "AUDIO") listOf("TRANSCRIPTION") else emptyList(),
+    processingRequests = pm.processing ?: UploadTranscribe.legacy(pm.mediaType),
     // THE MARKER THE FORM WROTE, CARRIED ACROSS THE OUTBOX — see [PendingMedia.purpose].
     //
     // Nothing else on this path can tell the server what the file is. The filename is built by

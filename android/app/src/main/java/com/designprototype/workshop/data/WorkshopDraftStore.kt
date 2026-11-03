@@ -6,6 +6,7 @@ import android.media.ExifInterface
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
+import com.designprototype.workshop.transcript.data.UploadTranscribe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -193,7 +194,8 @@ data class DraftMedia(
      * again" one tap rather than a support request.
      */
     val uploadFailure: String? = null,
-    val uploadFailedAt: String? = null
+    val uploadFailedAt: String? = null,
+    val transcribe: Boolean? = null
 ) {
     /** True once the server holds these bytes under an id it told us. The only definition of "safe". */
     val isConfirmedRemote: Boolean get() = !remoteMediaId.isNullOrBlank()
@@ -1408,7 +1410,8 @@ object WorkshopDraftStore {
             stageId = stageId,
             fieldKey = fieldKey,
             caption = caption,
-            sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+            sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) },
+            transcribe = if (UploadTranscribe.eligible(inferDraftMediaType(mimeType))) false else null
         ).let { base -> if (base.mediaType == "IMAGE") base.withImageMetadata(target) else base }
 
         // Registration is the only part that needs the lock, and it is a map/list append measured in
@@ -1514,6 +1517,18 @@ object WorkshopDraftStore {
      * them is ever wanted it belongs in a start-up sweep that re-reads the draft under the lock at the
      * moment it decides — `sweepStagedObjects` is the shape of it — and never in a detach.
      */
+    suspend fun setTranscribe(context: Context, workshopId: String, mediaId: String, on: Boolean): DraftMedia? {
+        var changed: DraftMedia? = null
+        update(context, workshopId) { draft ->
+            draft.copy(
+                media = draft.media.map { item ->
+                    if (item.id == mediaId && !item.isConfirmedRemote) item.copy(transcribe = on).also { changed = it } else item
+                }
+            )
+        }
+        return changed
+    }
+
     suspend fun removeMedia(context: Context, workshopId: String, mediaId: String) {
         var removedPath: String? = null
         val doomed = update(context, workshopId) { draft ->
