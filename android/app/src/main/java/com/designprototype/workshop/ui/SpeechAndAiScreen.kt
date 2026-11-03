@@ -54,45 +54,6 @@ import com.designprototype.workshop.ui.designworkshop.rememberDwLanguagePacks
 import com.designprototype.workshop.ui.designworkshop.rememberDwTier2Models
 import kotlinx.coroutines.delay
 
-/**
- * **EVERYTHING ABOUT THIS PHONE'S SPEECH AND AI, ON ONE SCREEN, IN TWO CARDS.**
- *
- * ── WHAT THIS REPLACED ────────────────────────────────────────────────────────────────────────
- *
- * Four cards at the bottom of Appearance & accessibility, measured on the handset's own view
- * hierarchy at roughly **2,300 words**: "Offline dictation languages" (170), "Offline speech engine"
- * (176), "Offline speech model" (188+), and "AI on this phone" (156 plus a nineteen-row language
- * list of 1,207). Beneath two cards about a colour scheme.
- *
- * ── AND WHY IT IS TWO CARDS AND NOT FOUR ──────────────────────────────────────────────────────
- *
- *  * **The engine card is gone entirely.** It described 23.6 MB that is inside the APK and cannot be
- *    anywhere else; it had no state a designer can change and one control, "Check again", which
- *    re-read a fact that cannot vary. The reading is still taken — `dwRecommendTiers` needs it — and
- *    is simply no longer read aloud. See the note at the foot of `DwAsrRuntimeUi.kt`.
- *  * **The model is merged into the dictation card**, because it answers the same question the packs
- *    answer: what can this phone hear with no signal. Two cards made a designer compose the answer
- *    themselves, and `dwAsrModelWhatItBuysSentence` now states the model's contribution **net of what
- *    the packs already give** — which on the fleet's own handset is nothing at all.
- *  * **The 1,207-word coverage list is gone.** Nineteen rows, seventeen of them a paragraph saying
- *    nothing can be done. What a designer needs to know about a language with no offline pack they
- *    meet in the dictation flow, at the moment it costs something — which is where the web puts it.
- *
- * ── WHAT IS DELIBERATELY KEPT ─────────────────────────────────────────────────────────────────
- *
- * The numbers. Device class, free memory, free storage, one line per tier, the model's size and the
- * verdict on this handset. Principle 5: measured things show their number. And the model list, which
- * is where a designer may install a model this device would not have suggested — the suggestion is
- * not binding, and `DwModelChoiceList` still gates that on a named confirmation.
- *
- * ── ONE READING OF THE PHONE, THREE READERS ───────────────────────────────────────────────────
- *
- * The pack controller and the model controller are created HERE and handed down, for the reason this
- * repository has already shipped a defect over: two controllers would bind two `SpeechRecognizer`s
- * and take two readings of one handset moments apart, and the two cards would print two accounts of
- * one fact. `DwDictationRun` remembering a refusal for a pack that had since arrived is that failure,
- * written up in `DwLanguagePackUi.kt`.
- */
 @Composable
 fun SpeechAndAiScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     val languagePacks = rememberDwLanguagePacks(active = true)
@@ -124,27 +85,12 @@ fun SpeechAndAiScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             )
         }
 
-        /*
-         * ---- ONE CARD FOR OFFLINE DICTATION: the packs and the model, which are one question -----
-         *
-         * The packs come first because they are Android's and cost a designer nothing to discover;
-         * the model second because it is 365 MB and its whole value is measured against what the
-         * packs already cover.
-         */
         PreferenceCard {
             PreferenceCardHeading(Icons.Filled.RecordVoiceOver, "Offline dictation")
             DwLanguagePackSettings(languagePacks)
             DwAsrModelBody(asrModel, languageLabels, languagePacks.support)
         }
 
-        /*
-         * ---- AND ONE FOR WHAT THIS PHONE IS, WHICH IS NUMBERS -----------------------------------
-         *
-         * It is second because what it offers is larger and rarer: the Tier 2 language models, which
-         * LiteRT-LM in this APK runs once one is downloaded and verified. The brief's words for it:
-         * *"Keep 'AI on this phone' as the numbers only — class, free memory, free storage, one line
-         * per tier."*
-         */
         PreferenceCard {
             PreferenceCardHeading(Icons.Filled.Memory, "AI on this phone")
             DwDeviceTierBody(asrRuntime.status, asrModel, tier2Models)
@@ -152,28 +98,6 @@ fun SpeechAndAiScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * What this handset is, as numbers, and what each tier makes of them.
- *
- * ── WHAT CAME OFF THIS CARD ───────────────────────────────────────────────────────────────────
- *
- *  * **`DW_TIER_CARD_BLURB`**, a standing paragraph explaining what tiers are. A designer does not
- *    choose a tier; they read a verdict.
- *  * **The nineteen-row coverage list and its summary**, 1,207 words — see the screen's header.
- *  * **`DW_TIER_REPROBE_SENTENCE`**, which explained that the reading is taken again when "Check
- *    again" is tapped. The button says that.
- *  * **The duplicated `runBound` paragraph.** `dwTierOfferSentence` appended `"One run is: "` plus
- *    ~75 words, and `dwModelChoiceSentence` — printed by the model list a few dp below it —
- *    appended the identical string. One card, one screen, the same paragraph twice. It is kept in
- *    the model row, where a designer choosing between models needs it, and dropped from the tier
- *    line, which is a verdict rather than a specification.
- *
- * ── WHAT STAYED, AND WHY THE STALE WARNING IS NOT NARRATION ───────────────────────────────────
- *
- * Free memory and free storage move through a working day, and a figure from twenty minutes ago
- * passed off as the state of the phone is a fabricated measurement — the one thing this lane may not
- * do. [dwProbeIsStale] says so instead.
- */
 @Composable
 private fun DwDeviceTierBody(
     runtime: com.designprototype.workshop.data.DwAsrRuntimeStatus,
@@ -194,13 +118,6 @@ private fun DwDeviceTierBody(
     }
 
     val measurement = reading
-    /*
-     * WHY THIS POLLS INSTEAD OF SLEEPING ONCE FOR THE WHOLE FRESHNESS WINDOW. `delay` runs on a clock
-     * that does not advance while the device is in deep sleep, so a phone put in a pocket for an hour
-     * with this screen open would come back with the timer still part-way through and the card still
-     * claiming a reading from before the walk. Asking `SystemClock.elapsedRealtime()` every fifteen
-     * seconds is what actually notices. The loop ends the moment it turns stale.
-     */
     LaunchedEffect(measurement) {
         val taken = measurement?.takenAtElapsedMs ?: return@LaunchedEffect
         while (!stale) {
@@ -219,16 +136,9 @@ private fun DwDeviceTierBody(
             return@Column
         }
 
-        // THE ENGINE'S STATUS IS PASSED IN, NOT DEFAULTED. Left out, `dwRecommendTiers` would answer
-        // Tier 1 out of an UNKNOWN engine state — "this app could not look at its own files" — which
-        // is a true sentence about a question this screen HAS asked and would print it beside a card
-        // that knows the answer.
-        // THE TIER 2 LOAD FAILURES RECORDED ON THIS HANDSET ARE PASSED IN, so a model that would not
-        // load here is never suggested or offered here again (plan §2.1: a failure is data).
         val failures = remember(probeCount) { DwTier2FailureStore.read(context) }
         val recommendation = dwRecommendTiers(measurement, connection, failures, runtime = runtime)
 
-        // ---- The numbers, first, because they are what a designer reads down a phone line --------
         Text(
             "This phone: ${dwDeviceClassLabel(recommendation.deviceClass)}",
             style = MaterialTheme.typography.bodySmall,
@@ -243,9 +153,6 @@ private fun DwDeviceTierBody(
             Text(DW_TIER_STALE_SENTENCE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.warning)
         }
 
-        // ---- One line per tier --------------------------------------------------------------
-        // Tier 2 says what runs here, or what is suggested, or nothing: a phone that cannot run a
-        // language model is not told so — it is simply not offered one.
         dwTier2TierLine(recommendation.tier2, tier2Models.installed)?.let { line ->
             Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.body)
         }
@@ -260,20 +167,6 @@ private fun DwDeviceTierBody(
             color = MaterialTheme.field.body
         )
 
-        /*
-         * ---- The models a designer may choose from ---------------------------------------------
-         *
-         * THE SUGGESTION IS NOT BINDING, which is why this list exists at all: every measured model
-         * is drawn on every device with what it would cost here, and a designer may install one the
-         * arithmetic would not have suggested after a single confirmation naming the cost.
-         * `DwModelChoiceList` owns that gate, and on the fleet's own handset it is the TIGHT path
-         * that fires — the pinned model's 1.26 GB peak RSS against this phone's free memory fits
-         * physically with the 512 MiB margin gone.
-         *
-         * Tier 2 draws through `DwTier2ModelList` and not through this composable, because
-         * `dwModelChoiceSentence` speaks about transcription, which is false under a proofreader. That
-         * list owns its own download, pause, cancel and remove, through `DwTier2ModelController`.
-         */
         val labels = remember { DW_DICTATION_LANGUAGES.associate { it.tag to it.label } }
         DwModelChoiceList(
             choices = recommendation.tier1Choices,
@@ -296,16 +189,9 @@ private fun DwDeviceTierBody(
     }
 }
 
-/**
- * Whether anything on this phone is mid-install, so the caller can keep a reading warm.
- *
- * Exposed rather than inlined because `MainActivity` uses it to decide whether leaving this screen
- * should be treated as a pause — see `DwAsrModelController.release`, which keeps the part-file.
- */
 internal fun dwSpeechInstallInFlight(state: DwAsrModelState): Boolean =
     state == DwAsrModelState.INSTALLING
 
-/** Ids of models verified on this phone, for the row summary. Thin wrapper, one import. */
 internal fun dwSpeechInstalledModelIds(
     status: com.designprototype.workshop.data.DwAsrModelStatus,
 ): Set<String> = dwAsrInstalledModelIds(status)

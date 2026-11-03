@@ -14,13 +14,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * A Ministry Admin sees Delete in admin chrome (REQUIREMENTS_2026-10-20 §5.4), drawn on a device.
- *
- * The comment row is the record screen's real delete control: its Remove is offered on
- * [LocalMayDelete], which `MainActivity` provides as [mayDelete] — so a Ministry Admin sees it with
- * admin view on AND off (owner, 2026-10-21), and a designer never does. The author's Edit (the PATCH the web already had) is held here too.
- */
 @RunWith(AndroidJUnit4::class)
 class ContentAdminDeleteUiTest {
     @get:Rule
@@ -40,7 +33,6 @@ class ContentAdminDeleteUiTest {
     private fun show(viewer: UserDto, adminView: Boolean, onEdit: () -> Unit = {}, onRemove: () -> Unit = {}) {
         compose.setContent {
             MaterialTheme {
-                // As MainActivity provides them: chrome follows admin view, delete does not.
                 CompositionLocalProvider(
                     LocalContentAdminChrome provides contentAdminChrome(viewer, adminView),
                     LocalMayDelete provides mayDelete(viewer),
@@ -56,12 +48,10 @@ class ContentAdminDeleteUiTest {
         var removed = 0
         show(user("ma", "MINISTRY_ADMIN"), adminView = true, onRemove = { removed++ })
         compose.onNodeWithText("Remove").assertIsDisplayed().performClick()
-        // Asked first: nothing is removed until the confirmation.
         compose.onNodeWithText("Delete this comment?").assertIsDisplayed()
         assertEquals(0, removed)
         compose.onNodeWithText("Delete").performClick()
         assertEquals(1, removed)
-        // Not the author: no Edit.
         compose.onNodeWithText("Edit").assertDoesNotExist()
     }
 
@@ -86,12 +76,9 @@ class ContentAdminDeleteUiTest {
         compose.onNodeWithText("Remove").assertDoesNotExist()
     }
 
-    // ── The record page's "Danger zone" card (owner, 2026-10-21) ─────────────────────────────────
-
     private fun showDangerZone(viewer: UserDto, adminView: Boolean, delete: () -> Unit = {}, deleted: () -> Unit = {}) {
         compose.setContent {
             MaterialTheme {
-                // `adminView` is what MainActivity would hold; the card does not read it (2026-10-21).
                 if (RecordDangerZone.visible(viewer)) {
                     RecordDangerZoneCard(noun = "artisan", delete = { delete() }, onDeleted = deleted, onError = {})
                 }

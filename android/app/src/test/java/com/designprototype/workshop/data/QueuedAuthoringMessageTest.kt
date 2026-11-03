@@ -6,7 +6,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** L11 (audit 21 Oct 2026): the stale Android sentence and comments about questionnaires. */
 class QueuedAuthoringMessageTest {
 
     @Test

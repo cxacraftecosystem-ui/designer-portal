@@ -9,11 +9,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * C10 on the designer portal: a session's read view shows what the server's readers make of it. The
- * readers count the session's live takes and typed answers (`backend/app/questionnaire/readers.py`),
- * so a session with a typed answer and a take no longer lists answers or a recording as missing.
- */
 class SessionReadersTest {
     private fun read(body: String) = ApiClient.json.decodeFromString(QuestionnaireInterviewDetailDto.serializer(), body)
 

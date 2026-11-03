@@ -34,24 +34,13 @@ import com.designprototype.workshop.ui.ActionRow
 import com.designprototype.workshop.ui.Text
 import kotlinx.coroutines.launch
 
-/*
- * C11 (owner decision, 2026-10-17): "Import artisans from a spreadsheet" on stage 3 — the web's
- * `RosterImportPanel`, on the handset. Download the pro-forma (already naming this workshop), fill it
- * in, pick it, upload it; the report is shown in full and the earlier uploads are listed. Online only,
- * like the copy card: the server reads the workbook, and an import report nobody sees is the point of
- * the upload thrown away, so nothing here is queued. After an import the participant rows exist on the
- * server, so the card offers to reload the stage rather than pretending the form already shows them.
- */
-
 @Composable
 internal fun DwRosterImportCard(
     context: Context,
     repository: WorkshopRepository,
-    /** The SERVER id; null for a workshop only this device holds. */
     serverId: String?,
     online: Boolean,
     enabled: Boolean,
-    /** Re-read the stage from the server once an import has added participants. */
     onImported: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()

@@ -11,33 +11,11 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
 
-/**
- * A questionnaire must be attachable to a GRANTED workshop, which lives past the first page.
- *
- * ── THE LIVE READING THIS IS PINNED TO ─────────────────────────────────────────────────────────────
- *
- * Not invented numbers. Against the running API, with an admin having put designer@example.org on
- * cmsik2jg8000eh8xc1lcy661a via `PUT /design-workshops/{id}/viewers`:
- *
- *   GET /api/design-workshops?pageSize=100&page=1 -> total 121, 100 items, granted workshop ABSENT
- *   GET /api/design-workshops?pageSize=100&page=2 ->            21 items, granted workshop at index 20
- *   GET /api/design-workshops/cmsik2jg8000eh8xc1lcy661a          -> 200 (404 before the grant)
- *   POST /api/questionnaires {designWorkshopId: cmsik2jg8000eh8xc1lcy661a} -> 201
- *
- * So the server says yes to the attachment and the picker never offered the row. A grant lands in that
- * position by construction rather than by luck: rows come back `createdAt desc`, and a grant is issued
- * against a workshop that already existed, so it is older than everything the grantee started.
- */
 class QuestionnaireWorkshopPickerTest {
 
     private fun row(id: String, title: String = id, craft: String? = null) =
         DesignWorkshopDto(id = id, title = title, craftName = craft)
 
-    /**
-     * The API's own paging, including the part that caused this: a request for more than
-     * [DW_LIST_PAGE_SIZE] is CLAMPED rather than refused, so a client cannot buy its way out with a
-     * bigger page. Whatever size is asked for, this serves at most a hundred.
-     */
     private fun server(
         rows: List<DesignWorkshopDto>,
         pageSize: Int = DW_LIST_PAGE_SIZE,
@@ -53,12 +31,9 @@ class QuestionnaireWorkshopPickerTest {
         )
     }
 
-    /** The live shape: 120 of the designer's own, then the granted one last. */
     private fun withGrantAtTheEnd(): List<DesignWorkshopDto> =
         (0 until 120).map { row("own-$it") } +
             row("cmsik2jg8000eh8xc1lcy661a", "Ikat cluster, Nuapatna", craft = "Ikat")
-
-    // ── The defect itself ────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `the granted workshop past page one is offered as an attachment target`() {
@@ -75,7 +50,6 @@ class QuestionnaireWorkshopPickerTest {
 
     @Test
     fun `a granted workshop is recognisable by craft and cluster, not just its title`() {
-        // A granted workshop is somebody else's fieldwork under a title the reader did not choose.
         val option = drive(server(withGrantAtTheEnd())).first { it.value == "cmsik2jg8000eh8xc1lcy661a" }
 
         assertEquals("Ikat cluster, Nuapatna", option.label)
@@ -84,9 +58,6 @@ class QuestionnaireWorkshopPickerTest {
 
     @Test
     fun `a designer under the ceiling still costs exactly one request`() {
-        // The other half of the bargain: paging must not tax the ordinary case. A second request goes
-        // out only when the server has already said there is a second page, so the handful-of-workshops
-        // designer on a metered rural connection pays exactly what they paid before this change.
         var calls = 0
         val rows = (0 until 40).map { row("own-$it") }
         val options = drive { page, size -> calls++; server(rows)(page, size) }
@@ -97,26 +68,17 @@ class QuestionnaireWorkshopPickerTest {
 
     @Test
     fun `a workshop with no title is still selectable`() {
-        // A blank label renders as an unpickable-looking empty row; the id behind it is what the
-        // attachment needs, so it must stay offerable rather than be filtered out.
         val options = drive(server(listOf(row("w-1", title = ""))))
 
         assertEquals(1, options.size)
-        assertEquals("Workshop", options.first().label) // NAMING 2.4 generated default
+        assertEquals("Workshop", options.first().label)
         assertEquals("w-1", options.first().value)
     }
 
-    /**
-     * Runs the suspend function to completion on this thread; the fake server never suspends.
-     *
-     * `.options()` with no argument is the CREATE case — nothing attached yet — which is what these
-     * cases are about. The attached-workshop argument has its own case below.
-     */
     private fun drive(
         fetch: suspend (Int, Int) -> DesignWorkshopPageDto
     ): List<com.designprototype.workshop.ui.SelectOption> = walk(fetch).options()
 
-    /** The whole answer, including what happened and whether the walk covered the account. */
     private fun walk(fetch: suspend (Int, Int) -> DesignWorkshopPageDto): AttachableWorkshops {
         var result: AttachableWorkshops? = null
         var failure: Throwable? = null

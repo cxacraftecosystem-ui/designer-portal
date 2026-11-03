@@ -17,14 +17,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * The read-only view of a record whose whole record is its card — an allow-list entry, a roster
- * entry — opened by a tap anywhere on that card (owner ruling, 2026-10-16: a record opens to be
- * read; changing it is the separate "Update"). The web's `RecordDetailsDialog`, on the handset.
- *
- * A row whose value is null or blank is left out rather than printed empty. [onUpdate] draws the
- * Update button; the caller passes it only where the card's own Update would be drawn.
- */
 @Composable
 fun RecordDetailsDialog(
     title: String,

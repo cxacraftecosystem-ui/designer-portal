@@ -22,32 +22,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * What the handset SAYS about the photographs it referenced and could not find.
- *
- * ── THE DEFECT THESE PIN ──────────────────────────────────────────────────────────────────────
- *
- * `imageFor` answers null for any token that is not a LOCAL `DraftMedia.id` with bytes on disk, and
- * both of its consumers used to be `ids.mapNotNull(imageFor)`. That made the residue invisible in
- * every direction at once: no counter, nothing on the export screen (`ReportExport.droppedImages`
- * counts an `ImageRef` whose BYTES failed to load, and an id that never became an `ImageRef` never
- * reaches a writer), no line in the file, and — because `renderMediaAnnexure` returned on
- * `gathered.isEmpty()` — no 'Photographic record' section either, heading and contents entry
- * included.
- *
- * IT IS THE ORDINARY CASE, NOT AN EXOTIC ONE. [reportSourceFor] fills stages this handset never
- * opened from `designWorkshopStages`, and those answers carry the SERVER's `MediaFile` ids, which
- * resolve against nothing in `draft.media`. So a designer exporting a colleague's workshop got every
- * table, every paragraph, not one photograph, and a screen and an export-log row both reporting the
- * file as whole. The bytes are not lost — the office's copy prints them — which is why the sentence
- * these tests assert on says WHERE they are rather than only that they are missing.
- *
- * The assertions are about the SENTENCE and the SECTION, not about block counts: a test that pinned
- * the document's shape would fail on the next legitimate template change and be deleted.
- */
 class ReportUnresolvedMediaTest {
-
-    // ── the registry, cut to the one shape that matters ──────────────────────────────────────────
 
     private fun photoSchema() = SchemaResponse(
         version = "test",
@@ -81,14 +56,6 @@ class ReportUnresolvedMediaTest {
         ),
     )
 
-    /**
-     * A stage as [reportSourceFor] hands it over after a server read: the answers are the server's,
-     * so the three ids in `photos` name `MediaFile` rows this device has never held.
-     *
-     * `m2` APPEARS TWICE ON PURPOSE. The media annexure re-resolves every id the stage sections
-     * already tried, so a count that is not deduplicated reports six missing photographs for four
-     * files — and a number a designer can disprove by counting is a number they stop reading.
-     */
     private fun downloadedDraft() = WorkshopDraft(
         workshopId = "local-test",
         title = "Barpali cluster",
@@ -141,8 +108,6 @@ class ReportUnresolvedMediaTest {
     private val resolvesEverything: (String) -> ImageRef? =
         { id -> ImageRef(source = "/data/media/$id.jpg", widthPx = 1600, heightPx = 1200) }
 
-    // ── the count ────────────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `every media id the document could not resolve is counted once and handed back`() {
         var reported: List<String>? = null
@@ -162,8 +127,6 @@ class ReportUnresolvedMediaTest {
             "DETAILED_TECHNICAL", downloadedDraft(), imageFor = resolvesEverything,
         ) { reported = it }
 
-        // The callback fires on the clean path too — a caller holding a screen counter has to be
-        // able to CLEAR it, or a stale "3 photographs are missing" outlives the file it described.
         assertEquals("the clean path must report an empty list, not nothing", emptyList<String>(), reported)
         assertTrue(
             "no note may appear over a document that is whole:\n${document.warnings}",
@@ -174,8 +137,6 @@ class ReportUnresolvedMediaTest {
             !printedText(document).contains("held in the online workshop record"),
         )
     }
-
-    // ── the screen's copy of it ──────────────────────────────────────────────────────────────────
 
     @Test
     fun `the count reaches the export screen through the document's warnings`() {
@@ -193,8 +154,6 @@ class ReportUnresolvedMediaTest {
             note.contains("held in the online workshop record"),
         )
     }
-
-    // ── the file's copy of it ────────────────────────────────────────────────────────────────────
 
     @Test
     fun `the photographic record annexure keeps its heading and states what is missing`() {
@@ -217,10 +176,6 @@ class ReportUnresolvedMediaTest {
 
     @Test
     fun `a template with no photographic record still says it in the file`() {
-        // COMPACT_SUMMARY carries no ANNEXURE_MEDIA section, so the note has nowhere natural to sit
-        // and goes to the foot of the document instead of nowhere. Four of the six templates are in
-        // this case, and a short report is internally consistent — right cover, right contents,
-        // fewer plates — so the file itself is the only place the gap can be detected.
         val document = build("COMPACT_SUMMARY", downloadedDraft())
 
         assertTrue(
@@ -240,8 +195,6 @@ class ReportUnresolvedMediaTest {
             1, said,
         )
     }
-
-    // ── a workshop that genuinely has no photographs is unchanged ───────────────────────────────
 
     @Test
     fun `a workshop with no media at all prints no annexure and no note`() {

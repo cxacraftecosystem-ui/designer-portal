@@ -4,11 +4,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * An appearance change made offline is kept with its time and, at the next sync, wins over the
- * server's row only when it is the later write (2026-10-16, mirrored from the documentation portal's
- * test of the same name). See `localPreferencesWin` in AppearanceScreen.kt.
- */
 class PreferencesSyncTest {
     private val serverAt = "2026-10-16T08:00:00Z"
     private val serverMs = java.time.Instant.parse(serverAt).toEpochMilli()

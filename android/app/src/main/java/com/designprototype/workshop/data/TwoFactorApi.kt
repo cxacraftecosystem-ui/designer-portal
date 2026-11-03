@@ -8,20 +8,7 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
 
-/**
- * Two-step verification (TOTP) — `/api/auth/two-factor` and the administrator's reset.
- *
- * The mechanism lives on the server (`backend/app/services/two_factor.py`): the code is checked and
- * SPENT there, the recovery codes are hashed there, and the QR square is drawn there as SVG. This
- * file is the wire and nothing else. The field names are snake_case because the designer portal and
- * the documentation portal implement one shared spec with one shape, and this file is meant to be
- * copyable between the two apps.
- *
- * A SERVICE OF ITS OWN, built from [ApiClient.retrofit] for the reason [UsageApi] gives: the bearer
- * header, the 504 retry, the timeouts and the lenient decoder come with it.
- */
 interface TwoFactorApi {
-    /** The second half of a sign-in. Unauthenticated: the challenge token is the whole authority. */
     @POST("auth/two-factor/verify")
     suspend fun verify(@Body body: TwoFactorVerifyRequest): TokenResponse
 
@@ -31,33 +18,22 @@ interface TwoFactorApi {
     @POST("auth/two-factor/setup")
     suspend fun setup(): TwoFactorSetupDto
 
-    /**
-     * Discard a setup that was started and never confirmed. 204, idempotent, and the server conditions
-     * the write on the account being OFF, so it can never switch a confirmed second factor off.
-     */
     @POST("auth/two-factor/setup/cancel")
     suspend fun cancelSetup()
 
     @POST("auth/two-factor/enable")
     suspend fun enable(@Body body: TwoFactorCodeRequest): RecoveryCodesDto
 
-    /** 204 on success. */
     @POST("auth/two-factor/disable")
     suspend fun disable(@Body body: TwoFactorCodeRequest)
 
     @POST("auth/two-factor/recovery-codes")
     suspend fun recoveryCodes(@Body body: TwoFactorCodeRequest): RecoveryCodesDto
 
-    /** An account provisioner turning somebody else's off. Ends that person's sessions. */
     @DELETE("users/{id}/two-factor")
     suspend fun resetForUser(@Path("id") userId: String): UserDto
 }
 
-/**
- * What `POST /auth/login` answers: a session, OR — for an account with two-step verification on — a
- * challenge and no session. One class for both because Retrofit decodes one type per method;
- * [WorkshopRepository]'s sign-in calls turn it into a [SignInOutcome], and nothing else reads it.
- */
 @Serializable
 data class SignInResponse(
     val accessToken: String? = null,
@@ -67,10 +43,8 @@ data class SignInResponse(
     @SerialName("challenge_token") val challengeToken: String? = null,
 )
 
-/** What a first factor led to. */
 sealed interface SignInOutcome {
     data class SignedIn(val user: UserDto) : SignInOutcome
-    /** The account has two-step verification on: ask for a code, then [WorkshopRepository.verifyTwoStep]. */
     data class TwoStepRequired(val challengeToken: String) : SignInOutcome
 }
 
@@ -85,9 +59,7 @@ data class TwoFactorCodeRequest(val code: String)
 
 @Serializable
 data class TwoFactorStatusDto(
-    /** True only once the server CONFIRMED a code. The switch reads this and nothing else. */
     val enabled: Boolean = false,
-    /** A setup was started and may still be finished (under 15 minutes). Never makes [enabled] true. */
     val pending: Boolean = false,
     @SerialName("recovery_codes_remaining") val recoveryCodesRemaining: Int = 0,
     @SerialName("enabled_at") val enabledAt: String? = null,

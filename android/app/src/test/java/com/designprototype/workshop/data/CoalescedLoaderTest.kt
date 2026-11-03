@@ -13,11 +13,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * [CoalescedLoader]: what each caller gets must be exactly what its own single read gave it; what
- * changes is only how many requests carry them. Every per-row card that moved onto it (transcript
- * insights, the signed-URL refresh, the profile's three files) leans on these four properties.
- */
 class CoalescedLoaderTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

@@ -6,7 +6,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The record page's "Danger zone": content admins, admin view or not, and nobody else. */
 class RecordDangerZoneTest {
 
     private fun user(role: String) = UserDto(id = role, email = "$role@example.org", name = role, role = role)
@@ -14,7 +13,6 @@ class RecordDangerZoneTest {
     @Test
     fun `content admins see it whether or not admin view is on`() {
         FieldPermissions.CONTENT_ADMIN_ROLES.forEach { role -> assertTrue(role, RecordDangerZone.visible(user(role))) }
-        // The gate takes no admin view: a Ministry Admin with it off is shown the card (2026-10-21).
         assertTrue(RecordDangerZone.visible(user("MINISTRY_ADMIN")))
         assertTrue(mayDelete(user("MINISTRY_ADMIN")))
         assertFalse("admin view chrome still needs the switch", contentAdminChrome(user("MINISTRY_ADMIN"), adminView = false))
@@ -22,7 +20,6 @@ class RecordDangerZoneTest {
 
     @Test
     fun `no other role ever sees it`() {
-        // A sample below the content admins, not the ladder: `isContentAdmin` is set membership.
         listOf("RESEARCHER", "DESIGNER", "PROFESSOR")
             .forEach { role -> assertFalse(role, RecordDangerZone.visible(user(role))) }
         assertFalse(RecordDangerZone.visible(null))
@@ -39,7 +36,6 @@ class RecordDangerZoneTest {
 
     @Test
     fun `an interview is not deleted permanently and the page says so`() {
-        // H5 (21 Oct 2026): the interview delete is soft; its recordings stay and an admin restores it.
         assertFalse(RecordDangerZone.INTERVIEW_BODY.contains("ermanent"))
         assertTrue(RecordDangerZone.INTERVIEW_BODY.contains("restore"))
         assertTrue(RecordDangerZone.INTERVIEW_CONFIRM_BODY.contains("recordings are kept"))

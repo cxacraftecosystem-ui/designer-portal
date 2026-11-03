@@ -23,39 +23,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.ZipInputStream
 
-/**
- * The answers must reach the BYTES of the file, not merely the block list.
- *
- * ── WHY THIS EXISTS BESIDE [ReportQuestionnaireAnnexureTest] ──────────────────────────────────────
- *
- * That test asserts on `ReportDocument.blocks`, which is the renderer's INPUT. A block list is not a
- * document: this project has already shipped a perfectly valid .docx with a correct cover page and
- * ten paragraphs of nothing behind it, and only unzipping the package revealed it. `word/document.xml`
- * is the artefact a ministry officer actually opens, so that is what is asserted here.
- *
- * TWO THINGS IT PINS THAT THE BLOCK-LEVEL TEST STRUCTURALLY CANNOT:
- *
- *  1. THE REAL TEMPLATE, UNMODIFIED. [ReportQuestionnaireAnnexureTest] proves the section draws by
- *     replacing `DCH_STANDARD.sections` with a one-element list holding only the annexure. That
- *     answers "does the branch run", not "does the annexure survive a document that also contains a
- *     cover, a table of contents, a metric row, twenty-two stages and three other annexures". The
- *     section-walk in `buildWorkshopDocument` is the thing that could drop it, and stripping the
- *     section list removes exactly the code under suspicion.
- *  2. [DocxWriter] EMITTING IT. Every block the annexure produces has to be one the writer knows how
- *     to draw. A block type the writer's `when` does not handle is dropped in silence — no exception,
- *     no warning, a valid package with the section missing — which is the failure this file is named
- *     after.
- *
- * IT WRITES A REAL FILE as well as asserting on the bytes in memory: `app/build/verify-annexure/`
- * holds the .docx after a run, so a human can open it in Word and a reviewer can unzip it without
- * re-deriving the fixture. The assertions do not depend on that file — a read-only build tree costs
- * the artefact and not the test.
- */
 class ReportQuestionnaireDocxTest {
 
-    // ── one workshop, one questionnaire, one answered sitting ────────────────────────────────────
-
-    /** The one string a reader would look for. Distinctive enough to grep the package for. */
     private val ANSWER = "Indigo and madder"
 
     private val cache = DwQuestionnaireCache(
@@ -100,12 +69,6 @@ class ReportQuestionnaireDocxTest {
     private fun text(key: String, label: String) =
         FieldDto(key = key, label = label, type = "TEXT", reportRole = "KEY_VALUE", tier = "BASIC")
 
-    /**
-     * A registry of real stage keys, so the resolved template is the real one.
-     *
-     * Every key here is in `NARRATIVE_ORDER`; an unknown key would make `reportPlanFor` append a
-     * section and raise a warning, which is a different code path from the one under test.
-     */
     private val schema = SchemaResponse(
         version = "verify",
         stages = listOf(
@@ -143,7 +106,6 @@ class ReportQuestionnaireDocxTest {
         ),
     )
 
-    /** The whole report, through the SHIPPED template — nothing stripped, nothing substituted. */
     private fun document(questionnaires: DwQuestionnaireCache?): ReportDocument =
         buildWorkshopDocument(
             schema = schema,
@@ -158,7 +120,6 @@ class ReportQuestionnaireDocxTest {
             questionnaires = questionnaires,
         )
 
-    /** The .docx as the designer would get it, and as a file on disk for anyone who wants to open it. */
     private fun docxBytes(questionnaires: DwQuestionnaireCache?, name: String): ByteArray {
         val out = ByteArrayOutputStream()
         renderDocx(document(questionnaires), { null }, out)
@@ -191,28 +152,11 @@ class ReportQuestionnaireDocxTest {
         return String(entries.getValue("word/document.xml"), Charsets.UTF_8)
     }
 
-    /**
-     * `<w:t>…</w:t>` is where every visible character of a .docx lives.
-     *
-     * CONCATENATED WITH NO SEPARATOR, and that is not laziness. `runsOf` puts every span through
-     * `splitByScript`, so one printed sentence becomes one run PER SCRIPT and one `<w:t>` per run —
-     * an Odia respondent name inside an English sentence is three nodes. Joining on a newline would
-     * make a search for the sentence fail on exactly the handsets this app is built for, and the test
-     * would pass on the developer's Latin-only fixture and lie about the field.
-     */
     private fun visibleText(xml: String): String =
         Regex("<w:t(?: [^>]*)?>(.*?)</w:t>", RegexOption.DOT_MATCHES_ALL)
             .findAll(xml).joinToString("") { it.groupValues[1] }
             .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
 
-    // ── the assertion the lane turns on ──────────────────────────────────────────────────────────
-
-    /**
-     * The whole lane, measured at the only place that counts: the bytes handed to the officer.
-     *
-     * Asserted against the TEXT NODES rather than the raw XML, so a string that happens to appear in
-     * a relationship id, a style name or a comment cannot pass for a printed answer.
-     */
     @Test
     fun `the recorded answer is in the bytes of the exported docx`() {
         val printed = visibleText(documentXml(docxBytes(cache, "with-answers.docx")))
@@ -245,12 +189,6 @@ class ReportQuestionnaireDocxTest {
         )
     }
 
-    /**
-     * The cover page cannot pass for a report.
-     *
-     * The ten-paragraph .docx that shipped here was not empty — it had a correct cover — so a floor
-     * on the paragraph count is what tells "the document rendered" from "the document opened".
-     */
     @Test
     fun `the annexure is not the only thing in the package, and the package is a real docx`() {
         val bytes = docxBytes(cache, "with-answers.docx")
@@ -272,14 +210,6 @@ class ReportQuestionnaireDocxTest {
         )
     }
 
-    /**
-     * THE OTHER HALF, and it is not symmetry for its own sake.
-     *
-     * A handset that has never read this workshop's questionnaire list must produce byte-for-byte the
-     * report this build produced before the annexure existed — no heading, no page break, no
-     * apology — because that is the majority of exports and the argument for keeping the conditional
-     * warning rests on it.
-     */
     @Test
     fun `a device with no copy of the answers writes the document it always wrote`() {
         val without = docxBytes(null, "without-answers.docx")
@@ -291,16 +221,9 @@ class ReportQuestionnaireDocxTest {
                 "answered', which is a false statement about somebody's fieldwork",
             printed.contains("Annexure — Questionnaire responses"),
         )
-        // The rest of the report is untouched: the cover still names the workshop.
         assertTrue("the report itself must still be there", printed.contains("Barpali cluster"))
     }
 
-    /**
-     * A questionnaire the device knows is attached and whose answers it does not hold is NAMED.
-     *
-     * Silence here is the defect the lane exists to end: it asserts by omission that the fieldwork
-     * does not exist. Measured in the file, because that is where the assertion is made.
-     */
     @Test
     fun `an attached questionnaire without its answers is named in the file itself`() {
         val unread = DwQuestionnaireCache(

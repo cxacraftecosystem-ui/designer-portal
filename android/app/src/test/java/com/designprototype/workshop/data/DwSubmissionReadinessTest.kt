@@ -10,25 +10,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * [DwSubmissionReadiness] on its own — no Compose, no server, no filesDir.
- *
- * Case for case the same spec as `frontend/e2e/submission-readiness-unit.spec.ts`, which is the
- * specification both clients answer to. A case that file covers and this one does not is a place the
- * two screens are free to disagree about whether a workshop may be submitted.
- *
- * THE ASSERTION THIS FILE EXISTS FOR is the last one: the blocking list must be exactly
- * [DwStageCompleteness.missing], entry for entry. That module claims in its header that it assembles
- * the existing scorer rather than re-deriving completeness, and a claim like that decays the moment
- * nobody checks it — someone adds "…and also warn when a collection is empty", the readiness screen
- * starts naming obstacles the Save button is perfectly happy with, and the designer it was written
- * for learns to distrust it. Everything above that test is the behaviour a reader would expect;
- * `agrees with the scorer, entry for entry` is the invariant.
- *
- * The fixture is hand-built rather than read from the bundled registry asset, for the reason
- * `DesignWorkshopListingTest` gives: a fixture that changed when somebody edited stage 5 would make
- * every failure here ambiguous.
- */
 class DwSubmissionReadinessTest {
 
     private val workshopId = "cmspecworkshop00000000001"
@@ -51,11 +32,7 @@ class DwSubmissionReadinessTest {
                         fields = listOf(
                             FieldDto(key = "craftName", label = "Craft name", type = "TEXT", tier = "BASIC", required = true),
                             FieldDto(key = "venue", label = "Venue", type = "TEXT", tier = "BASIC", required = true),
-                            // Optional, and unfilled: it must reach `advisory` and never the blocking list.
                             FieldDto(key = "weather", label = "Weather", type = "TEXT", tier = "STANDARD", required = false),
-                            // Deprecated AND required: a dead input no form draws, so it must be
-                            // skipped entirely — listing it would send a designer hunting for a box
-                            // that does not exist.
                             FieldDto(
                                 key = "oldCode", label = "Old code", type = "TEXT", tier = "BASIC",
                                 required = true, deprecated = true,
@@ -104,15 +81,12 @@ class DwSubmissionReadinessTest {
         ),
     )
 
-    // ── The fixture, in the draft store's own shape ──────────────────────────────────────────────
-
     private fun stage(
         stageKey: String,
         singleton: Map<String, JsonElement> = emptyMap(),
         rows: List<DraftRow> = emptyList(),
     ) = StageDraft(stageId = stageKey, values = singleton, rows = rows)
 
-    /** A collection row whose client key — the suffix of [DraftRow.id] — is what a link names. */
     private fun row(entityKey: String, rowKey: String, values: Map<String, JsonElement>) =
         DraftRow(id = dwRowId(entityKey, rowKey), values = values)
 
@@ -121,10 +95,6 @@ class DwSubmissionReadinessTest {
 
     private fun text(value: String): JsonElement = JsonPrimitive(value)
 
-    /**
-     * Stage 1 half-answered; two prototype rows, the first missing its material, both missing
-     * captions; stage 20 answered with a template this registry does offer.
-     */
     private val draft = draftWith(
         stage("SETUP", singleton = mapOf("craftName" to text("Sambalpuri bandha"))),
         stage(
@@ -144,14 +114,9 @@ class DwSubmissionReadinessTest {
 
     private fun labels(): List<String> = readiness.blocking.map { it.label }
 
-    // ── What blocks, and what does not ───────────────────────────────────────────────────────────
-
     @Test
     fun `an unfilled required field blocks and an unfilled optional one does not`() {
         assertTrue(labels().contains("Venue"))
-        // "Weather" is STANDARD tier. It has to be absent from the blocking list entirely — a
-        // Standard gap that appeared beside a Basic one would tell a designer to do work no submit
-        // is waiting on.
         assertFalse(labels().contains("Weather"))
         assertTrue(readiness.advisory.map { it.stageKey }.contains("SETUP"))
     }
@@ -159,16 +124,11 @@ class DwSubmissionReadinessTest {
     @Test
     fun `a filled field is not listed, and a deprecated one is never listed at all`() {
         assertFalse(labels().contains("Craft name"))
-        // The dead input. [computeStageCompleteness] skips it, so this module must never surface it —
-        // a designer sent to find "Old code" would search a form that has not drawn that box since it
-        // was retired.
         assertFalse(labels().contains("Old code"))
     }
 
     @Test
     fun `a collection's missing field is one entry that says how many rows it covers`() {
-        // De-duplicated by label exactly as the server de-duplicates it, so eleven prototypes missing
-        // a material are one item and not eleven.
         assertEquals(1, labels().count { it == "Prototypes: Photograph caption" })
 
         val caption = readiness.blocking.first { it.label == "Prototypes: Photograph caption" }
@@ -179,8 +139,6 @@ class DwSubmissionReadinessTest {
         assertEquals("only the first row is missing its material", 1, material.address?.occurrences)
         assertEquals(2, material.address?.rowCount)
     }
-
-    // ── Being able to act on an entry ────────────────────────────────────────────────────────────
 
     @Test
     fun `every entry deep-links to its own stage, and a collection entry to its own row`() {
@@ -193,8 +151,6 @@ class DwSubmissionReadinessTest {
         }
 
         val material = readiness.blocking.first { it.label == "Prototypes: Material" }
-        // The FIRST offending row keeps the link — proto-1 is the one without a material, and proto-2
-        // has one, so a link naming proto-2 would land the designer on a row that is already answered.
         assertEquals(
             "/design-workshops/$workshopId/stages/PROTOTYPE?find=prototype.material&row=proto-1",
             material.href,
@@ -210,23 +166,10 @@ class DwSubmissionReadinessTest {
     @Test
     fun `a caption anchors to the media field it is drawn under, not to itself`() {
         val caption = readiness.blocking.first { it.label == "Prototypes: Photograph caption" }
-        // A caption input has no wrapper of its own — it is drawn beneath its media field — so
-        // focusing `photoCaption` would scroll to nothing and the item would land on the stage with
-        // no highlight.
         assertEquals("photo", caption.address?.anchorFieldKey)
         assertTrue(caption.href.contains("find=prototype.photo"))
     }
 
-    // ── What the handset navigates by ────────────────────────────────────────────────────────────
-
-    /**
-     * The href is for people; [DwStageFocus] is for this client.
-     *
-     * `AndroidManifest.xml` declares MAIN/LAUNCHER and nothing else, so there is nothing here that
-     * could open `/design-workshops/…?find=…`. If the two ever described different boxes, the
-     * designer would be sent to one field and told about another — so they are asserted against each
-     * other rather than each against a literal.
-     */
     @Test
     fun `the focus a handset navigates by names the same box as the href a person pastes`() {
         for (item in readiness.blocking) {
@@ -250,15 +193,11 @@ class DwSubmissionReadinessTest {
         )!!
         assertEquals("prototype", material.entityKey)
         assertEquals("material", material.fieldKey)
-        // The row the stage screen opens. It is the `_clientKey`, which is what `CollectionRow.rowId`
-        // holds — a focus naming anything else would expand no row and land on a closed heading.
         assertEquals("proto-1", material.rowKey)
 
         val caption = DwSubmissionReadiness.focusOf(
             readiness.blocking.first { it.label == "Prototypes: Photograph caption" }
         )!!
-        // The MEDIA field, not the caption's own key: a caption input is drawn inside the field it
-        // describes and has no wrapper to scroll to.
         assertEquals("photo", caption.fieldKey)
 
         val venue = DwSubmissionReadiness.focusOf(readiness.blocking.first { it.label == "Venue" })!!
@@ -267,14 +206,6 @@ class DwSubmissionReadinessTest {
         assertEquals("a singleton has no row to open", null, venue.rowKey)
     }
 
-    /**
-     * The screen looks each label up by the string it is already printing.
-     *
-     * The stage index renders [DwStageCompleteness.missing] verbatim and asks this map where each
-     * entry lives. A key that did not match the printed label character for character would produce
-     * a list that silently stopped being tappable — which looks exactly like the inert list this
-     * replaced.
-     */
     @Test
     fun `the address book is keyed by the label the scorer produced`() {
         val book = DwSubmissionReadiness.addressBook(readiness)
@@ -286,11 +217,8 @@ class DwSubmissionReadinessTest {
                 )
             }
         }
-        // A stage with nothing outstanding contributes no entry at all rather than an empty map.
         assertFalse(book.containsKey("REPORT_GENERATION"))
     }
-
-    // ── The report's checks, beyond the fields ───────────────────────────────────────────────────
 
     @Test
     fun `a stage-20 template this build does not offer is reported, and a known one is not`() {
@@ -310,8 +238,6 @@ class DwSubmissionReadinessTest {
             check,
         )
         assertTrue(check!!.href.contains("find=reportSettings.templateId"))
-        // The token is quoted back verbatim, because the designer has to recognise the answer they
-        // are being asked to re-pick.
         assertTrue(check.detail.contains("\"MINISTRY_2031\""))
     }
 
@@ -333,8 +259,6 @@ class DwSubmissionReadinessTest {
         )
         assertTrue(withAnswers.checks.map { it.id }.contains("stage-excluded:SETUP"))
 
-        // Excluding an EMPTY stage is exactly what the setting is for. Warning about it would train a
-        // designer to skim this section, and then the one warning that mattered would go unread too.
         val empty = DwSubmissionReadiness.assess(
             registry,
             draftWith(
@@ -351,23 +275,6 @@ class DwSubmissionReadinessTest {
         assertFalse(empty.checks.map { it.id }.contains("stage-excluded:SETUP"))
     }
 
-    /**
-     * The two checks, reachable by the screen that has to SAY them.
-     *
-     * ── THE DEFECT THIS PINS ──────────────────────────────────────────────────────────────────────
-     *
-     * `reportChecks` was private and [DwSubmissionReadiness.assess] was its only route out. The one
-     * caller of `assess` in `main/` is the stage index, which reads `blocking` and nothing else — so
-     * both checks were computed on every stage-index open and rendered nowhere, while the exclusion
-     * they warn about was honoured in full: `applyReportSettings` drops the section from the file and
-     * the Data completeness annexure in that same file scores the dropped stage as complete. A stage
-     * of captured work left the building and no surface said a word.
-     *
-     * THE ASSERTION IS AGREEMENT, not the checks themselves — those are covered by the two tests
-     * above, through `assess`. What must never drift is that the report screen and the readiness
-     * screen answer this question the same way; a second route to the same fact is exactly how the
-     * two screens would come to disagree about which stages are in the delivered document.
-     */
     @Test
     fun `the report screen reaches the same two checks assess computes, entry for entry`() {
         val exporting = draftWith(
@@ -398,17 +305,6 @@ class DwSubmissionReadinessTest {
         )
     }
 
-    /**
-     * WHICH COPY THE CHECKS ARE SCORED FROM, which is the report screen's own decision and the
-     * reason this overload takes scores instead of computing them.
-     *
-     * The export screen builds its document from the MERGED draft — this device's work with the
-     * stages it downloaded for this export filled in around it (`reportSourceFor`) — and prints its
-     * completeness percentage from the same scores. Scoring the exclusion check against the LOCAL
-     * draft alone would read the excluded stage as empty on exactly the workshop that most needs the
-     * warning: one captured on a colleague's handset, where every answer being dropped from the file
-     * arrived from the server ten seconds ago.
-     */
     @Test
     fun `an excluded stage is judged by the copy being exported, not by the local one`() {
         val settings = stage(
@@ -418,9 +314,7 @@ class DwSubmissionReadinessTest {
                 "excludedStages" to buildJsonArray { add("SETUP") },
             ),
         )
-        // What this handset itself has for stage 1: nothing. The stage was captured elsewhere.
         val localOnly = draftWith(settings)
-        // What `reportSourceFor` hands the exporter: the server's copy of stage 1, merged in.
         val merged = draftWith(
             stage("SETUP", singleton = mapOf("craftName" to text("Sambalpuri bandha"))),
             settings,
@@ -450,8 +344,6 @@ class DwSubmissionReadinessTest {
         assertEquals("1 of 3 stages complete · 3 required fields left", dwStageProgressLine(header))
     }
 
-    // ── Saying it honestly ───────────────────────────────────────────────────────────────────────
-
     @Test
     fun `the summary counts stages and fields rather than printing a percentage`() {
         assertEquals(
@@ -459,8 +351,6 @@ class DwSubmissionReadinessTest {
                 "required fields remain in ${readiness.blockedStages} stages.",
             DwSubmissionReadiness.summary(readiness),
         )
-        // Spelled out as well as composed, so the sentence cannot be satisfied by a readiness object
-        // that counts the fixture wrongly in two places at once.
         assertEquals(
             "1 of 3 stages complete; 3 required fields remain in 2 stages.",
             DwSubmissionReadiness.summary(readiness),
@@ -477,8 +367,6 @@ class DwSubmissionReadinessTest {
             ),
             workshopId,
         )
-        // No prototype rows at all: an empty collection contributes nothing, which is a legitimate
-        // state and NOT an obstacle — the same rule `stage_completeness` applies.
         assertTrue(done.isSubmittable)
         assertEquals("3 of 3 stages complete; no required fields remain.", DwSubmissionReadiness.summary(done))
     }
@@ -499,31 +387,10 @@ class DwSubmissionReadinessTest {
         )
     }
 
-    // ── The invariant ────────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `the blocking list agrees with the scorer, entry for entry`() {
-        /*
-         * THE WHOLE CONTRACT OF THIS MODULE. If these two ever disagree, a second completeness
-         * algorithm has grown here — and the readiness screen and the Save button would then be
-         * giving a designer two different answers to "may I submit this?".
-         *
-         * ASSERTED OVER SEVERAL DRAFTS, and that is not thoroughness for its own sake. Written
-         * against the main fixture alone this test PASSED against a deliberately planted drift ("an
-         * empty collection is also an obstacle"), because that fixture happens to have rows in its
-         * only collection — the one shape the bug needed to show itself was the one shape the fixture
-         * did not have. An empty draft, a draft with populated collections and a finished draft are
-         * the three states a real workshop passes through, and the invariant has to hold in all of
-         * them or it is not an invariant.
-         *
-         * The fourth state is this client's alone: NO DRAFT AT ALL. A stage index opened on a record
-         * the phone has only ever seen in a list has nothing on disk, and "every required field is
-         * outstanding" has to come out of that rather than a crash.
-         */
         val drafts = linkedMapOf<String, WorkshopDraft?>(
             "the half-filled fixture" to draft,
-            // Nothing recorded at all — every collection empty, which is a legitimate day-one state
-            // and the case the planted drift got wrong.
             "an untouched workshop" to draftWith(),
             "a workshop with no draft on this device" to null,
             "stage 1 only" to draftWith(stage("SETUP", singleton = mapOf("craftName" to text("Sambalpuri bandha")))),
@@ -552,7 +419,6 @@ class DwSubmissionReadinessTest {
                 fromScorer.isEmpty(),
                 assessed.isSubmittable,
             )
-            // The counts are the scorer's too, not re-totalled from the item list.
             assertEquals("$name: filled count", scores.sumOf { it.requiredFilled }, assessed.requiredFilled)
             assertEquals("$name: required total", scores.sumOf { it.requiredTotal }, assessed.requiredTotal)
         }

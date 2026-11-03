@@ -9,7 +9,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** L9 (audit 21 Oct 2026): soft delete and restore of questionnaires and sittings on Android. */
 class QuestionnaireTrashTest {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -51,7 +50,6 @@ class QuestionnaireTrashTest {
             "@Query(\"deletedOnly\")",
         ).forEach { assertTrue(it, api.contains(it)) }
         val list = qLiveSource("app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireListScreen.kt").readText()
-        // The trash is offered to designers too (their own forms) and to content admins (every form).
         assertTrue(list.substringBefore("DeletedQuestionnairesCard(").takeLast(900).contains("FieldPermissions.canRunDesignWorkshops(trashUser)"))
         assertTrue(list.contains("ownOnly = !mayDeleteQuestionnaireItems(trashUser),"))
         val detail = qLiveSource("app/src/main/java/com/designprototype/workshop/ui/questionnaires/QuestionnaireDetailScreen.kt").readText()

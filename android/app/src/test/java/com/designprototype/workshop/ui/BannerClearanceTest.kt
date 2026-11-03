@@ -4,7 +4,6 @@ import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** The banner stack's footprint: added to a page's end while it shows, nothing once it is gone. */
 class BannerClearanceTest {
 
     @Test

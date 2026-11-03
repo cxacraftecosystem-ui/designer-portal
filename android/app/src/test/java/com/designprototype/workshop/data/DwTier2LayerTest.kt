@@ -7,14 +7,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * **THE LAYERING LAW, ASSERTED ON THE DEVICE SIDE BEFORE ANY DEVICE CAN BREAK IT.**
- *
- * Five rules, five groups of assertions, and two of them read this repository's own source rather than
- * calling a function — because "no path names a stage entry as writable" and "neither money gate is
- * wired" are properties of the FILE, and a test that only exercised the happy path would go on passing
- * the day somebody imported a consent check into it.
- */
 class DwTier2LayerTest {
 
     private val provenance = DwTier2Provenance(
@@ -32,26 +24,9 @@ class DwTier2LayerTest {
         provenance = provenance,
     )
 
-    /** This file's own source, for the two rules that are properties of the code. */
     private fun layerSource(): String =
         File("src/main/java/com/designprototype/workshop/data/DwTier2Layer.kt").readText()
 
-    /**
-     * The same source with its comment lines dropped. **THE ASSERTIONS BELOW READ THIS, NOT THE RAW
-     * TEXT, AND THE FIRST RUN OF THIS FILE IS WHY.**
-     *
-     * The stage-entry rule asserted that the string `DwStageEntry` appears nowhere in
-     * `DwTier2Layer.kt` — and that file's own header explains the rule by naming the type, in a KDoc
-     * link. So the test failed on the paragraph that states the thing it is checking, which is the
-     * crudest possible false positive: it would have been "fixed" either by weakening the rule or by
-     * deleting the explanation, and the explanation is load-bearing here.
-     *
-     * Dropping comment lines keeps the rule exactly as strong where it matters — no declaration,
-     * import, parameter or call may name it — and lets the prose say what the code may not do. It is
-     * the same split `docs/DEVICE-TIER-MEASUREMENT.md` uses for its own greps
-     * (`grep -v "^[^:]*:[0-9]*: *\*"`), for the same reason. **Imports survive the filter**, which
-     * matters: an import is code, and the import assertions below depend on seeing it.
-     */
     private fun layerCode(): String = layerSource()
         .lines()
         .filterNot { line ->
@@ -60,24 +35,8 @@ class DwTier2LayerTest {
         }
         .joinToString("\n")
 
-    // -----------------------------------------------------------------------------------------
-    // Rule 1 and 5: a row, never an edit, and nothing addresses a designer's own words
-    // -----------------------------------------------------------------------------------------
-
     @Test
     fun `nothing in the device layer contract can address a stage entry`() {
-        /*
-         * `DwStageEntry` IS THE POSTGRES TABLE, NOT A KOTLIN TYPE, and the first version of this test
-         * forbade only that name. Checked: the string occurs in the whole of `android/app/src` five
-         * times, every one of them a comment or this test's own message, because **there is no Kotlin
-         * declaration called `DwStageEntry`** — the server's Prisma model is what carries that name
-         * (`dictation_consent.STAGE_TABLE = "DwStageEntry"`). So the rule was spelled in a vocabulary
-         * no Kotlin code could ever use, and `dwTier2Apply(entry: StageEntryBody)` — the actual shape
-         * of the defect — would have passed it.
-         *
-         * The names below are what a device-side path to a designer's own words is really spelled
-         * with, each verified to exist by `every symbol the gate rule forbids…`.
-         */
         STAGE_ENTRY_SYMBOLS.forEach { symbol ->
             assertFalse(
                 "“$symbol” is how a designer's own writing is addressed on this device. A Tier 2 " +
@@ -88,8 +47,6 @@ class DwTier2LayerTest {
                 layerCode().contains(symbol)
             )
         }
-        // AND THE BODY HAS NO SHAPE THAT COULD ADDRESS ONE. Not the same assertion: a body carrying a
-        // field key would let a server apply the text even with no mention of the Kotlin type here.
         val body = dwTier2LayerBody(draft)
         listOf("fieldKey", "stageKey", "entryId", "value", "apply", "replace").forEach { forbidden ->
             assertFalse(
@@ -98,10 +55,6 @@ class DwTier2LayerTest {
             )
         }
     }
-
-    // -----------------------------------------------------------------------------------------
-    // Rule 2: provenance is mandatory, and the tier is not a field
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `a run that cannot say what produced it cannot be constructed`() {
@@ -118,7 +71,6 @@ class DwTier2LayerTest {
                 thrown is IllegalArgumentException
             )
         }
-        // The one legitimate way to say nothing is to say it in a word that shows up in a diff.
         assertEquals("UNRECORDED", DW_TIER2_UNRECORDED)
         DwTier2Provenance(
             provider = DW_TIER2_UNRECORDED,
@@ -141,13 +93,6 @@ class DwTier2LayerTest {
         assertEquals("2026-08-13T03:10:00+05:30", body["producedAt"])
         assertEquals("layer_abc", body["sourceLayerId"])
 
-        /*
-         * NO `tier` IN THE BODY, AND THIS IS THE ASSERTION THAT KEEPS THE PROVENANCE COLUMN WORTH
-         * READING. `AiLayerRegisterIn`'s own docstring: a body that could claim TIER_1 for cloud
-         * output "would make the tier column — the one thing that lets a reviewer tell a
-         * phone-produced transcript from a cloud-produced one — worth nothing". The five existing
-         * verb routes fix TIER_3 from a module constant; a device route fixes TIER_2 the same way.
-         */
         assertFalse(body.keys.any { it.equals("tier", ignoreCase = true) })
         assertEquals("but the tier of an on-device run is not in doubt", "TIER_2", DW_TIER2_TIER)
     }
@@ -163,39 +108,20 @@ class DwTier2LayerTest {
         val supplied = dwTier2LayerBody(
             draft.copy(verb = DwTier2Verb.EXPANDED, source = DwTier2Source.SuppliedText("terse note"))
         )
-        /*
-         * `sourceText`, NOT `suppliedText`. The three source keys are named after the three Postgres
-         * columns the `DwAiLayer_source_is_exactly_one` CHECK counts — `sourceMediaId`,
-         * `sourceLayerId`, `sourceText` — so the migration and this file use one vocabulary. The
-         * string `suppliedText` appears nowhere in `backend/`; what exists there is the internal
-         * factory `ai_layers.LayerSource.supplied_text()`, which is a Python method and not a wire key.
-         */
         assertEquals("terse note", supplied["sourceText"])
         assertFalse(
             "suppliedText is not a name anything in this system uses on the wire",
             supplied.keys.any { it.equals("suppliedText", ignoreCase = true) }
         )
-        // Exactly one source key, ever. Two would let a reviewer read the wrong evidence rung.
         listOf(supplied, dwTier2LayerBody(draft)).forEach { body ->
             assertEquals(
                 1,
                 body.keys.count { it in setOf("sourceLayerId", "sourceMediaId", "sourceText") }
             )
         }
-        /*
-         * THE TWO PROSE KEYS, PINNED TOGETHER, BECAUSE THEY ARE THE COLLISION. `text` is what the
-         * model WROTE; on the five verb routes that exist today `text` is the passage a verb is run
-         * OVER. A route that confused them would run the server's own Tier 3 chain over Gemma's output
-         * and charge `ai_verb_cap` for a feature that is supposed to spend nothing. See
-         * `dwTier2LayerBody`'s KDoc. If either name changes, that argument needs re-reading.
-         */
         assertEquals("the model's own words", "The warp was set on a pit loom.", supplied["text"])
         assertEquals("and the words it was given", "terse note", supplied["sourceText"])
     }
-
-    // -----------------------------------------------------------------------------------------
-    // Rule 3: inert until a person accepts it
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `a device cannot post an already-accepted row`() {
@@ -213,15 +139,8 @@ class DwTier2LayerTest {
         )
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Rule 4: neither money gate is wired, and the file may not so much as mention them
-    // -----------------------------------------------------------------------------------------
-
     @Test
     fun `no consent check and no daily cap stands in front of a model that runs on this phone`() {
-        // CODE, NOT PROSE — the file's own argument for NOT wiring these has to be able to name them,
-        // and DW_TIER2_NO_GATES_NOTE is that argument. What may not appear is a call or a reference,
-        // and GATE_SYMBOLS is the list of things such a reference would be spelled with.
         val source = layerCode()
         GATE_SYMBOLS.forEach { symbol ->
             assertFalse(
@@ -238,29 +157,6 @@ class DwTier2LayerTest {
         )
     }
 
-    /**
-     * **THE TEST OF THE TEST ABOVE, AND IT EXISTS BECAUSE THE FIRST VERSION OF THAT TEST WAS
-     * VACUOUS.**
-     *
-     * It forbade five spellings — `dwDictationConsent(`, `DwDictationConsentState`,
-     * `dwDictationAllowance(`, `DwDictationAllowance(`, `dwCapRemaining` — and **four of the five
-     * exist nowhere in this repository.** The consent enum is [DwTier3Consent], the reader is
-     * [dwTier3ConsentOf], the allowance reader is [dwDictationAllowanceOf] and the cap reader is
-     * [dwDictationCapView]; not one of those was on the list. The fifth, `DwDictationAllowance(`,
-     * only ever matches a CONSTRUCTOR call, so naming the type in a parameter — which is how a gate
-     * is actually plumbed — slipped past it too.
-     *
-     * It also asserted that neither module was IMPORTED. `DwDictationConsent.kt`,
-     * `DwDictationAllowance.kt` and `DwTier2Layer.kt` are all in
-     * `com.designprototype.workshop.data`, so **a same-package reference needs no import and that
-     * assertion could never fire.** Verified by wiring a working gate into `DwTier2Layer.kt` —
-     * `dwTier3ConsentOf(token) != GRANTED` and `dwDictationCapView(...).spent`, exactly the
-     * regression the rule is for — and watching all nine tests in this class pass.
-     *
-     * So this test pins the mechanism rather than the outcome: every name in [GATE_SYMBOLS] must
-     * still be a real symbol somewhere in the app's own sources. Rename one and this goes red,
-     * pointing at the list, instead of the rule quietly ceasing to check anything.
-     */
     @Test
     fun `every symbol the gate rule forbids is a symbol that really exists`() {
         val mainSources = File("src/main/java/com/designprototype/workshop")
@@ -280,17 +176,7 @@ class DwTier2LayerTest {
     }
 
     private companion object {
-        /**
-         * **THE REAL NAMES OF THE TWO MONEY GATES.** Every one verified by
-         * `every symbol the gate rule forbids is a symbol that really exists` to still exist.
-         *
-         * Deliberately NOT `dwModelNeedsConsent`, which is a different thing wearing the same word:
-         * that is the one confirmation a designer taps before installing a model this handset calls
-         * TIGHT, it spends nothing and discloses nothing, and forbidding it here would forbid the
-         * install flow Tier 2 is supposed to have.
-         */
         val GATE_SYMBOLS: List<String> = listOf(
-            // The Tier 3 send-consent gate: an artisan's recording leaving the handset.
             "DwTier3Consent",
             "dwTier3ConsentOf",
             "dwTier3ConsentToken",
@@ -299,7 +185,6 @@ class DwTier2LayerTest {
             "dwRecordDictationConsent",
             "DwDictationConsentRefused",
             "DwDictationConsentRow",
-            // The daily ceiling on provider spend.
             "DwDictationAllowance",
             "dwDictationAllowanceOf",
             "DwDictationAllowanceStore",
@@ -309,36 +194,17 @@ class DwTier2LayerTest {
             "dwDictationCapSpentRecord",
         )
 
-        /**
-         * **HOW A DESIGNER'S OWN WRITING IS ADDRESSED ON THIS DEVICE.** None of these may appear in
-         * `DwTier2Layer.kt`'s code.
-         *
-         * `DwStageEntry` is kept at the end and is the server's Prisma model name rather than a
-         * Kotlin declaration — it cannot be constructed here, which is why it needed the four above
-         * it. It stays because it is what the row is called everywhere else in this system, and a
-         * developer reaching for it by that name should still trip.
-         */
         val STAGE_ENTRY_SYMBOLS: List<String> = listOf(
-            // The wire body one stage entry is PUT as — the shape an "apply this" call would take.
             "StageEntryBody",
-            // One entry as it was last sent, used by the refusal decoder.
             "DwSentEntry",
-            // Where the designer's typed words live on the handset before they are sent.
             "WorkshopDraftStore",
-            // One stage as the server describes it, entries and all.
             "StageDto",
-            // The Postgres table. Not a Kotlin type; see the KDoc above.
             "DwStageEntry",
         )
 
-        /** The subset of [STAGE_ENTRY_SYMBOLS] that is real Kotlin, for the existence guard. */
         val STAGE_ENTRY_SYMBOLS_THAT_ARE_KOTLIN: List<String> =
             STAGE_ENTRY_SYMBOLS - "DwStageEntry"
     }
-
-    // -----------------------------------------------------------------------------------------
-    // The verbs that are real, and the one that is not
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `subtitles is not a device verb, because nothing on the phone returns a timing`() {
@@ -353,10 +219,6 @@ class DwTier2LayerTest {
             DwTier2Verb.entries.any { it.name == "SUBTITLES" }
         )
     }
-
-    // -----------------------------------------------------------------------------------------
-    // The write path exists, and the body is the one the route takes
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `nothing blocks a device layer now, because the runtime is in the APK and the route exists`() {

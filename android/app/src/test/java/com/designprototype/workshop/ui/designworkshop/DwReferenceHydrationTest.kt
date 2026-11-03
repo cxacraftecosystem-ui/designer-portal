@@ -28,31 +28,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * What a chosen reference writes onto the row on THIS surface, and what the phone then prints.
- *
- * ── WHY BOTH HALVES ARE IN ONE FILE ───────────────────────────────────────────────────────────
- *
- * The handset builds its own report from the local draft, with no signal and no server to correct
- * it, so a field that hydrates and never prints — or prints and never hydrates — is a hole in the
- * copy handed to a visiting officer at the close of the workshop, and nothing on the device says
- * so. The tests below therefore walk the same path the paper copy takes: resolve the record onto
- * the row, then render the row and look for the words.
- *
- * ── THE DEFECT THAT MADE THIS FILE NECESSARY ──────────────────────────────────────────────────
- *
- * Hydration here used to write `option.data` into any box whose key happened to match. The server
- * has never worked that way — `REFERENCE_HYDRATION` maps the reference model's vocabulary onto the
- * entity's, and the two are deliberately different — and the collision is not hypothetical: on
- * `existingProduct` the payload's `data["name"]` is the ARTISAN's name under `artisanRef`, while
- * the entity's own `name` field means the PRODUCT. So choosing the artisan wrote her name into the
- * product column of a ministry report, the server's only-fill-blanks rule then refused to correct
- * it at save, and the web — which has always carried the mapping — filled the same row correctly.
- * One surface, one wrong word, permanent.
- */
 class DwReferenceHydrationTest {
-
-    // ── The registry, cut to the entities these references fill ──────────────────────────────────
 
     private fun text(key: String, label: String, role: String = "KEY_VALUE") =
         FieldDto(key = key, label = label, type = "TEXT", reportRole = role)
@@ -63,7 +39,6 @@ class DwReferenceHydrationTest {
             reportRole = "HIDDEN", refHydration = hydration,
         )
 
-    /** Stage 5's process step, as the server declares it. */
     private val processStepFields = listOf(
         FieldDto(key = "stepNumber", label = "Step", type = "INT", reportRole = "TABLE_COLUMN"),
         ref(
@@ -78,7 +53,6 @@ class DwReferenceHydrationTest {
         ),
     )
 
-    /** Stage 6's existing product: the entity the name collision lives on. */
     private val existingProductFields = listOf(
         ref("artisanRef", "Artisan", "Artisan", mapOf("name" to "artisanName")),
         ref(
@@ -111,12 +85,8 @@ class DwReferenceHydrationTest {
         return hydrationPatch(hydratedValues(option, mapping, writable), lastHydration, row, writable)
     }
 
-    // ── The mapping, not the key names ───────────────────────────────────────────────────────────
-
     @Test
     fun `an artisan chosen on a product row fills Made by and never the product name`() {
-        // THE WHOLE DEFECT IN ONE ASSERTION. `data["name"]` is the artisan's; the entity's `name`
-        // is the product's. Matching keys put "Latha Devi" in the product column of stage 6.
         val patch = patchFor(
             existingProductFields, "artisanRef",
             option("a1", "Latha Devi", mapOf("name" to "Latha Devi", "village" to "Barpali")),
@@ -127,8 +97,6 @@ class DwReferenceHydrationTest {
             "the artisan's name reached the PRODUCT column: $patch",
             patch.containsKey("name"),
         )
-        // `village` is not in the mapping and is not a field of this entity either. Nothing about
-        // it is written, and nothing about it is invented.
         assertFalse(patch.containsKey("village"))
     }
 
@@ -151,15 +119,11 @@ class DwReferenceHydrationTest {
             JsonPrimitive("Yarn is tied in sections, dyed dark, then untied and washed."),
             patch["description"],
         )
-        // The picker's sublabel is the only thing that separates this cluster's "Tie and dye" from
-        // another's; copying it is what lets the printed page make the same distinction.
         assertEquals(JsonPrimitive("Sambalpuri saree"), patch["documentedFor"])
     }
 
     @Test
     fun `a field the server published no mapping for hydrates nothing`() {
-        // FAIL CLOSED. A missing entry costs the designer one retyped box and the server fills it
-        // at save regardless; a guessed one costs a wrong value nobody can see is wrong.
         val fields = listOf(
             FieldDto(key = "sketchRef", label = "From sketch", type = "REF", refModel = "DwSketch"),
             text("name", "Prototype name"),
@@ -170,8 +134,6 @@ class DwReferenceHydrationTest {
 
     @Test
     fun `a single photograph bound for a gallery arrives as a list`() {
-        // `hydrate_entries` wraps a scalar for a multi field. Writing the bare id would leave an
-        // IMAGE_LIST holding something no renderer on this device can read.
         val patch = patchFor(
             existingProductFields, "productRef",
             option("d1", "Saree", mapOf("name" to "Saree", "photo" to "media-7")),
@@ -181,8 +143,6 @@ class DwReferenceHydrationTest {
 
     @Test
     fun `a gallery the designer filled is never replaced by the catalogue shot`() {
-        // Seeded when empty, never overwritten: the photographs taken in the room are the only copy
-        // that exists. This is `hydrate_entries`' own rule, restated where the phone applies it.
         val mine = JsonArray(listOf(JsonPrimitive("photo-taken-in-the-room")))
         val patch = patchFor(
             existingProductFields, "productRef",
@@ -198,7 +158,6 @@ class DwReferenceHydrationTest {
         val first = option("p1", "Tie and dye", mapOf("name" to "Tie and dye", "notes" to "Old notes"))
         val firstValues = hydratedValues(first, fieldsOf(processStepFields).getValue("processRef").refHydration, fieldsOf(processStepFields))
 
-        // The designer corrected the step name by hand; the notes are still exactly what we wrote.
         val row = mapOf<String, JsonElement>(
             "name" to JsonPrimitive("Tying and dyeing (as the artisans say it)"),
             "description" to JsonPrimitive("Old notes"),
@@ -213,8 +172,6 @@ class DwReferenceHydrationTest {
         assertNull("a correction typed in the room was reverted: $patch", patch["name"])
         assertEquals(JsonPrimitive("New notes"), patch["description"])
     }
-
-    // ── And then it has to be printed ────────────────────────────────────────────────────────────
 
     private fun runText(runs: List<Run>) = runs.joinToString("") { it.text }
 
@@ -232,8 +189,6 @@ class DwReferenceHydrationTest {
 
     @Test
     fun `the hydrated process step reaches the report this phone writes`() {
-        // HYDRATED IS NOT PRINTED. The office copy and the on-device copy are meant to be the same
-        // document, so the same two values the server test follows onto the page are followed here.
         val chosen = option(
             "p1", "Tie and dye",
             mapOf(
@@ -272,9 +227,6 @@ class DwReferenceHydrationTest {
                 stages = mapOf(
                     "TRADITIONAL_PROCESS_BASELINE" to StageDraft(
                         stageId = "TRADITIONAL_PROCESS_BASELINE",
-                        // `rowsFor` filters on the entity prefix a row id carries, so a bare id
-                        // belongs to no entity and the stage renders as if the step were never
-                        // captured — which is how this assertion first failed.
                         rows = listOf(DraftRow(id = dwRowId("processStep", "r1"), values = row)),
                     )
                 ),

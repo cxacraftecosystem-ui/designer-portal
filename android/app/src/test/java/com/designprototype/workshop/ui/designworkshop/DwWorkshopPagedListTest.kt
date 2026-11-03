@@ -10,15 +10,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * DA-39: the Sketches & prototypes picker reaches EVERY workshop — server search plus "Load more" —
- * instead of twenty rows and a sentence about the rest.
- */
 class DwWorkshopPagedListTest {
 
     private val all = (1..45).map { DesignWorkshopDto(id = "w$it", title = "Workshop $it") }
 
-    /** A fake `GET /design-workshops`: title search, 20 per page. */
     private val calls = mutableListOf<Triple<Int, Int, String?>>()
     private val fetch: suspend (Int, Int, String?) -> DesignWorkshopPageDto = { page, size, search ->
         calls += Triple(page, size, search)
@@ -90,7 +85,6 @@ class DwWorkshopPagedListTest {
         assertTrue(src.contains("loadMore = picker.loadMoreAction("))
     }
 
-    /** Waits for the list's in-flight page, polling the state the screen itself reads. */
     private suspend fun DwWorkshopPagedList.awaitIdle() {
         repeat(200) {
             kotlinx.coroutines.delay(10)

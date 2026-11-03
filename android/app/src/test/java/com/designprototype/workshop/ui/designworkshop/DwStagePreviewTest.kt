@@ -26,19 +26,7 @@ import org.junit.Test
 import java.io.File
 import kotlin.math.abs
 
-/**
- * The stage preview's two release blockers, held where a unit test can reach them:
- *
- *  · THE ZOOM MATH — [dwFitScale], [dwZoomTarget], [dwScaledExtent] — and the guard that the sheet
- *    is not drawn with `requiredSize` again, whose centring left the page blank at every zoom but 100%;
- *  · THE DRAFT — [dwStagePreviewDraft] — which is always the report screen's merge of this device's
- *    draft with the server's copy, so a one-stage local draft never hides the other stages;
- *  · THE SERVER READ — [DwPreviewServerCopy] — which tells offline and failed apart from empty, and
- *    survives the debounce cancelling the build that is waiting for it.
- */
 class DwStagePreviewTest {
-
-    // ── Scale ─────────────────────────────────────────────────────────────────────────────────────
 
     private val a4WidthPx = 210f * DW_PX_PER_MM
     private val a4HeightPx = 297f * DW_PX_PER_MM
@@ -67,7 +55,6 @@ class DwStagePreviewTest {
         assertEquals(fit * 0.5f, dwZoomTarget(0.01f, fit), 0f)
         assertEquals(DW_ZOOM_MAX, dwZoomTarget(9f, fit), 0f)
         assertEquals(fit, dwZoomTarget(Float.NaN, fit), 0f)
-        // Smaller from the fit, then Larger back, returns to the fit.
         val smaller = dwZoomTarget(fit - DW_ZOOM_STEP, fit)
         assertEquals(fit, dwZoomTarget(smaller + DW_ZOOM_STEP, fit), 1e-5f)
     }
@@ -81,14 +68,10 @@ class DwStagePreviewTest {
         for (scale in listOf(fit * 0.5f, fit, fit + DW_ZOOM_STEP, 1f, 1.5f, DW_ZOOM_MAX)) {
             val w = dwScaledExtent(refW, scale)
             val h = dwScaledExtent(refH, scale)
-            // The reference page's far corner, drawn at `scale` from the origin, lands on the sheet's
-            // own far corner — the running foot is therefore inside the sheet, not off its edge.
             assertTrue("width at $scale", abs(refW * scale - w) <= 1f)
             assertTrue("height at $scale", abs(refH * scale - h) <= 1f)
-            // And it agrees with how the sheet itself is sized: `Modifier.size((ref × scale).dp)`.
             assertEquals(Math.round(a4WidthPx * scale * density).toFloat(), w.toFloat(), 1f)
         }
-        // Held inside what the parent allows.
         assertEquals(500, dwScaledExtent(refW, 1f, maxPx = 500))
     }
 
@@ -101,8 +84,6 @@ class DwStagePreviewTest {
         assertTrue(source.contains(".dwScaledPage(geometry.pageWidthPx.dp, geometry.pageHeightPx.dp, scale)"))
         assertTrue(source.contains("placeable.placeWithLayer(0, 0)"))
     }
-
-    // ── The draft the preview is built from ───────────────────────────────────────────────────────
 
     private val schema = SchemaResponse(
         version = "test",
@@ -176,7 +157,6 @@ class DwStagePreviewTest {
 
     @Test
     fun `a one-stage local draft keeps the server's other stages, with the live stage laid over it`() {
-        // What the first debounced save writes on a workshop this device had never opened.
         val local = WorkshopDraft(
             workshopId = "ws-1",
             remoteId = "ws-1",
@@ -184,7 +164,6 @@ class DwStagePreviewTest {
         )
         val draft = dwStagePreviewDraft(schema, "ws-1", stageKey, local = local, remoteId = "ws-1", remote = serverCopy, live = typed("new"))
         assertEquals("new", (draft!!.stages[stageKey]?.values?.get("objectives") as JsonPrimitive).content)
-        // The device holds no work for setup, so it is the server's — the report screen's merge.
         assertEquals(
             "Dabu print",
             (draft.stages["WORKSHOP_SETUP"]?.values?.get("craftName") as JsonPrimitive).content,
@@ -215,8 +194,6 @@ class DwStagePreviewTest {
         assertFalse("WORKSHOP_SETUP" in draft.stages)
     }
 
-    // ── The server read ───────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `offline with no earlier read is Offline, and nothing is fetched`() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -236,7 +213,6 @@ class DwStagePreviewTest {
         assertEquals(DwServerRead.Failed, first)
         val second = copy.read(online = true) { calls++; serverCopy }
         assertEquals(DwServerRead.Read(serverCopy), second)
-        // Read once, then served from memory — even offline.
         assertEquals(DwServerRead.Read(serverCopy), copy.read(online = false) { calls++; serverCopy })
         assertEquals(2, calls)
         scope.cancel()

@@ -20,48 +20,17 @@ import org.junit.rules.TemporaryFolder
 import retrofit2.HttpException
 import java.io.IOException
 
-/**
- * A SET-PASSWORD LINK IS CHECKED WITH ITS TOKEN IN A BODY, AND IN AN ADDRESS ONLY WHEN THE SERVER
- * CANNOT HEAR A BODY.
- *
- * The token is the link's whole authority until it is used or expires, and a URL is what proxies and
- * access logs write down. So `WorkshopRepository.checkPasswordLink` asks
- * `POST /api/auth/set-password/check` with `{"token": …}` first, and falls back to the old
- * `GET /api/auth/set-password?token=…` ONLY when that POST is answered 404 or 405 — the answer of a
- * server from before the route existed. Pinned here, both halves:
- *
- *  1. Against a server that has the route, the token never appears in a URL, and the answer is read
- *     into the same `{valid, reason, purpose}` the GET answers.
- *  2. Against an older server, a 404 or a 405 brings the GET, and the screen gets the same verdict.
- *  3. NOTHING ELSE brings the GET. A 5xx, a 422, a 429, a 401 or a dropped connection says nothing
- *     about whether the route exists, and re-sending the token in an address on those would put it
- *     back in the logs exactly when the server is struggling.
- *  4. A gateway error on the POST is retried, as it was on the GET it replaces — the check reads and
- *     writes nothing.
- *  5. The debug request log blanks the fallback GET's `token=` (OkHttp writes its `██` back
- *     percent-encoded), the bearer header, and the fresh session a password change sends back.
- *  6. A 2xx body that does not say whether the link is valid is thrown, not read as "dead".
- *
- * Driven through the app's OWN stack — `ApiClient.httpClient` and `ApiClient.retrofit`, every
- * interceptor in order — with the socket replaced by an answer from memory, the shape
- * `SessionEndedSignalTest` uses, so the method, the address and the body are read exactly as they
- * would leave the phone.
- */
 class PasswordLinkCheckTest {
 
     @get:Rule
     val folder = TemporaryFolder()
 
-    /** A token in the shape the server issues: base64url payload, a dot, base64url signature. */
     private val token = "eyJ1IjoidXNlci0xIiwicCI6IlJFU0VUIn0.c2lnbmF0dXJlLWJ5dGVz_-"
 
-    /** What both routes answer for an expired reset link. */
     private val expired = """{"valid":false,"reason":"expired","purpose":"RESET"}"""
 
-    /** One canned answer, or a dropped connection when [code] is null. */
     private class Answer(val code: Int?, val body: String = "{}")
 
-    /** Every request that reached the transport, and its body as the transport received it. */
     private val sent = mutableListOf<Request>()
     private val bodies = mutableListOf<String?>()
 
@@ -84,7 +53,6 @@ class PasswordLinkCheckTest {
             .build()
 
     private fun repository(answer: (Request) -> Answer): WorkshopRepository {
-        // Signed out, as everybody holding one of these links is.
         val store = TokenStore(InMemoryContext(folder.root))
         val service = ApiClient.retrofit(store).newBuilder()
             .client(stack(store, answer))
@@ -98,8 +66,6 @@ class PasswordLinkCheckTest {
 
     private fun Request.isTheOldGet(): Boolean =
         method == "GET" && url.encodedPath.endsWith("/auth/set-password")
-
-    // ── 1. The route that keeps the token out of the address ────────────────────────────────────
 
     @Test
     fun `a server with the route is asked with the token in a POST body and never in the address`() {
@@ -131,8 +97,6 @@ class PasswordLinkCheckTest {
         assertEquals("INVITE", verdict.purpose)
     }
 
-    // ── 2. An older server, which has only the GET ──────────────────────────────────────────────
-
     @Test
     fun `an older server's 404 or 405 brings the GET, and the same verdict`() {
         listOf(404, 405).forEach { status ->
@@ -155,8 +119,6 @@ class PasswordLinkCheckTest {
             assertEquals("HTTP $status: the GET carries the token as before", token, sent[1].url.queryParameter("token"))
         }
     }
-
-    // ── 3. Nothing else re-sends the token in an address ────────────────────────────────────────
 
     @Test
     fun `no other refusal or failure brings the GET`() {
@@ -190,8 +152,6 @@ class PasswordLinkCheckTest {
         assertTrue("every attempt was the POST", sent.isNotEmpty() && sent.all { it.isTheCheck() })
     }
 
-    // ── 4. Retried like the GET it replaces ─────────────────────────────────────────────────────
-
     @Test
     fun `a gateway error on the check is retried, as the GET was`() {
         var attempts = 0
@@ -207,12 +167,8 @@ class PasswordLinkCheckTest {
         assertTrue("both were the POST", sent.all { it.isTheCheck() })
     }
 
-    // ── 6. An answer that does not answer ───────────────────────────────────────────────────────
-
     @Test
     fun `a 2xx body with no verdict in it is thrown, never read as a dead link`() {
-        // `valid` used to default to false, so this body hid the password boxes behind "This password
-        // link is not valid." Thrown, the screen treats the check as not examined and offers the form.
         val repository = repository { Answer(200, """{"reason":null}""") }
 
         val thrown = runCatching { runBlocking { repository.checkPasswordLink(token) } }.exceptionOrNull()
@@ -220,8 +176,6 @@ class PasswordLinkCheckTest {
         assertTrue("a body with no verdict fails to decode: $thrown", thrown is kotlinx.serialization.SerializationException)
         assertTrue("and it brings no GET", sent.none { it.method == "GET" })
     }
-
-    // ── 5. The request log ──────────────────────────────────────────────────────────────────────
 
     @Test
     fun `the request log prints neither the fallback's token nor either session`() {
@@ -232,8 +186,6 @@ class PasswordLinkCheckTest {
             }
         }
         val client = OkHttpClient.Builder()
-            // HEADERS rather than the BASIC a debug build uses, so the header redaction is exercised
-            // as well; the request line is printed, and redacted, at both.
             .addInterceptor(ApiClient.httpLogging(logger, HttpLoggingInterceptor.Level.HEADERS))
             .addInterceptor { chain ->
                 Response.Builder()
@@ -241,7 +193,6 @@ class PasswordLinkCheckTest {
                     .protocol(Protocol.HTTP_1_1)
                     .code(200)
                     .message("OK")
-                    // What a password change answers with: the fresh session, in a header.
                     .header(SESSION_TOKEN_HEADER, "the-fresh-session")
                     .body(expired.toResponseBody("application/json".toMediaType()))
                     .build()

@@ -8,10 +8,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The designer portal's half of the shared questionnaire trees (not shared): what an artisan typed on
- * the phone is created as, and which old outbox entries hold the v2 queue.
- */
 class QuestionnairePortalTest {
     @Test fun `an artisan registered on the phone needs what the server needs, and travels as the create body`() {
         assertFalse(NewArtisan(name = "Meena", place = "Bankura", dos = "Ask first", donts = "No flash").valid)
@@ -19,7 +15,6 @@ class QuestionnairePortalTest {
         assertTrue(shared.valid)
         val withNumber = NewArtisan(name = "Meena", place = "Bankura", aadhaar = "1234 5678 9012", dos = "a", donts = "b")
         assertTrue(withNumber.valid)
-        // The portal's own create body: the designer portal files the artisan under the design workshop.
         val body = QuestionnairePortal.json.decodeFromString(ArtisanCreateRequest.serializer(), QuestionnairePortal.artisanCreateJson(withNumber, "w1"))
         assertEquals("123456789012", body.aadhaarNumber)
         assertEquals("w1", body.designWorkshopId)

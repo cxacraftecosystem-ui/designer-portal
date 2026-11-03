@@ -6,7 +6,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Hold-for-help (owner, 2026-10-21): the timing and the card's placement, without a device. */
 class DwFieldHelpTest {
 
     @Test

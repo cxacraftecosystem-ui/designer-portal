@@ -24,59 +24,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * WHAT A PICKED RECORD CARRIES ONTO A ROW — checked against the REGISTRY THIS APK SHIPS, not a
- * fixture, because the fixture is not what a designer in a courtyard is filling in.
- *
- * ── THE REQUIREMENT THIS FILE EXISTS TO MAKE CHECKABLE ────────────────────────────────────────
- *
- * "It is okay to have more fields over there, but not less." A designer who picks an artisan, a
- * product, a process, a tool or a craft into a workshop stage must get EVERY field that record
- * carries, and the same set of them whichever surface they are standing at. `DwReferenceHydration‐
- * Test` is the spec — hand-built entities, so a failure there names a RULE. This file is the other
- * half: it reads `app/src/main/assets/design-workshop-schema.json` and asks what the shipped
- * registry actually carries, so a failure here names a STAGE somebody edited.
- *
- * ── HOW THE HANDSET LEARNS THE MAPPING, WHICH IS THE FACT THE REST OF THIS FILE RESTS ON ──────
- *
- * IT DOES NOT KEEP ONE. There is no Kotlin copy of `REFERENCE_HYDRATION` anywhere in this app — the
- * server publishes it per field as [FieldDto.refHydration] (`field_to_dict`), and the picker's
- * records arrive with a `data` map built by `REFERENCE_MODELS[...].data`. BOTH halves of the carry
- * therefore come off the wire, so widening either table on the server reaches this phone with no
- * app change at all. The browser is the surface that keeps a second copy (`DW_REFERENCE_HYDRATION`
- * in `lib/designWorkshops.ts`, pinned by a backend test); this one deliberately does not, and
- * [DwReferenceField]'s KDoc records what deriving the mapping by matching key names cost when this
- * surface last tried to be clever: the artisan's name printed in the product column of a ministry
- * report.
- *
- * The one place the phone can fall behind is TIER 3 of its cache — the bundled asset, which is what
- * a handset handed to a field worker renders from until its first successful GET. That asset is a
- * dump of `registry_to_dict()` and the backend compares it to the live registry CONTENT-WISE
- * (`test_the_bundled_android_asset_is_the_registry_it_claims_to_be`), with the version digest now
- * covering the hydration mapping itself (`registry_version`, stage_schema.py). So a widened
- * mapping cannot ship with a stale asset silently — but nothing checked that the ASSET'S mapping is
- * one this client can actually apply, which is what the tests below do.
- *
- * ── THE FLOOR, AND WHY IT IS A FLOOR AND NOT AN EQUALITY ──────────────────────────────────────
- *
- * [FLOOR] is a transcription, and a transcription is a second declaration — normally the thing this
- * repository refuses. It is justified here by being an ASSERTION rather than a mechanism: nothing
- * in the app reads it, hydration would behave identically if it were deleted, and it is compared
- * with `⊇` rather than `==`. Adding a pair on the server needs no edit here; REMOVING one fails
- * this test by name. That is exactly the requirement — more is fine, less is the defect — and it
- * is the only shape of check that does not have to be re-approved every time the server widens.
- */
 class DwReferenceCarryParityTest {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true; coerceInputValues = true }
 
-    /**
-     * A file of this repository, found by walking up from wherever the test runner started.
-     *
-     * The working directory of a Gradle test worker is not something to depend on, and a test that
-     * SKIPPED when it could not find its data would prove nothing on the day somebody moves it.
-     * Missing is a failure, loudly. Same idiom as `DwWorkshopSearchRegistryTest`.
-     */
     private fun repoFile(vararg relative: String): File {
         var dir: File? = File(".").absoluteFile
         while (dir != null) {
@@ -98,7 +49,6 @@ class DwReferenceCarryParityTest {
         ).readText()
     )
 
-    /** One REF picker of the shipped registry, and the entity whose row it fills in. */
     private data class RefSite(val stage: StageDto, val entity: EntityDto, val refField: FieldDto) {
         val pair: String get() = "${entity.key}.${refField.key}"
     }
@@ -113,45 +63,6 @@ class DwReferenceCarryParityTest {
 
     private fun hydratingSites(): List<RefSite> = refSites().filter { it.refField.refHydration.isNotEmpty() }
 
-    // ── The floor ────────────────────────────────────────────────────────────────────────────────
-
-    /**
-     * The `source key on the record → box on the row` pairs that MUST survive, per picker.
-     *
-     * Transcribed from the shipped asset on 2026-08-16 and cross-read against
-     * `stage_schema.REFERENCE_HYDRATION`. Read it as the answer to "what does picking this record
-     * fill in", which is the question the requirement is phrased in.
-     *
-     * A PICKER WITH NO ENTRY HERE IS DELIBERATE AND IS NOT AN OVERSIGHT. Fifteen of the registry's
-     * twenty-three live REF fields point at `Dw…` models — entities of this very registry, whose
-     * rows the designer is looking at on an earlier stage.
-     *
-     * THIRTEEN OF THOSE FIFTEEN STILL CARRY A JOIN KEY AND NOTHING ELSE, AND TWO NO LONGER DO.
-     * This paragraph used to read "they carry a JOIN KEY rather than a copy. Copying a prototype's
-     * twenty-nine fields onto the row that references it would put two versions of the same answer
-     * in one workshop with nothing to say which was meant." The SECOND sentence was the argument and
-     * it was answered on 2026-09-03 rather than overruled: two versions of one answer is exactly
-     * what the product HAD, because stage 16 asks a designer to type the prototype's materials and
-     * dimensions again by hand, and the prototypes table and the final-products table of one report
-     * were printing different numbers for one physical piece. The carry does not create the second
-     * copy; it stops the second copy being typed independently. What survives of the old sentence is
-     * the NARROWNESS: nine of a prototype's twenty-nine fields cross to `finalProduct`, three to
-     * `prototypeValidation`, and the other thirteen internal refs are refused BY NAME above the
-     * server's `REFERENCE_HYDRATION` — a drawing is not the object made from it, a successor sketch
-     * exists because something changed, a material line names one material where the source holds a
-     * list, and stage 17 exists to build a price rather than inherit one.
-     *
-     * NOTHING ON THIS SURFACE HAD TO CHANGE FOR THEM, WHICH IS THE PROPERTY WORTH NOTICING. The
-     * handset keeps no hydration table (see the header): the mapping arrives as
-     * [FieldDto.refHydration] and the record's values arrive in the picker's `data`, so an internal
-     * carry reaches this client through the same two channels an external one does. The one edit
-     * here is to the FLOOR below, which is an assertion and not a mechanism.
-     *
-     * 81 PAIRS ACROSS 8 PICKERS as of the widening of 2026-08-16, up from 27 across 7 — the artisan
-     * picker went from 8 boxes to 22, the tool picker from 6 to 24, the product picker from 6 to 22,
-     * and stage 5's `traditionalProcess` started hydrating at all. 13 pickers as of 2026-09-03 with
-     * the two internal ones below.
-     */
     private val FLOOR: Map<String, Map<String, String>> = mapOf(
         "workshopSetup.craftRef" to mapOf(
             "craftName" to "craftName",
@@ -211,9 +122,6 @@ class DwReferenceCarryParityTest {
             "remarks" to "remarks",
             "lengthCm" to "lengthCm",
             "breadthCm" to "breadthCm",
-            // The tool's THIRD converted figure, carried since 2026-08-27, when
-            // `ToolDocumentation.heightInches` was added. `heightAsRecorded` below is the OLD
-            // unit-less `height` and a different column, so losing either is a real loss.
             "heightCm" to "heightCm",
             "heightAsRecorded" to "heightAsRecorded",
             "widthAsRecorded" to "widthAsRecorded",
@@ -250,13 +158,8 @@ class DwReferenceCarryParityTest {
             "photoCaption" to "productPhotosCaption",
         ),
         "prototype.productRef" to mapOf("name" to "productName"),
-        // Added 2026-08-24 with the product->process cascade. One pair each, and both land in the same
-        // box: `documentedFor` says which product the documented thing was documented FOR.
         "traditionalProcess.productRef" to mapOf("name" to "documentedFor"),
         "processStep.productRef" to mapOf("name" to "documentedFor"),
-        // Added 2026-08-24 with the sixth reference model. Eleven pairs, every one of them a fact
-        // ABOUT the sitting and not an answer GIVEN in it: no question text, no response, no
-        // respondent name. The server's `REFERENCE_MODELS["QuestionnaireInterview"]` argues why.
         "artisanBaseline.interviewRef" to mapOf(
             "interviewTitle" to "interviewTitle",
             "interviewDate" to "interviewDate",
@@ -270,29 +173,6 @@ class DwReferenceCarryParityTest {
             "interviewDocumentedOn" to "interviewDocumentedOn",
             "interviewDocumentedAtWorkshop" to "interviewDocumentedAtWorkshop",
         ),
-        // ── THE TWO INTERNAL CARRIES, 2026-09-03 ────────────────────────────────────────────────
-        //
-        // The source of both is a `DwPrototype` — a row of THIS workshop's stage 13 — rather than a
-        // record in another table, and that difference is invisible from here on purpose: the
-        // mapping still arrives as `refHydration`, the values still arrive in the option's `data`,
-        // and `hydratedValues`/`hydrationPatch` neither know nor need to know which kind they are
-        // applying. That is why the floor below is written in exactly the shape of the eleven above.
-        //
-        // WHAT A NARROWING WOULD COST HERE, since that is what this table is for. These nine boxes
-        // are the catalogue record a ministry reads: lose `materials` and stage 16's REQUIRED
-        // Materials column empties, lose the three dimensions and the final-products table prints a
-        // product with no size, lose `makingTimeDays` and the one figure that connects the
-        // catalogue to the costing disappears. Every one of them would come back as "the designer
-        // has to type it again", which is the state this carry was built to end.
-        //
-        // `processSummary -> makingProcess` IS THE PAIR TO WATCH ON THIS SURFACE. The value is a
-        // RICH_TEXT document; `coerceHydrated`'s RICH_TEXT arm is what makes it storable here, and
-        // the web deliberately skips it (its guard takes only JSON scalars) and lets the server
-        // write it at save. The handset is therefore the client that fills this box at the keyboard,
-        // which is the opposite of the usual asymmetry and is worth knowing when the two are
-        // compared by hand.
-        // The stage-7 instrument link (spec §22, 2026-09-03): one carried box, the instrument's
-        // title into the `fromref` name field beside the picker.
         "surveyPlan.questionnaireRef" to mapOf(
             "name" to "questionnaireName",
         ),
@@ -316,11 +196,6 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `no picker loses a pair the handset used to carry`() {
-        // THE DEFECT THIS CATCHES IS A NARROWING, WHICH HAS NO OTHER SYMPTOM. A pair removed from
-        // `REFERENCE_HYDRATION` — or an asset regenerated from a registry that lost one — leaves a
-        // box the designer used to find filled in simply empty. Nothing errors, nothing logs, the
-        // stage still saves, and the missing answer surfaces as a blank column in a .docx months
-        // later. Reported per pair rather than as a map diff, so the failure names the box.
         val shipped = hydratingSites().associate { it.pair to it.refField.refHydration }
         val lost = mutableListOf<String>()
         for ((pair, mapping) in FLOOR) {
@@ -342,39 +217,17 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `every picker that hydrates is one this file knows about`() {
-        // The floor is only evidence if it is complete. A NEW hydrating picker is not a failure of
-        // the product — it is the widening working — but it must not slip in unlisted, because an
-        // unlisted picker is one nobody has checked can be applied on this surface, and the next
-        // narrowing of it would go unnoticed. Add it to FLOOR and to the census below.
         val unlisted = hydratingSites().map { it.pair }.filterNot { it in FLOOR }
         assertEquals("a picker started hydrating and was not added to FLOOR", emptyList<String>(), unlisted)
     }
 
-    // ── Every incoming value must have somewhere to land ─────────────────────────────────────────
-
     @Test
     fun `every hydration target is a live box on the very entity being filled in`() {
-        /*
-         * THE SILENT-DROP CHECK, and the reason it is worth its own test is the shape of the drop.
-         *
-         * `hydratedValues` resolves a target through the entity's own live fields and simply
-         * `return@forEach`s when it finds nothing. That is the right behaviour — a client must not
-         * invent a box — but it means a pair declared on the server against a receiving field that
-         * was never declared, or was declared on a DIFFERENT entity, or was deprecated, carries
-         * nothing here and says nothing about it. On the server the same pair reaches
-         * `coerce_value` and is stored, so the row saved from the browser holds a value the row
-         * saved from the phone does not, from the same pick. That is the divergence this lane
-         * exists to prevent, and the widening in progress is exactly when it would be introduced:
-         * "add the pair" and "declare the box it lands in" are two edits in two files.
-         *
-         * `validate_registry` checks targets exist server-side. This checks the ASSET a phone with
-         * no signal is running, which is not the same artefact and can be older.
-         */
         val problems = mutableListOf<String>()
         for (site in hydratingSites()) {
             val live = site.entity.liveFields.associateBy { it.key }
             for ((source, target) in site.refField.refHydration) {
-                if (target.startsWith("_")) continue   // the sentinel for "resolved, but not stored"
+                if (target.startsWith("_")) continue
                 val box = site.entity.field(target)
                 when {
                     box == null ->
@@ -389,25 +242,11 @@ class DwReferenceCarryParityTest {
         assertEquals("a mapped value has nowhere to land on this surface", emptyList<String>(), problems)
     }
 
-    /**
-     * Boxes that TWO pickers on one entity both claim, and the reason each is tolerated.
-     *
-     * Read the value as "these two pickers write this box, and we have decided that is acceptable".
-     * Anything not listed fails the test `two pickers may not claim one box unless it is a known one`.
-     */
     private val KNOWN_SHARED_BOXES: Map<String, String> = mapOf(
         "existingProduct.artisanName" to
             "artisanRef maps name→artisanName and productRef maps artisanName→artisanName. " +
             "Defensible — a designer who picks only the documented product should still get the " +
             "maker's name — but see the test's note on what it costs on this surface.",
-        // Both stage-5 process pickers, 2026-08-24. `productRef` maps name→documentedFor and
-        // `processRef` maps productName→documentedFor, so the parent and the child both name the
-        // product. WHICH ONE WINS WAS MEASURED, not assumed, and it is NOT the declaration order the
-        // comments used to claim: re-pointing the product forces the process to be re-picked, so one
-        // save carries two re-pointed refs, `hydrate_entries` clears and rewrites for both, and
-        // `processRef` writes last. They agree whenever the pair is consistent. They do not when it
-        // is stale — a process still belonging to the previously chosen product prints THAT product's
-        // name — which is recorded as an open limit on the server side rather than fixed here.
         "traditionalProcess.documentedFor" to
             "productRef maps name→documentedFor and processRef maps productName→documentedFor. " +
             "processRef writes last and wins; consistent pairs agree, a stale pair prints the " +
@@ -419,29 +258,6 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `two pickers may not claim one box unless it is a known one`() {
-        /*
-         * WHY A SHARED BOX IS A DIVERGENCE AND NOT MERELY UNTIDY.
-         *
-         * `hydrate_entries` walks `item.entity.fields` IN DECLARATION ORDER and applies only-fill-
-         * blanks, so on the server the FIRST picker declared always wins a shared box: on
-         * `existingProduct`, `artisanRef` is declared before `productRef`, so the artisan's own name
-         * is what lands in `artisanName` whatever order the designer picked in.
-         *
-         * ON THIS SURFACE THE ORDER IS THE DESIGNER'S, NOT THE REGISTRY'S. Each picker is its own
-         * composable with its own `lastHydration` (`remember(field.key)` at DwReferenceField.kt),
-         * and [hydrationPatch] only overwrites a box holding exactly what THAT picker last wrote.
-         * So whichever picker the designer touches first fills the box, and the other is then
-         * refused it for the life of the row — and re-pointing the picker that did NOT write it
-         * cannot clear it either, because `current[key] != lastHydration[key]`. Pick the product
-         * first and the row carries the product record's copy of the maker's name; pick the artisan
-         * first and it carries the artisan record's. Those two spellings are the reason
-         * `ProductDocumentation` has an `artisanName` column at all.
-         *
-         * THE FIX IS SERVER-SIDE IF ONE IS WANTED — drop the pair from `productRef`, or give the
-         * product's copy its own box — so this test does not try to arbitrate here. What it does is
-         * refuse to let a SECOND such box appear without somebody writing down why, because the
-         * next one will not have a note explaining it.
-         */
         val collisions = mutableMapOf<String, List<String>>()
         for (stage in registry.stages) {
             for (entity in stage.entities) {
@@ -462,7 +278,6 @@ class DwReferenceCarryParityTest {
             emptyList<String>(),
             unexplained,
         )
-        // And the note must not outlive the collision it describes, or the next reader trusts it.
         assertEquals(
             "KNOWN_SHARED_BOXES names a collision that no longer exists",
             emptySet<String>(),
@@ -470,40 +285,6 @@ class DwReferenceCarryParityTest {
         )
     }
 
-    // ── A fully documented record arrives whole ──────────────────────────────────────────────────
-
-    /**
-     * A legal value for [field], in the shape `REFERENCE_MODELS[...].data` would actually produce.
-     *
-     * DELIBERATELY THE SERVER'S SHAPES AND NOT THE PRETTIEST ONES: money arrives as the two-place
-     * STRING `_money()` formats, an enum arrives as a bare token, a photograph arrives as a single
-     * media id even where the box is a gallery. A fixture that handed each box a value already in
-     * its stored form would pass while proving nothing about the coercion that has to happen.
-     */
-    /**
-     * A VALUE THAT SATISFIES THE DECLARED `text_format`, WHERE THE FIELD DECLARES ONE.
-     *
-     * ── THIS IS THE `maxLength` NOTE BELOW, ONE DECLARATION LATER ─────────────────────────────
-     *
-     * The type arm below already cuts its string to `maxLength` for a stated reason: "a longer
-     * fixture string would be refused by the length check and read here as 'the mapping did not
-     * arrive' — a green-to-red flip with nothing wrong on either surface." `text_format` is the same
-     * kind of declaration and needs the same treatment. `participant.aadhaarNumber` is a TEXT field
-     * declaring `AADHAAR`, so the generic "Recorded answer" is now refused by
-     * [com.designprototype.workshop.data.DwTextFormats] inside `coerce` — correctly, because a typed
-     * string in the shape of nothing at all was exactly the value that used to be masked to
-     * "XXXX XXXX swer" and printed as a national identity number in a ministry document — and the
-     * assertion read that legitimate refusal as a missing mapping.
-     *
-     * THE AADHAAR NUMBER IS A REAL VERHOEFF-VALID ONE. A plausible-looking twelve digits would be
-     * refused by the checksum arm, which is the same green-to-red flip one arm further in.
-     *
-     * WHAT THIS FIXTURE DOES *NOT* MODEL, and it is worth knowing while reading the assertion: in
-     * production the value hydration copies into that box is the MASK (`mask_identity_number`), not
-     * a number, and the format accepts a mask by shape precisely so that re-coercing a hydrated row
-     * stays silent. Both are accepted; this generator uses the number because it is also the value a
-     * designer types.
-     */
     private fun plausibleForFormat(field: FieldDto): JsonElement? = when (field.format) {
         "AADHAAR" -> JsonPrimitive("234567890124")
         "PINCODE" -> JsonPrimitive("768029")
@@ -514,9 +295,6 @@ class DwReferenceCarryParityTest {
     }
 
     private fun plausible(field: FieldDto): JsonElement = plausibleForFormat(field) ?: when (DwFieldType.of(field.type)) {
-        // Inside the declared range as well as the declared type: `participant.experienceYears`
-        // carries min 0 / max 90, and a fixture that ignored a bound would report a value dropped
-        // for being out of range as a mapping that never arrived.
         DwFieldType.INT -> JsonPrimitive("12")
         DwFieldType.DECIMAL, DwFieldType.PERCENT -> JsonPrimitive("1.5")
         DwFieldType.MONEY -> JsonPrimitive("1200.00")
@@ -530,19 +308,10 @@ class DwReferenceCarryParityTest {
         DwFieldType.PHONE -> JsonPrimitive("+91 98765 43210")
         DwFieldType.IMAGE, DwFieldType.IMAGE_LIST, DwFieldType.FILE,
         DwFieldType.AUDIO, DwFieldType.VIDEO -> JsonPrimitive("media-7")
-        // `{lat, lon}` and no `accuracy`, which is exactly the shape `_subject_point` returns: a
-        // hand-dropped pin has no error bar, and the registry treats the key as optional so that
-        // "somebody pointed at this" stays distinguishable from "a device measured this".
         DwFieldType.GEO -> buildJsonObject {
             put("lat", JsonPrimitive(21.2))
             put("lon", JsonPrimitive(83.6))
         }
-        // Prose off a source column arrives as a plain string, never as a document — which is the
-        // whole reason `coerceHydrated` has a RICH_TEXT arm.
-        //
-        // CUT TO `maxLength` WHERE ONE IS DECLARED. `participant.gender` allows twenty characters,
-        // and a longer fixture string would be refused by the length check and read here as "the
-        // mapping did not arrive" — a green-to-red flip with nothing wrong on either surface.
         else -> JsonPrimitive(
             "Recorded answer".let { if (field.maxLength > 0) it.take(field.maxLength) else it }
         )
@@ -550,16 +319,6 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `a fully documented record arrives with every mapped box filled, on every picker`() {
-        /*
-         * THE "WITHOUT A MISS" TEST. Give each picker a record whose every mapped source key holds
-         * a plausible value and assert the row comes back holding ALL of them. Run over the shipped
-         * registry rather than a fixture, so a pair added on the server is covered the day the
-         * asset is regenerated, with no edit here.
-         *
-         * It catches three separate things at once, all of which are silent in the product: a
-         * target with no box (above), a value the target's type rejects, and a value this client
-         * writes but `hydrationPatch` then refuses to put on the row.
-         */
         for (site in hydratingSites()) {
             val writable = site.entity.liveFields.associateBy { it.key }
             val mapping = site.refField.refHydration
@@ -586,9 +345,6 @@ class DwReferenceCarryParityTest {
         }
     }
 
-    // ── The coercion the server runs, run here too ───────────────────────────────────────────────
-
-    /** Stage 6's existing product, straight out of the shipped registry. */
     private fun existingProduct(): EntityDto = registry.stages
         .flatMap { it.entities }
         .first { it.key == "existingProduct" }
@@ -607,37 +363,22 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `a category token this build's enum list does not contain is dropped, not written`() {
-        /*
-         * `hydrate_entries` says it out loud: "a value the target field cannot legally hold — a
-         * product type that is not one of the workshop's categories — is dropped rather than
-         * written". This surface used to write it, and then [DwValues.validate] marked the row red
-         * with "…is not one of the options" — over a value the designer never typed and cannot
-         * correct, because the dropdown does not offer that token either. The mark reads as "you
-         * filled this in wrongly" and there is no way to act on it.
-         *
-         * `_PRODUCT_TYPE_TO_CATEGORY` maps a Prisma ProductType onto PRODUCT_CATEGORY and the map
-         * is deliberately partial, so the widening of it is precisely where a token that is not a
-         * category would arrive.
-         */
         val entity = existingProduct()
         val carried = carry(entity, "productRef", mapOf(
             "name" to JsonPrimitive("Sambalpuri saree"),
-            "category" to JsonPrimitive("RAW_MATERIAL"),   // a ProductType, never a PRODUCT_CATEGORY
+            "category" to JsonPrimitive("RAW_MATERIAL"),
         ))
         assertEquals(JsonPrimitive("Sambalpuri saree"), carried["name"])
         assertFalse(
             "a token no dropdown on this device can draw was stored: $carried",
             carried.containsKey("category"),
         )
-        // And the row it produced is clean — no red mark on a box the designer never touched.
         val marks = DwValues.validate(entity, carried, enforceRequired = false)
         assertTrue("hydration left a mark the designer cannot act on: $marks", marks.isEmpty())
     }
 
     @Test
     fun `a category token the enum does contain still arrives`() {
-        // The drop above must be the narrow rule and not a refusal of enums generally, or the fix
-        // would itself be a narrowing — which is the very thing this file is here to prevent.
         val entity = existingProduct()
         val carried = carry(entity, "productRef", mapOf("category" to JsonPrimitive("PACKAGING")))
         assertEquals(JsonPrimitive("PACKAGING"), carried["category"])
@@ -645,14 +386,6 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `prose bound for a rich-text box arrives as a document, not as a bare string`() {
-        /*
-         * `coerce_value`'s RICH_TEXT arm normalises through the rich-text model, so a plain string
-         * is stored as `{"blocks":[…]}`. The phone builds its OWN report from the local draft, with
-         * no signal and no server to correct it, so a bare string in a document-shaped box is a
-         * paragraph missing from the copy handed to a visiting officer at the close of the
-         * workshop. `problems` on stage 6 is RICH_TEXT and is a natural target for the widening —
-         * `ProductDocumentation` and `Artisan` both carry prose columns nothing currently copies.
-         */
         val entity = existingProduct()
         val problems = entity.field("problems")
         assertEquals("this test is pinned to a RICH_TEXT box", "RICH_TEXT", problems?.type)
@@ -665,9 +398,6 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `a free-metadata answer the target's type cannot hold is dropped rather than stored`() {
-        // `Artisan.experienceYears` is read out of `extraMetadata`, which is free-form, so "12
-        // years" is a real answer to find in one. The server drops it; this surface wrote the
-        // string into a field typed INT, where every later reader has to guess what to do with it.
         val participant = registry.stages.flatMap { it.entities }.first { it.key == "participant" }
         val years = participant.field("experienceYears")!!
         assertEquals("INT", years.type)
@@ -677,21 +407,9 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `a measurement is copied in the unit the server sent it in, never converted here`() {
-        /*
-         * `ProductDocumentation` stores measurements in INCHES and `existingProduct` declares its
-         * boxes in CENTIMETRES, so a conversion has to happen — ON THE SERVER, inside
-         * `REFERENCE_MODELS[...].data`, which is the one place both clients read the number from.
-         * A conversion added on this side would be applied on top of it and the handset would
-         * report a product 2.54 times the size the browser reports for the same record.
-         *
-         * Pinned against `lengthCm` whether or not it is mapped yet: the assertion is about what
-         * this client does to a number on its way onto a row, and the answer must stay "nothing
-         * but the registry's own coercion".
-         */
         val entity = existingProduct()
         val lengthCm = entity.field("lengthCm")!!
         assertEquals("cm", lengthCm.unit)
-        // 45.7 cm is 18 inches. If anything here ever "helpfully" converts, this reads 116.08.
         assertEquals(
             JsonPrimitive(45.7),
             DwValues.coerceHydrated(lengthCm, JsonPrimitive("45.7")),
@@ -700,11 +418,6 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `the artisan's stated pin arrives whole, and anything that is not a pin does not arrive`() {
-        // `participant.subjectLocation` became a hydration target with the artisan widening, fed by
-        // `_subject_point`, which returns `{lat, lon}` or nothing. The object is passed through
-        // UNCHANGED — a client that re-rounded a coordinate would put the map pin somewhere the
-        // browser does not — but a value that is not an object at all is refused, because a bare
-        // string reaching the map picker draws nothing and offers no way to fix it.
         val participant = registry.stages.flatMap { it.entities }.first { it.key == "participant" }
         val pin = participant.field("subjectLocation")!!
         assertEquals("GEO", pin.type)
@@ -716,9 +429,6 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `a single photograph bound for a gallery arrives as a list, from the shipped registry`() {
-        // `hydrate_entries` wraps a scalar for a multi field. The synthetic twin of this lives in
-        // DwReferenceHydrationTest; this one proves the SHIPPED registry really does point the
-        // product's one photograph at a gallery, which is the half a fixture cannot say.
         val entity = existingProduct()
         val carried = carry(entity, "productRef", mapOf("photo" to JsonPrimitive("media-7")))
         assertEquals(
@@ -729,48 +439,19 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `money off a reference record lands two-place, as it does on the server`() {
-        // `_money()` already formats to two places, so this is a round-trip rather than a rounding
-        // — but the arm has to be exercised, because MONEY is the one type where the phone and the
-        // server disagreed for real once (Formatter rounds half away from zero, Python half to
-        // even) and a hydrated amount feeds the stage-17 cost sheet a PRODUCT derivation reads.
         val entity = existingProduct()
         val carried = carry(entity, "productRef", mapOf("price" to JsonPrimitive("1200.5")))
         assertEquals(JsonPrimitive("1200.50"), carried["price"])
     }
 
-    // ── The digest, and what a widening does to a phone that already holds a cache ───────────────
-
     @Test
     fun `the shipped asset declares a registry version, and the mapping is inside it`() {
-        /*
-         * WHAT A WIDENED REGISTRY COSTS A HANDSET, ANSWERED HONESTLY RATHER THAN ASSUMED.
-         *
-         * `registry_version()` digests key, type, tier, required, enum NAME, deprecated, derivation
-         * AND the hydration mapping — the last one added for exactly this feature, so that
-         * correcting a wrong mapping (which touches no key, type or tier) still moves the version
-         * and still forces the bundled asset to be re-dumped. So the widening in progress WILL move
-         * the digest, and that is the honest outcome rather than a cost.
-         *
-         * What it does NOT do is invalidate anything on this phone. [StageSchemaStore.store]'s "the
-         * version moved" return value is discarded by its only caller, [WorkshopDraft] carries no
-         * registry version to be recognised against, and [StageDraft.values] is a `JsonElement` map
-         * so a key this build does not know survives a round trip rather than being dropped. The
-         * measured result (SM-M325F, 2026-08-13, recorded in [StageSchemaStore]'s KDoc) is that a
-         * digest change rewrites the cache file and leaves the draft byte-for-byte identical.
-         *
-         * This test asserts only the two things a client can check for itself: the asset declares a
-         * version at all, and the mapping it carries is not empty — i.e. the dump really did
-         * include `refHydration`. A dump that silently stopped emitting it would leave every picker
-         * on a never-connected handset hydrating nothing, with the version still matching, which is
-         * the exact shape of the derived-fields incident this digest was widened for.
-         */
         assertTrue("the bundled registry declares no version", registry.version.isNotBlank())
         assertEquals("registry_version() is a 16-character sha256 prefix", 16, registry.version.length)
         assertTrue(
             "the bundled asset carries no hydration mapping at all — was it dumped without refHydration?",
             hydratingSites().isNotEmpty(),
         )
-        // The count is a floor, not an equality, for the same reason FLOOR is: the widening adds.
         assertTrue(
             "the shipped registry hydrates fewer pickers than this app has ever shipped with",
             hydratingSites().size >= FLOOR.size,
@@ -779,23 +460,10 @@ class DwReferenceCarryParityTest {
 
     @Test
     fun `a reference list cached before a widening hydrates what it has and clears nothing`() {
-        /*
-         * THE CACHE THIS PHONE ALREADY HOLDS IS THE ONE THING THE SERVER'S WIDENING CANNOT REACH.
-         *
-         * [DwReferenceStore] has no expiry and no version stamp, deliberately — "a stale artisan
-         * list is worth immeasurably more than no artisan list". So a handset that fetched the
-         * artisan register a fortnight ago holds options whose `data` predates every key the
-         * widening adds, and it will go on serving them until it next sees a tower.
-         *
-         * That has to be a PARTIAL fill and never a wrong one: the keys the old payload has arrive,
-         * the keys it lacks leave their boxes blank for the designer, and nothing already on the row
-         * is cleared on the strength of a key the record simply could not have carried.
-         */
         val participant = registry.stages.flatMap { it.entities }.first { it.key == "participant" }
         val writable = boxesOf(participant)
         val mapping = writable.getValue("artisanRef").refHydration
 
-        // An option from before the widening: it carries the two oldest keys and nothing else.
         val old = DwReferenceOption(
             id = "a1",
             data = buildJsonObject {

@@ -47,14 +47,6 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.apiErrorMessage
 import kotlinx.coroutines.launch
 
-/**
- * "Add a person" on Manage users: one step makes the account, lets the address in at that role and
- * puts them on their role's own list — all on the server, all or nothing (`POST /users`).
- *
- * The temporary password a "make one for me" answer carries exists only in this card's state until
- * it is dismissed: not logged, not stored. A 409 for an address that already has an account offers
- * [onOpenExisting] instead of a second account.
- */
 @Composable
 fun AddPersonCard(
     repository: WorkshopRepository,
@@ -240,7 +232,6 @@ fun AddPersonCard(
     }
 }
 
-/** A setting on the add form — the shared switch row, never a checkbox (owner's rule, 2026-10-17). */
 @Composable
 private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     AppToggle(label = label, checked = checked, onCheckedChange = onChange)

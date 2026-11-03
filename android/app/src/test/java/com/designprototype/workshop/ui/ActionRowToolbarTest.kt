@@ -6,15 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * `ActionRow(toolbar = true)`: controls that act on one thing share ONE line in equal cells and never
- * stack. The stage preview's zoom (Smaller / Larger / Fit / 100%) stacked one per row on a phone as an
- * action row (release smoke 2026-10-17, dp-final/36).
- */
 class ActionRowToolbarTest {
     @Test
     fun fourCellsShareA360dpLineAtAThumbsWidth() {
-        // 360dp phone minus the card's padding, at 1x density: four cells with 4dp gaps.
         val cell = toolbarCellWidth(width = 328, count = 4, gap = 4)
         assertEquals(79, cell)
         assertTrue("each cell must stay a 48dp target", cell >= 48)

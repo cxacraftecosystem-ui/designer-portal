@@ -14,10 +14,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * A CREATE HELD AS A LIKELY DUPLICATE (409 `artisan_possible_duplicate`) is its own outbox arm, never
- * a clash: the tray says who it looks like and offers "Same person" and "Different person".
- */
 class OutboxPossibleDuplicateTest {
     private val holdBody = """
         {"detail":{"code":"artisan_possible_duplicate","message":"This may be Giriraj Prasaad (Bhuj), already recorded.",
@@ -46,7 +42,6 @@ class OutboxPossibleDuplicateTest {
         assertNotNull(held)
         assertEquals(listOf("a1", "a2"), held!!.map { it.artisan.id })
         assertEquals("Names 92% alike", held[0].reasons.single().label)
-        // An identity clash is a 409 too, and stays the clash arm's.
         val clash = """{"detail":{"code":"artisan_identity_conflict","message":"x"}}"""
         assertNull(PossibleDuplicates.heldCandidates(409, clash))
         assertNull(PossibleDuplicates.heldCandidates(422, holdBody))
@@ -73,7 +68,6 @@ class OutboxPossibleDuplicateTest {
         assertTrue(after.attachedToExisting)
         assertNull(after.failure)
         assertTrue(after.duplicateCandidates.isEmpty())
-        // The queued record's fields are not copied anywhere: the body is untouched.
         assertEquals(held.payloadJson, after.payloadJson)
     }
 

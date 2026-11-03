@@ -5,18 +5,10 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * AN EMPTY REGISTER READS AS EMPTY; ONLY A FAILED READ SAYS IT COULD NOT LOAD.
- *
- * The 0.0.19 emulator smoke opened the artisan form on a deployment with no crafts and read
- * "Couldn't load crafts" while online: a live fetch sets `online = true`, and `registerListNotice`
- * had no arm for a read that answered with nothing, so it fell through to the failure sentence.
- */
 class RegisterListNoticeTest {
 
     private val live = RegisterLoad(source = RegisterSource.LIVE, online = true)
 
-    /** A caller's own empty sentence; the craft list's own empty state is the catalogue picker's now. */
     private val empty = "No crafts yet. Ask an admin to add one."
 
     @Test

@@ -17,11 +17,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.io.File
 
-/**
- * [stageBlockRange], [sliceStageBlocks] and [spliceStageBlocks] against the vectors the web's
- * `e2e/stage-slice-unit.spec.ts` reads — `shared/report-parity/stage-slice-vectors.json` — so the
- * two clients find a stage, and splice a live copy of it into the saved document, the same way.
- */
 class DwStageSliceTest {
     private val vectors: JsonObject = Json.parseToJsonElement(
         repoFile("shared/report-parity/stage-slice-vectors.json").readText()

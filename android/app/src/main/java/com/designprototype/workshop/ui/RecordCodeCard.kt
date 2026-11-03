@@ -71,75 +71,12 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 
-/**
- * The QR code for one record, drawn on the record's own screen, with an expanded view and a file the
- * designer can share.
- *
- * ── WHY IT IS HERE AND NOT ONLY ON A PRINT SHEET ─────────────────────────────────────────────
- *
- * `ui/designworkshop/WorkshopCodesScreen.kt` writes an A4 PDF of thirty cards, which is the right
- * shape on the morning a workshop starts and the wrong one every other day. A designer holding one
- * tool wants the code for THAT tool — to tie to the tool, to send to a colleague, to hand to the
- * officer asking which record a photograph belongs to. That is one code, from the screen the record
- * is already open on, and it must not cost a walk to a printer.
- *
- * ── IT IS GENERATED IN REAL TIME AND NOTHING IS SAVED ────────────────────────────────────────
- *
- * There is no stored PNG, no cached bitmap and no column on the record. The payload is a pure
- * function of the record's type and its id ([encodeWorkshopCode]) and the symbol is a pure function
- * of the payload ([DwQrEncode]), so this recomputes both on every visit. `remember` holds the result
- * only for as long as the screen is composed — a cache against re-composition, never a cache that
- * outlives the screen.
- *
- * IF YOU ARE HERE TO "OPTIMISE" THIS INTO A STORED ASSET, READ THIS FIRST. Encoding a payload and
- * scoring eight masks is under a millisecond on the Galaxy M32 this app is tested on; a stored image
- * costs a column or a file, an invalidation rule, a migration for every record already recorded, and
- * space on a handset that is usually within a few hundred megabytes of full. And it can go stale,
- * which a function cannot: the id a code is built from is immutable, so a cached image can only ever
- * be as correct as this function and never more. There is nothing to win.
- *
- * ── WHAT IT WILL NOT DO ──────────────────────────────────────────────────────────────────────
- *
- * It draws no field of the record except the [title] its caller passes, and never an identity
- * number: [encodeWorkshopCode] refuses anything shaped like an Aadhaar or Pehchan number before this
- * file sees it, and the refusal is drawn as a sentence rather than swallowed. THE SHARED FILE IS
- * NAMED AFTER THE CODE, not the record — a file called `DPW1-A-CMSIK….png` can be sent to anybody
- * and a file called `ram-kumar.png` cannot. The code is the one string here that is opaque by
- * construction.
- *
- * ── WHY IT DOES NOT INVERT IN DARK MODE ──────────────────────────────────────────────────────
- *
- * The symbol is black on white in every theme. A light-on-dark QR is refused outright by a large
- * share of scanners, which look for a dark symbol inside a light quiet zone — so a code that
- * politely followed the theme would be a code that stopped working for exactly the designers who use
- * dark mode in a courtyard. Everything around it is themed as usual.
- */
-
-/**
- * Error correction level Q — a quarter of the symbol recoverable.
- *
- * The level the print sheet uses, for the reason it gives: these end up on paper that spends a
- * fortnight in a workshop. Two surfaces drawing one record at two levels would also produce two
- * different-looking symbols for one record, which is the sort of thing that makes somebody doubt a
- * scan they should have trusted.
- */
 private val CODE_ECC = DwQrEccLevel.Q
 
-/** The light border a scanner uses to FIND a symbol. Four modules, as the standard asks. */
 private const val QUIET_MODULES = 4
 
-/**
- * Pixels per module in the shared PNG.
- *
- * 12 puts the largest symbol this app draws (version 4: 33 modules plus the quiet zone, 41 units) at
- * 492px, which prints at 26mm — `renderCardSheetPdf`'s box, the size below which a module stops
- * being readable by a handset camera in a courtyard. A PNG carries no physical size of its own, so
- * the only protection against one printed too small is to hand over enough pixels that scaling it
- * down has to be somebody's decision.
- */
 private const val PNG_MODULE_PX = 12
 
-/** What one record's code came to: a symbol, or the sentence saying why there is none. */
 private sealed interface CodeRender {
     data class Ok(val code: String, val printed: String, val symbol: DwQrSymbol) : CodeRender
 
@@ -154,36 +91,17 @@ private fun renderRecordCode(recordType: DwWorkshopRecordType, id: String?): Cod
         }.getOrElse { CodeRender.Refused(it.userMessage("This code could not be drawn.")) }
     }
 
-/** An artisan's QR card: the server-signed token (no record id) and the short code under it. */
 private fun renderCardToken(token: String, shortCode: String): CodeRender =
     runCatching { CodeRender.Ok(token, shortCode, DwQrEncode.encode(token, CODE_ECC)) as CodeRender }
         .getOrElse { CodeRender.Refused(it.userMessage("This code could not be drawn.")) }
 
-/** Where a shared code landed on this device. */
 private data class SavedCode(val displayLocation: String, val shareUri: android.net.Uri?, val fileName: String)
 
-/**
- * Draw the symbol into a bitmap, write it as a PNG, and publish it.
- *
- * DRAWN FROM THE MODULE MATRIX rather than captured off the screen. A screen capture is at the
- * device's pixel density, over whatever the theme is, with whatever is behind it — and half a pixel
- * of smoothing across a module boundary is what makes a camera hesitate. Filling integer rectangles
- * on a white ground cannot introduce one.
- *
- * WRITE COMPLETELY BEFORE PUBLISHING, and `fd.sync()` before either — the same discipline
- * `WorkshopCodesScreen.writeSheet` and `report/ReportExport` use, for the reason they give: the
- * publish step copies the temp file into a MediaStore row that becomes visible to every app the
- * moment IS_PENDING clears, and a copy whose bytes are still only in the page cache publishes a
- * truncated file that a viewer reports as damaged.
- */
 private suspend fun writeCodePng(
     context: Context,
     repository: WorkshopRepository,
     entry: CodeRender.Ok,
 ): SavedCode = withContext(Dispatchers.IO) {
-    // Named after the CODE and nothing else — see the file header. Colons are illegal in a file name
-    // on every filesystem this could be copied onto, so they become hyphens.
-    // NAMING 2.1: DesignWorkshop_Workshop_DW-RJ-0012-A3_Record-Code.png — still the code and nothing else.
     val name = com.designprototype.workshop.data.Naming.fileName(
         entity = "Workshop", subject = entry.code, what = "Record-Code", ext = "png",
     )
@@ -193,9 +111,6 @@ private suspend fun writeCodePng(
     val tmp = File(context.cacheDir, name)
     try {
         val canvas = AndroidCanvas(bitmap)
-        // The quiet zone is PAINTED, not left transparent: a transparent PNG dropped on a coloured
-        // page or opened in a dark-mode viewer leaves the symbol without the light border a scanner
-        // uses to find it at all.
         canvas.drawColor(AndroidColor.WHITE)
         val paint = Paint().apply {
             color = AndroidColor.BLACK
@@ -217,7 +132,6 @@ private suspend fun writeCodePng(
         }
         FileOutputStream(tmp).use { fos ->
             val buffered = BufferedOutputStream(fos)
-            // Quality is ignored for PNG (it is lossless); the argument is required all the same.
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, buffered)
             buffered.flush()
             fos.fd.sync()
@@ -230,29 +144,12 @@ private suspend fun writeCodePng(
     }
 }
 
-/**
- * A QR symbol, drawn straight onto the canvas from [DwQrEncode]'s module matrix.
- *
- * NO LIBRARY AND NO BITMAP. `drawBehind` runs on the draw pass rather than composition, so a screen
- * holding one repaints rather than recomposes and nothing is allocated per frame.
- *
- * The module size is computed from the box and each run is drawn on absolute boundaries rather than
- * by accumulating a step, so rounding cannot open a hairline between two runs of one row — a seam
- * across a module is exactly the artefact that makes a camera hesitate.
- *
- * `internal` and shared with `ui/designworkshop/WorkshopCodesScreen.kt`: two implementations of
- * "draw this matrix" is two chances to get the quiet zone or the rounding wrong, in one feature a
- * designer moves between within a single workshop.
- */
 @Composable
 internal fun DwQrSymbolImage(symbol: DwQrSymbol, label: String, modifier: Modifier = Modifier) {
     val extent = symbol.size + QUIET_MODULES * 2
     Box(
         modifier = modifier
-            // White, and NOT a theme colour: this is a depiction of paper. See the file header.
             .background(Color.White, RoundedCornerShape(2.dp))
-            // The symbol is an image with meaning — a designer using TalkBack needs to know WHICH
-            // record this one is, and "QR code" alone would say the same thing on every screen.
             .semantics { contentDescription = label }
             .drawBehind {
                 val unit = size.minDimension / extent
@@ -277,17 +174,6 @@ internal fun DwQrSymbolImage(symbol: DwQrSymbol, label: String, modifier: Modifi
     )
 }
 
-/**
- * The record's code, on the record.
- *
- * [title] is only ever used to NAME the symbol for a screen reader and to head the expanded view. It
- * is never encoded and never put in a file name — see the file header.
- *
- * SELF-CONTAINED ON PURPOSE: it reports where a shared file landed inside its own card rather than
- * through a host callback, so it can be dropped onto any record screen without that screen having to
- * grow a message channel for it. A snackbar would be the wrong home anyway — "Saved to Downloads/…"
- * is a fact a designer comes back to when they go looking for the file.
- */
 @Composable
 fun RecordCodeSection(
     repository: WorkshopRepository,
@@ -298,12 +184,6 @@ fun RecordCodeSection(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    /*
-     * AN ARTISAN SHOWS ITS QR CARD, not a DPW1 code: the card's token is signed by the server and
-     * holds no record id, so it is fetched (`GET /artisans/{id}/card`) rather than derived. While
-     * cards are off that route answers 404 and the artisan keeps its DPW1 code, as before. An artisan
-     * not yet on the server shows the refusal the printed sheet shows.
-     */
     val isArtisan = recordType == DwWorkshopRecordType.ARTISAN
     var artisanRender by remember(recordType, recordId) { mutableStateOf<CodeRender?>(null) }
     if (isArtisan) {
@@ -389,8 +269,6 @@ fun RecordCodeSection(
                 ) {
                     Icon(
                         Icons.Filled.WarningAmber,
-                        // Decorative: the sentence beside it carries the meaning, so the refusal
-                        // survives greyscale and a screen reader that never sees the icon.
                         contentDescription = null,
                         tint = MaterialTheme.field.onWarningContainer,
                         modifier = Modifier.size(14.dp),
@@ -412,8 +290,6 @@ fun RecordCodeSection(
                                 color = MaterialTheme.field.body,
                                 style = MaterialTheme.typography.bodySmall,
                                 lineHeight = 15.sp,
-                                // Monospace, because this string is read aloud and typed back: the
-                                // grouping is only legible if the groups line up.
                                 fontFamily = FontFamily.Monospace,
                             )
                             Text(
@@ -428,8 +304,6 @@ fun RecordCodeSection(
                     ActionRow {
                         OutlinedButton(
                             onClick = { expanded = true },
-                            // The 48dp floor this app applies wherever a control was thought about —
-                            // see ISLAND_TOUCH_TARGET in ui/AppNavigation.kt.
                             modifier = Modifier.heightIn(min = 48.dp),
                         ) {
                             Icon(Icons.Filled.OpenInFull, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -483,9 +357,6 @@ fun RecordCodeSection(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(heading, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
-                    // A white plate under the symbol rather than the dialog's own surface: in dark
-                    // mode the dialog is dark, and a dark quiet zone is a symbol most scanners never
-                    // find. See the file header.
                     Box(
                         modifier = Modifier
                             .background(Color.White, RoundedCornerShape(8.dp))
@@ -512,14 +383,6 @@ fun RecordCodeSection(
     }
 }
 
-/**
- * Where the shared file landed, and the one control that sends it on.
- *
- * The same two-branch answer `WorkshopCodesScreen.DwSheetSavedCard` gives, for the same measured
- * reason: on Android 10 and above the file lands in the public Downloads collection, which every app
- * can already open, so there is no Uri to grant and nothing to share FROM this app — and saying
- * where it is beats offering a button that would have to re-copy the file to work.
- */
 @Composable
 private fun SavedCodeCard(file: SavedCode) {
     val context = LocalContext.current
@@ -538,8 +401,6 @@ private fun SavedCodeCard(file: SavedCode) {
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "image/png"
                         putExtra(Intent.EXTRA_STREAM, file.shareUri)
-                        // Without this the receiving app gets a Uri it has no permission to read, and
-                        // the share silently produces an empty attachment.
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     context.startActivity(Intent.createChooser(send, "Share the code"))

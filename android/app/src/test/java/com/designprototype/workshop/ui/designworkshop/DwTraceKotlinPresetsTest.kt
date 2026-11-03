@@ -12,38 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * **THE KOTLIN ENGINE'S TWO PRESET REGISTERS, PINNED AGAINST THE PORTAL'S AND AGAINST THEMSELVES.**
- *
- * ── WHAT WOULD GO WRONG WITHOUT THIS ──────────────────────────────────────────────────────────
- *
- * `DwTraceKotlinPresets.kt` sits between two registers that are maintained by different people in
- * different languages, and every way they can part company fails silently:
- *
- *  · **A style id that stops matching** does not raise. `TraceParams.styleId` is persisted, so a
- *    handset would write an id the portal cannot resolve and the portal would fall back to
- *    `clean-line` — a different drawing from the same sheet, with nothing anywhere saying so.
- *  · **A style whose `params.styleId` is not its own id** does not raise either. The TypeScript
- *    register makes that impossible by construction (`styles.ts:46-47`); the Kotlin one writes the id
- *    by hand twenty times, so it is a convention, and a convention nothing checks is a typo waiting.
- *  · **The subject registers already disagree**, and the adapter's account of HOW they disagree is
- *    three hand-written lists. A list that drifts from the thing it describes puts a sentence on the
- *    wrong row of a picker, or leaves the right row silent.
- *  · **The two guards on `applySubject`** — the style's identity, and the designer's hand-tuned
- *    knobs — are enforcements of promises the vendored tables keep unaided today. That is exactly the
- *    state in which somebody deletes them as dead code.
- *
- * ── AND WHY IT READS THE TYPESCRIPT RATHER THAN A COPY OF IT ──────────────────────────────────
- *
- * The same reason `DwSketchTraceStagesTest` and `DwSketchTraceParamsTest` do: Gradle runs this
- * module's unit tests with `android/app` as the working directory, so two levels up is the monorepo
- * root and `frontend/lib/trace/engine/` — vendored verbatim and hashed in `UPSTREAM-MANIFEST.txt` — is
- * right there. Pinning against a second Kotlin transcription of those ids would only prove that two
- * transcriptions agree with each other.
- */
 class DwTraceKotlinPresetsTest {
-
-    /* ── The portal's own registers, read out of the vendored TypeScript ───────────────────────── */
 
     private fun vendored(path: String): String {
         val file = File("../../frontend/lib/trace/$path")
@@ -57,10 +26,8 @@ class DwTraceKotlinPresetsTest {
         return file.readText(Charsets.UTF_8)
     }
 
-    /** `preset('id', 'Name', GROUP_X, …)` — the only two-space-indented `preset(` calls are the table. */
     private val presetCall = Regex("""^ {2}preset\(\s*'([^']+)',\s*'([^']*)',\s*(GROUP_\w+),""", RegexOption.MULTILINE)
 
-    /** `subject('id', 'Name', …)`, likewise. */
     private val subjectCall = Regex("""^ {2}subject\(\s*'([^']+)',\s*'([^']*)',""", RegexOption.MULTILINE)
 
     private val groupConst = Regex("""^const (GROUP_\w+) = '([^']*)';""", RegexOption.MULTILINE)
@@ -90,17 +57,6 @@ class DwTraceKotlinPresetsTest {
         return rows
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────
-     * The style register
-     * ──────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * The twenty ids, and their order, are the portal's exactly.
-     *
-     * ORDER AND NOT ONLY MEMBERSHIP, because both registers call the order part of the persisted
-     * contract ("append to the end, never renumber", `Styles.kt:911-913`) and because the picker is
-     * drawn in it. This is the assertion that lets a project move between clients.
-     */
     @Test
     fun `the twenty style ids are the portal's, in the portal's order`() {
         assertEquals(portalStyles().map { it.id }, Styles.ALL.map { it.id })
@@ -111,13 +67,6 @@ class DwTraceKotlinPresetsTest {
         )
     }
 
-    /**
-     * Every style's tree reports the style it is.
-     *
-     * `styleId` is what a saved trace is filed under, so a preset whose `params.styleId` disagreed
-     * with its own `id` would persist a drawing under a name that produces a different drawing. See
-     * the class header for why this is a convention here and a construction on the portal.
-     */
     @Test
     fun `every style's params report that style's own id`() {
         Styles.ALL.forEach { style ->
@@ -129,13 +78,6 @@ class DwTraceKotlinPresetsTest {
         }
     }
 
-    /**
-     * Names, descriptions and groups are the engine's own strings, not a transcription of them.
-     *
-     * `DwSketchTracePresets.kt:65-66`: "There is no Kotlin table of style names in this repository and
-     * there must not be one." This is that rule as an assertion — the day somebody "improves" a
-     * description in the adapter, this fails instead of the two registers quietly parting.
-     */
     @Test
     fun `the style rows are the engine's own strings`() {
         val rows = dwTraceKotlinPresetTables().styles
@@ -145,13 +87,6 @@ class DwTraceKotlinPresetsTest {
         assertEquals(Styles.ALL.map { it.group }, rows.map { it.group })
     }
 
-    /**
-     * The display-text divergence `DwTraceKotlinPresets.kt`'s header states, pinned to the digit.
-     *
-     * A comment that counts something is a claim, and this repository's rule is that a count must be
-     * true when it is written. This is how it stays true: change either register and the header's
-     * "one name" and "fourteen of the twenty groups" fail here rather than rotting in a docblock.
-     */
     @Test
     fun `exactly one style name and fourteen style groups differ from the portal's`() {
         val portal = portalStyles().associateBy { it.id }
@@ -173,19 +108,6 @@ class DwTraceKotlinPresetsTest {
         )
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────
-     * The subject register, and the divergence this adapter admits to
-     * ──────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * The two registers differ by exactly the rows the adapter's own lists name.
-     *
-     * THE POINT OF THIS TEST IS THE FAILURE MODE, not the pass. `DW_TRACE_SUBJECTS_ONLY_ON_THIS_ENGINE`
-     * decides which rows carry a sentence on screen and
-     * `DW_TRACE_SUBJECTS_ONLY_ON_THE_PORTAL` decides which ids get a refusal that names the remedy
-     * instead of a dead end. Either list drifting from the registers it describes is a picker that
-     * lies quietly, so the difference is recomputed here from both sources rather than trusted.
-     */
     @Test
     fun `the subject registers differ by exactly the rows this adapter names`() {
         val engine = Subjects.ALL.map { it.id }
@@ -201,8 +123,6 @@ class DwTraceKotlinPresetsTest {
             DW_TRACE_SUBJECTS_ONLY_ON_THE_PORTAL,
             portal.filter { it !in engine },
         )
-        // The nine that ARE shared are spelled identically on both sides and appear in the same
-        // relative order, which is what makes a subject choice mean the same thing on both clients.
         assertEquals(
             listOf(
                 "painting", "pottery", "textile", "jewellery", "sculpture",
@@ -213,9 +133,6 @@ class DwTraceKotlinPresetsTest {
         assertEquals(engine.filter { it in portal }, portal.filter { it in engine })
     }
 
-    /**
-     * The notes table covers exactly the unmatched rows — no row silent, no row over-explained.
-     */
     @Test
     fun `every unmatched subject row carries a divergence sentence and no other row does`() {
         assertEquals(
@@ -240,12 +157,6 @@ class DwTraceKotlinPresetsTest {
         }
     }
 
-    /**
-     * Each subject row is the engine's hint verbatim, then this client's sentences — in that order.
-     *
-     * The hint is the material's own explanation and belongs first; a designer skimming the sheet
-     * reads what the preset does before they read what the two clients disagree about.
-     */
     @Test
     fun `every subject row opens with the engine's own hint and states that adjusting compounds`() {
         val rows = dwTraceKotlinPresetTables().subjects
@@ -262,18 +173,6 @@ class DwTraceKotlinPresetsTest {
         }
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────
-     * Applying a style
-     * ──────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * A style is the preset's whole tree, and the base is discarded — including the `auto` block.
-     *
-     * The discard is asserted rather than merely documented because it is the one place two runtimes
-     * behind one button could differ: `bridge.ts:475-484` takes the base, writes `void paramsJson` and
-     * returns the preset alone, and a Kotlin implementation that "helpfully" kept something would give
-     * the same designer two different drawings depending on which build they were holding.
-     */
     @Test
     fun `applying a style returns the preset's whole tree and keeps nothing from the base`() {
         val base = TraceParams().copy(
@@ -293,7 +192,6 @@ class DwTraceKotlinPresetsTest {
         }
     }
 
-    /** An id nothing carries is refused in the portal's own words, never substituted for `clean-line`. */
     @Test
     fun `an unknown style is refused rather than silently replaced by the default`() {
         val failure = runCatching { dwTraceKotlinApplyStyle(TraceParams(), "clean-lines") }.exceptionOrNull()
@@ -301,27 +199,8 @@ class DwTraceKotlinPresetsTest {
         assertEquals("There is no style called \"clean-lines\".", failure?.message)
         assertEquals(dwTraceKotlinNoSuchStyleSentence("clean-lines"), failure?.message)
 
-        // THE FOURTH ASSERTION IS GONE, AND THE SENTENCE IS STILL PINNED BY THE LINE ABOVE IT.
-        // It read the spelling out of `frontend/lib/trace/android/bridge.ts` — the JavaScript route's
-        // host shim — so that the two runtimes explained one problem the same way. That route is
-        // deleted, there is no second spelling to agree with, and the file it read no longer exists.
-        // What survives is what the check was actually protecting: the message is
-        // `dwTraceKotlinNoSuchStyleSentence`'s and not a literal at the throw site, so there is one
-        // place this sentence is written.
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────
-     * Applying a subject
-     * ──────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * All 240 style × subject pairs keep the four fields that are what a style *is*.
-     *
-     * API-CONTRACT §4.3: `adjust` "never touches `edge.engine`, `output.vectorMode`,
-     * `output.fillClosed` or `styleId` — those are what a style *is*". Asserted across the whole
-     * cross-product because the failure is per-table: one careless `engine =` in one of twelve entries
-     * would turn "colouring book" into something that is no longer colouring book, on export, silently.
-     */
     @Test
     fun `no subject can change what a style is`() {
         Styles.ALL.forEach { style ->
@@ -338,15 +217,6 @@ class DwTraceKotlinPresetsTest {
         }
     }
 
-    /**
-     * The guard above is a BELT, and today the tables need no braces — which is why it is easy to
-     * delete and why this test says so out loud.
-     *
-     * `Subjects.kt:657-661` gives the reason to keep it: the subject tables "are data, they are edited
-     * by hand", and the automatic path applies one without a user having asked. If this test ever
-     * fails, a vendored table has started changing a style's identity and the enforcement in
-     * `dwTraceKotlinApplySubject` is the only thing standing between that and somebody's export.
-     */
     @Test
     fun `the vendored subject tables keep the identity promise unaided today`() {
         Styles.ALL.forEach { style ->
@@ -362,7 +232,6 @@ class DwTraceKotlinPresetsTest {
         }
     }
 
-    /** The `auto` block belongs to the screen, not to the subject table, and survives an adjustment. */
     @Test
     fun `applying a subject leaves the auto block alone`() {
         val base = TraceParams().copy(
@@ -373,18 +242,6 @@ class DwTraceKotlinPresetsTest {
         assertEquals(AutoMode.OFF, applied.auto.mode)
     }
 
-    /* ── The hand-tuned knobs ──────────────────────────────────────────────────────────────────── */
-
-    /**
-     * The six knob strings this handset already transcribed are the six the engine actually honours.
-     *
-     * LOAD-BEARING FOR `applySubject`, which passes `auto.handTuned` straight to [Knobs.restore]:
-     * `AutoParams.sanitized()` trims and de-duplicates that set but does **not** validate it against
-     * the six names (`Params.kt:294-305`), so a label that is one character out is silently
-     * unprotected — the knob a designer set by hand gets overwritten and nothing anywhere says so.
-     * `DW_TRACE_KNOBS` was written against the TypeScript register; this is the other half of that
-     * check, against the Kotlin one.
-     */
     @Test
     fun `the handset's knob labels are the Kotlin engine's own`() {
         assertEquals(Knobs.ALL, DW_TRACE_KNOB_NAMES)
@@ -392,13 +249,6 @@ class DwTraceKotlinPresetsTest {
         assertEquals(Knobs.ALL.toSet(), DW_TRACE_KNOB_KEY_FOR_NAME.keys)
     }
 
-    /**
-     * A knob named in `handTuned` survives an adjustment; the same knob unnamed does not.
-     *
-     * Both halves, because either alone is passable by an implementation that does nothing: a test
-     * that only checked the protected case would pass against a `applySubject` that never adjusts
-     * anything at all.
-     */
     @Test
     fun `a hand-tuned knob is restored after a subject and an unprotected one is not`() {
         val tuned = TraceParams().copy(
@@ -433,27 +283,9 @@ class DwTraceKotlinPresetsTest {
             unprotectedRun.edge.sensitivity != 0.37f,
         )
 
-        // Only the named knobs come back. Everything else the subject moved stays moved in both runs,
-        // which is what makes `handTuned` a protection rather than a switch that turns subjects off.
         assertEquals(unprotectedRun.preprocess, protectedRun.preprocess)
     }
 
-    /* ── The compounding, pinned so it cannot become a surprise ────────────────────────────────── */
-
-    /**
-     * **A SUBJECT COMPOUNDS HERE AND IS IDEMPOTENT ON THE PORTAL. THIS TEST EXISTS TO PIN THAT.**
-     *
-     * `subjects.ts:41-43` documents the TypeScript `adjust` as idempotent, and it is: those tables are
-     * absolute overrides pushed through `withOverrides` (`subjects.ts:56-63`). The Kotlin tables are
-     * relative — `Subjects.kt:21-24` claims only that applying twice cannot leave the legal range —
-     * so a second application multiplies a second time.
-     *
-     * `DwSketchTracePanel.kt:684` re-applies a subject on a tap, so this is reachable by a designer
-     * pressing the same button twice. It is deliberately NOT corrected here: a third behaviour
-     * invented in the adapter would belong to neither engine. It is stated on every row by
-     * [DW_TRACE_SUBJECT_COMPOUNDS_NOTE], reported by the panel's own overwrite notice, and left as an
-     * owner's decision. If somebody takes that decision, this test is where the change lands.
-     */
     @Test
     fun `applying a subject twice adjusts twice, unlike the portal's idempotent tables`() {
         val base = Styles.byId("clean-line")!!.params.sanitized()
@@ -465,20 +297,9 @@ class DwTraceKotlinPresetsTest {
         assertEquals(60, once.cleanup.minBlobArea)
         assertEquals(150, twice.cleanup.minBlobArea)
         assertNotEquals(once, twice)
-        // Still legal, which is the only promise `Subjects.kt:21-24` actually makes about a second run.
         assertEquals(twice, twice.sanitized())
     }
 
-    /* ── The refusals ─────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * A portal-only id is refused with the three rows that replaced it, not with "no such thing".
-     *
-     * `DwSketchTraceParams.kt:1094` maps the `DECORATIVE` product category to `"carving"` and
-     * `DwSketchTracePanel.kt:404` seeds the picker from it, so a decorative record reaches this
-     * runtime holding an id it does not carry. The sentence is what a designer standing in a courtyard
-     * gets instead of a dead button.
-     */
     @Test
     fun `the portal's own carving id is refused with the remedy named`() {
         assertEquals("carving", dwTraceSubjectFor("DECORATIVE"))
@@ -494,14 +315,6 @@ class DwTraceKotlinPresetsTest {
         assertEquals(dwTraceKotlinNoSuchSubjectSentence("carving"), message)
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────
-     * The same two halves at the DwTraceValues boundary
-     * ──────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * The `DwTraceValues` forms are the `TraceParams` forms with a codec round trip around them, and
-     * nothing else — asserted rather than assumed, because "nothing else" is the whole claim.
-     */
     @Test
     fun `the values-level halves are the params-level halves plus a round trip`() {
         val base = TraceParams().sanitized()
@@ -522,15 +335,6 @@ class DwTraceKotlinPresetsTest {
         )
     }
 
-    /**
-     * **THE HAND-TUNED SET HAS NO DOTTED KEY, AND IS STILL HONOURED ACROSS THE WIRE.**
-     *
-     * `auto.handTuned` is an array, and `dwTraceFlatten` skips arrays because no control reads one
-     * (`DwSketchTraceWire.kt:1144-1146`) — so it is absent from [DwTraceValues.keys] and a caller
-     * reading the flat map would conclude nothing is protected. `dwTraceParamsOf` goes through
-     * [DwTraceValues.wire] instead, which carries it. This test is the proof that the guard survives
-     * the boundary a runtime actually calls across, and not only the one the tests above use.
-     */
     @Test
     fun `a hand-tuned knob survives a subject even though it has no leaf key`() {
         val tuned = TraceParams().copy(
@@ -546,14 +350,11 @@ class DwTraceKotlinPresetsTest {
         assertEquals(setOf(Knobs.MIN_BLOB_AREA), applied.auto.handTuned)
     }
 
-    /** Anything else gets the bridge's bare sentence — there is nothing helpful to add about a typo. */
     @Test
     fun `an unknown subject that is nobody's id gets the bare refusal`() {
         val failure = runCatching { dwTraceKotlinApplySubject(TraceParams(), "pottery ceramics") }
             .exceptionOrNull()
         assertEquals("There is no subject called \"pottery ceramics\".", failure?.message)
-        // `Subjects.byId` trims, so a padded id is a hit rather than a refusal, and the refusal
-        // sentence must not print the untrimmed spelling of something that would have worked.
         assertEquals("pottery", Subjects.byId("  pottery  ")?.id)
         assertEquals(
             "There is no subject called \"carving\".",

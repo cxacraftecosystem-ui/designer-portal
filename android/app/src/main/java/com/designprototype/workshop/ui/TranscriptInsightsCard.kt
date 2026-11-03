@@ -35,16 +35,9 @@ import com.designprototype.workshop.data.TranscriptInsightStates
 import com.designprototype.workshop.data.TranscriptInsightViewDto
 import kotlinx.coroutines.delay
 
-/** How often a queued summary is looked at again, and for how long. The web's numbers. */
 private const val POLL_MILLIS = 15_000L
 private const val POLL_LIMIT_MILLIS = 10 * 60_000L
 
-/**
- * Summary, key quotes and English translation under a transcript. Draws nothing while loading, when the feature is off (the server
- * answers 404), offline, or when there is nothing to show.
- *
- * [load] fetches the full item (translation included); [formatDate] is the screen's own date format.
- */
 @Composable
 fun TranscriptInsightsCard(
     mediaId: String,

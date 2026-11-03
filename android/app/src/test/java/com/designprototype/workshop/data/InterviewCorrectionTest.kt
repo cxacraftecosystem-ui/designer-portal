@@ -10,7 +10,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** An interview correction queued with no signal (2026-10-17) — see `InterviewCorrection.kt`. */
 class InterviewCorrectionTest {
 
     private val formJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -184,8 +183,6 @@ class InterviewCorrectionTest {
 
     @Test
     fun a_correction_the_server_already_holds_reviews_empty_so_the_outbox_sends_it_without_asking() {
-        // The lost-response case: the PATCH committed, its answer did not arrive, and the queued
-        // copy is refused against the old version. Nothing differs, so nothing needs choosing.
         val review = interviewCorrectionReview(
             QuestionnaireInterviewUpdateRequest(
                 title = "Lac turning",

@@ -18,38 +18,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * **THE THREE FORMATS THE HANDSET COULD NOT WRITE UNTIL THE ENGINE WAS VENDORED.**
- *
- * `DwTraceKotlinExporter` closes the gap `DwSketchTraceExporter.kt` documented with a measurement:
- * the JavaScript bundle carried no writers because reaching them cost 56,839 bytes of bundle, so a
- * designer could save an SVG and a picture and nothing else. `:core-export` is compiled into the APK
- * and the constraint is gone. What has to be held is that the bytes are actually a PDF, an EPS and a
- * DXF, that the round trip through the flat geometry does not lose the drawing, and that another
- * product's name does not travel with them.
- *
- * NO ANDROID IN ANY OF IT. Every case here runs on the desktop JVM: the exporter takes a
- * `DwTraceGeometry` and returns a `ByteArray`, and `dwSaveTraceExport` — the half that knows what a
- * Downloads folder is — is a different file. That split is what makes this testable at all.
- */
 class DwTraceKotlinExporterTest {
 
-    /* ══════════════════════════════════════════════════════════════════════════════════════════
-     * The round trip: flat arrays back to a document
-     * ══════════════════════════════════════════════════════════════════════════════════════════ */
-
-    /**
-     * `dwTraceKotlinDocumentOf` is the EXACT INVERSE of `dwTraceKotlinGeometryOf`.
-     *
-     * The pair is the one place a drawing can be quietly changed rather than lost: a verb read at the
-     * wrong offset does not crash, it reads a neighbouring shape's numbers as this shape's curve and
-     * produces something plausible and wrong. So this asserts the geometry back, point for point,
-     * rather than asserting that a file was produced.
-     *
-     * The layer structure is deliberately NOT round-tripped, and that is asserted too — the flat
-     * arrays concatenate shapes across layers and keep no boundary, so two layers in become one layer
-     * out. `geometryToDocument.ts` makes the same collapse for the portal.
-     */
     @Test
     fun `the document rebuilt from flat arrays is the document that was flattened`() {
         val source = threeShapeDocument()
@@ -74,7 +44,6 @@ class DwTraceKotlinExporterTest {
             assertEquals("shape $i segments", original[i].path.segments, out[i].path.segments)
         }
 
-        // The style table survives by value, including the three enums that cross as strings.
         assertEquals(0xFF102030.toInt(), out[0].style.stroke)
         assertEquals(LineCap.ROUND, out[0].style.cap)
         assertEquals(FillRule.EVENODD, out[0].style.fillRule)
@@ -84,20 +53,6 @@ class DwTraceKotlinExporterTest {
         assertEquals(LineJoin.MITER, out[1].style.join)
     }
 
-    /**
-     * A shape whose style index is outside the table REFUSES THE WHOLE EXPORT rather than losing a line.
-     *
-     * `dwTraceKotlinDocumentOf` calls `DwTraceGeometry.validate` before it walks anything, and that
-     * check refuses a style index outside the table — so the `getOrNull` fallback inside the walk is
-     * defence in depth and not a live branch. Stated as a test rather than as a comment because the
-     * two possible wrong answers here are both silent: dropping the shape makes the file short, and
-     * `getOrElse` with a default makes it plausible and wrong.
-     *
-     * The fallback the walk carries — a plain black hairline for an absent style, `LineCap.BUTT` and
-     * `LineJoin.MITER` — is `geometryToDocument.styleFor`'s choice on the portal and `buildSvg`'s
-     * before it: a style that did not survive is a paint problem, and a line the designer actually
-     * drew is worth more than a consistent paint.
-     */
     @Test
     fun `a style index outside the table refuses the export rather than losing the shape`() {
         val good = dwTraceKotlinGeometryOf(threeShapeDocument())
@@ -120,7 +75,6 @@ class DwTraceKotlinExporterTest {
         )
     }
 
-    /** A zero page dimension becomes 1 rather than reaching a writer that would divide by it. */
     @Test
     fun `a zero page dimension is clamped rather than passed to a writer`() {
         val geometry = dwTraceKotlinGeometryOf(threeShapeDocument())
@@ -129,13 +83,6 @@ class DwTraceKotlinExporterTest {
         assertEquals(1f, doc.height, 0f)
     }
 
-    /**
-     * The document's background is passed through, never chosen here.
-     *
-     * `dwTraceExportBackground` exists as a named pass-through for this reason: `ExportOptions.background
-     * = null` means "leave the document alone" to a vector writer and "transparent" to a rasteriser, so
-     * an export-time colour this file invented would put a PDF and a PNG of one drawing on two grounds.
-     */
     @Test
     fun `the background reaches the document rather than being chosen`() {
         val geometry = dwTraceKotlinGeometryOf(threeShapeDocument())
@@ -147,17 +94,6 @@ class DwTraceKotlinExporterTest {
         assertNull(dwTraceKotlinDocumentOf(geometry, 40, 30, null).document.background)
     }
 
-    /* ══════════════════════════════════════════════════════════════════════════════════════════
-     * The three files
-     * ══════════════════════════════════════════════════════════════════════════════════════════ */
-
-    /**
-     * All three formats produce bytes that are actually that format.
-     *
-     * The magic strings are each format's own required opening, so this is a check that the right
-     * writer ran rather than a check that something ran: `%PDF-` opens a PDF, `%!PS-Adobe-3.0 EPSF`
-     * opens an Encapsulated PostScript, and a DXF R12 file opens with a `SECTION` group.
-     */
     @Test
     fun `the exporter writes a PDF, an EPS and a DXF`() = runBlocking {
         val exporter = DwTraceKotlinExporter()
@@ -176,19 +112,6 @@ class DwTraceKotlinExporterTest {
         }
     }
 
-    /**
-     * **NO OTHER PRODUCT'S NAME REACHES A MINISTRY SUBMISSION — AND ONE LINE OF ONE FORMAT STILL DOES.**
-     *
-     * `PdfWriter.kt:135-136` writes `/Producer (Offline Tracer) /Creator (Offline Tracer) /Title
-     * (Offline Tracer export)` and `EpsWriter.kt:144` writes `%%Title: Offline Tracer export`, both
-     * under `includeMetadata`, which the exporter sets false for exactly this reason — the same switch
-     * `dwTraceKotlinSvgOf` sets for the SVG.
-     *
-     * `EpsWriter.kt:143` writes `%%Creator: Offline Tracer` OUTSIDE that guard, so no option removes
-     * it. This case asserts the difference rather than papering over it: the PDF and the DXF are
-     * clean, the EPS carries the name in one header comment, and the day somebody changes either
-     * expectation this goes red instead of a file going out.
-     */
     @Test
     fun `the PDF and the DXF carry no branding and the EPS carries exactly one line of it`() = runBlocking {
         val exporter = DwTraceKotlinExporter()
@@ -214,14 +137,6 @@ class DwTraceKotlinExporterTest {
         assertTrue(eps.contains("%%Creator: Offline Tracer"))
     }
 
-    /**
-     * The provenance note does not reach any of the three, and this pins that rather than hoping.
-     *
-     * `DwTraceExportRequest.provenanceNote` says it "Reaches `/Title` in a PDF and `%%Title:` in an
-     * EPS". That was true of a writer taking a metadata argument; `ExportOptions` has ten fields and
-     * none is a title, so with these writers the note is carried and dropped for all three. It is a
-     * loss `dwTraceExportLosses` states on screen, and this is where the claim is held honest.
-     */
     @Test
     fun `the provenance note reaches none of the three files`() = runBlocking {
         val marker = "TRACED-BY-A-NAMED-DESIGNER-ON-A-HANDSET"
@@ -235,13 +150,6 @@ class DwTraceKotlinExporterTest {
         }
     }
 
-    /**
-     * The layer a CAD operator sees is named, not `LAYER0`.
-     *
-     * This is the one place the single layer's NAME is load-bearing: `DxfWriter` emits one DXF layer
-     * per `VecLayer` and a router, cutter or plotter assigns a tool per layer. `sanitizeLayerName`
-     * upper-cases and replaces the space, so "Line art" arrives as `LINE_ART`.
-     */
     @Test
     fun `the DXF names its layer after the drawing rather than falling back`() = runBlocking {
         val dxf = String(
@@ -251,13 +159,6 @@ class DwTraceKotlinExporterTest {
         assertTrue("the DXF layer must be named: $DW_TRACE_KOTLIN_LAYER_NAME", dxf.contains("LINE_ART"))
     }
 
-    /**
-     * A format the engine will not encode is a sentence naming the format, not a crash.
-     *
-     * Unreachable through `DW_TRACE_EXPORT_FORMATS` — all five rows map to a format
-     * `Exporter.supports` — so this drives it through a hand-made row, which is exactly the state a
-     * sixth row added without a route would create.
-     */
     @Test
     fun `a format the engine cannot encode is refused in a sentence`() = runBlocking {
         val webp = DwTraceExportFormat(
@@ -278,12 +179,6 @@ class DwTraceKotlinExporterTest {
         assertTrue("and what still works", reason.contains("SVG"))
     }
 
-    /**
-     * A self-inconsistent geometry is refused with the validator's own sentence.
-     *
-     * `DwTraceGeometry.validate` is called before the walk rather than after, so a bad envelope is a
-     * sentence on screen and not an `ArrayIndexOutOfBoundsException` out of a writer.
-     */
     @Test
     fun `an inconsistent geometry is refused rather than walked`() = runBlocking {
         val good = dwTraceKotlinGeometryOf(threeShapeDocument())
@@ -291,7 +186,6 @@ class DwTraceKotlinExporterTest {
             coords = good.coords,
             verbs = good.verbs,
             verbStarts = good.verbStarts,
-            // One short, so the extents no longer describe the shapes.
             coordStarts = good.coordStarts.copyOf(good.coordStarts.size - 1),
             closed = good.closed,
             styleTable = good.styleTable,
@@ -303,19 +197,9 @@ class DwTraceKotlinExporterTest {
         assertTrue(outcome.reason.isNotBlank())
     }
 
-    /**
-     * The shape ceiling is the SVG's, and it is REPORTED.
-     *
-     * A designer who saves one drawing as an SVG and again as a PDF must get one drawing, so both stop
-     * at `DW_TRACE_KOTLIN_MAX_SHAPES` and both report the cut with the same sentence. A vector file
-     * with no ceiling of its own would quietly not match the SVG beside it.
-     */
     @Test
     fun `the document cap is the SVG cap and the cut is reported in the same sentence`() {
         val geometry = dwTraceKotlinGeometryOf(threeShapeDocument())
-        // The real ceiling is 200,000 shapes, which is too large to build in a unit test; the property
-        // under test is that BOTH writers ask the same function for the sentence, so it is asserted on
-        // the function they share.
         assertEquals(200000, DW_TRACE_KOTLIN_MAX_SHAPES)
         assertNull(dwTraceKotlinTruncationNote(3, 3))
         val note = dwTraceKotlinTruncationNote(shapeCount = 250000, shapesWritten = DW_TRACE_KOTLIN_MAX_SHAPES)
@@ -324,11 +208,6 @@ class DwTraceKotlinExporterTest {
         assertEquals("nothing is cut when nothing is over", 3, geometry.shapeCount)
     }
 
-    /* ══════════════════════════════════════════════════════════════════════════════════════════
-     * Fixtures
-     * ══════════════════════════════════════════════════════════════════════════════════════════ */
-
-    /** Two layers, three shapes, all three verb kinds and two distinct styles. */
     private fun threeShapeDocument(): VecDocument {
         val strokeOnly = VecStyle(
             stroke = 0xFF102030.toInt(),

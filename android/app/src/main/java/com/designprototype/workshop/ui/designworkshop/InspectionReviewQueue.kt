@@ -44,22 +44,8 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 
-/** The section's heading, pinned by a test against the walkthrough card that teaches it. */
 const val DW_INSPECTION_QUEUE_TITLE = "Workshops waiting for your decision"
 
-/**
- * THE INSPECTOR'S HALF OF THE REVIEW QUEUE: the assigned workshops sorted by whose move it is.
- *
- * Drawn at the top of the Review screen for an Inspector / Reviewer, above the record queue every
- * reviewer shares. A report in Pre-submission has been handed in and is waiting for an officer —
- * that is the queue. Reports sent back and waiting for their designers are listed under it, and the
- * ones not yet handed in are counted, so nothing assigned silently disappears from the screen.
- *
- * Read from the same list route as Workshops to inspect, walked to the server's ceiling, and from the
- * copy kept on this phone when there is no signal — said so on screen. Notes written on this phone
- * and not yet on the record are counted per workshop, held ones included, so an officer sees where
- * something of theirs still needs attention.
- */
 @Composable
 fun InspectionAwaitingSection(
     repository: WorkshopRepository,
@@ -110,8 +96,6 @@ fun InspectionAwaitingSection(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f, fill = false)
                 )
-                // The count beside the title (2026-10-18): the same number the drawer badge wears,
-                // read off the list this card already holds, so it is right offline too.
                 val waiting = queue?.awaitingYou?.size ?: 0
                 dwInspectionWaitingLabel(waiting)?.let { label ->
                     Text(

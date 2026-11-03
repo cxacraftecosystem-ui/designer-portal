@@ -6,10 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * C9 and C11 on the handset: the copy marks leave the draft once a push is accepted (the web's
- * `copiesAfterPush`), and the stage-3 artisan-list import's pure halves and wiring.
- */
 class DwPlanFollowupsTest {
     @Test
     fun anAcceptedPushMovesTheMarksIntoACopiedStamp() {
@@ -20,7 +16,6 @@ class DwPlanFollowupsTest {
         )!!
         assertEquals(emptyMap<String, String>(), settled.first)
         assertEquals(DW_COPIED_SOURCE, settled.second.singleton["history"]?.source)
-        // So Keep as is sends the key to the server at the first press.
         assertEquals(setOf("history", "craftIntroduction"), dwPendingCopies(settled.first, settled.second.singleton, emptySet()))
     }
 

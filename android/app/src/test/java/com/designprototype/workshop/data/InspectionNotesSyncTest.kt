@@ -24,19 +24,6 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.io.IOException
 
-/**
- * THE REPOSITORY'S INSPECTION CALLS, OVER A REAL RETROFIT AND A SCRIPTED TRANSPORT.
- *
- * Real Retrofit so the paths, the verbs and the bodies are the ones the annotations produce — a
- * suggestion posted to the wrong route is the failure a fake service would hide. The transport is
- * scripted per "VERB path" and never opens a socket; an unscripted request is a test failure.
- *
- * What is held here, in the order an officer meets it: a note written without signal is KEPT and
- * waits; with signal it is sent with its device moment and leaves the phone; a report that moved on
- * holds it with the reason and sends NOTHING; the server's own refusal holds it too; an answer lost
- * on the way back does not file it twice; and the kept copy of a workshop is read back with no
- * signal and deleted the moment the assignment is gone.
- */
 class InspectionNotesSyncTest {
 
     @get:Rule
@@ -94,8 +81,6 @@ class InspectionNotesSyncTest {
 
     private fun store() = DwInspectionStore.of(context)
 
-    // ── Filing ──────────────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `with signal a suggestion is posted to the feedback route with its device moment and leaves the phone`() {
         on("GET", "/api/design-workshop-inspections/w-1") { 200 to detailJson("PRE_SUBMISSION", 2) }
@@ -144,14 +129,11 @@ class InspectionNotesSyncTest {
         assertEquals(2, kept.draftedRound)
     }
 
-    // ── Back online, under the conflict rules ───────────────────────────────────────────────────
-
     @Test
     fun `a send-back the report moved on from is held with the reason, nothing is posted, and nothing is lost`() {
         offline("GET", "/api/design-workshop-inspections/w-1")
         runBlocking { repository().fileInspectionNote(context, read(), DwInspectionNoteKind.SEND_BACK, "Redo stage 9.", null) }
 
-        // Signal returns; the designer withdrew the report in the meantime.
         on("GET", "/api/design-workshop-inspections/w-1") { 200 to detailJson("IN_PROGRESS", 2) }
         val report = runBlocking { repository().syncInspectionNotes(context) }
 
@@ -172,7 +154,6 @@ class InspectionNotesSyncTest {
         assertTrue(sent.none { it.first.startsWith("POST") })
         assertTrue(store().notes().single().held!!.contains("round 3"))
 
-        // The officer reads round 3 and re-files deliberately: now it goes.
         on("POST", "/api/design-workshop-inspections/w-1/feedback") {
             201 to answerJson("PRE_SUBMISSION", 3, """[{"id":"f-9","round":3,"note":"Check the dates.","actorId":"u-inspector"}]""")
         }
@@ -188,7 +169,6 @@ class InspectionNotesSyncTest {
         runBlocking { repository().fileInspectionNote(context, read(), DwInspectionNoteKind.SEND_BACK, "Redo.", null) }
 
         on("GET", "/api/design-workshop-inspections/w-1") { 200 to detailJson("PRE_SUBMISSION", 2) }
-        // The race the server closes inside its transaction: withdrawn between the read and the write.
         on("POST", "/api/design-workshop-inspections/w-1/send-back") {
             422 to """{"detail":"This report has not been handed in for inspection yet, so there is nothing to comment on."}"""
         }
@@ -215,7 +195,6 @@ class InspectionNotesSyncTest {
         offline("GET", "/api/design-workshop-inspections/w-1")
         runBlocking { repository().fileInspectionNote(context, read(), DwInspectionNoteKind.SUGGESTION, "Fix stage 2.", null) }
         val kept = store().notes().single()
-        // The server re-spells the moment: microseconds and an explicit offset instead of `Z`.
         val echoed = java.time.OffsetDateTime.parse(kept.recordedAt)
             .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSSxxx"))
 
@@ -249,8 +228,6 @@ class InspectionNotesSyncTest {
         assertTrue(store().notes().single().held!!.contains("no longer open to you"))
         assertNull(store().detail("w-1", "u-inspector"))
     }
-
-    // ── Reading without signal ──────────────────────────────────────────────────────────────────
 
     @Test
     fun `a workshop read once is read back from the phone without signal, and says when it was saved`() {
@@ -294,8 +271,6 @@ class InspectionNotesSyncTest {
         assertEquals(listOf("w-1", "w-2"), keptRows.map { it.id })
         assertNotNull(keptAt)
     }
-
-    // ── The transport ───────────────────────────────────────────────────────────────────────────
 
     private inner class ScriptedCall(private val req: Request) : Call {
         override fun request(): Request = req

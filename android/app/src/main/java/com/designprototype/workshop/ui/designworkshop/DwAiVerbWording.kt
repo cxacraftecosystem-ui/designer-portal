@@ -11,113 +11,23 @@ import com.designprototype.workshop.data.dwAiIsUnrecorded
 import com.designprototype.workshop.report.RichDoc
 import java.io.IOException
 
-/**
- * EVERYTHING THE THREE VERB SURFACES DECIDE AND SAY — with no composition, no Context and no network.
- *
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- * NO RULE IS DECIDED HERE. `data/DwAiVerbs.kt` decides every one of them.
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The pre-press ladder is `dwVerbGate`, the passage bound is `dwVerbPassageRefusal`, the ceiling is
- * `dwAiVerbCapView`, the target-language rule is `dwTranslationTargetRefusal`, and the five pre-press
- * sentences are that file's constants. Each is USED here rather than re-expressed, because the
- * cross-surface rule for this feature is that one rule may not acquire a second voice.
- *
- * What lives here is the part that is genuinely a SCREEN's: which passage the editor's caret is
- * pointing at, the vocabulary a reader meets beside a layer, and the two sentences the surfaces
- * compose out of facts the data lane hands them. It is a separate file from the composables for the
- * reason `DwStageFindings` and `DwPhotoMeasure` are separate from their panels — so it can be
- * asserted on a desktop JVM by `DwAiVerbWordingTest`, which is where the properties that matter
- * about it are actually checked.
- */
-
-// -------------------------------------------------------------------------------------------------
-// Which passage the caret is pointing at
-// -------------------------------------------------------------------------------------------------
-
-/**
- * THE PASSAGE AN AI VERB WOULD RUN OVER: the designer's selection where they made one, and the whole
- * paragraph the caret is in where they did not.
- *
- * ── WHY BOTH, RATHER THAN ONE OR THE OTHER ──────────────────────────────────────────────────────
- *
- * A collapsed caret is the ORDINARY state of this editor — a designer types, the keyboard closes, and
- * nothing is highlighted — so a selection-only rule would leave the verbs unavailable almost all of
- * the time and would ask for a gesture Android makes awkward on a small screen. But a designer who
- * DID drag out a phrase means that phrase, and widening it to the paragraph would send more of an
- * artisan's words to a provider than they chose to send. So: the selection when there is one.
- *
- * ── AND WHY IT CANNOT REACH PAST ONE BLOCK ──────────────────────────────────────────────────────
- *
- * Because a selection in this editor cannot: `RichTextBlockRow.onSelectionChanged` builds both ends
- * of the range from the same block index, since each block is a separate `BasicTextField` and
- * Android's selection handles do not cross composables. Reading one block is therefore the whole
- * truth about what is selected rather than a simplification of it — and it is why [DwAiVerbsPanel]
- * is paragraph-scoped instead of porting the browser's block-walking `selectedPassage`.
- *
- * A TABLE CONTRIBUTES ITS CELLS, tab-separated by row, because that is what `RichBlock.text` means
- * for that kind — the same reading the browser's `blockText` gives it. AN IMAGE BLOCK CONTRIBUTES ITS
- * CAPTION, because an IMAGE block's spans ARE its caption; a caret in a caption is a caret in prose,
- * and proofreading a caption is a perfectly ordinary thing to want.
- *
- * A RANGE NAMING A BLOCK THAT IS NOT THERE ANSWERS "" rather than throwing. Nothing should produce
- * one — every command clamps through `clampPoint` — but this is read on a click handler, and
- * `clampPoint`'s own KDoc says what an off-the-end point costs there: *"it does not look to a
- * designer like a bad caret, it looks like the app closing while they type."*
- */
 internal fun dwVerbPassageOf(doc: RichDoc, range: DocRange): String {
     val ordered = normaliseRange(doc, range)
     val block = doc.blocks.getOrNull(ordered.anchor.block) ?: return ""
     val text = block.text
     val from = ordered.anchor.offset.coerceIn(0, text.length)
     val to = ordered.focus.offset.coerceIn(0, text.length)
-    // A COLLAPSED CARET MEANS THE WHOLE PARAGRAPH. `normaliseRange` has already put the two ends in
-    // document order, so `from >= to` is the only shape a collapsed range can have by the time it
-    // reaches here — including a selection the designer dragged UPWARD, whose anchor followed its
-    // focus until that call.
     if (from >= to) return text
     return text.substring(from, to)
 }
 
-/** How much of the passage the card shows, so a designer can see what is about to be sent. */
 internal const val DW_VERB_PREVIEW_CHARS: Int = 160
 
-/**
- * The opening of a passage, on one line.
- *
- * Newlines are collapsed for `ai_layers._preview`'s reason applied to a table: a cell-joined block
- * would otherwise draw as several lines in a card sized for one, pushing the buttons off the bottom
- * of a phone screen. Truncation is MARKED with an ellipsis rather than silent — a preview that simply
- * stopped would be indistinguishable from a short paragraph, which is the defect class this
- * repository keeps re-fixing.
- *
- * ── THE COST IS BOUNDED BY [DW_VERB_PREVIEW_CHARS] AND NOT BY THE PASSAGE ───────────────────────
- *
- * This was `passage.split(Regex("\\s+")).filter { … }.joinToString(" ")` and then `take(160)`, which
- * built the WHOLE collapsed paragraph — thousands of intermediate strings for a paragraph near
- * `DW_VERB_MAX_TEXT_CHARS` — before throwing all but 160 characters of it away. Its caller in
- * `RichTextEditor` is the one composable that file says recomposes on every keystroke, so the cost
- * landed per character typed. The single pass below stops as soon as it has one character more than
- * it can show, which is what makes the 161st character the last one this function ever looks at.
- *
- * SAME ANSWER, arrived at more cheaply: a run of whitespace becomes one space, leading and trailing
- * whitespace is dropped, and the ellipsis appears on exactly the inputs it appeared on before.
- *
- * ONE DELIBERATE DIFFERENCE, WHICH IS THE PREDICATE. `Char.isWhitespace()` is
- * `Character.isWhitespace(ch) || Character.isSpaceChar(ch)`, so it covers what the regex's ASCII `\s`
- * did AND the Unicode separators a pasted document carries — U+2028/U+2029, and the non-breaking
- * space a word processor puts between a number and its unit. Folding those is what this function is
- * for: a LINE SEPARATOR left in place drew the second line of a paste into a card sized for one. **It
- * changes nothing that is sent or measured** — `passageChars` and `readPassage` never come through
- * here, so the passage a layer records as its evidence is byte-for-byte what it always was.
- */
 internal fun dwVerbPassagePreview(passage: String): String {
     val flat = StringBuilder(DW_VERB_PREVIEW_CHARS + 1)
     var gap = false
     for (ch in passage) {
         if (ch.isWhitespace()) {
-            // Recorded rather than written, so a trailing run adds nothing and a leading one — where
-            // `flat` is still empty — is dropped altogether.
             if (flat.isNotEmpty()) gap = true
             continue
         }
@@ -126,66 +36,18 @@ internal fun dwVerbPassagePreview(passage: String): String {
             gap = false
         }
         flat.append(ch)
-        // ONE CHARACTER PAST THE LIMIT AND THEN STOP. The extra character is what tells a passage of
-        // exactly [DW_VERB_PREVIEW_CHARS] from a longer one, which is the difference between a
-        // preview that ends and one that is marked as truncated.
         if (flat.length > DW_VERB_PREVIEW_CHARS) break
     }
     if (flat.length <= DW_VERB_PREVIEW_CHARS) return flat.toString()
     return flat.substring(0, DW_VERB_PREVIEW_CHARS).trimEnd() + "…"
 }
 
-/**
- * **THE ONE SENTENCE THESE SURFACES AUTHOR, AND THE ONE PLACE THE HANDSET'S WORDING DIVERGES FROM
- * THE BROWSER'S.**
- *
- * `DW_VERBS_NOTHING_SELECTED` says *"Select the words you want worked on first"*, which is right in a
- * browser and is an instruction this editor cannot honour: a selection here can never leave one block
- * (see [dwVerbPassageOf]), and the ordinary state of a caret in a paragraph is collapsed. A designer
- * told to select first would be told to perform a gesture that is not needed and, for anything longer
- * than a paragraph, not possible.
- *
- * So this sentence names the caret and the paragraph, and it makes the SAME CLAIM as the browser's
- * about what is sent and what the layer records. Everything else on these surfaces uses the shared
- * constants unchanged; this is a divergence in the words, forced by a divergence in the editor, and
- * not a second opinion about the rule.
- */
 internal const val DW_NO_PARAGRAPH_TO_WORK_ON: String =
     "Place the cursor in a paragraph, or select text."
 
-// -------------------------------------------------------------------------------------------------
-// Which verb a file admits
-// -------------------------------------------------------------------------------------------------
-
-/** `ai_verbs.Verb.CAPTION` / `SUBTITLES` as the media row names them. */
 internal const val MEDIA_VERB_CAPTION: String = "CAPTION"
 internal const val MEDIA_VERB_SUBTITLES: String = "SUBTITLES"
 
-/**
- * The media verbs one stored file may be offered, mirroring `_VERB_MEDIA_TYPES` exactly.
- *
- *     IMAGE  ->  caption
- *     VIDEO  ->  caption AND subtitles
- *     AUDIO  ->  subtitles
- *     PDF, DOCUMENT -> neither
- *
- * **OFFERED BY TYPE SO THIS CLIENT NEVER PRODUCES THAT 409.** The server checks the same pairing
- * before any bytes move, precisely because the failure otherwise is expensive and unreadable: a
- * caption run over an audio file uploads a recording to a vision model, which answers with a parse
- * error after the credit is spent, and the designer reads "FAILED (HTTP 400)" about a file they
- * picked correctly.
- *
- * Compared with [String.endsWith] for the reason the server states about the same comparison: the
- * stored form of that column has varied, and a prefixed enum spelling must not silently match
- * nothing. This handset's own vocabulary is `DraftMedia.mediaType` — "IMAGE / VIDEO / AUDIO / PDF /
- * DOCUMENT" — so the bare tokens match today and a prefixed one would still match tomorrow.
- *
- * **A PDF AND A DOCUMENT GET NO CONTROL AND NO SENTENCE**, which is the one place this feature stays
- * silent on purpose. A designer looking at a scanned sanction order has no question that a refusal
- * would answer: there is no verb for it and nothing has been taken away. That is the treatment the
- * stage list gives the divergence row, for the reason recorded there — a control explained where the
- * capability does not apply advertises something nobody can get.
- */
 internal fun dwMediaVerbsFor(mediaType: String?): Set<String> {
     val stored = (mediaType ?: "").trim().uppercase()
     if (stored.isEmpty()) return emptySet()
@@ -195,31 +57,6 @@ internal fun dwMediaVerbsFor(mediaType: String?): Set<String> {
     return verbs
 }
 
-// -------------------------------------------------------------------------------------------------
-// The two sentences these surfaces compose
-// -------------------------------------------------------------------------------------------------
-
-/**
- * TODAY'S COUNTDOWN, COMPOSED IN ONE PLACE. Null means draw nothing at all.
- *
- * ── WHY IT IS A FUNCTION ────────────────────────────────────────────────────────────────────────
- *
- * This is the third of the three defects the browser's own review found: *"the cap countdown was
- * computed inline in three places before being extracted."* There are three surfaces here too — the
- * prose panel, the media row and the review sheet — and this is the one copy between them.
- *
- * **NULL FOR AN UNCAPPED DEPLOYMENT, WHICH IS THE WHOLE POINT.** `allowance_payload` sends null for
- * both the limit and the remainder where there is no ceiling, deliberately, *"because 0 remaining and
- * 'no ceiling' must not look alike"* — and the obvious `?: 0` an implementer reaches for turns an
- * uncapped deployment into one that appears to be out of runs.
- *
- * The day is printed beside the number because it is the SERVER's India-time day, and it is passed in
- * rather than computed here: on the review sheet it comes off the 201's own `aiVerbDay`, and on the
- * two pre-press surfaces it is the day the stored mirror was accepted under (`dwAiVerbCapView`
- * answers "unknown" for any other day, so the two can never be shown together). A handset whose clock
- * is a day out would otherwise print a count against a date the designer does not recognise, with
- * nothing on screen admitting whose date it is.
- */
 internal fun dwAiVerbCountdownLine(remaining: Int?, day: String?): String? {
     if (remaining == null || remaining > DW_AI_VERB_COUNTDOWN_FROM) return null
     val runs = if (remaining == 1) "1 run" else "$remaining runs"
@@ -228,98 +65,25 @@ internal fun dwAiVerbCountdownLine(remaining: Int?, day: String?): String? {
     return "$runs AI runs $where. Dictation has its own separate allowance."
 }
 
-/**
- * WHAT TO SAY ABOUT THE CEILING WHEN THERE IS NO NUMBER TO COUNT DOWN — null to say nothing.
- *
- * ── THREE FACTS, AND TWO OF THEM LOOK IDENTICAL IN THE NUMBERS ──────────────────────────────────
- *
- * [DwAiVerbCapView.told] is the fact that separates them, and its KDoc has the table. This function
- * exists so the separation is made ONCE: [DwAiVerbsPanel] branched on `limit == null && remaining ==
- * null` and told an uncapped deployment its allowance was unknown, which is precisely what
- * `allowance_payload` keeps two nulls apart to prevent — *"because 0 remaining and 'no ceiling' must
- * not look alike"*.
- *
- * ── AND WHY BOTH PRE-PRESS SURFACES NOW DRAW IT ─────────────────────────────────────────────────
- *
- * The prose panel drew a sentence in this state and [DwMediaAiVerbsRow] drew nothing, which was a
- * divergence between two surfaces of one feature and nothing argued for it. The panel's own reason —
- * *"Silence would leave a designer discovering it as a refusal after typing a language in"* — is
- * stronger on the media row, not weaker: the press it precedes can be a whole recording going up over
- * a designer's own mobile data, which is the most expensive press this feature has.
- *
- * NOTHING HERE IS DRAWN WHILE A COUNTDOWN IS: [dwAiVerbCountdownLine] answers non-null only when a
- * `remaining` is known and low, and both branches here need it to be absent. A surface may therefore
- * draw both without ever printing two sentences about one ceiling.
- */
 internal fun dwAiVerbAllowanceNote(cap: DwAiVerbCapView): String? = when {
     !cap.told ->
-        // NOTHING TO SAY UNTIL A RUN HAS GONE PAST TODAY. `ai_verb_cap.allowance_payload` rides on the
-        // 201 and on the 429 and nowhere else; there is no route that answers "what is my allowance"
-        // (checked against `backend/app/api/routes/` rather than assumed), so there is no number to
-        // show. A run that meets a spent allowance is refused in the allowance's own words, and the
-        // missing pre-flight is recorded in docs/OPEN_FINDINGS.md rather than narrated here.
         null
 
     cap.limit == null && cap.remaining == null ->
-        // TOLD, AND TOLD THERE IS NO CEILING. A statement about the DEPLOYMENT rather than about this
-        // designer's afternoon, which is why it does not decay: it is read off a row this phone
-        // accepted for today, and `dwAiVerbCapView` answers "not told" for any other day.
         "There is no daily limit on these runs. Dictation is separate."
 
-    // A number is known. The countdown says it where it is worth saying — see [dwAiVerbCountdownLine],
-    // which stays silent well above the ceiling rather than nagging from run one.
     else -> null
 }
 
-/**
- * THE SENTENCE TO SHOW WHEN A PRESS COMES BACK BADLY — **the server's own words wherever it sent any.**
- *
- * Consent (`dictation_consent.gate_refusal`), the ceiling (`ai_verb_cap.cap_refusal`), the layer law
- * (`ai_layers.check_placement`), the wrong-file-type 409 and the 503 that names a missing key are all
- * field copy already, each naming a next move that can actually work. Re-wording any of them here
- * would give one rule two voices, which is the drift `DwDictationConsentRefused` refuses in as many
- * words: *"[detail] IS THE COPY … Composing our own here would mean choosing between those two states
- * from a body that does not name one."*
- *
- * The three arms that are not verbatim are the three where the server said nothing:
- *
- *  * an [IOException] — Retrofit's shape for a request that never reached anybody — is the offline
- *    sentence, which is this client's to write because no server saw the request;
- *  * a cap refusal whose body carried no sentence falls back to `DW_AI_VERBS_SPENT`, which
- *    deliberately does not invent the zero-cap case (`cap_refusal` has its own sentence for a
- *    deployment that has switched these verbs off, and it is the server's to write);
- *  * anything else is named as an unexpected failure rather than dressed up as a refusal, because a
- *    client that turned a decoding bug into "the model declined" would send a designer off to
- *    rewrite a perfectly good note.
- *
- * **A REFUSAL WHOSE BODY CARRIED NO SENTENCE SAYS WHAT WAS NOT WRITTEN AND WHAT TO DO.** No status
- * code reaches a designer: `DwAiVerbRefused`'s own KDoc records that a 409 rewritten by something in
- * between carries no detail, and the code would tell a designer nothing they could act on.
- */
 internal fun dwAiVerbProblem(error: Throwable): String = when (error) {
     is DwAiVerbNotConfigured -> error.detail
     is DwAiVerbCapRefused -> error.detail ?: DW_AI_VERBS_SPENT
     is DwAiVerbRefused -> error.detail
         ?: "Couldn't do that. Nothing was written. Try again or ask an admin."
     is IOException -> DW_VERBS_NEED_A_CONNECTION
-    // NOT `error.message`: anything that reaches this arm is a fault nobody wrote a sentence for — a
-    // decoding error, or `dwVerbWorkshopId`'s `require`, whose message is for whoever reads a crash.
     else -> "Something went wrong. Nothing changed. Try again."
 }
 
-// -------------------------------------------------------------------------------------------------
-// The vocabulary a reader meets — the same words the report annexure prints
-// -------------------------------------------------------------------------------------------------
-
-/**
- * What each rung IS, in the words a designer would use, and the words the annexure prints above the
- * passage — so the person signing recognises what they signed for when they meet it again in the
- * .docx a year later.
- *
- * "Machine transcript" rather than the bare "Transcript" for RAW_TRANSCRIPT: a workshop also holds
- * transcripts a person typed or corrected, and a heading that did not distinguish them would let
- * model output be read as somebody's own words.
- */
 private val DW_LAYER_KIND_LABELS: Map<String, String> = mapOf(
     "RAW_TRANSCRIPT" to "Machine transcript",
     "CLEANED_TRANSCRIPT" to "AI-cleaned transcript",
@@ -335,13 +99,6 @@ private val DW_LAYER_KIND_LABELS: Map<String, String> = mapOf(
     "SUBTITLES" to "AI subtitles, with their timings",
 )
 
-/**
- * A kind's heading.
- *
- * A kind this app does not know degrades to a plain heading and never to a blank, and never to the
- * stored token either — a raw enum is a code, not a heading. The row still shows where it ran, its
- * model and its acceptance, none of which needs the kind to be understood.
- */
 internal fun dwLayerKindLabel(kind: String?): String {
     DW_LAYER_KIND_LABELS[kind.orEmpty()]?.let { return it }
     return if (!kind.isNullOrBlank()) {
@@ -351,23 +108,9 @@ internal fun dwLayerKindLabel(kind: String?): String {
     }
 }
 
-/**
- * A kind as a NOUN PHRASE that can sit inside a sentence — "…against this AI translation."
- *
- * Separate from [dwLayerKindLabel] because that one degrades to a whole sentence, and a sentence
- * inside a sentence reads as a bug.
- */
 internal fun dwLayerKindNoun(kind: String?): String =
     DW_LAYER_KIND_LABELS[kind.orEmpty()]?.lowercase() ?: "layer"
 
-/**
- * The sentence under a kind's heading: what the machine WAS and WAS NOT allowed to change.
- *
- * That is the question somebody about to quote the passage actually has, and it is why each of the
- * five verbs has its own kind rather than reusing a neighbour's — each is a different PROMISE to
- * whoever reads the document. Null for the kinds these five verbs cannot produce; the review sheet is
- * only ever shown one of the five.
- */
 internal fun dwLayerKindNote(kind: String?): String? = when (kind) {
     "PROOFREAD" ->
         "Fixes spelling, grammar and punctuation only. Craft words are kept. The original stays."
@@ -387,14 +130,6 @@ internal fun dwLayerKindNote(kind: String?): String? = when (kind) {
     else -> null
 }
 
-/**
- * THE TIER, SAID AS WHAT IT MEANS, with no numeral.
- *
- * `AiTier.number` exists on the server "for prose only, never for a comparison", and a chip reading
- * "Tier 3" invites exactly the comparison the enum was chosen to prevent: Tier 1 is the only tier
- * that works in a courtyard with no signal and Tier 3 is the only one carrying the craft keyterm
- * list, so neither direction is "better".
- */
 internal fun dwTierLabel(tier: String?): String = when (tier) {
     "TIER_1" -> "On the handset"
     "TIER_2" -> "On the handset, small model"
@@ -418,15 +153,6 @@ internal fun dwTierSentence(tier: String?): String = when (tier) {
     else -> "Update the app to see the source."
 }
 
-/**
- * A provenance column in words.
- *
- * `UNRECORDED` is a REAL stored value and not a null — the server writes it deliberately, because a
- * null on a provenance column would read as "there is no such thing" where the truth is "nobody
- * recorded one". Printing the bare token would put a shouting constant in front of a designer, which
- * reads like a code rather than like an answer. `dwAiIsUnrecorded` is the one comparison, so this
- * screen and the tier-2 lane cannot come to spell it differently.
- */
 internal fun dwProvenanceWord(raw: String?): String {
     val value = raw?.trim().orEmpty()
     return if (value.isEmpty() || dwAiIsUnrecorded(value)) "not recorded" else value
@@ -442,13 +168,6 @@ internal fun dwModelWords(modelId: String?, modelVersion: String?): String {
     }
 }
 
-/**
- * A language column in words.
- *
- * `multi` IS A REAL ANSWER AND NOT A PLACEHOLDER: Deepgram Nova-3 is deliberately called with
- * `language=multi` precisely because these interviews code-switch mid-sentence. Printing the bare
- * token would read like a missing value, which is the opposite of what it says.
- */
 internal fun dwLanguageWords(raw: String?): String {
     val value = raw?.trim().orEmpty()
     return when {

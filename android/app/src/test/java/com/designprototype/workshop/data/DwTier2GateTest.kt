@@ -6,16 +6,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * **THE GATE IN FRONT OF A 2.6 GB DOWNLOAD, PINNED NOW THAT THE DOWNLOAD EXISTS.**
- *
- * Until 2026-10-10 the only thing keeping a Tier 2 fetch off the fleet was that `DwTier2ModelList`
- * drew no control at all, and this file pinned that omission. LiteRT-LM is now in the APK and the list
- * draws Download, Pause, Cancel and Remove — so what is pinned is the rule that omission stood in for:
- * **the control is decided by `dwTier2InstallOffer`, which asks `dwTier2InstallMayBeOffered` (fit AND
- * connection AND runtime), and never by `dwModelDownloadMayBeOffered` alone.** Source-reading tests,
- * because a composable cannot be invoked from a desktop JVM test.
- */
 class DwTier2GateTest {
 
     private fun source(path: String): String {
@@ -24,7 +14,6 @@ class DwTier2GateTest {
         return file.readText()
     }
 
-    /** Comment lines dropped, so prose may explain a rule the code may not break. */
     private fun code(path: String): String = source(path)
         .lines()
         .filterNot { line ->
@@ -32,10 +21,6 @@ class DwTier2GateTest {
             t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")
         }
         .joinToString("\n")
-
-    // -----------------------------------------------------------------------------------------
-    // The arithmetic, stated as it really is rather than as it is hoped to be
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `the Tier 2 gate is the general fit gate AND the runtime`() {
@@ -92,17 +77,8 @@ class DwTier2GateTest {
         assertTrue(screen.contains("DwTier2ModelList"))
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Nothing in the Tier 2 surface reaches a money gate
-    // -----------------------------------------------------------------------------------------
-
     @Test
     fun `neither money gate appears anywhere in the Tier 2 surface, not only in the layer contract`() {
-        /*
-         * `DwTier2LayerTest` pins this for `DwTier2Layer.kt`. The catalogue and the list are the other
-         * two files a designer's Tier 2 interaction passes through, and a consent check added to
-         * EITHER of them would refuse an on-device model for a disclosure that does not happen.
-         */
         val files = listOf(
             "src/main/java/com/designprototype/workshop/data/DwTier2Models.kt",
             "src/main/java/com/designprototype/workshop/ui/designworkshop/DwTier2ModelUi.kt",

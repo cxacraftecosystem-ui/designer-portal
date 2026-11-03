@@ -51,76 +51,15 @@ import com.designprototype.workshop.data.DwSubtitleSummary
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.dwSubtitleCueSummary
 import com.designprototype.workshop.data.dwSubtitleTimecode
-// The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.launch
 
-/**
- * WHAT THE MODEL PRODUCED, WHAT IT WAS PRODUCED FROM, AND THE ONE QUESTION: does this stand in your
- * name?
- *
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- * THERE IS NO COPY BUTTON, NO "USE THIS TEXT", NO "REPLACE MY PARAGRAPH", ON ANY VERB, AND THERE
- * MUST NEVER BE ONE. THIS IS THE SINGLE MOST LIKELY DEFECT IN THE WHOLE FEATURE.
- * ════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * It will feel broken, and on a handset it will feel broken twice over: this sheet is sitting
- * directly on top of the paragraph it corrected, the designer's thumb is already there, and
- * `insertText` — the very function dictation uses to put spoken words into this document at the
- * caret — is one import away. The ease of it is not an argument.
- *
- *  · Plan §3 forbids any AI-produced value feeding a field that is compared across surfaces. A
- *    RICH_TEXT stage field IS compared across surfaces, and the same note through a phone and through
- *    the cloud legitimately differs for ever — so the first cross-surface divergence test to fail
- *    would be blamed on a bug that is actually the design.
- *  · The server cannot even EXPRESS the write. A `LayerWritePlan` may only name a table in
- *    `WRITABLE_TABLES`, `DwStageEntry` is deliberately absent, and `_writable_model` has no entry for
- *    it either — so a plan that somehow carried its name would still have nowhere to be applied. On
- *    the server the rule is true by construction; on a client it is true only by there being nothing
- *    to press.
- *  · **A clipboard button is a paste button with one extra keystroke.** The cross-surface argument
- *    does not count keystrokes, and an Android share sheet is a clipboard button with an icon on it.
- *
- * The alternative is one this repository actively prefers, in `ai_verbs.expand`'s own words: *"A
- * designer who wants those words in the field types them, at which point they are that designer's
- * sentences under that designer's name — which is a true statement, unlike anything a paste button
- * could produce."*
- *
- * `DwAiVerbSurfaceGuardTest` reads this file's SOURCE and fails if it gains a call to the editor's
- * own change handler, to the dictation insert, to the system clipboard, or to a share intent — the
- * four ways a paste button gets built. That test carries the list and the argument for each; the list
- * is not repeated here, because a comment naming the exact tokens would itself trip the guard. Adding
- * a paste button should be a failing test rather than a helpful commit.
- *
- * ────────────────────────────────────────────────────────────────────────────────────────────────
- * WHY A FULL DIALOG, AND WHY IT IS NOT FOLLOWED BY A CONFIRM.
- *
- * The text has to be READ before it is signed for, and a verb's 201 is the one moment the words are
- * on screen at all — `_finish_verb` passes `include_text=True`, while a list deliberately does not
- * carry text because a workshop can hold twenty-five interviews. That makes this dialog the confirm.
- * Stacking a second "are you sure" on top of it would be the trains-people-to-click failure every
- * refusal in this feature is written against.
- *
- * ── AND WHY IT IS AN [AlertDialog] AND NOT A BOTTOM SHEET ───────────────────────────────────────
- *
- * A bottom sheet is dismissed by a downward drag, which is the same gesture as scrolling the passage
- * a designer is reading. The surface holding a decision somebody's name goes on must not close on the
- * gesture they use to read it. Dismissing here means "leave it for now" — the layer stays on the
- * server, unaccepted and inert, which is a real third answer and is on a labelled button as well.
- */
 @Composable
 internal fun DwAiVerbReviewSheet(
     result: DwAiVerbResultDto,
     repository: WorkshopRepository,
-    /** The server's id for this workshop. Never the route param — see [DwAiVerbSurface]. */
     serverWorkshopId: String,
-    /**
-     * The passage this phone sent, used ONLY as a fallback for `layer.source.text`.
-     *
-     * The server sends the evidence back on every supplied-text layer and the server's copy is the
-     * one the annexure will print, so a disagreement between the two resolves towards the stored one.
-     */
     sentPassage: String?,
     onAccepted: () -> Unit,
     onDeclined: () -> Unit,
@@ -130,8 +69,6 @@ internal fun DwAiVerbReviewSheet(
     val scope = rememberCoroutineScope()
     val layer = result.layer
 
-    // Keyed on the LAYER and not on the dialog opening: a designer who runs a second verb without
-    // closing this would otherwise read the first run's refusal under the second run's words.
     var busy by remember(layer.id) { mutableStateOf<String?>(null) }
     var problem by remember(layer.id) { mutableStateOf<String?>(null) }
     var speakers by remember(layer.id) { mutableStateOf(false) }
@@ -151,20 +88,10 @@ internal fun DwAiVerbReviewSheet(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                /*
-                  RULE 3, ON SCREEN, AT THE MOMENT IT MATTERS MOST — and read off the wire rather than
-                  assumed. `_finish_verb` puts `accepted: false` and `acceptanceRequired: true` in the
-                  body precisely because *"the client that just asked for this has words on screen and
-                  is one tap from putting them in a report"*. A screen that hid them would be hiding
-                  the rule.
-                */
                 Text(
                     if (result.acceptanceRequired && !result.accepted) {
                         "Nothing has been put in any document yet. Read it, then decide."
                     } else {
-                        // Unreachable through these five routes today; drawn from the flags rather
-                        // than from a constant so that a server which one day answers differently is
-                        // not contradicted.
                         "Read it before you rely on it."
                     },
                     color = MaterialTheme.field.body,
@@ -173,15 +100,6 @@ internal fun DwAiVerbReviewSheet(
                 )
 
                 if (layer.kind == "EXPANDED") {
-                    /*
-                      THE ONE KIND THAT INVENTS, WARNED ABOUT WHERE THE DECISION IS MADE.
-
-                      This carries the substance of `report_ai_layers.EXPANDED_NOTE`, which the
-                      annexure prints under this heading and under no other — so the caution a
-                      ministry officer reads a year from now is the caution the designer read before
-                      signing. Two accounts of one risk, one of them arriving too late to act on, is
-                      exactly what this feature exists to prevent.
-                    */
                     DwVerbCaution(
                         "Machine-written from your note (quoted below). Anything not in the note was supplied by the model — check it before quoting."
                     )
@@ -191,12 +109,6 @@ internal fun DwAiVerbReviewSheet(
                     Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                 }
 
-                /*
-                  WHAT WAS SENT, VERBATIM AND ABOVE THE OUTPUT, because accepting is a statement that
-                  somebody checked one against the other. `layer_payload` calls this "the evidence
-                  travels with the layer", and for a supplied-text source it is the only copy there is
-                  — there is no second request that could fetch it.
-                */
                 if (evidence != null) {
                     DwVerbSection("What was sent") { DwVerbPassage(evidence) }
                 } else if (layer.source?.kind == "MEDIA") {
@@ -217,14 +129,6 @@ internal fun DwAiVerbReviewSheet(
                 DwVerbSection("What came back") {
                     val body = layer.text?.trim().orEmpty()
                     when {
-                        /*
-                          WITHHELD IS ITS OWN SENTENCE AND NOT AN EMPTY BOX. `textWithheld` is on
-                          every payload precisely so a client says "you may not read this one" from a
-                          stated fact rather than inferring it from an absence — and an empty box and
-                          a withheld one look identical. Who may read a recording is decided per file
-                          and not by who may open the workshop, so this is reachable by an ordinary
-                          colleague with a viewer grant.
-                        */
                         layer.textWithheld -> Text(
                             "You can't access the source recording, so you can't view or accept this. Ask its uploader.",
                             color = MaterialTheme.field.warning,
@@ -271,21 +175,12 @@ internal fun DwAiVerbReviewSheet(
 
                 DwVerbProvenance(layer)
 
-                /*
-                  THE RUNNING ALLOWANCE, FROM THE 201'S OWN NUMBERS rather than from a second request,
-                  and only where there IS a ceiling — [dwAiVerbCountdownLine] answers null on an
-                  uncapped deployment, because "0 left" must never be how "no ceiling" looks.
-                */
                 dwAiVerbCountdownLine(result.aiVerbsRemaining, result.aiVerbDay)?.let {
                     Text(it, color = MaterialTheme.field.warning, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp)
                 }
 
                 savedTo?.let {
                     Text(
-                        // THE PATH THE FILE ACTUALLY LANDED AT, which is the repository's answer and
-                        // not a guess: on a pre-Q handset that refused the storage permission it is
-                        // app-private storage rather than Downloads, and a sentence that named
-                        // Downloads either way would send a designer looking in the wrong folder.
                         "Saved to $it. Saving doesn't accept it.",
                         color = MaterialTheme.field.muted,
                         style = MaterialTheme.typography.bodySmall,
@@ -299,8 +194,6 @@ internal fun DwAiVerbReviewSheet(
                         color = MaterialTheme.field.warning,
                         style = MaterialTheme.typography.bodySmall,
                         lineHeight = 17.sp,
-                        // Announced: the button that caused it is several rows above the sentence,
-                        // and on a phone it is routinely below the fold.
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                     )
                 }
@@ -308,11 +201,6 @@ internal fun DwAiVerbReviewSheet(
         },
         confirmButton = {
             Button(
-                // REFUSED FOR A WITHHELD LAYER, matching `accept_ai_layer`, which refuses the same
-                // account with the same argument: *"a signature on a page the signer is not allowed
-                // to open is worth less than no signature, because the report then names them as the
-                // person who checked it."* Refused here as well so the round trip is not spent
-                // learning it, and the sentence above the button is what says why.
                 enabled = busy == null && !layer.textWithheld,
                 onClick = {
                     busy = "ACCEPT"
@@ -332,9 +220,6 @@ internal fun DwAiVerbReviewSheet(
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
                 Spacer(Modifier.width(6.dp))
-                // WORDED AND NOT ONLY SPUN, and worded as what the designer is actually saying. A
-                // button labelled "Accept" is a form control; this is somebody's name going next to a
-                // machine's sentence in a document a ministry officer reads.
                 Text(if (busy == "ACCEPT") "Accepting…" else "I have read it — accept it in my name")
             }
         },
@@ -342,9 +227,6 @@ internal fun DwAiVerbReviewSheet(
             Column(horizontalAlignment = Alignment.End) {
                 ActionRow {
                     TextButton(enabled = busy == null, onClick = onClose) {
-                        // THE HONEST THIRD ANSWER. The layer stays on the server, listed and inert, and
-                        // no report reads it — so leaving is not the same as declining and must not be
-                        // worded as though it were.
                         Text("Leave it for now")
                     }
                 }
@@ -374,7 +256,6 @@ internal fun DwAiVerbReviewSheet(
     )
 }
 
-/** A caution block. It reads as a warning about content and never as a failure of the app. */
 @Composable
 private fun DwVerbCaution(sentence: String) {
     Surface(
@@ -416,14 +297,6 @@ private fun DwVerbSection(heading: String, content: @Composable () -> Unit) {
     }
 }
 
-/**
- * A passage, bounded and scrollable, and **deliberately not inside a selection container**.
- *
- * Wrapping it would raise Android's own Copy action on a long press — the paste button this file's
- * header refuses, supplied by the platform rather than by us, which makes it no less a paste button.
- * The designer reads it here and, if they want those words in the field, types them; at which point
- * they are that designer's sentences under that designer's name.
- */
 @Composable
 private fun DwVerbPassage(text: String) {
     Surface(
@@ -444,7 +317,6 @@ private fun DwVerbPassage(text: String) {
     }
 }
 
-/** How many cues are drawn before the list says it stopped. A phone is not a subtitle editor. */
 private const val DW_CUE_PREVIEW_LIMIT: Int = 25
 
 @Composable
@@ -457,9 +329,6 @@ private fun DwVerbCueList(
 ) {
     DwVerbSection("The cues") {
         if (!cues.readable) {
-            // NOT THE SAME SENTENCE AS "no cues". `dwSubtitleCueSummary` reports `readable = false`
-            // for a payload that is not a cue list at all, which is a different fact from a cue list
-            // with nothing in it, and only one of the two is something a designer can act on.
             Text(
                 "Update the app to see cues. You can still save the file below.",
                 color = MaterialTheme.field.warning,
@@ -512,11 +381,6 @@ private fun DwVerbCueList(
                     }
                 }
             }
-            /*
-              A LIST THAT QUIETLY STOPS IS INDISTINGUISHABLE FROM A SHORT LIST — the most repeated
-              defect class in this repository, and worse on a phone, where the end of a scroll region
-              is off-screen by default. The saved file carries every cue and this says so.
-            */
             if (cues.cues.size > DW_CUE_PREVIEW_LIMIT) {
                 Text(
                     "First $DW_CUE_PREVIEW_LIMIT of ${cues.count} cues shown; the file has all.",
@@ -540,9 +404,6 @@ private fun DwVerbCueList(
         DwSubtitleFormat.entries.forEach { format ->
             OutlinedButton(
                 onClick = { onSave(format) },
-                // Offered even when this build could not parse the payload, because the FILE is built
-                // by the server from its own rows and does not depend on this parse. Withheld only
-                // when there is provably nothing: a readable list with no cues in it.
                 enabled = !busy && (cues.cues.isNotEmpty() || !cues.readable),
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -551,13 +412,6 @@ private fun DwVerbCueList(
                 Text(format.label, style = MaterialTheme.typography.labelMedium)
             }
         }
-        /*
-          SAVING IS NOT GATED ON ACCEPTANCE, matching the route, which is deliberate and says so:
-          *"requiring acceptance first would mean accepting subtitles nobody has watched, which is the
-          opposite of what acceptance is for."* This is the designer looking at what the model
-          produced, in the only form in which subtitles can actually be judged — played against the
-          video.
-        */
         Text(
             "Save and check against the recording before deciding.",
             color = MaterialTheme.field.muted,
@@ -567,13 +421,6 @@ private fun DwVerbCueList(
     }
 }
 
-/**
- * THE PROVENANCE, ALWAYS, IN WORDS AND NEVER A NUMERAL.
- *
- * "not recorded" is a real answer and is drawn in the same quiet type as a recorded one — a row whose
- * provider nobody stored is the ordinary case, and a warning colour would tell a designer their
- * archive is broken when it is not.
- */
 @Composable
 private fun DwVerbProvenance(layer: DwAiLayerDto) {
     Surface(
@@ -606,13 +453,6 @@ private fun DwVerbProvenance(layer: DwAiLayerDto) {
                 style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
             )
-            /*
-              BOTH LANGUAGES, ON A TRANSLATION AND ONLY THERE. "In English" is not a provenance record
-              for a translation — a reader checking it against what the artisan said has to know what
-              they said it in — which is why `ai_layers._check_languages` refuses a translation
-              missing either. The pair is read off the columns the payload sends unconditionally,
-              rather than out of the text.
-            */
             if (layer.kind == "TRANSLATION") {
                 Text(
                     "From ${dwLanguageWords(layer.sourceLanguage)} into " +

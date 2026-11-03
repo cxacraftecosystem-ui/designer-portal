@@ -18,16 +18,9 @@ import retrofit2.Response
 import java.io.File
 import java.io.IOException
 
-/**
- * The review of the 2026-10-17 smoke-test fixes: the files-ready card's rows, the banners over the
- * keyboard and the consent gate, a stale "can't reach the server" line, the wrong sentence for an
- * expired session, a duplicate "Could not connect", and the admin-view memory's names.
- */
 class SmokeFixesFollowUpTest {
 
     private fun http(code: Int) = HttpException(Response.error<Any>(code, "".toResponseBody(null)))
-
-    // ── The admin-view switch, remembered per account (ui/AdminViewMemory.kt) ────────────────
 
     @Test
     fun `the admin view opens where this account left it, else at the role default`() {
@@ -42,8 +35,6 @@ class SmokeFixesFollowUpTest {
         assertEquals("admin_view:u1", adminViewKey("u1"))
         assertNotEquals(adminViewKey("u1"), adminViewKey("u2"))
     }
-
-    // ── No "Could not connect" under the offline line ─────────────────────────────────────
 
     @Test
     fun `the connection error is swallowed only while a banner already says it`() {
@@ -67,8 +58,6 @@ class SmokeFixesFollowUpTest {
             assertTrue(fn, MAIN.substring(start, start + 400).contains("offlineLineSays(text)"))
         }
     }
-
-    // ── Which sentence a failed upload is queued with ─────────────────────────────────────
 
     @Test
     fun `only no answer, a 5xx, a 408 or a 429 means the server is down`() {
@@ -97,8 +86,6 @@ class SmokeFixesFollowUpTest {
         assertTrue(call.contains("signInNeeded = failures.any { sessionExpired(it) }"))
     }
 
-    // ── The server line after reconnecting ────────────────────────────────────────────────
-
     @Test
     fun `coming back online asks a server marked unreachable once`() {
         assertTrue(shouldReprobeServer(wasOnline = false, nowOnline = true, serverUnreachable = true))
@@ -108,15 +95,11 @@ class SmokeFixesFollowUpTest {
         assertTrue(MAIN.contains("if (shouldReprobeServer(wasOnline, nowOnline, ServerReachability.unreachable.value))"))
     }
 
-    // ── Where the banners stand down ──────────────────────────────────────────────────────
-
     @Test
     fun `the banners step aside for the keyboard and the consent gate`() {
         assertTrue(MAIN.contains("val bannersHeld = user == null || passwordHeld || usageConsentBlocks(user)"))
         assertTrue(MAIN.contains("val bannersShown = !rootImeOpen && (banner != null || connectionLine != null)"))
     }
-
-    // ── The files-ready card's rows take the tile's ink ───────────────────────────────────
 
     @Test
     fun `each file row on the purple card draws in the tile's ink`() {

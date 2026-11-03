@@ -23,12 +23,6 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.io.IOException
 
-/**
- * "Use this questionnaire again" with and without a signal (2026-10-17): when it is sent now, when it
- * waits in the outbox, and that the drain sends it with its key and with every temporary id swapped
- * for the server's — over a real Retrofit and a scripted transport, so the path, the header and the
- * body are the ones the annotations produce.
- */
 class QuestionnaireReuseOutboxTest {
 
     @get:Rule
@@ -62,8 +56,6 @@ class QuestionnaireReuseOutboxTest {
     private val copied =
         """{"questionnaire":{"id":"q-copy","title":"Loom survey (copy)"},"sourceQuestionnaireId":"q-1"}"""
 
-    // ── When it is sent now ───────────────────────────────────────────────────────────────────
-
     @Test
     fun `with a signal and nothing queued for the source, the copy is made now`() {
         assertTrue(reuseCanSendNow("q-1", "dw-1", emptyMap(), pendingForSource = 0, online = true))
@@ -89,8 +81,6 @@ class QuestionnaireReuseOutboxTest {
             )
         )
     }
-
-    // ── Queued, then drained ──────────────────────────────────────────────────────────────────
 
     @Test
     fun `with no signal the copy is queued with a key, and nothing is sent`() {
@@ -120,8 +110,6 @@ class QuestionnaireReuseOutboxTest {
         val repo = repository()
         runBlocking {
             repo.applyQuestionnaireOp(context, op, "key-12345678")
-            // The answer was lost and the outbox sends it again: the same key, so the server answers
-            // from the first copy instead of making a second.
             repo.applyQuestionnaireOp(context, op, "key-12345678")
         }
         assertEquals(2, sent.size)

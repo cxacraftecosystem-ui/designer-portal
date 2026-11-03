@@ -4,11 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
 
-/**
- * The stage index header's one rule: the bar, the percentage and "N of M stages complete" all count
- * stages. The 0.0.19 smoke printed "0% overall · 9 of 22 stages complete" because the percentage
- * counted required fields; these pin the shape that produced it so it cannot come back.
- */
 class DwStageProgressTest {
     private fun score(key: String, requiredTotal: Int, requiredFilled: Int, missing: List<String> = emptyList()) =
         DwStageCompleteness(
@@ -23,7 +18,6 @@ class DwStageProgressTest {
             missing = missing,
         )
 
-    /** Nine stages with nothing required, thirteen with every required field empty. */
     private val smoke = List(9) { score("EMPTY_$it", 0, 0) } +
         List(13) { score("OPEN_$it", 40, 0, List(3) { n -> "Field $n" }) }
 

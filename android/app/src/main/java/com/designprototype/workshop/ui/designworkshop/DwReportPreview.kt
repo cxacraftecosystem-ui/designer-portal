@@ -54,104 +54,11 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import java.io.File
 
-/**
- * The report, drawn on the handset from the document the handset is about to write.
- *
- * Asked for on 2026-08-25: *"Provide the same live document preview functionality on Android,
- * ensuring that the generated document can be previewed directly from the Android application as
- * well."*
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * IT IS NOT A NEW RENDERER, AND ON THIS PLATFORM THAT CLAIM IS STRONGER THAN IT IS ON THE WEB
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The web's preview has to ask the server to build the document, because the browser has no report
- * builder in it. This handset does: `buildWorkshopDocument` walks the registry over the local draft
- * and produces the very [ReportDocument] that `DocxWriter` and `PdfWriter` then write. So the caller
- * hands that same document here and this file draws its `blocks`. Nothing is re-derived from stage
- * data, no second traversal exists, and there is no round trip — which is why the preview works in a
- * courtyard with no signal, where the web's cannot and says so.
- *
- * The consequence worth stating: on Android the preview is live against the DRAFT, so it reflects
- * what the designer has typed as soon as the stage is saved to the device — no sync required. That is
- * a genuine platform difference from the web (whose preview follows what the SERVER holds) and it is
- * the honest one rather than a paraphrase: the two clients have different builders available to
- * them, and this one is offline-first by design.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * WHY THIS IS A FLOW OF BLOCKS — AND WHY IT IS NO LONGER THE ONLY VIEW
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * THIS SECTION USED TO SAY THERE COULD BE NO A4 VIEW ON A HANDSET, AND THE ARGUMENT IT MADE WAS
- * SOUND. It is kept here rather than deleted, because [DwReportSheets] is built on top of it:
- *
- *   *"an A4 sheet rendered to fit is 4pt type, and rendered at readable type it needs horizontal
- *   scrolling, which is a gesture nobody can aim on a phone while reading."*
- *
- * Both halves of that are still true. What was wrong was the conclusion. They are not a reason to
- * have no page view; they are the SPECIFICATION for one — fit-to-width really is about 4pt type at
- * 360dp, so the sheet ships with a zoom and a pinch and "Actual size" one tap away; and at actual
- * size the sheet really is wider than the screen, so the stage scrolls sideways only ONCE THE READER
- * HAS ZOOMED PAST THE FIT, never at rest and never under a finger that meant to scroll the document.
- * Asked for on 2026-08-27: *"it should render as if on actual a4 sheet … it should also be there on
- * android."*
- *
- * SO THERE ARE TWO VIEWS, AND THEY ANSWER DIFFERENT QUESTIONS. This one answers "does this prose
- * read correctly, and did the right photographs land under the right headings" — which is what a
- * designer does most of, and which a readable single column is simply better at. [DwReportSheets]
- * answers "does it fit on the page, and where does the break fall". `ReportScreen` offers both.
- *
- * ONE RENDERER, TWO VIEWS. The sheets re-render nothing: they call [DwReportBlock] — this file's own
- * composable, with the same arguments — and lay the results onto fixed A4 boxes. That is why
- * [DwReportBlock] is `internal` rather than private, and why the break probes below sit on this
- * file's own repeating children rather than in a parallel copy of them. A second block renderer on
- * one device is two documents that nobody compares until an officer opens the file.
- *
- * PAGE BREAKS ARE DRAWN AS A MARKED RULE here rather than being ignored. A `PAGEBREAK` is a break the
- * template ASKED for and every writer honours it exactly, so it is the one piece of page structure
- * that is knowable in a flow — and a preview that silently dropped it would let a designer arrange
- * two sections believing they sit together when the file will always split them. In the sheet view
- * that same block is not drawn at all: it has become the page turn it always meant.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * THE FIGURES
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * MAP and CHART blocks are drawn as a NAMED PLACEHOLDER carrying their title and their own summary,
- * not as an empty box and not as an invented drawing. `ReportChart.kt` and `ReportMap.kt` rasterise
- * these into the file, and re-implementing either in Compose would be a second chart engine on one
- * device whose output nobody compares against the first. The placeholder says which figure it is and
- * that the file carries it drawn — which is what a designer proofing prose needs to know, and it is
- * honest about what this screen is not showing. Rule 10: a gap that says nothing reads as a gap in
- * the document.
- */
-
-/**
- * How much of the theme is honoured here. See [DwReportPreview] for what the accent is used on.
- *
- * `internal` because [DwReportSheets] draws the same blocks and must resolve the accent the same
- * way; a second copy of this parser is a second answer to "what colour is this report".
- */
 internal fun dwAccentColor(hex: String?): Color? {
     val cleaned = hex?.trim()?.removePrefix("#")?.takeIf { it.length == 6 } ?: return null
     return runCatching { Color(("ff$cleaned").toLong(16)) }.getOrNull()
 }
 
-/**
- * Report runs as one styled string. The four marks the model carries, and nothing invented.
- *
- * EVERY CALL SITE PASSES THE `AnnotatedString` ITSELF, and that is the whole point of building one.
- * Until 2026-08-26 all six of them ended in `.text` — and the table cells did not call this at all,
- * flattening with `joinToString("") { it.text }` — so this function assembled bold, italic,
- * underline and strikethrough and then every reader threw them away. Nothing failed and nothing
- * looked wrong: a run's marks are the kind of thing a reader only misses when they compare the
- * preview with the .docx it is a preview OF, which is exactly the comparison this screen exists to
- * let a designer make in a courtyard rather than back at a desk.
- *
- * The `Text` these call sites resolve to is `ui/FieldText.kt`'s `AnnotatedString` overload, which
- * exists for precisely this. An outer `fontWeight` still applies as the base style — the total row
- * of a table stays `SemiBold` — and a span overrides it per run.
- */
 @Composable
 private fun runsToAnnotated(runs: List<Run>) = remember(runs) {
     buildAnnotatedString {
@@ -176,15 +83,6 @@ private fun runsToAnnotated(runs: List<Run>) = remember(runs) {
 @Composable
 internal fun DwReportPreview(
     document: ReportDocument,
-    /**
-     * Resolve an [com.designprototype.workshop.report.ImageRef.source] token to a file on this
-     * device, or null.
-     *
-     * PASSED IN RATHER THAN REACHED FOR, exactly as [DwMediaBridge] is on the form side: this file
-     * has no business knowing which workshop it is drawing and must not be able to read another
-     * one's media directory. Null is ORDINARY and not an error — a photograph attached in the browser
-     * has no local copy — and it draws a named placeholder rather than a broken frame.
-     */
     resolveImage: (String) -> File?,
     modifier: Modifier = Modifier,
 ) {
@@ -199,14 +97,6 @@ internal fun DwReportPreview(
     }
 }
 
-/**
- * One block. The only block renderer this app has — [DwReportPreview] flows them and
- * [DwReportSheets] pages them, and neither draws anything of its own.
- *
- * [key] is the block's index in `ReportDocument.blocks`. It identifies the block to the measurement
- * probe below and, in the sheet view, is what a `PageSlice` carries back so that the right block is
- * drawn in the right window.
- */
 @Composable
 internal fun DwReportBlock(
     block: Block,
@@ -217,26 +107,8 @@ internal fun DwReportBlock(
     val ink = MaterialTheme.colorScheme.onSurface
     val muted = MaterialTheme.field.muted
 
-    /*
-      WHERE THIS BLOCK MAY BE CUT, reported only while the sheet view is measuring.
-
-      `LocalDwFlowProbe` is null everywhere else — in this file's own flow, and in any other caller —
-      so with no probe every arm below composes exactly as it did before the sheets existed. The
-      probes mark the places the FILE WRITERS break a block and nowhere else: `_block_bullets` places
-      one item at a time, `_simple_grid` one pair, `place_row` one row with the header redrawn above
-      the continuation, `_block_image_grid` one grid row, and `_draw_lines` one LINE — which is why a
-      paragraph and a callout report their line boxes rather than a child count.
-
-      They are HERE, on the real children, rather than in a parallel measuring renderer, because a
-      measuring copy that drifts from the drawing copy breaks the page where the drawing does not —
-      and nothing would fail; the sheet would simply be wrong.
-    */
     val probe = LocalDwFlowProbe.current
 
-    // EXHAUSTIVE `when` ON A SEALED INTERFACE, with no `else`. That is what makes the compiler point
-    // at this file the day a seventeenth block type is added to the model — the same discipline
-    // `FieldInput`'s switch over `DwFieldType` keeps on the web. A block type this screen cannot draw
-    // must be a build failure, not a silently missing section of a document.
     when (block) {
         is CoverBlock -> Column(
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -263,17 +135,11 @@ internal fun DwReportBlock(
             }
             if (block.infoRows.isNotEmpty()) {
                 HorizontalDivider(color = MaterialTheme.field.hairline)
-                // The cover's rows are plain `Pair<String, String>` in the document model — they carry no
-                // runs and so no marks — while [KeyValueBlock] below hands this the styled string
-                // [runsToAnnotated] builds. One row renderer, wrapped here rather than overloaded.
                 block.infoRows.forEach { (label, value) -> KeyValueLine(label, AnnotatedString(value), muted, ink) }
             }
             block.footerLines.forEach { line -> Text(line, color = muted, style = MaterialTheme.typography.bodySmall) }
         }
 
-        // THE TABLE OF CONTENTS IS NAMED, NOT SYNTHESISED. Both writers build it from the headings
-        // they emit and from their own page numbers; a list of headings with no page numbers beside
-        // them would be a different object wearing the same title.
         is TocBlock -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(block.title, display = true, color = ink, style = MaterialTheme.typography.titleMedium)
             Text(
@@ -292,8 +158,6 @@ internal fun DwReportBlock(
                 },
                 display = true,
                 color = accent ?: ink,
-                // The four levels, kept in the same ORDER of sizes the writers use. Exact points are
-                // the file's business; what has to survive here is the hierarchy a reader navigates by.
                 style = when (block.level) {
                     1 -> MaterialTheme.typography.titleLarge
                     2 -> MaterialTheme.typography.titleMedium
@@ -304,8 +168,6 @@ internal fun DwReportBlock(
             )
         }
 
-        // `_draw_lines` calls `_ensure(line.height)` once per line, so a paragraph breaks BETWEEN
-        // LINES — and `TextLayoutResult.getLineBottom` is where those lines fall on this device.
         is ParagraphBlock -> Text(
             runsToAnnotated(block.runs),
             color = if (block.style.name.contains("CAPTION")) muted else ink,
@@ -319,7 +181,6 @@ internal fun DwReportBlock(
 
         is BulletListBlock -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             block.items.forEachIndexed { at, item ->
-                // `_block_bullets` places one item at a time: an item is where a list may be cut.
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.dwBreakStop(probe, key, at),
@@ -335,7 +196,6 @@ internal fun DwReportBlock(
         }
 
         is KeyValueBlock -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            // `_simple_grid` places one pair at a time: a pair is where the grid may be cut.
             block.pairs.forEachIndexed { at, pair ->
                 KeyValueLine(
                     pair.first,
@@ -347,13 +207,6 @@ internal fun DwReportBlock(
             }
         }
 
-        /*
-          A TABLE, SCROLLED INSIDE ITSELF AND NEVER WRAPPED INTO A LIST OF CARDS.
-          Turning rows into cards is the usual phone answer and it is the wrong one for a document
-          preview: the designer is checking that a cost sheet's columns line up and that the total row
-          agrees with the rows above it, which is a question about a TABLE. So the columns stay, in the
-          template's declared proportions, and the block scrolls horizontally within its own bounds.
-        */
         is TableBlock -> Column(
             verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = Modifier
@@ -372,16 +225,11 @@ internal fun DwReportBlock(
                     )
                 }
             }
-            // WHERE THE HEADER ENDS, so a continuation page can RESERVE it. `place_row` calls
-            // `place_header()` after `_new_page()` — "exactly as Word repeats a `<w:tblHeader/>` row
-            // over a body row it has split" — and a header that is drawn but not reserved costs the
-            // continuation a row it thought it had.
             HorizontalDivider(
                 color = MaterialTheme.field.hairline,
                 modifier = Modifier.dwHeaderBottom(probe, key),
             )
             block.rows.forEachIndexed { at, row ->
-                // `place_row` places one row at a time: a row is where a table may be cut.
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth().dwBreakStop(probe, key, at),
@@ -398,10 +246,6 @@ internal fun DwReportBlock(
             }
             block.totalRow?.let { total ->
                 HorizontalDivider(color = MaterialTheme.field.hairline)
-                // NO BREAK STOP ON THE TOTAL ROW, and its absence is the decision. Every body row
-                // above is a legal cut; the total is not, so the packer can never put a sum on a page
-                // of its own under a repeated header — which is the one place in a cost table a
-                // reader must not have to turn the page to reach.
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     block.columns.forEachIndexed { at, column ->
                         Text(
@@ -434,11 +278,7 @@ internal fun DwReportBlock(
         }
 
         is ImageGridBlock -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            // Chunked to the template's own column count, so a four-up grid in the file reads as a
-            // four-up grid here rather than as a single column of unrelated photographs.
             block.images.chunked(block.columns.coerceAtLeast(1)).forEachIndexed { at, row ->
-                // `_block_image_grid` loops `range(0, n, cols)` and `_ensure`s ONE GRID ROW at a
-                // time: a grid row, never a single plate, is where a gallery may be cut.
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier.fillMaxWidth().dwBreakStop(probe, key, at),
@@ -461,13 +301,6 @@ internal fun DwReportBlock(
                     }
                 }
             }
-            // THE GALLERY'S NAME GOES BELOW ITS PLATE, not above it, because that is where all five
-            // other surfaces draw it: report_docx.py and DocxWriter.kt both emit the caption paragraph
-            // after the table, PdfWriter.kt calls `caption(...)` after the row loop, report_pdf.py does
-            // the same, and ReportBlock.tsx puts its `<figcaption>` after the closing `.rp-grid`. The ImageBlock
-            // arm just above already reads this way. This file's header disclaims A4 pagination and
-            // figure rasterisation only — it claims to draw the blocks faithfully — so a caption that
-            // led its own grid here made the preview the one surface that read differently.
             if (block.caption.isNotBlank()) Text(block.caption, color = muted, style = MaterialTheme.typography.bodySmall)
         }
 
@@ -489,7 +322,6 @@ internal fun DwReportBlock(
             }
         }
 
-        // See the header: a named placeholder rather than a second chart engine or an empty box.
         is ChartBlock -> FigurePlaceholder(
             name = block.title.ifBlank { "Chart" },
             detail = "Drawn in the exported file."
@@ -509,10 +341,6 @@ internal fun DwReportBlock(
             if (block.title.isNotBlank()) {
                 Text(block.title, color = ink, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             }
-            // A callout is MOVED WHOLE while it fits a page at all — `_cut_row`'s docstring calls
-            // that "an ordinary break" — and is divided only when it fits no page. Its line boxes
-            // are reported for that last case; the title above is never a cut point, because a
-            // boxed aside cut immediately under its own title is worse than one moved.
             Text(
                 runsToAnnotated(block.runs),
                 color = ink,
@@ -525,9 +353,6 @@ internal fun DwReportBlock(
         is SignatureBlock -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             block.signatories.forEach { (name, role) ->
                 Column {
-                    // The rule a signature goes ON, drawn as the rule it is. A name with nothing under
-                    // it does not read as a signature block, and this is the part of the document an
-                    // officer counter-signs.
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(0.6f)
@@ -572,50 +397,12 @@ private fun KeyValueLine(
     }
 }
 
-/**
- * A photograph this document carries a reference to and this screen cannot draw.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * WHICH CASE THIS ACTUALLY IS — AND THE SENTENCE IT USED TO CARRY WAS ABOUT A DIFFERENT ONE
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * It said *"not on this device; the exported file will fetch it."* Both halves were wrong, and the
- * second half was wrong in a way that loses photographs out of a submitted document.
- *
- * **THE EXPORT ON THIS HANDSET CANNOT FETCH ANYTHING.** `DocxWriter`'s image loader resolves a media
- * id against LOCAL storage only, records every miss in `ReportExport.Result.droppedImages` and has no
- * network path of any kind — the whole point of building the report on the device is that it works in
- * a courtyard with no signal. A designer who read that sentence, exported, and handed the file over
- * had been told the gaps would fill themselves; they do not, and nothing in the delivered .docx says
- * a plate is missing.
- *
- * **AND "NOT ON THIS DEVICE" IS NOT THE CASE THAT REACHES HERE AT ALL.** A photograph attached in the
- * browser — a workshop captured on a colleague's phone, read back through `reportSourceFor` — carries
- * the SERVER's media id, which `buildWorkshopDocument`'s `imageFor` answers null for. `imagesOf` then
- * does `imageFor(id) ?: continue`, so no `ImageRef` is ever built for it, so no [ImageBlock],
- * [ImageGridBlock] cell or [CoverBlock.heroImage] exists for this composable to be reached from. That
- * loss is counted by `onUnresolvedMedia` and said in words on the export screen and in the preview's
- * own header — see `unresolvedMediaNote`, which is the sentence for it — and it never comes here.
- *
- * What DOES reach here is the narrow case where the builder resolved the id to a real file on this
- * device (`imageFor` requires `file.exists()`) and `resolveImage` cannot open that file when the
- * block is drawn: a capture deleted, moved or truncated between the two moments. That is the same
- * failure `droppedImages` counts on the export side, and the export will drop it too — which is what
- * the sentence now says, because it is the thing that is true and the thing a designer can act on.
- *
- * NAMED, NEVER BLANK. A grey rectangle in a preview reads as a photograph that failed to attach, and
- * this says which figure it is, that the reference itself is intact, and what the file will do with
- * it. Rule 10: a gap that says nothing reads as a gap in the document.
- */
 @Composable
 private fun MissingFigure(name: String) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
-            // `heightIn` AND NOT `height`. The honest sentence is three times as long as the false
-            // one, and a fixed 72dp box clips text at the small screen widths this preview exists
-            // for — a truncated warning about a truncation is the defect twice over.
             .heightIn(min = 72.dp)
             .background(MaterialTheme.field.surface100, RoundedCornerShape(8.dp))
     ) {
@@ -629,7 +416,6 @@ private fun MissingFigure(name: String) {
     }
 }
 
-/** A figure the file rasterises and this screen deliberately does not redraw. See the header. */
 @Composable
 private fun FigurePlaceholder(name: String, detail: String) {
     Column(

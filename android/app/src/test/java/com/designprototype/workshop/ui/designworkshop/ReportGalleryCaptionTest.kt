@@ -16,42 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * WHERE A GALLERY'S NAME IS PRINTED — and, which is the half these pin, where it is printed TWICE.
- *
- * ── THE DEFECT THESE PIN ──────────────────────────────────────────────────────────────────────────
- *
- * `imagesOf` filled a blank cell caption with the owning FIELD'S LABEL, at gather time, for every
- * caller. That was written when there was one merged plate per record and no caption above it, so the
- * label under a cell was the only thing saying which field a picture came from. Once `imageGroupsOf`
- * started giving a multi-photograph field its OWN plate captioned by that same label, the fallback
- * printed the label again under every one of the plate's photographs: "Cluster photographs" once over
- * the grid and twenty more times beneath it, in a document submitted to a ministry.
- *
- * The office's copy has never done that. `report_builder.py:1392` is
- * `images.append((ref, caption or ("" if grid_caption else spec.label)))` — the fallback fires only on
- * the plate that has no caption of its own. So the two copies of one report disagreed, and the handset
- * was the wrong one.
- *
- * IT IS THE DEFAULT STATE AND NOT AN EDGE CASE. `photos()` (stage_definitions.py) declares every
- * gallery's `*Caption` box with no `required=True`, so blank is what a designer who did not type a
- * caption leaves behind — which is most of them — and stage 4 alone ships three galleries.
- *
- * ── WHAT IS ASSERTED, AND WHAT DELIBERATELY IS NOT ────────────────────────────────────────────────
- *
- * The assertions are on the CAPTIONS of one grid, never on the document's block count or ordering:
- * those belong to `ReportTemplateDocumentTest` and pinning them twice would make a legitimate template
- * change fail here for a reason this file is not about. The shared-plate test is the guard against
- * over-correcting — deleting the fallback outright would have passed the first test and stripped the
- * only field name off the mixed plate, where nothing else carries it.
- */
 class ReportGalleryCaptionTest {
-
-    // ── the registry, cut to stage 4's real shape ────────────────────────────────────────────────
-    //
-    // The keys, labels, tiers and roles are the ones `photos("clusterPhotos", "Cluster photographs",
-    // S, "Cluster photograph caption")` and its `motifPhotos` sibling publish, because the pairing of
-    // a gallery with a `*Caption` field through `captionFor` is exactly what is under test.
 
     private fun clusterSchema(vararg fields: FieldDto) = SchemaResponse(
         version = "test",
@@ -107,7 +72,6 @@ class ReportGalleryCaptionTest {
 
     private fun ids(vararg id: String) = buildJsonArray { id.forEach { add(JsonPrimitive(it)) } }
 
-    /** Every token resolves, to a path that is NOT the token — the shape a real media cache answers. */
     private val resolvesEverything: (String) -> ImageRef? =
         { id -> ImageRef(source = "/data/media/$id.jpg", widthPx = 1600, heightPx = 1200) }
 
@@ -123,8 +87,6 @@ class ReportGalleryCaptionTest {
             generatedAt = "2026-08-26T09:30:00Z",
         )
 
-    // ── the named plate ──────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `a named gallery prints its label over the grid and never again under a photograph`() {
         val document = build(
@@ -132,8 +94,6 @@ class ReportGalleryCaptionTest {
                 gallery("clusterPhotos", "Cluster photographs"),
                 captionBox("clusterPhotos", "Cluster photograph caption"),
             ),
-            // The caption box left blank, which is what `photos()` makes the default: it is optional
-            // on every one of the registry's galleries.
             draftOf(mapOf("clusterPhotos" to ids("c1", "c2"))),
         )
 
@@ -175,8 +135,6 @@ class ReportGalleryCaptionTest {
         )
     }
 
-    // ── the shared plate, which is what the fallback was written for ──────────────────────────────
-
     @Test
     fun `the shared plate still names the field each photograph came from`() {
         val document = build(
@@ -186,9 +144,6 @@ class ReportGalleryCaptionTest {
                 gallery("motifPhotos", "Traditional motif photographs"),
                 captionBox("motifPhotos", "Traditional motif caption"),
             ),
-            // ONE PHOTOGRAPH EACH, so neither field earns a plate of its own and the two share one —
-            // the case `imageGroupsOf` leaves uncaptioned because no single name over it would be
-            // true of both.
             draftOf(
                 mapOf(
                     "clusterPhotos" to ids("c1"),

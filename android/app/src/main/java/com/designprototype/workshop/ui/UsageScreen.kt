@@ -52,62 +52,6 @@ import com.designprototype.workshop.data.usageNowStamp
 import com.designprototype.workshop.data.usageWithheld
 import kotlinx.coroutines.launch
 
-/**
- * **USAGE** — which screens are reached, how often, how fast, how often broken, aggregated across
- * every account. The handset's twin of the web's `/settings/usage`.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * NOT "ANALYTICS", AND THE COLLISION IS THE REASON
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * `/admin/analytics` observes CRAFT OUTCOMES and no person at all. This observes PEOPLE — which
- * screens they reached, in what order the platform recorded them arriving. Calling both "analytics"
- * would leave every future reader to work out which one a name meant, in a product where one of the
- * two is a privacy surface. So this is titled, labelled and routed as "Usage" on both clients, and
- * `AdminHubEntry.USAGE` carries the web's tile wording verbatim.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE THREE RULES, COPIED FROM THE WEB PAGE BECAUSE THEY ARE THE SAME THREE RULES
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * 1. **Nothing here computes.** Every figure comes off the wire. [usageWithheld] is the only branch a
- *    reader needs, and a withheld row's numbers are `null` — which in Kotlin becomes `0` through
- *    `?: 0` and through every arithmetic helper anybody would add. A page that fell back would
- *    publish a number the server explicitly refused to state, about a screen too few accounts used
- *    to be safely reported.
- * 2. **The collection posture renders FIRST, above the figures.** A number with no stated method is
- *    a number nobody can check, and the posture is the one thing on this screen that says whether
- *    the rows below carry names at all.
- * 3. **The gate is mirrored, not invented.** `require_usage_reader` is Admin and above; this screen
- *    is only ever reached from `AdminHubEntry.USAGE`, and the hub itself is already behind
- *    `isAdmin && adminChrome`. So there is no predicate in this file — adding one would be a third
- *    copy of the rule and the one nobody updates.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * WHAT IS A HANDSET SHAPE AND NOT A COPY OF THE TABLE
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The web draws an eight-column `min-w-[760px]` table in a horizontal scroller. That cannot survive
- * a phone: eight columns at 360dp means either a two-axis scroll nobody can read a row across, or
- * type at a size the accessibility settings this same app ships exist to prevent. **The FIGURES port
- * and the LAYOUT does not** — each screen is one card with its template on top and its six figures
- * laid out beneath, which reads down a thumb instead of across a desk.
- *
- * Three other differences, all stated rather than silently made:
- *
- *  * **A window CHIP and not a date pair.** Two date pickers on a phone is four taps to answer "how
- *    was last week"; the chips are the three windows an admin actually asks for. The API's `maxDays`
- *    is honoured and stated. Anybody needing an arbitrary range has the web page, which is where
- *    that question is comfortable.
- *  * **A smaller page.** [PAGE_SIZE] rather than the API's 50, because 50 cards is 350 text nodes
- *    composed at once in a Column that is already inside the app's scroller — and the cheapest
- *    handset in this fleet is the one an admin opens this on in a field office. The page count and
- *    the total are printed, so a smaller page is visible rather than a truncation.
- *  * **NO CHARTS.** The web page has none today, and a chart drawn on one client only would be two
- *    clients disagreeing about the same dataset — with the phone the more emphatic of the two. When
- *    the web grows them, the trap they introduce is already known and written down: a withheld route
- *    must be a GAP and never a plotted zero.
- */
 @Composable
 fun UsageScreen(
     repository: WorkshopRepository,
@@ -124,9 +68,6 @@ fun UsageScreen(
     var routes by remember { mutableStateOf<UsageRoutesPageDto?>(null) }
     var routesRead by remember { mutableStateOf<UsageReadState>(UsageReadState.Loading) }
 
-    // Re-read at every load, not sampled once on entry — see the identical note on
-    // [UsageRecordingScreen]. An admin who opened this in a lift and retried in the corridor
-    // must not still be told the phone has no connection.
     var online by remember { mutableStateOf(repository.isOnline(context)) }
 
     suspend fun loadMethod() {
@@ -152,8 +93,6 @@ fun UsageScreen(
         routesRead = if (answer == null) UsageReadState.Failed else UsageReadState.Answered(answer.items.size)
     }
 
-    // The method does not vary with the window, so it is loaded once. The rows are reloaded whenever
-    // either of the two things that decide them moves.
     LaunchedEffect(Unit) { loadMethod() }
     LaunchedEffect(windowDays, page) { loadRoutes() }
 
@@ -177,12 +116,10 @@ fun UsageScreen(
             )
         }
 
-        // ── 1. THE COLLECTION POSTURE, ABOVE EVERY FIGURE ─────────────────────────────────────
         CollectionPostureCard(method = method, state = methodRead, online = online) {
             scope.launch { loadMethod() }
         }
 
-        // ── 2. THE WINDOW ─────────────────────────────────────────────────────────────────────
         PreferenceCard {
             Text(
                 "Window",
@@ -197,9 +134,6 @@ fun UsageScreen(
                         selected = windowDays == days,
                         onClick = {
                             windowDays = days
-                            // Back to page 1: the row that was on page 3 of a week is not the row on
-                            // page 3 of a quarter, and staying put would silently answer a different
-                            // question than the one the chip asked.
                             page = 1
                         },
                         label = { Text("$days days") }
@@ -216,14 +150,10 @@ fun UsageScreen(
             }
         }
 
-        // ── 3. THE FIGURES ────────────────────────────────────────────────────────────────────
         usageReadNotice(
             state = routesRead,
             noun = "usage figures",
             online = online,
-            // ANSWERED AND EMPTY is a real state here and it is not "nothing happened": the page may
-            // simply be past the end, or every route on it may have been withheld. Both are said,
-            // because "no screens in this window" alone would be read as a quiet week.
             emptyLine = "No screens on this page. Rarely used screens are hidden."
         )?.let { notice ->
             Text(
@@ -258,9 +188,6 @@ fun UsageScreen(
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.titleMedium
                 )
-                // NAMED "This page" AND NOT "Total", following the server's own naming of the field
-                // it comes from. A figure called "total" beside a paged list is read as the platform
-                // figure by everybody, every time — and no arm of this API produces one.
                 StatLine("Requests on this page", usageCount(data.totalsForThisPage.requests))
                 StatLine("Succeeded", usageCount(data.totalsForThisPage.ok))
                 StatLine(
@@ -312,9 +239,6 @@ fun UsageScreen(
 
             if (data.notMeasured.isNotEmpty()) {
                 Text(
-                    // Excluded from the rows rather than reported as zero, and SAID: a row that is
-                    // structurally always zero reads as "nobody uses this screen", and the two are
-                    // opposite facts.
                     "${usageCount(data.notMeasured.size)} screens are never measured.",
                     color = MaterialTheme.field.muted,
                     style = MaterialTheme.typography.bodySmall,
@@ -328,16 +252,6 @@ fun UsageScreen(
     }
 }
 
-/**
- * The consent and collection posture, drawn above every figure.
- *
- * `unaskedPolicy` IS COMPARED DIRECTLY and never sniffed out of a sentence. The web page carries the
- * scar: it used to test `collects.some(line => line.startsWith("The account id"))`, on the
- * assumption that only the ATTRIBUTED sentence began that way — and BOTH of the server's account-id
- * sentences share that prefix, one per policy, with only the wording after it saying which. The
- * result was that the one screen whose stated purpose is telling an admin the truth about this exact
- * fact told them the opposite of it. The enum token is on the wire; nothing here needs to guess.
- */
 @Composable
 private fun CollectionPostureCard(
     method: UsageCollectionDto?,
@@ -374,9 +288,6 @@ private fun CollectionPostureCard(
                         lineHeight = 18.sp
                     )
                     if (state is UsageReadState.Failed) {
-                        // WITHOUT THE METHOD THE FIGURES ARE STILL DRAWN, and this card says why that
-                        // is a problem rather than hiding them: an admin reading counts with no
-                        // stated posture cannot tell whether the rows below carry names.
                         Text(
                             "Figures shown; attribution unknown until this loads.",
                             color = MaterialTheme.field.onWarningContainer,
@@ -424,15 +335,6 @@ private fun CollectionPostureCard(
     }
 }
 
-/**
- * One screen's figures, as a card.
- *
- * **THE WITHHELD BRANCH IS THE WHOLE POINT OF THIS FUNCTION.** A withheld row has `null` in every
- * metric, and drawing it through the same six [StatLine]s as an ordinary row would render six
- * confident dashes with no explanation — or, one careless `?: 0` later, six zeroes claiming a screen
- * nobody used. So a withheld row gets its own shape: the reason the server gave, in place of the
- * figures it refused to give.
- */
 @Composable
 private fun RouteCard(row: UsageRouteRow) {
     PreferenceCard {
@@ -452,9 +354,6 @@ private fun RouteCard(row: UsageRouteRow) {
                     .background(MaterialTheme.field.hairline, MaterialTheme.shapes.small)
                     .padding(8.dp)
             ) {
-                // The em dash, drawn once and labelled, rather than six of them down the card. A dash
-                // and a small number must not look alike, or a reader skims past a refusal as though
-                // it were a quiet fortnight.
                 Text("—", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodyLarge)
                 Text(
                     row.withheldBecause.orEmpty().ifBlank {
@@ -477,13 +376,6 @@ private fun RouteCard(row: UsageRouteRow) {
     }
 }
 
-/**
- * One label and one figure, on one line, wrapping to two at a large font scale.
- *
- * `Alignment.Top` and a weighted label, so that at 200% text scale with "Larger text" also on, a
- * three-word label wraps under itself and the figure stays beside its own first line rather than
- * being pushed off the card.
- */
 @Composable
 private fun StatLine(label: String, value: String) {
     Row(
@@ -502,11 +394,6 @@ private fun StatLine(label: String, value: String) {
     }
 }
 
-/**
- * The three windows a chip offers. Every one is inside the API's 366-day cap, which the response
- * states for itself and the screen prints.
- */
 private val WINDOW_CHOICES: List<Long> = listOf(7L, 30L, 90L)
 
-/** See the header: fewer cards than the API's page of 50, and the page count says so. */
 private const val PAGE_SIZE: Int = 20

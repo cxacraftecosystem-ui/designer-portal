@@ -6,7 +6,6 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Back from a record, search comes back as it was left — the workshop scope included (2026-10-17). */
 class SearchMemoryTest {
 
     private fun leftOn(focus: String?): SearchMemory = SearchMemory().apply {

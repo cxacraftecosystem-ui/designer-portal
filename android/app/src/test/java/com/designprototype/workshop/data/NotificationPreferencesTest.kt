@@ -8,11 +8,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The handset's e-mail choices (2026-10-18): an older server's answer reads as the defaults, a save
- * carries only the field that changed, the hand-in word is one of three, the waiting pill draws
- * nothing at zero, and the three switches say what the web's say.
- */
 class NotificationPreferencesTest {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = false }
 

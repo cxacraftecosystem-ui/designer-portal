@@ -11,10 +11,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * H4 (audit 21 Oct 2026): a second researcher must be able to add to a shared interview, and a
- * queued interview refused over somebody else's answers must not be stuck for good.
- */
 class InterviewOwnedAnswersTest {
 
     private val refusal = """{"detail":{"code":"ANSWER_OWNED_BY_OTHER",""" +

@@ -9,17 +9,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/**
- * The designer's profile, copied into the matching boxes of a design workshop's stages.
- *
- * The server owns the rule (`backend/app/services/designers.py`, `PREFILL_MAP` and
- * `prefill_from_profile`) and answers it per workshop at `GET design-workshops/{id}/designer-prefill`.
- * This file is the handset's copy of the same rule, used for one case only: a workshop this phone
- * started for its own signed-in designer, opened with no connection and no cached server answer.
- * `DesignerPrefillParityTest` pins the map below to the Python one, pair for pair.
- *
- * A stage only ever takes these values into EMPTY boxes — see [designerPrefillIntoEmpty].
- */
 val DESIGNER_PREFILL_MAP: List<Pair<String, String>> = listOf(
     "displayName" to "designerName",
     "institution" to "designerInstitution",
@@ -44,10 +33,8 @@ val DESIGNER_PREFILL_MAP: List<Pair<String, String>> = listOf(
     "cvMediaId" to "designerCv",
 )
 
-/** Columns typeset on a report cover as ONE line (the server's `_SINGLE_LINE_PREFILL_COLUMNS`). */
 private val SINGLE_LINE_COLUMNS = setOf("addressLine")
 
-/** A stored rich-text document as its words; any other string unchanged (`rich_text.plain_from_stored`). */
 internal fun designerPrefillPlain(stored: String): String {
     val trimmed = stored.trim()
     if (!trimmed.startsWith("{") || !trimmed.contains("\"blocks\"")) return stored
@@ -55,7 +42,6 @@ internal fun designerPrefillPlain(stored: String): String {
     return if (parsed is JsonObject && parsed["blocks"] != null) toPlain(parsed) else stored
 }
 
-/** Every line break as one space, each line trimmed, blank lines dropped (`_fold_to_one_line`). */
 internal fun designerPrefillOneLine(text: String): String =
     text.replace("\r\n", "\n").replace('\r', '\n')
         .split('\n')
@@ -63,7 +49,6 @@ internal fun designerPrefillOneLine(text: String): String =
         .filter { it.isNotEmpty() }
         .joinToString(" ")
 
-/** `"+91 9876543210"`, exactly as `standard_values.compose_phone`; a number that will not normalise stays as typed. */
 internal fun designerPrefillPhone(countryCode: String?, number: String?): String? {
     if (number.isNullOrBlank()) return null
     val result = StandardValues.normalizePhone(countryCode, number)
@@ -96,7 +81,6 @@ private fun columnValue(profile: DesignerProfileDto, column: String): Any? = whe
     else -> null
 }
 
-/** The profile's stated `Location`, used only where the flat column is blank — the server's fallback. */
 private fun locationFallback(profile: DesignerProfileDto, column: String): String? {
     val location = profile.location ?: return null
     return when (column) {
@@ -108,10 +92,6 @@ private fun locationFallback(profile: DesignerProfileDto, column: String): Strin
     }?.takeIf { it.isNotBlank() }
 }
 
-/**
- * `{registry field key: value}` for every [DESIGNER_PREFILL_MAP] pair the profile can answer.
- * Blank values are skipped. `designerName` falls back to [accountName].
- */
 fun designerPrefillFromProfile(profile: DesignerProfileDto, accountName: String?): Map<String, JsonElement> {
     val values = LinkedHashMap<String, JsonElement>()
     for ((column, fieldKey) in DESIGNER_PREFILL_MAP) {
@@ -134,10 +114,6 @@ fun designerPrefillFromProfile(profile: DesignerProfileDto, accountName: String?
     return values
 }
 
-/**
- * The values that may go into this stage: keys that are live fields of its SINGLETON entities and
- * whose box is empty in [current]. A box holding anything is never overwritten.
- */
 fun designerPrefillIntoEmpty(
     stage: StageDto,
     current: Map<String, JsonElement>,
@@ -150,7 +126,6 @@ fun designerPrefillIntoEmpty(
     return dwCopyIntoEmpty(current, values.filterKeys { it in keys })
 }
 
-/** The update body as the profile it will become once sent — for the cache while it is queued. */
 fun DesignerProfileUpdateBody.asProfile(previous: DesignerProfileDto?): DesignerProfileDto =
     (previous ?: DesignerProfileDto()).copy(
         displayName = displayName,
@@ -181,10 +156,6 @@ fun DesignerProfileUpdateBody.asProfile(previous: DesignerProfileDto?): Designer
 @Serializable
 private data class StoredOwnProfile(val userId: String = "", val profile: DesignerProfileDto = DesignerProfileDto())
 
-/**
- * Two small files: the signed-in designer's own profile (for offline use) and the server's last
- * answer per workshop. Written atomically, read leniently; a failure is never surfaced.
- */
 object DesignerPrefillCache {
     private const val OWN_FILE = "designer_profile_me.json"
     private const val WORKSHOP_DIR = "designer_prefill"
@@ -215,7 +186,6 @@ object DesignerPrefillCache {
         )
     }
 
-    /** The cached own profile, only when it belongs to [userId] (a shared handset never mixes designers). */
     fun ownProfile(context: Context, userId: String): DesignerProfileDto? {
         if (userId.isBlank()) return null
         val file = File(context.filesDir, OWN_FILE)
@@ -240,7 +210,6 @@ object DesignerPrefillCache {
     }
 }
 
-/** `GET design-workshops/{id}/designer-prefill`. */
 @Serializable
 data class DesignerPrefillDto(
     val designerId: String? = null,

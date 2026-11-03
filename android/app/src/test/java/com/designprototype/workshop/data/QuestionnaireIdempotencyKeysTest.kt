@@ -5,7 +5,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** M13 (audit 21 Oct 2026): retried questionnaire creates must not make duplicates. */
 class QuestionnaireIdempotencyKeysTest {
 
     private val serverRule = Regex("^[A-Za-z0-9_-]{8,128}$")

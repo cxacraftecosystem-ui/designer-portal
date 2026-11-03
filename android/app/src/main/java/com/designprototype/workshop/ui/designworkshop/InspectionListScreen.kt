@@ -49,96 +49,30 @@ import com.designprototype.workshop.ui.field
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
-/** The same 350ms as every other server-backed search box in this app. */
 private const val INSPECTION_SEARCH_DEBOUNCE_MS = 350L
 
-/** The server clamps to `MAX_PAGE_SIZE = 100`; twenty is a phone screen's worth of cards. */
 private const val INSPECTION_PAGE_SIZE = 20
 
-/**
- * The list page's own title.
- *
- * It must equal the label of the `NavDestination.DESIGN_WORKSHOP_INSPECTIONS` row in
- * [com.designprototype.workshop.ui.FIELD_NAV_ITEMS] — a menu row whose label differs from the
- * heading it opens sends a reader looking for a second feature. That is NOT enforced by sharing this
- * constant: the nav table is a flat list of literals and threading a UI-subpackage constant into it
- * would be the only such reference in the file. It is enforced instead by
- * `InspectionGateTest.the nav row exists, is in Browse, and reads the same predicate as the screens`,
- * which asserts the row's label against THIS constant, so changing either alone goes red.
- *
- * The words are the web's, verbatim — see the nav row's own comment on why this one wave wrote the
- * strings on the web side first.
- */
 const val DW_INSPECTION_LIST_TITLE = "Workshops to inspect"
 
-/**
- * THE INSPECTOR'S OWN LIST: the design & prototype workshops an admin has assigned them to inspect.
- *
- * ── THE LIST IS HALF THE FEATURE, AND THAT IS NOT A FIGURE OF SPEECH ─────────────────────────────
- *
- * `services/design_workshop_viewers.py` records the lesson this screen exists to honour: a scope the
- * LIST does not honour tells its holder that a workshop exists (they can open it by id) and
- * simultaneously that it does not (it is absent from every list they can reach). Nothing in either
- * client navigates to a design workshop by typed id, so without this screen an inspection row is
- * unreachable in practice — which is exactly the state this handset was in before this wave.
- *
- * ── THE SCOPE HAS EXACTLY ONE SOURCE, WHICH IS WHY THE EMPTY STATE CAN BE HONEST ─────────────────
- *
- * `GET /design-workshop-inspections` AND-composes `inspectable_by_clause` and nothing else: there is
- * no "all workshops" arm, no rank fallback and no `createdById` arm, because an inspector creates
- * nothing. So an empty answer means "no admin has assigned you anything", flatly, and the screen may
- * say so — unlike the designer's list, where an empty page could be any of several things.
- *
- * **THAT MAKES THE THREE STATES LOAD-BEARING.** `rows == null` (nothing has been asked for yet),
- * `rows == emptyList()` (the server answered, and the answer is none) and `loadError != null` (the
- * ask failed) are kept apart all the way to the screen, because an inspector must be able to tell
- * "nothing is assigned to me" from "the load failed" — and collapsing the first two is how a broken
- * connection comes to read as a withdrawn assignment.
- *
- * ── KEPT FOR THE COURTYARD, AND SAID TO BE KEPT ──────────────────────────────────────────────────
- *
- * Page one of the unsearched list is kept on this phone for the account that read it, and shown —
- * under a notice naming the day it was saved — when nothing answers. A workshop whose read answers
- * "not open to you" is dropped from the kept list at once, so an ended assignment does not linger.
- * See `DesignWorkshopInspectionFeedback.kt`.
- *
- * ── PAGED, AND DELIBERATELY NOT WALKED ───────────────────────────────────────────────────────────
- *
- * `visibleDesignWorkshops` walks up to five pages because a viewer GRANT lands an older workshop
- * past the end of page one in a `createdAt desc` list a designer otherwise fills with their own. No
- * such burial can happen here: every row is an assignment and there is no second source for them to
- * be buried under. So the inspector drives the pager, the server's `total` is on screen, and a
- * metered connection is asked for one page at a time.
- */
 @Composable
 fun InspectionListScreen(
     repository: WorkshopRepository,
-    /** Open one workshop under inspection. The id is the SERVER's — there is no draft to resolve. */
     onOpenWorkshop: (workshopId: String) -> Unit,
 ) {
     val viewer = remember(repository) { repository.cachedUser() }
-    // THE HANDSET'S DOOR, NARROWER THAN `assert_inspection_surface`: the server also admits an admin
-    // appointed to inspect (since 2026-10-09), and on this handset that is web-only, so every admin
-    // is refused here — see `canInspectDesignWorkshops`. Re-derived here from the cached
-    // account rather than trusted from the menu: a nav entry is not a guard, and an account demoted
-    // since the drawer was drawn must meet the same refusal the server would give it. Nothing is
-    // REQUESTED when the answer is already known — asking the server to refuse something this client
-    // knows it may not have would put an unexplained 403 in the error channel on every visit.
     val mayInspect = remember(viewer) { viewer != null && canInspectDesignWorkshops(viewer.role) }
 
     var page by remember { mutableIntStateOf(1) }
     var reload by remember { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
 
-    /** Null until the server has answered once. NOT the same state as an empty list — see the KDoc. */
     var rows by remember { mutableStateOf<List<DesignWorkshopDto>?>(null) }
     var total by remember { mutableIntStateOf(0) }
     var pages by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(mayInspect) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    /** The term the list on screen was actually fetched for — never the text in the box. */
     var answeredFor by remember { mutableStateOf<String?>(null) }
-    /** When the list on screen was saved on this phone; null while it is a live answer. */
     var savedAt by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
@@ -149,9 +83,6 @@ fun InspectionListScreen(
             return@LaunchedEffect
         }
         val term = dwInspectorSearchTerm(query)
-        // Not for the first load and not for the CLEAR, which is a deliberate act rather than
-        // typing: waiting 350ms to un-narrow a list the inspector has just emptied the box for reads
-        // as a stuck screen.
         if (term != null && term != answeredFor) delay(INSPECTION_SEARCH_DEBOUNCE_MS)
         loading = true
         loadError = null
@@ -171,14 +102,7 @@ fun InspectionListScreen(
                 savedAt = kept
             }
             .onFailure { error ->
-                // A CANCELLED LOAD IS NOT A FAILED ONE. This effect is keyed on the search box, so
-                // every keystroke cancels the request in flight; reported, it would flash a
-                // connection failure over a connection that is fine, mid-word.
                 if (error is CancellationException) return@onFailure
-                // ROWS ARE NOT CLEARED. What was on screen is still what the server last said, and
-                // blanking it would turn a dropped socket into an apparently withdrawn assignment.
-                // The error renders above the list instead, with the list marked stale by the words
-                // in it.
                 loadError = error.inspectionFailure(DwInspectionAttempt.READ)
             }
         loading = false
@@ -195,7 +119,6 @@ fun InspectionListScreen(
             style = MaterialTheme.typography.headlineSmall
         )
 
-        // ── The refusal, and it is the one refusal in this app an ADMIN also meets ───────────────
         if (!mayInspect) {
             InspectionNotice(
                 "For Inspector / Reviewer accounts. Shows workshops assigned to you.",
@@ -209,8 +132,6 @@ fun InspectionListScreen(
             color = MaterialTheme.field.muted,
             style = MaterialTheme.typography.bodySmall
         )
-        // A KEPT LIST SAYS SO, with the moment it was saved: an inspector must be able to tell the
-        // copy on this phone from a list that has just been read.
         savedAt?.let {
             InspectionNotice(
                 "Offline — list from ${it.take(10)}. Suggestions send when you're back online.",
@@ -255,9 +176,6 @@ fun InspectionListScreen(
 
         val served = rows
         when {
-            // NOTHING HAS ARRIVED YET AND THE ASK FAILED. Distinct from the empty state below and
-            // rendered as an action rather than as a sentence about assignments, because nobody has
-            // learned anything about their assignments yet.
             served == null && loadError != null -> OutlinedButton(
                 onClick = { reload++ },
                 modifier = Modifier.fillMaxWidth()
@@ -271,9 +189,6 @@ fun InspectionListScreen(
                 Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
-            // THE SERVER ANSWERED, AND THE ANSWER IS NONE. Two different sentences, because a search
-            // that matched nothing and an account with no assignments are two different facts and
-            // the remedy for one is not the remedy for the other.
             served.isEmpty() && answeredFor != null -> {
                 Text(
                     "No matching workshops",
@@ -303,8 +218,6 @@ fun InspectionListScreen(
             }
 
             else -> {
-                // THE COUNT IS THE SERVER'S `total`, NOT `served.size`. Printing the page's length
-                // would tell an inspector holding 40 assignments that they have 20.
                 Text(
                     "$total ${if (total == 1) "workshop" else "workshops"} assigned to you" +
                         if (answeredFor != null) ", matching this search." else ".",
@@ -318,7 +231,6 @@ fun InspectionListScreen(
                     )
                 }
                 if (pages > 1) {
-                    // Not an ActionRow: a pager (Previous · page count · Next).
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -347,17 +259,8 @@ fun InspectionListScreen(
     }
 }
 
-/**
- * One workshop as an inspector scans it.
- *
- * The fields drawn are exactly the ones `workshop_summary` promotes to columns — craft, cluster,
- * place, dates, code and status — and no attempt is made to say anything about the STAGES, because
- * this payload carries none and inventing a progress figure from a list row is how two screens come
- * to disagree about the same workshop.
- */
 @Composable
 private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> Unit) {
-    // Never blank: the typed title, else its generated default (NAMING 2.4).
     val shownTitle = workshopDisplayTitle(
         workshop.title,
         date = workshop.startDate,
@@ -372,7 +275,6 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        // The whole card opens the workshop; the click sits inside the card's clip ([openable]).
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -381,8 +283,6 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
-                // Never blank: an untitled row in a list of fourteen is a row nobody can identify,
-                // and on this screen there is no second way to tell two of them apart.
                 shownTitle,
                 display = true,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -402,8 +302,6 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
             }
             val second = listOfNotNull(
                 workshop.workshopCode?.takeIf { it.isNotBlank() },
-                // The plain word and not the column's token — the same mapping the designer's own
-                // list prints from, so an inspector and a designer read one word for one state.
                 workshop.status.takeIf { it.isNotBlank() }?.let { designWorkshopStatusLabel(it, workshop.handedOnAt) },
                 listOfNotNull(
                     workshop.startDate?.takeIf { it.isNotBlank() }?.take(10),
@@ -413,9 +311,6 @@ private fun InspectableWorkshopCard(workshop: DesignWorkshopDto, onOpen: () -> U
             if (second.isNotBlank()) {
                 Text(second, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
-            // SAID ON EVERY CARD, not only on the detail screen. An inspector tapping through has
-            // to know before they arrive that there is nothing here for them to do to the record —
-            // and the word is what carries it, never the absence of a button.
             Text(
                 "Read-only",
                 color = MaterialTheme.field.muted,

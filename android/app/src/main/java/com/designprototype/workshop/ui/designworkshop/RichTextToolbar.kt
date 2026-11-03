@@ -48,56 +48,9 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-// The two-typeface `Text`, shadowing androidx.compose.material3.Text — see FieldText.kt.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 
-/**
- * The contextual formatting bar — one bar, belonging to the editor that currently has the caret.
- *
- * ── WHY CONTEXTUAL AND NOT PERMANENT ──────────────────────────────────────────────────────────
- *
- * A design-workshop stage carries up to a dozen narrative fields. A formatting bar drawn
- * permanently above each of them is a dozen identical bars stacked down one phone screen, which
- * pushes the first actual question below the fold and gives no clue which bar acts on which field.
- * The web solves it the same way (`RichTextEditor.tsx` renders the bar only while `active`), and the
- * two clients agreeing on that is what keeps a designer who uses both from having to learn twice.
- *
- * ── THE ONE LINE THAT MAKES A FORMATTING BAR WORK AT ALL ──────────────────────────────────────
- *
- * `focusProperties { canFocus = false }` on the container. Every control in here acts on the
- * SELECTION inside a text field that is somewhere else on the screen, and a control that takes the
- * focus when it is pressed destroys that selection on the way in: by the time the click handler
- * runs there is nothing selected to embolden, the soft keyboard has closed, and the press appears to
- * do nothing whatsoever. That is the single most reported bug in every hand-rolled editor, on every
- * platform, and it is the reason the web version cancels `mousedown` on the bar and on each button.
- * Android needs the same guarantee stated differently — Compose moves focus through the focus
- * system, not through pointer defaults, so refusing focus for the whole subtree is the exact
- * equivalent and it cannot be forgotten on a button added later.
- *
- * Refusing Compose focus does NOT make the bar unreachable to a screen reader: TalkBack navigates
- * accessibility nodes, which `clickable` still publishes, and each button below carries a role, a
- * label and — for the toggles — an on/off state description.
- *
- * ── THE BUTTON SET, AND WHAT DECIDES ITS ACTIVE STATE ─────────────────────────────────────────
- *
- * The set is the web's, minus find-and-replace and full screen (see the header of
- * `RichTextEditor.kt` for why those two are absent rather than pending). Everything here is driven
- * by [RichToolbarState], which `RichTextOps.toolbarState` computes, and the rules it encodes are not
- * negotiable at this layer:
- *
- *  - a MARK is lit only when EVERY character in the selection carries it, so a half-bold selection
- *    shows Bold as off and the next press bolds the whole of it rather than clearing it;
- *  - `kind`, `level` and `align` are NULL for a selection spanning blocks that disagree, and a null
- *    lights nothing at all. A bar reading "Heading 2" over a mixed selection would be telling the
- *    designer something untrue about their own document;
- *  - indent and outdent are ANY-of-selection and are DISABLED rather than hidden when they cannot
- *    apply, because a control that vanishes when the caret moves is a control nobody finds twice.
- *
- * The bar never decides what a press MEANS — pressing Heading 2 on a heading 2 returning it to a
- * paragraph is the editor's rule, applied in `RichTextEditor.kt` where the document is. This file
- * reports the press and draws the state it is given.
- */
 @Composable
 internal fun RichTextToolbar(
     state: RichToolbarState,
@@ -111,32 +64,14 @@ internal fun RichTextToolbar(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     modifier: Modifier = Modifier,
-    /**
-     * Place a photograph at the caret, or null when this field cannot.
-     *
-     * NULL IS THE ORDINARY STATE, not a missing dependency. Placing a picture needs somewhere to put
-     * the bytes, which only the stage screen can supply (`DwMediaBridge`), so a field rendered in a
-     * preview — or anywhere else with no workshop behind it — simply does not offer the button
-     * rather than offering one that fails when pressed.
-     */
     onInsertImage: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            // See the header. Nothing inside this subtree may ever take the focus.
             .focusProperties { canFocus = false }
             .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))
             .border(1.dp, MaterialTheme.field.hairline, RoundedCornerShape(10.dp))
-            // Twenty-three controls do not fit across a phone, and wrapping them onto three rows
-            // makes the bar taller than the field it is formatting. One scrolling row keeps the five
-            // marks — which is what almost every press is — visible without any scrolling at all.
-            //
-            // The count is the buttons below, counted from them: 5 marks, ¶, H1-H4, Quote, two
-            // lists, outdent, indent, 4 aligns, Photograph, Clear formatting, Undo, Redo. 22 in a
-            // field with no media bridge, where Photograph is absent. It read "Twenty-one", which
-            // was already one short of the set beneath it — a count in a comment beside a growing
-            // button set decays silently, so recount before trusting this one.
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -152,9 +87,6 @@ internal fun RichTextToolbar(
             Icons.Filled.FormatStrikethrough,
             state.marks.contains("STRIKETHROUGH"),
         ) { onMark("STRIKETHROUGH") }
-        // Inline code is stored faithfully and PRINTS IN THE BODY FACE, because `report.Run` has no
-        // monospace flag. The note under the editor says so in words; the button is still offered
-        // because the mark survives the round trip and the web offers it.
         RteToolButton("Inline code", Icons.Filled.Code, state.marks.contains("CODE")) { onMark("CODE") }
 
         RteSeparator()
@@ -211,10 +143,6 @@ internal fun RichTextToolbar(
 
         if (onInsertImage != null) {
             RteSeparator()
-            // A ONE-SHOT COMMAND, so `active = null` and no state is announced. There is no such
-            // thing as "the caret is inside a photograph" to light up — the caret inside an IMAGE
-            // block is inside its CAPTION, which is prose, and lighting this there would say the
-            // designer had a picture selected when what they have is a line of text.
             RteToolButton("Photograph", Icons.Filled.Image, active = null) { onInsertImage() }
         }
 
@@ -226,17 +154,6 @@ internal fun RichTextToolbar(
     }
 }
 
-/**
- * One control.
- *
- * [active] is deliberately nullable and the three states are different things: `true` and `false`
- * are the two halves of a TOGGLE and are announced as "on"/"off", while `null` means this is a
- * one-shot command — Undo, Clear formatting, Indent — that has no state to report. Announcing "off"
- * for Undo would be a lie a screen-reader user cannot see past.
- *
- * The active look is carried by the FILL AND THE BORDER together, not by colour alone, for the same
- * reason every status chip in this app is: the bar is used outdoors on a phone at midday.
- */
 @Composable
 private fun RteToolButton(
     label: String,
@@ -250,14 +167,6 @@ private fun RteToolButton(
     }
 }
 
-/**
- * A control whose icon is a letterform.
- *
- * Material ships no Heading-1 glyph, and the four heading levels have to be told apart at a glance
- * on a 360dp-wide bar. "H1".."H4" and "¶" are what a designer already reads in every word processor,
- * and inventing four look-alike icons would be four things to learn instead of none. The
- * `contentDescription` on the shell still speaks the full name, so nothing is lost to a reader.
- */
 @Composable
 private fun RteToolLabelButton(
     glyph: String,
