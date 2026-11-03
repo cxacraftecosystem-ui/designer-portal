@@ -79,7 +79,7 @@ const VERB_201 = JSON.parse(`
     "tier": "TIER_3",
     "source": { "kind": "SUPPLIED_TEXT", "id": null, "text": "warp sized w/ rice paste, 2 dips" },
     "provider": "OPENAI",
-    "modelId": "gpt-4o-mini",
+    "modelId": "gpt-6-luna",
     "modelVersion": null,
     "language": null,
     "sourceLanguage": null,

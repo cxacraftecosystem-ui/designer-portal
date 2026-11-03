@@ -1020,7 +1020,7 @@ async def transcribe_audio_bytes(
 # --- Transcript refinement (raw transcript -> clean interviewer/interviewee conversation) ----------
 
 # Hard cap on the transcript we send to the chat model, so a runaway transcript can't blow up the
-# token bill or the request. ~48k characters is well within gpt-4o-mini's context window.
+# token bill or the request. ~48k characters is well within gpt-6-luna's context window.
 _REFINE_MAX_CHARS = 48_000
 
 
@@ -1125,7 +1125,7 @@ async def refine_transcript_text(
     settings: Settings,
 ) -> dict[str, Any]:
     """Refine a raw transcript into a clean interviewer/interviewee conversation (Markdown), optionally
-    translating it to English. Uses the configured chat model (gpt-4o-mini by default)."""
+    translating it to English. Uses the configured chat model (gpt-6-luna by default)."""
     credential = await user_ai_keys.resolve(None, AiTask.TRANSLATE)
     if credential is None:
         return {
@@ -1313,7 +1313,7 @@ def _model_for(credential: AiCredential, settings: Settings) -> str:
 
     THE ONE SPECIAL CASE IS THE DEPLOYMENT'S OPENAI KEY, and it exists to keep this change from
     altering a single existing deployment. Before designer-supplied keys, every text verb ran on
-    ``settings.openai_chat_model`` — ``gpt-4o-mini`` unless an operator set otherwise. The catalogue's
+    ``settings.openai_chat_model`` — ``gpt-6-luna`` unless an operator set otherwise. The catalogue's
     OpenAI default is a newer and more expensive model, so resolving the app-level key through the
     catalogue would have quietly re-pointed every existing installation at it and multiplied the
     bill without anybody choosing that. A designer's OWN key runs their OWN choice, which is the

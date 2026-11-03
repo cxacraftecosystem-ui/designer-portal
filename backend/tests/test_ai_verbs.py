@@ -69,10 +69,10 @@ CHAT_ANSWER = {
     "status": "COMPLETED",
     "text": "The dabu paste is mixed with gum and clay.",
     "provider": "openai",
-    "model": "gpt-4o-mini",
+    "model": "gpt-6-luna",
 }
 
-RUN = VerbRun(tier=AiTier.TIER_3, provider="openai", model_id="gpt-4o-mini", produced_at=AT)
+RUN = VerbRun(tier=AiTier.TIER_3, provider="openai", model_id="gpt-6-luna", produced_at=AT)
 
 
 # --------------------------------------------------------------------------------------
@@ -218,7 +218,7 @@ def test_the_tier_is_an_argument_with_no_default():
         )
         assert plan.data["tier"] == tier.value
     with pytest.raises(TypeError):
-        VerbRun(provider="openai", model_id="gpt-4o-mini")  # type: ignore[call-arg]
+        VerbRun(provider="openai", model_id="gpt-6-luna")  # type: ignore[call-arg]
 
 
 def test_no_verb_sets_an_acceptance_column():
@@ -238,7 +238,7 @@ def test_the_moment_the_model_ran_is_never_invented():
         workshop_id="wsp_1",
         note="x",
         answer=CHAT_ANSWER,
-        run=VerbRun(tier=AiTier.TIER_3, provider="openai", model_id="gpt-4o-mini"),
+        run=VerbRun(tier=AiTier.TIER_3, provider="openai", model_id="gpt-6-luna"),
     )
     assert plan.data["producedAt"] is None
 

@@ -5608,7 +5608,7 @@ class WorkshopRepository(
 
     /**
      * AI-refine a media file's transcript into a clean interviewer/interviewee conversation (Markdown),
-     * optionally translated to English. Billable (gpt-4o-mini) — the caller confirms cost first.
+     * optionally translated to English. Billable (gpt-6-luna) — the caller confirms cost first.
      */
     suspend fun refineTranscript(mediaId: String, translate: Boolean): TranscriptRefineResponse =
         api.refineTranscript(mediaId, TranscriptRefineRequest(translate = translate))

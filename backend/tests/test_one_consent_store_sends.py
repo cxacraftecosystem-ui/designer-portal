@@ -216,7 +216,7 @@ def drafting(monkeypatch, ledger_db):
 
     async def fake_draft(questions, transcript, settings, *, user_id):
         asked.append(transcript)
-        return {1: "Since my grandfather"}, "anthropic", "claude-sonnet-5"
+        return {1: "Since my grandfather"}, "anthropic", "claude-sonnet-5-5"
 
     monkeypatch.setattr(routes, "db", fake)
     monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(ai_answer_drafts_enabled=True))

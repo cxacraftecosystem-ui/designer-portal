@@ -76,7 +76,7 @@ def _row(media_id: str, version: int) -> dict:
         "sourceHash": "h",
         "translationStatus": "NOT_NEEDED",
         "provider": "openai",
-        "modelId": "gpt-4o-mini",
+        "modelId": "gpt-6-luna",
         "promptVersion": "transcript-insights/1",
         "generated": Json({"summaryLines": [], "quotes": [], "translationText": None}),
         "generatedAt": datetime.now(UTC),
@@ -116,7 +116,7 @@ async def test_enqueue_and_generate_through_the_real_client(client, monkeypatch)
 
     async def run_chat_verb(**_kwargs):
         return {"available": True, "status": "COMPLETED", "text": reply, "provider": "openai",
-                "model": "gpt-4o-mini"}
+                "model": "gpt-6-luna"}
 
     monkeypatch.setattr(ai, "_run_chat_verb", run_chat_verb)
     media_id = await _media(client)

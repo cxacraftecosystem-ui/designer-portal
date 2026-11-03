@@ -85,7 +85,7 @@ class DwAiVerbWireTest {
               "text": "The dabu block is cut from teak."
             },
             "provider": "openai",
-            "modelId": "gpt-4o-mini",
+            "modelId": "gpt-6-luna",
             "modelVersion": null,
             "language": "English",
             "sourceLanguage": null,
@@ -128,7 +128,7 @@ class DwAiVerbWireTest {
         // interview and a device-guessed one must never look alike on a page.
         assertEquals("TIER_3", layer.tier)
         assertEquals("openai", layer.provider)
-        assertEquals("gpt-4o-mini", layer.modelId)
+        assertEquals("gpt-6-luna", layer.modelId)
         assertEquals("English", layer.language)
         assertEquals("usr_meera", layer.createdById)
         assertEquals("The dabu block is cut from teak.", layer.text)

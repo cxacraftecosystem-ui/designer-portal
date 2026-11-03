@@ -390,8 +390,8 @@ class DwAiVerbWordingTest {
         assertTrue(dwLanguageWords("multi").contains("code-switched"))
         assertEquals("not recorded", dwLanguageWords("UNRECORDED"))
         // A model with no version recorded is named without a dangling separator.
-        assertEquals("gpt-4o-mini", dwModelWords("gpt-4o-mini", null))
-        assertEquals("gpt-4o-mini · 2024-07-18", dwModelWords("gpt-4o-mini", "2024-07-18"))
+        assertEquals("gpt-6-luna", dwModelWords("gpt-6-luna", null))
+        assertEquals("gpt-6-luna · 2024-07-18", dwModelWords("gpt-6-luna", "2024-07-18"))
         assertEquals("not recorded", dwModelWords("UNRECORDED", "2024-07-18"))
     }
 }

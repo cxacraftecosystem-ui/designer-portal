@@ -112,7 +112,7 @@ const TASK_LABELS: Record<string, string> = {
  * and cannot mislead anybody; shipping a half-wired fifth verb is neither.
  *
  * **AND IT IS FILTERED HERE RATHER THAN CUT FROM THE CATALOGUE** because `AiModel.tasks` is an honest
- * statement about the MODEL — GPT-4o really can summarise — while this line is a statement about
+ * statement about the MODEL — GPT-6 Luna really can summarise — while this line is a statement about
  * what THIS DEPLOYMENT WILL SPEND YOUR KEY ON. They are different claims and only the second one was
  * wrong. `ai_providers.py` belongs to another lane besides.
  *
@@ -302,14 +302,14 @@ function ProviderRow({
         HALF OF THAT WAS TRUE AND IS WHY THIS IS NOT A ONE-LINE SWAP. A `<label htmlFor>` genuinely
         cannot name a `<button>` — HTML-AAM computes a button's name from its own contents and the
         label association plays no part — so replacing the `<select>` with a bare `<Dropdown>` under
-        that `<label>` would have announced "Claude Sonnet 4.5, combobox": the answer, and never the
+        that `<label>` would have announced "Claude Sonnet 5.5, combobox": the answer, and never the
         question. That is the exact failure `ui/fieldLabel.tsx` was written to end, at forty-four
         call sites at once.
 
         THE OTHER HALF WAS NOT. The trigger DOES take an id — it publishes its own (`triggerId`) —
         and it takes `describedBy`. `FieldLabelProvider` hands the label's id down through context,
         and `SearchableSelect` composes `aria-labelledby="<label id> <trigger id>"`, which the
-        accname algorithm concatenates into "Model Claude Sonnet 4.5" — the question AND the answer,
+        accname algorithm concatenates into "Model Claude Sonnet 5.5" — the question AND the answer,
         which is strictly better than what the `<select>` announced. `ariaLabel` is deliberately NOT
         passed: it would REPLACE name-from-content and drop the value again.
 

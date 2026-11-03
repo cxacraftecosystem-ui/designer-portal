@@ -228,7 +228,7 @@ private val TASK_LABELS = mapOf(
  * half-wired fifth verb is neither.
  *
  * **FILTERED HERE RATHER THAN CUT FROM THE CATALOGUE** because `AiModel.tasks` is an honest statement
- * about the MODEL — GPT-4o really can summarise — while this line is a statement about what THIS
+ * about the MODEL — GPT-6 Luna really can summarise — while this line is a statement about what THIS
  * DEPLOYMENT WILL SPEND YOUR KEY ON. Different claims; only the second was wrong.
  *
  * WHEN A SUMMARISE VERB IS WIRED, DELETE THE ENTRY AND NOTHING ELSE — the label above is already
