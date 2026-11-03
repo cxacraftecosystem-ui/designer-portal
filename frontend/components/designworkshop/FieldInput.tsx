@@ -4590,7 +4590,7 @@ function MediaField({
                 </button>
                 </div>
                 {/* A recording on a stage opens the shared transcript viewer: turns, copy, karaoke. */}
-                {file?.mediaType === "AUDIO" && file.url ? <TranscriptViewer mediaId={file.id} audioUrl={file.url} initiallyOpen={false} /> : null}
+                {(file?.mediaType === "AUDIO" || file?.mediaType === "VIDEO") && file.url ? <TranscriptViewer mediaId={file.id} audioUrl={file.url} video={file.mediaType === "VIDEO"} initiallyOpen={false} /> : null}
               </li>
             );
           })}
@@ -4796,8 +4796,8 @@ function MediaField({
         title={multiple ? `Add to ${field.label.toLowerCase()}` : field.label}
         description={
           multiple
-            ? "Files upload straight away. Audio is transcribed."
-            : "Replaces the current file. Audio is transcribed."
+            ? "Files upload straight away."
+            : "Replaces the current file."
         }
         allowedTypes={ALLOWED_TYPES[field.type]}
         allowDocuments={field.type === "FILE"}

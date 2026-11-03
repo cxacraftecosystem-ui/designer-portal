@@ -139,6 +139,7 @@ import {
   underlyingIsTransient
 } from "@/lib/failureTriage";
 import { MediaBatchError, uploadMediaBatch, type BatchResult } from "@/lib/media";
+import { transcribeFlags } from "@/lib/transcript/uploadChoice";
 
 const DB_NAME = "field-repo-outbox";
 const DB_VERSION = 1;
@@ -162,6 +163,8 @@ export type OutboxMediaBatch = {
   recordedTimezone?: string | null;
   extraMetadata?: Record<string, unknown>;
   transcribeAudio?: boolean;
+  alwaysTranscribe?: boolean;
+  transcribe?: boolean[];
   /**
    * Link this batch to the Nth CHILD of the created record instead of the record itself — the
    * process form's per-step media, whose `processstep` ids do not exist until the server has made
@@ -169,6 +172,17 @@ export type OutboxMediaBatch = {
    */
   stepIndex?: number;
 };
+
+export function withTranscribeFlags(batch: OutboxMediaBatch): OutboxMediaBatch {
+  return batch.transcribe ? batch : { ...batch, transcribe: transcribeFlags(batch.files) };
+}
+
+export function transcribeFlagsFor(batch: OutboxMediaBatch, subset: readonly File[]): boolean[] {
+  return subset.map((file) => {
+    const position = batch.files.indexOf(file);
+    return position >= 0 ? Boolean(batch.transcribe?.[position]) : false;
+  });
+}
 
 export type OutboxEntry = {
   id?: number;
@@ -1150,6 +1164,7 @@ export async function queueOffline(
   await tx("readwrite", (store) =>
     store.add({
       ...entry,
+      media: (entry.media ?? []).map(withTranscribeFlags),
       createdAt: Date.now(),
       attempts: 0,
       failure: null,
@@ -2303,7 +2318,8 @@ async function runSync(): Promise<SyncResult> {
               recordedAt: batch.recordedAt ?? undefined,
               recordedTimezone: batch.recordedTimezone ?? undefined,
               extraMetadata: batch.extraMetadata,
-              transcribeAudio: batch.transcribeAudio ?? true,
+              alwaysTranscribe: batch.alwaysTranscribe ?? batch.transcribeAudio === true,
+              transcribe: transcribeFlagsFor(batch, sendable),
               // THE SAME REASON AS THE CREATE LEG'S, AND THE HALF THAT USED TO BE MISSING. This pass
               // runs on an `online` event and on mount with nobody having asked for anything, and an
               // entry that is being RESUMED (its record already on the server) sends its very first
@@ -2339,7 +2355,7 @@ async function runSync(): Promise<SyncResult> {
             // Re-sending exactly the set that never landed cannot duplicate the set that did, which
             // is the whole reason the index may be left out of `uploaded`.
             progress.media = progress.media.map((queued, position) =>
-              position === index ? { ...queued, files: outstanding } : queued
+              position === index ? { ...queued, files: outstanding, transcribe: transcribeFlagsFor(queued, outstanding) } : queued
             );
           } else {
             uploaded.add(index);

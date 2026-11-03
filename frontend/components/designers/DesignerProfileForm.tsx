@@ -1602,7 +1602,6 @@ async function uploadOne(
       caption,
       // A photograph and a signature are stills; queueing them for speech transcription would spend
       // a provider call on an image and put an empty transcript on the row.
-      transcribeAudio: false
     });
     const stranded = outcomes.filter((outcome) => outcome.failure !== null);
     if (stranded.length) {
