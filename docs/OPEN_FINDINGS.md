@@ -296,7 +296,7 @@ fix and a test that fails without the fix.
 
 ### [MEDIUM] The browser assembles the whole archive as one in-memory `Blob` — three `JSZip.generateAsync({type:"blob"})` sites (frontend)
 
-`frontend/app/(protected)/data/page.tsx:865`, `:1516` and `sharing/page.tsx:766` each build the
+`frontend/app/(protected)/data/page.tsx:651`, `:1161` and `sharing/page.tsx:519` each build the
 complete zip in the tab's heap: every media object is `await response.blob()`-ed into `JSZip`, and
 `generateAsync({type:"blob"})` then produces one more `Blob` holding the entire archive before a
 byte is written to disk. On a repository whose media runs to a gigabyte the tab dies.

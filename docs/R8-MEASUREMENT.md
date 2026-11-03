@@ -209,7 +209,7 @@ Checked before assuming, because "just use an App Bundle" is the reflex answer a
 device:**
 
 1. The portal's download button is a fixed, versionless address —
-   `frontend/components/settings/GetTheAppPanel.tsx:41`, `${API_BASE}/api/app/download`.
+   `frontend/components/settings/GetTheAppPanel.tsx:18`, `${API_BASE}/api/app/download`.
 2. That address is one redirect to one object, chosen only by highest `versionCode` and knowing
    nothing whatever about the requesting device — `backend/app/api/routes/app_release.py:154`
    `download_latest_apk()`, over the row `_latest_release()` picks at line 59.
