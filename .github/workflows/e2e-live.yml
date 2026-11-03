@@ -1,84 +1,9 @@
 name: Live end-to-end suite
 
-# ─── THE SPECS THAT HAVE NEVER RUN ANYWHERE BUT ONE LAPTOP ───────────────────────────────
-#
-# `frontend/e2e/` holds two kinds of spec. The `*-unit.spec.ts` ones read source files and call
-# pure functions; checks.yml runs those on every pull request and they need nothing. THE REST sign
-# in against a real API, create real records and drive a real browser — and until this file landed,
-# the only machine on earth that had ever executed them was the developer laptop that
-# `docs/TESTING-E2E-LOCAL.md` was written on. Every refusal path, every carry rule at save time,
-# every upload, every screen: covered by specs that ran when somebody remembered to type the
-# command.
-#
-# ─── THIS IS AN ON-DEMAND TOOL, NOT A GATE, AND THAT IS DELIBERATE ───────────────────────
-# It stands up Postgres, MinIO, the API and a production build of the web app on one runner, which
-# is minutes of setup before the first assertion. Putting that on every pull request would triple
-# the cost of a one-line change and would go red for reasons — a slow container, a cold npm cache —
-# that have nothing to do with the diff. So it runs ONLY when somebody asks for it, and it MUST NOT
-# be added to branch protection. When it goes red, somebody reads it; nothing is blocked.
-#
-#     gh workflow run "Live end-to-end suite" --ref <branch>
-#
-# ─── IT USED TO BE WEEKLY. THE SCHEDULE WAS REMOVED 2026-09-21 ───────────────────────────
-# It ran `cron: 0 4 * * 1` — Monday 04:00 UTC — from 2026-09-03. That was dropped because the
-# cadence was not earning what it cost: a weekly run is only a signal if somebody reads it, and the
-# record says nobody was. What the three scheduled runs actually did:
-#
-#   2026-09-07  the stack came up in 3 minutes, then `Run the live specs` was killed at the 45-minute
-#               job timeout — and produced NOTHING to diagnose from, because the report-upload and
-#               Diagnostics steps are `if: failure()`, which does not fire on a cancellation.
-#   2026-09-14  failed in 14s: `docker compose up` could not pull the MinIO image.
-#   2026-09-21  failed in 12s, same pull. Fixed by repointing `docker-compose.yml` at quay.io.
-#
-# AND quay.io WENT THE SAME WAY (found 2026-10-09): both MinIO images there now answer 401 to an
-# anonymous pull, and upstream MinIO is archived, so this workflow could not start at all. The stack
-# now runs `docker.io/pgsty/silo`, a maintained fork of the same MinIO source; docker-compose.yml says
-# why that one and what was checked. The service is still named `minio` and still on host port 9010.
-#
-# Two weeks red on an unrelated registry change, unnoticed. A red run nobody reads is not a signal,
-# it is noise with a cost — so this is now run deliberately, when somebody intends to act on the
-# answer. THE SUITE ITSELF IS UNCHANGED and every step below still works.
-#
-# ─── IF IT IS EVER PUT BACK ON A SCHEDULE ────────────────────────────────────────────────
-# Weekly is still the right shape — the argument for it (catch drift over time rather than gate a
-# change; a Monday failure is read at the start of a working week, not on a Friday evening) was
-# sound and is not what was wrong. Fix these two first, or the next schedule repeats this one:
-#   • THE 45-MINUTE TIMEOUT. `npm run test:e2e` is bare `playwright test` — ALL ~201 spec files at
-#     `workers: 1`, which re-runs the ~2,137 `-unit` tests `checks.yml` already gates on every PR
-#     to reach the ~355 live ones. Measure it before raising `timeout-minutes`; the number is not
-#     the problem.
-#   • THE DISCARDED EVIDENCE. Make the report-upload and Diagnostics steps `failure() ||
-#     cancelled()`, so a run killed by the timeout still leaves the traces and the API log behind.
-#
-# ─── IT IS docs/TESTING-E2E-LOCAL.md, SCRIPTED ───────────────────────────────────────────
-# The order of operations below is that document's "The sequence" section, in its order, for its
-# stated reasons. Where this file departs from it, it says so in the step. If you change the
-# sequence in one, change it in the other — that document's own "How this document is kept true"
-# table says the four commands are kept honest by running them, and this workflow is now the thing
-# that runs them.
-#
-# THE TWO DEPARTURES, BOTH FORCED BY CI RATHER THAN CHOSEN:
-#   • THE PORTS. That document says the host port is 55442 and warns you to read the repository
-#     root `.env` rather than trusting either number — because 55442 is an override in a gitignored
-#     file on that one machine, and the compose default is 55432. A runner has no root `.env`, so
-#     the default applies. Both host ports are therefore pinned in this job's `env:` rather than
-#     left to whatever compose resolves, so the DSN in this file and the port compose publishes
-#     cannot drift apart. MinIO is pinned to 9010 for the same reason: it is what
-#     `playwright.config.ts` defaults `E2E_MINIO_PORT` to, so pinning it here means the config's
-#     defaults are correct with nothing exported.
-#   • `prisma migrate deploy`. The document does not mention it because the laptop's database
-#     already had the schema. A runner's Postgres is empty every time, so the migrations have to be
-#     applied before anything can be seeded.
-
 on:
-  # Manual only. The `schedule:` that stood here until 2026-09-21 is gone and the header says why;
-  # putting a cron back is a decision, not a tidy-up, and the header lists what to fix first.
   workflow_dispatch:
     inputs:
       specs:
-        # Empty runs the whole suite. Otherwise spec files or name filters, space-separated, as
-        # `playwright test` takes them (e.g. `e2e/nav-responsive.spec.ts`), so one live spec can be
-        # run without waiting on all of them.
         description: "Specs to run (empty: the whole suite)"
         required: false
         default: ""
@@ -87,9 +12,6 @@ permissions:
   contents: read
 
 concurrency:
-  # One at a time. Two runs would fight over the same host ports on different runners only in
-  # theory, but they would also both be writing into the same seeded account set if anyone ever
-  # points this at a shared database, and serialising costs nothing on a job this occasional.
   group: e2e-live
   cancel-in-progress: false
 
@@ -97,24 +19,12 @@ jobs:
   e2e:
     name: Browser suite against a live stack
     runs-on: ubuntu-26.04
-    # Generous and then some: compose pull, a full `pip install` from the lock, a Next production
-    # build, a Chromium download and then the suite itself. If this is regularly hitting the limit,
-    # the answer is to find what got slow, not to raise the number again.
     timeout-minutes: 45
 
     env:
-      # ── The stack's host ports, pinned. See the header for why they are not left to defaults. ──
       POSTGRES_HOST_PORT: "55432"
       MINIO_HOST_PORT: "9010"
-      # ── What the API is configured with. Loopback everywhere: the API runs ON the runner, not in
-      #    the compose network, so `postgres:5432` and `minio:9000` (which is what
-      #    .env.docker.example uses) would not resolve. This is the same shape as the laptop setup
-      #    the document describes, where the API also runs on the host.
       DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:55432/design_workshop"
-      # Real-looking because `verify_jwt_configuration` refuses to build the app for a secret under
-      # 32 characters or one on its placeholder list. It signs tokens for a database that is deleted
-      # when this job ends, and it is deliberately in the open rather than in a secret: a value
-      # nobody can read back is a value nobody can debug.
       JWT_SECRET: "e2e-live-not-a-secret-0123456789abcdefgh"
       MASTER_ADMIN_EMAIL: "ci@example.invalid"
       AWS_ACCESS_KEY_ID: "minioadmin"
@@ -124,14 +34,8 @@ jobs:
       AWS_S3_ENDPOINT: "http://127.0.0.1:9010"
       AWS_S3_PUBLIC_BASE_URL: "http://127.0.0.1:9010/design-workshop"
       BACKEND_CORS_ORIGINS: "http://localhost:3000"
-      # The web process must never run the queue — user_data.sh explains at length what that costs
-      # in production. Nothing here needs the queue, and leaving it off keeps the API's log readable.
       MEDIA_QUEUE_WORKER_ENABLED: "false"
-      # ── The suite's own variables. frontend/e2e/README.md is the reference for each. ──
       E2E_EMAIL: "admin2@example.org"
-      # Not a secret and deliberately not one: it is the shared password that
-      # backend/scripts/seed_test_accounts.py writes into a throwaway database, in that file, in
-      # the open. Putting it in a repository secret would imply it protects something.
       E2E_PASSWORD: "LocalDev123!"
       E2E_BASE_URL: "http://localhost:3000"
       E2E_API_URL: "http://localhost:8000"
@@ -141,34 +45,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # ── 1. Postgres + MinIO ───────────────────────────────────────────────────────────────
       - name: Bring up the compose stack
-        # FROM THE REPOSITORY ROOT AND NOWHERE ELSE. docs/TESTING-E2E-LOCAL.md gives this its own
-        # warning: run compose from `backend/` and it picks up `backend/.env`, whose DATABASE_URL
-        # names the HOST port, and the containers then cannot reach their own database. On a runner
-        # backend/.env does not exist, so the trap cannot fire here — the rule is repeated anyway
-        # because this file is meant to be the executable copy of that document, including its
-        # warnings.
-        #
-        # A bare `up` starts exactly the three services with no profile (postgres, minio and the
-        # one-shot bucket creator); everything else in that file sits behind a profile. checks.yml's
-        # packaging job asserts that promise on every push.
         run: |
           set -euo pipefail
           docker compose up -d
           docker compose ps
 
       - name: Wait for Postgres and MinIO
-        # The compose file declares health checks; this waits on them rather than sleeping, because
-        # a fixed sleep is either too short (and the seed fails with something that reads like an
-        # application bug) or too long on every run forever.
-        #
-        # THE GREPS ARE ON COMPOSE 5's OUTPUT TOO. ubuntu-26.04 ships Docker Compose 5 (5.1.3 in the
-        # 2026-09-27 image), whose `ps --format json` prints one JSON object per line with
-        # `"Health":"starting"` written without spaces, exactly as Compose 2 did — measured with
-        # Compose 5.5.0 on 2026-10-09 against a container in its start period. If a future Compose
-        # pretty-prints that JSON, these patterns stop matching and the loop says "stack is up" early;
-        # parse with jq then rather than loosening the patterns.
         run: |
           set -euo pipefail
           for i in $(seq 1 60); do
@@ -187,8 +70,6 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          # 3.14, production's interpreter and the two backend jobs' in checks.yml; `check-latest`
-          # for python.org's newest patch rather than the runner image's cached one.
           python-version: "3.15"
           check-latest: true
           cache: pip
@@ -204,60 +85,36 @@ jobs:
           pip install -r requirements.lock
           pip install -e . --no-deps
           python -m prisma py fetch
-          # Through the script, as in checks.yml: the generated client must import in seconds on 3.14.
           python scripts/generate_prisma_client.py --schema prisma/schema.prisma
 
       - name: Apply the migrations
-        # NOT IN THE DOCUMENT, and it has to be here — see the header. The laptop's database already
-        # carried the schema (and 396 crafts with it); a runner's is created empty by the compose
-        # service thirty seconds ago.
         working-directory: backend
         run: python -m prisma migrate deploy
 
-      # ── 2. The accounts the specs sign in as ──────────────────────────────────────────────
       - name: Seed the test accounts
-        # `python -u`, exactly as the document insists: without it the script's output is buffered
-        # until it exits, which reads as a hang on a step that legitimately takes a while. The
-        # script is idempotent and refuses to run against anything but a loopback DSN — it is the
-        # same gate the database-backed test modules use, and it is why this is safe to run in CI
-        # at all.
         working-directory: backend
         run: python -u scripts/seed_test_accounts.py
 
-      # ── 3. The API ────────────────────────────────────────────────────────────────────────
       - name: Start the API
         working-directory: backend
         run: |
           set -euo pipefail
-          # `-u` again, and to a log file so the "Diagnostics" step can print it whatever happens.
-          # A cold start here is minutes, not seconds — `import app.services.stage_definitions`
-          # alone is ~2 minutes on the machine the document was written on — so this polls rather
-          # than sleeps, and the poll budget is deliberately generous.
           nohup python -u -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/api.log" 2>&1 &
           for i in $(seq 1 90); do
             if curl -fsS http://127.0.0.1:8000/health > /dev/null 2>&1; then echo "API up after ${i} polls"; break; fi
             if [ "$i" = "90" ]; then echo "::error::the API never answered /health"; tail -100 "$RUNNER_TEMP/api.log"; exit 1; fi
             sleep 4
           done
-          # /health says the PROCESS is serving. /health/ready is the one that touches the database,
-          # and a stack whose API cannot reach Postgres would otherwise fail later as a wall of
-          # unrelated spec failures.
           curl -fsS http://127.0.0.1:8000/health/ready
 
-      # ── 4. The web app: BUILD, then serve the build ───────────────────────────────────────
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # `engines.node` in frontend/package.json — the major production runs on, read from the one
-          # line checks.yml and deploy-frontend.yml read too, so this suite drives the build that ships.
           node-version-file: frontend/package.json
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install npm 12
-        # The npm the site is built with in deploy-frontend.yml, and the one that applies
-        # frontend/package.json's `allowScripts`; no Node release ships it yet. See checks.yml's step
-        # of the same name.
         run: npm install --global npm@12 && npm --version
 
       - name: Build and start the web app
@@ -265,14 +122,6 @@ jobs:
         run: |
           set -euo pipefail
           npm ci
-          # `next build` AND NOT `next dev`, which is the document's most emphatic finding: a dev
-          # server booted in 82 s on that machine and then never served /login at all, because it
-          # was still compiling. A build costs once; `next start` then serves prebuilt routes and no
-          # spec pays a compile or races the cache compactor.
-          #
-          # NEXT_PUBLIC_API_URL is INLINED AT BUILD TIME. It is set in this job's env block, which
-          # is why the build has to come after that and why changing it would mean rebuilding rather
-          # than restarting.
           npx next build
           nohup npx next start -p 3000 > "$RUNNER_TEMP/web.log" 2>&1 &
           for i in $(seq 1 60); do
@@ -283,36 +132,15 @@ jobs:
 
       - name: Install the browser
         working-directory: frontend
-        # `--with-deps`, which the document does not need to mention because a laptop already has
-        # the shared libraries a headless Chromium links against and a runner image does not.
-        # Chromium only: playwright.config.ts declares exactly one project.
         run: npx playwright install --with-deps chromium
 
-      # ── 5. The suite ──────────────────────────────────────────────────────────────────────
       - name: Run the live specs
         working-directory: frontend
-        # `npm run test:e2e` — the whole suite, which is what frontend/e2e/README.md defines that
-        # script to mean, and NOT a hand-written selection that would go stale the day somebody adds
-        # a spec. `test:unit` is the other script and is what checks.yml already gates on.
-        #
-        # `--reporter=list,html` is added HERE rather than in playwright.config.ts: `list` is the
-        # right reporter for a human watching a terminal, which is what the config is tuned for, and
-        # the HTML report only earns its keep when somebody is reading a failure hours later from an
-        # artifact. Adding it on the command line leaves the local experience alone.
-        #
-        # Retries stay at the config's zero. A retry turns a real intermittent defect into a green
-        # run, and a suite that runs once a week is exactly the one that must be believed.
-        # The selection arrives through the environment, never interpolated into the script.
         env:
           SPECS: ${{ inputs.specs }}
-        # Unquoted on purpose: a space-separated list is several arguments.
         run: npm run test:e2e -- $SPECS --reporter=list,html
 
       - name: Upload the Playwright report and traces
-        # `failure()`, not `always()`: on a green run these artifacts are tens of megabytes nobody
-        # opens. On a red one they are the whole story — `screenshot: only-on-failure` and
-        # `trace: retain-on-failure` in playwright.config.ts mean test-results/ holds a screenshot
-        # and a replayable trace for each failure.
         if: ${{ failure() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -324,10 +152,6 @@ jobs:
           retention-days: 14
 
       - name: Diagnostics
-        # Everything a person needs to tell "the product is broken" from "the stack did not come
-        # up", which docs/TESTING-E2E-LOCAL.md's whole "failure modes that are not product bugs"
-        # section exists to distinguish. Printed on failure only, and never allowed to fail the job
-        # itself — a diagnostic that turns a red run into a differently-red run helps nobody.
         if: ${{ failure() }}
         run: |
           echo "=== compose ==="; docker compose ps || true

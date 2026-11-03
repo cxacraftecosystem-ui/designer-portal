@@ -1,35 +1,10 @@
-# ─── LIVE AGAIN AS OF 2026-09-02 ────────────────────────────────────────────────────────────
-#
-# This workflow was dormant from 2026-08-22 (schedule commented out, no database secret) while the
-# provider of that era suspended idle compute on its own. On 2026-09-02 production moved back onto a
-# Supabase project, whose free tier PAUSES after a stretch of inactivity and needs a human to
-# restore it — the exact case this ping was built for — so the dormancy header's own condition 2
-# was executed as written: the two `schedule:` lines below were restored, the
-# `SUPABASE_DATABASE_URL` repository secret was set (the session-pooler DSN; the script rewrites the
-# port to the transaction pooler itself, so the nightly ping never occupies a session slot), and the
-# dormancy block was replaced by this one. (WHICH provider hosts production is still stated in
-# exactly one place, docs/ENVIRONMENT.md's "The database" section; this file is the workaround that
-# exists because of that provider's pause behaviour, which is why it may name it.)
-#
-# `workflow_dispatch` is KEPT so the ping can also be fired by hand against whichever URL the
-# secrets name — useful for confirming the database is reachable from a runner without deploying.
-#
-# A run that fails here is a real signal now, not noise: it means the runner could not reach the
-# production database. Check the secret first, then the provider's status page.
-#
-# ONE THING TO KNOW BEFORE DELETING THIS FILE: `npm ci` here is the reason the root `package.json`
-# name cannot be renamed in a single commit — docs/CI.md §7 records that constraint. Removing this
-# file removes that constraint too, so say so in the commit message.
-
 name: Keep Supabase Active
 
 on:
-  # Every day at 8:00 PM UTC (1:30 AM IST).
   schedule:
     - cron: "0 20 * * *"
   workflow_dispatch:
 
-# Read-only token: this job only checks the code out and pings the database.
 permissions:
   contents: read
 
@@ -44,15 +19,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # 24, the newest LTS line (20 reached end of life on 2026-04-30). Written out because the root
-          # package.json this job installs declares no engines; frontend/package.json's `engines.node`
-          # is the line the rest of the repository follows, so move this with it.
           node-version: "26"
           cache: "npm"
 
       - name: Install npm 12
-        # The npm every other job installs with; no Node release ships it yet. None of the root
-        # package's dependencies has an install script, so npm 12's script blocking changes nothing here.
         run: npm install --global npm@12 && npm --version
 
       - name: Install keep-alive dependencies
