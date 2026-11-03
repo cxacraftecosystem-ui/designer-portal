@@ -639,3 +639,5 @@ to a decision, and put the new date beside the new figure.
 **Billing and timeouts.** A provider's HTTP 402 is reported as "the service's credit has run out", not as a refused request. A summary job that hits 402 is held for 15 minutes and spends no attempt, as the Gemini transcript pipeline already does. A timeout is reported as "took too long to answer".
 
 **Refining transcripts without an OpenAI key.** When the deployment has no OpenAI key, refining a transcript runs on the deployment's resolved AI key (Gemini on the designer portal), so the Android Refine action works.
+
+**Refine transcript on the web (R1).** Under a stored transcript, the uploader and the content admins see Refine transcript and Refine & translate (`components/media/TranscriptRefine.tsx`, `lib/transcriptRefine.ts`, identical in both portals). The cost confirmation, its "Do not remind me again" switch (kept in this browser), the refined Markdown and Approve or Reject match Android. Approve saves through `POST /media/{id}/transcript`. Read-only record pages and held workshops show no control.
