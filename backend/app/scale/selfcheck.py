@@ -1,20 +1,3 @@
-"""``python -m app.scale.selfcheck`` — prove what this package is doing in the current environment.
-
-WHY A SCRIPT AND NOT ONLY TESTS. A test suite proves the code is right. This proves the DEPLOYMENT is
-what somebody thinks it is, which is a different question and the one that actually goes wrong: a
-variable set in the wrong file, a flag on in staging and off in production, a Redis that answered at
-boot and has not since. Run it on the box, read the lines, and there is no ambiguity about which
-paths are live.
-
-It touches NO database and opens NO socket unless the Redis backend is configured — which is also
-what makes it safe to run against a checkout whose ``.env`` points at production.
-
-Run it twice to see the whole story:
-
-    python -m app.scale.selfcheck                          # a fresh clone: everything off
-    SCALE_CACHE_ENABLED=true python -m app.scale.selfcheck # the memory cache doing its job
-"""
-
 import asyncio
 import sys
 
@@ -36,8 +19,6 @@ def _check(label: str, condition: bool, detail: str = "") -> None:
 
 async def _cache_checks() -> None:
     enabled = flags.cache_enabled()
-    # Plain ASCII in the output: this is meant to be read over SSH on a box whose console encoding
-    # is whatever it is, and a mojibake dash in a verification tool undermines the verification.
     print(f"\ncache  [{'ON - ' + flags.cache_backend_name() if enabled else 'off'}]")
     await cache.reset_cache()
 
@@ -55,7 +36,7 @@ async def _cache_checks() -> None:
         "artisan.list", audience="u:selfcheck", params=params, loader=loader
     )
     _check("the response is unchanged by the cache layer", first == second == await loader())
-    calls["n"] -= 1  # the assertion above called the loader itself; do not count it
+    calls["n"] -= 1
 
     if enabled:
         _check(
@@ -64,15 +45,12 @@ async def _cache_checks() -> None:
     else:
         _check("every read runs the query", calls["n"] == 2, f"loader ran {calls['n']}x")
 
-    # A different viewer must never share an entry: the audience is part of the key precisely so
-    # that one researcher's filtered rows cannot be handed to another.
     before = calls["n"]
     await cache.cached_response(
         "artisan.list", audience="u:someone-else", params=params, loader=loader
     )
     _check("a different viewer gets their own entry", calls["n"] == before + 1)
 
-    # Invalidation: a write to an artisan must retire the artisan list AND the cross-type views.
     before = calls["n"]
     await cache.invalidate_record("artisan")
     await cache.cached_response(
@@ -84,7 +62,6 @@ async def _cache_checks() -> None:
         "generation bumped" if enabled else "nothing was cached to invalidate",
     )
 
-    # Single-flight: N concurrent misses on one key must produce ONE query, not N.
     slow_calls = {"n": 0}
 
     async def slow_loader() -> dict[str, object]:
@@ -162,8 +139,6 @@ def _rate_limit_checks() -> None:
         f"{len(app.installed)} middleware added",
     )
 
-    # The bucket itself, exercised directly so the arithmetic is verified whether or not the
-    # middleware is installed in this environment.
     buckets = rate_limit._TokenBuckets(capacity=3, refill_per_second=3 / 60)
     verdicts = [buckets.take("t:selfcheck")[0] for _ in range(5)]
     _check(
@@ -171,10 +146,6 @@ def _rate_limit_checks() -> None:
         verdicts == [True, True, True, False, False],
     )
 
-    # The refund is what makes the credential budget safe to set as low as it is, so it is worth
-    # proving on the box rather than only in the suite: a bucket that is spent and immediately
-    # refunded lets the next attempt through, which is the difference between counting FAILED
-    # sign-ins and counting sign-ins. See rate_limit.py's module docstring.
     refunded = rate_limit._TokenBuckets(capacity=1, refill_per_second=1 / 300)
     spent = refunded.take("ip:selfcheck")[0]
     refunded.refund("ip:selfcheck")

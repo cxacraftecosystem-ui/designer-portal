@@ -1,15 +1,3 @@
-"""Cross-researcher tiered data access + edit auditing.
-
-A DataAccessGrant lets one researcher (the GRANTEE) act on another researcher's (the OWNER's) uploaded
-records at a tier: DOWNLOAD (download/export) < COMMENT (+ comment) < EDIT (+ change fields). Admins and
-a record's own creator always have full (EDIT) access. Every field-changing edit is captured in a
-RecordRevision so an admin can reconstruct the original values and every subsequent edit, with author
--- EXCEPT for the identity and contact columns named in REVISION_REDACTED_FIELDS, where the ledger
-records THAT the field changed, who changed it and when, but not the value. The argument for that one
-exception is written out above the set; it is the difference between auditing a retraction and
-undoing it.
-"""
-
 from collections.abc import Collection
 from typing import Any
 
@@ -20,18 +8,11 @@ from app.core.db import db
 from app.services.measurement_provenance import MARKER_BODY_KEY
 from prisma import Json
 
-# Strictly increasing privilege. A tier includes every action of the tiers below it.
 TIER_ORDER = {"DOWNLOAD": 1, "COMMENT": 2, "EDIT": 3}
 
-# Human-readable, shown in UIs so a user knows exactly what each tier confers when requesting/granting.
 TIER_DESCRIPTIONS = {
     "DOWNLOAD": "Minimum — download this researcher's data (the whole set, or the shared subset).",
     "COMMENT": "Medium — everything in Download, plus leave comments on their entries.",
-    # This string is served over the API by ``routes/data_access.py`` and is the text an owner reads
-    # while deciding whether to grant EDIT, so it has to describe the ledger they will actually get.
-    # It named the REVISION_REDACTED_FIELDS exception the moment that exception existed: promising an
-    # auditability the portal no longer provides, on the screen where consent is given, is the one
-    # place a stale comment becomes a lie told to a member of the public.
     "EDIT": "Maximum — everything in Comment, plus edit fields on their entries (every change is "
     "tracked with its author; admins see the original for all but identity and contact fields, "
     "where only the fact and direction of the change is kept).",
@@ -49,7 +30,6 @@ def tier_at_least(tier: str | None, minimum: str) -> bool:
 
 
 async def active_grant(grantee_id: str, owner_id: str) -> Any:
-    """The (owner, grantee) DataAccessGrant row, with its subset items, or None."""
     if not grantee_id or not owner_id:
         return None
     return await db.dataaccessgrant.find_unique(
@@ -70,12 +50,6 @@ def _grant_covers(grant: Any, record_type: str, record_id: str) -> bool:
 async def effective_tier_for_record(
     user: Any, owner_id: str | None, record_type: str, record_id: str | None
 ) -> str | None:
-    """The highest tier `user` holds over one record owned by `owner_id`.
-
-    Content admins (``deps.CONTENT_ADMIN_ROLES``) and the record's own creator implicitly have EDIT. Otherwise it's the tier of an active
-    GRANTED grant from the owner to the user that covers this record (all-data, or the subset list).
-    Returns None when the user has no access beyond plain viewing.
-    """
     from app.core.deps import get_value, is_content_admin
 
     if is_content_admin(user):
@@ -91,45 +65,6 @@ async def effective_tier_for_record(
     return _enum_str(grant.tier)
 
 
-# Infrastructural fields whose churn should not be logged as a meaningful edit.
-#
-# ── WHY ``measurementMethods`` IS HERE, AND WHY IT HAD TO ARRIVE BEFORE THE SCHEMAS DID ──────────
-#
-# It is the ONE ENTRY IN THIS SET THAT IS NOT A COLUMN. Everything above it is a real field whose
-# churn is noise; ``measurementMethods`` is a request-body key that names no column on any table --
-# it is a per-dimension hint about HOW ``lengthInches`` / ``breadthInches`` / ``heightInches`` came
-# to be known (typed off a tape, computed from marks on a photograph, or estimated by a vision
-# model). ``services/measurement_provenance`` holds the whole argument; ``records.merge_field_
-# provenance`` pops the key off the payload and merges it into the ``{by, byName, at}`` stamp beside
-# each dimension.
-#
-# THE INCIDENT THIS ENTRY EXISTS TO PREVENT, WHICH IS WHY IT LANDED FIRST. ``guard_record_edit``
-# runs ``record_revision`` on the RAW payload, before ``merge_field_provenance`` gets a chance to
-# pop anything -- read the two calls at the bottom of this file, in that order. ``record_revision``
-# diffs every key not in this set against the stored row, ``get_value(product, "measurementMethods")``
-# is None because there is no such attribute, and ``values_match(None, {...})`` is False. So without
-# this entry EVERY marker-bearing PATCH appends a ``RecordRevision`` saying a human changed a field
-# from nothing to a dictionary they never saw -- breaking ``record_revision``'s own contract ("No-op
-# when nothing meaningful changed"), and doing it in an APPEND-ONLY table with no delete endpoint.
-# The history would positively assert an edit nobody made, which is the same class of defect
-# ``measurement_provenance`` was written to end (a machine's number wearing a named human's
-# signature), reintroduced one table over.
-#
-# That is also why the rollout order was fixed and is recorded in three places rather than one: this
-# entry, THEN the four schema declarations in ``schemas/records.py``, THEN the clients. The schema
-# declaration is what makes the key SENDABLE at all -- ``APIModel`` is ``extra="forbid"``, so before
-# it a marker-bearing body was a 422 in full. Landing the schemas first would have written revision
-# rows that no later edit of this file could retract. Landing this first was free: a skip entry can
-# skip nothing while nothing can send the key.
-#
-# MOVING THE POP EARLIER IS NOT THE ALTERNATIVE FIX, and it looks like one. The merge must still see
-# the marker, so popping it before ``record_revision`` means handing ``merge_field_provenance`` a
-# payload the marker has already been taken out of.
-#
-# True as of 2026-08-27, when the schemas began accepting the key. Re-check with::
-#
-#     grep -n "measurementMethods" backend/app/schemas/records.py
-#     grep -n "MARKER_BODY_KEY" backend/app/services/records.py
 REVISION_SKIP_FIELDS = {
     "extraMetadata",
     "location",
@@ -143,175 +78,6 @@ REVISION_SKIP_FIELDS = {
 }
 
 
-# -- COLUMNS WHOSE CHANGE IS AUDITED BUT WHOSE VALUE IS NOT --------------------------------------
-# Clearing a nullable scalar is how a researcher acts on "take my number off your system". Until
-# this set existed, the request that did it copied the retracted number INTO the row written below,
-# because the skip set above holds only infrastructural churn and says nothing about the subject of
-# the record. The API answered 200, the column went NULL, and the number the subject asked to be rid
-# of was now in an append-only table with no delete endpoint: the app reported success while making
-# a fresh copy in the one table nobody prunes.
-#
-# THE LEDGER WAS NEVER THE ONLY SECOND COPY, and an earlier draft of this comment claimed it was.
-# Three of the five columns below -- ``address``, ``email``, ``phone`` -- are ALSO carried verbatim
-# into every workshop stage entry that references the artisan: ``stage_definitions`` declares them
-# as ``fromref("address"/"email"/"phone", ...)`` and ``design_workshops``'s Artisan reference ``data``
-# lambda feeds them straight off the row. Hydration copies at SAVE time and the report never
-# re-resolves, so clearing ``Artisan.phone`` still leaves the number in every ``DwStageEntry.data``
-# that already referenced her and in every report generated from one. THIS SET DOES NOT CLOSE THAT,
-# deliberately: a document already handed to a ministry officer must not change because somebody
-# edited a record afterwards. The ledger is closed here because it is the copy that nothing about
-# the product needs -- not because it was the only one. A retraction request that has to reach the
-# stage entries is a separate, owner-level piece of work.
-#
-# BOTH PRESSURES HERE ARE REAL, AND THIS SET IS WHERE THEY WERE TRADED OFF. Neither is a nuisance to
-# be simplified away later:
-#
-#   * AN AUDIT TRAIL ON A GOVERNMENT RECORD EXISTS SO THAT A CHANGE CANNOT BE MADE INVISIBLY.
-#     Blanket-exempting contact columns -- moving them into REVISION_SKIP_FIELDS, which is the
-#     one-line version of this fix -- would let an EDIT-tier grantee overwrite an artisan's phone
-#     number with their own and leave no trace at all. ``GET /api/data-access/revisions`` is the
-#     only surface an admin has for "who did what to this record", and a silent column is a hole in
-#     it, not a privacy feature.
-#   * A SUBJECT'S RIGHT TO HAVE PII REMOVED IS NOT SERVED BY MOVING IT WHERE THEY CANNOT LOOK.
-#     Retention inside an audit table the subject has no access to is still retention, and calling
-#     the request that performs it a success is the part that misleads the researcher who ran it.
-#
-# So the ledger keeps everything about the edit EXCEPT the value: WHICH field changed (the key),
-# WHO changed it (``editedById``), WHEN (``createdAt``), and WHICH DIRECTION it moved -- set,
-# replaced, or cleared. A malicious edit to a phone number still leaves a row naming its author and
-# the minute they did it; what it no longer leaves is the number.
-#
-# WHAT THAT COSTS, STATED PLAINLY INSTEAD OF WAVED AWAY -- because an owner cannot sign off on a
-# trade-off the comment denies exists. For ``phone``, ``email`` and ``address`` the cost really is
-# small: the action available on a suspicious contact edit is "ask that editor what they changed and
-# why", not "read the old number back out of the log". For ``aadhaarNumber`` and
-# ``pehchanCardNumber`` it is NOT small. Both are UNIQUE deduplication columns
-# (``routes/artisans._IDENTITY_CONSTRAINTS``, with a 409 "you already have this artisan" path built
-# on them) and both are globally clearable. After this change an EDIT-tier grantee, or a professor
-# outranking the author, can repoint or clear one, the previous identifier is UNRECOVERABLE FROM
-# THIS LEDGER, and the freed unique key admits a duplicate artisan with nothing left in the audit
-# trail to trace the collision back to.
-#
-# THE PREMISE THAT USED TO STAND HERE DIED ON 2026-08-24, AND SO DID THE ARGUMENT BUILT ON IT. This
-# paragraph read: "The Aadhaar is carried into NO stage entry at any masking, by design, so the
-# RecordRevision ``old`` was the last copy of a previous Aadhaar number anywhere in the system",
-# followed by the parenthetical that ``pehchanCardNumber`` was "one degree better only where a
-# workshop exists: its masked last four already rides into ``participant.artisanCardNo`` on every
-# stage entry that referenced her." The owner reversed the Aadhaar carry on 2026-08-24 -- see the
-# long note above ``participant.aadhaarNumber`` in ``services/stage_definitions.py`` -- so the
-# masked last four of BOTH numbers now ride into every stage entry that references the artisan. The
-# two columns are one degree better in exactly the same way and to exactly the same extent, and the
-# sentence that made the Aadhaar the worse of the two is no longer true of it.
-#
-# WHAT THAT DOES AND DOES NOT CHANGE ABOUT THE COST, stated precisely, because "it survives on a
-# workshop entry somewhere" is not a recovery path: a ``DwStageEntry`` is not indexed by identity
-# number, is not what an admin opens when tracing a duplicate, and exists only where the artisan was
-# actually rostered into a design workshop. It is a RESIDUE, not a ledger. So the cost of the flat
-# placeholder is unchanged for an artisan who was never in a workshop, and slightly softened for one
-# who was -- now for both columns equally rather than for one of them.
-#
-# THE ALTERNATIVE IS A LIVE OWNER DECISION, IT WAS DECLINED ON A PREMISE THAT NO LONGER HOLDS, AND
-# IT IS RE-RAISED HERE RATHER THAN LEFT STANDING. Storing
-# ``records.mask_identity_number(old_value)`` for those two columns instead of the flat placeholder
-# would keep the last four for recovery and collision tracing while dropping the full identifier. It
-# was refused, in these words: "house rule 5 is unconditional about the Aadhaar -- it crosses at NO
-# masking, which is exactly why ``design_workshops`` refuses to carry it while carrying the masked
-# Pehchan card -- and giving the two identity columns different treatment inside one set is worse
-# than one rule that holds everywhere." EVERY CLAUSE OF THAT IS NOW SPENT. The rule is not
-# unconditional (the owner made it conditional on 2026-08-24), ``design_workshops`` does not refuse,
-# and the two columns no longer HAVE different treatment to preserve -- so what used to be the
-# objection now points the other way: storing the masked form here is what would make this set match
-# the treatment those same two columns already get on the workshop surface. It is still not done in
-# this change, because a retraction ledger is not a design workshop and the owner has not been
-# asked about THIS surface. What is recorded is that the objection is spent, so whoever raises it
-# next does not have to rediscover that.
-#
-# HOUSE RULE 5 IS NOT DEFINED ANYWHERE IN THIS TREE. It lives in owner-supplied instructions, and
-# three files cite it -- this one, ``records._mask_identity_node`` and ``routes/artisans``. That is
-# the other reason the reversal is written out at each of them: nothing else in the repository
-# records what the rule now says.
-#
-# WHY THESE FIVE AND NOT MORE. Every column here is a direct identifier of, or a route to, a living
-# person -- the columns a "delete my details" request actually names. All five exist on ``Artisan``
-# and, among the record types that reach ``record_revision`` (artisan, craft, product, tool,
-# process, workshop, questionnaire), on no other model, so the match-by-column-name this function
-# does is artisan-scoped in practice rather than by luck. Three near misses are deliberately OUT:
-#   * ``notes``, ``dos``, ``donts``, ``localName``. Free text that may happen to contain something
-#     personal, but it is not what a retraction targets, and it is exactly where a malicious edit
-#     hides meaning -- the old text is the only way to see what was quietly taken out of a record.
-#   * ``dateOfBirth``. The closest call. It is personal, but it is load-bearing derived data
-#     (``participant.age`` on a workshop report comes from it) rather than a way to reach or single
-#     out the person on its own. Adding it here is a one-line change if the owner wants the wider
-#     line drawn.
-#   * ``craftStartDate``. Named here rather than left undecided, because it arrived (2026-08-23) in
-#     exactly the shape of the near miss above and would otherwise be a column nobody had ruled on.
-#     It is the feeder ``participant.experienceYears`` is derived from, so it is load-bearing derived
-#     data by the same argument -- and it is weaker than ``dateOfBirth`` on the personal side: the
-#     year somebody took up weaving is a fact about a trade, not a date that singles out a person.
-#     If the owner draws the wider line, these two move together or the set says two different things
-#     about one pair of columns on one row.
-#
-# THIS SET DOES NOT REACH BACKWARDS, AND THAT IS AN OWNER DECISION SITTING IN THE TABLE RIGHT NOW.
-# Every ``RecordRevision`` written BEFORE this set existed still holds the real old value for these
-# five columns, in full, in an append-only table with no delete endpoint. Nothing below changes those
-# rows: the code stopped making new copies, it did not remove the copies already made. So a subject
-# who asked for their number to be removed a month ago is in the position this set exists to prevent,
-# and the only fix is a data migration -- an UPDATE over the ``changes`` JSON of a GOVERNMENT AUDIT
-# TABLE, rewriting history to say less than it said. That is emphatically not a drive-by:
-#   * it is irreversible, and the value it destroys is the only remaining record of what an editor
-#     changed on those rows (for the two identity columns, ``records._mask_identity_node`` explains
-#     why the same values are also the last trace of a previous Aadhaar);
-#   * a partial run leaves the ledger inconsistent about what it means, with no marker saying which
-#     rows were rewritten and which were always redacted;
-#   * "we altered the audit log" is a sentence that needs an owner's signature on it, whatever the
-#     reason, and a good reason is exactly when it needs one most.
-# Written down here rather than acted on. The reversible half is already done: nothing NEW is copied.
-#
-# THE READER COPES WITH THIS SHAPE, which was checked rather than assumed. THERE ARE TWO READERS,
-# AND THIS COMMENT SAID THERE WAS ONE until an audit went and looked:
-#   * ``frontend/components/CollabPanel.tsx`` renders every entry as
-#     ``String(change.old ?? "-") -> String(change.new ?? "-")``;
-#   * ``RecordCollabSection`` in ``android/app/src/main/java/com/designprototype/workshop/
-#     MainActivity.kt`` renders ``"$field: ${jsonText(change.old)} -> ${jsonText(change.new)}"`` under
-#     its "Edit history" heading, fed by ``WorkshopRepository.recordRevisions`` and typed as
-#     ``ApiModels.RecordRevisionDto.changes: Map<String, RevisionChange>``.
-# So the placeholders below print as an ordinary before/after line on BOTH clients with no change to
-# the rendering. They are worded as descriptions rather than left null ON PURPOSE: a null pair
-# renders as "- -> -" on either of them, which reads as "nothing happened" on the screens an admin
-# opens to find out that something did.
-#
-# THE HANDSET IS NOT YET AT PARITY, AND THAT IS AN OPEN ITEM RATHER THAN A CLAIM OF DONE. Two gaps,
-# both measured, both in files this unit does not own:
-#   * the web panel's caption naming the redaction exception has no Android counterpart, so a handset
-#     shows "aadhaarNumber: (value recorded) -> (cleared)" with nothing on screen saying why;
-#   * ``RevisionChange`` models only ``old``/``new`` as ``JsonElement?``, and ``ApiClient``'s
-#     ``ignoreUnknownKeys = true`` therefore DROPS the ``redacted`` flag -- not a crash, but the
-#     handset cannot mark these rows as placeholders, which is the job the flag was added for.
-# Neither is a leak: the placeholders carry no value, so the worst case is a reader who is not told
-# that a value was withheld. Raised for the Android owner.
-#
-# AND NEITHER READER COPED UNTIL THE ENCODE WAS FIXED TO LET THE SHAPE THROUGH. ``changes`` is
-# keyed by COLUMN NAME, and ``records.public_encode`` masks ``aadhaarNumber``/``pehchanCardNumber`` by
-# that same key name -- so for exactly the two identity columns the entry below was handed to a
-# masker that normalises with ``str(value)``, and ``GET /api/data-access/revisions`` served the
-# literal string ``"XXXX XXXX rue}"`` (the tail of ``…'redacted': True}``, spaces stripped) instead
-# of a dict. ``change.old`` on a string is undefined, so on the web those two rows rendered as
-# "- -> -" -- the very reading this wording was chosen to avoid, on the two columns that matter most.
-# The handset was handed the same string where its DTO declares ``RevisionChange``, an object; what
-# kotlinx did with it was not measured here, and the fix removes the question rather than answering
-# it. ``records``'s
-# ``_mask_identity_node`` now RECOGNISES an audit entry under an identity key instead of stringifying
-# it, and re-derives the placeholder pair through :func:`_redacted_change` rather than believing a
-# ``redacted`` key it was handed; ``tests/test_revision_pii_redaction`` drives ``public_encode`` over
-# a real blob so the write and the read are pinned together.
-# The panel's CAPTION did have to change: it promised that "original values are the first before of
-# each field", which stopped being true for these five the moment this set existed. Anything else
-# that repeats that promise has to name the exception too -- ``TIER_DESCRIPTIONS["EDIT"]`` above and
-# the ``list_revisions`` docstring do, and docs/DATA_MODEL.md spells it out.
-# STILL OPEN: docs/SECURITY.md still describes "an append-only ``RecordRevision`` audit trail
-# recording ``{field: {old, new}}`` per edit" with no exception, which is the security document
-# making the promise this set breaks. docs/ is outside this unit's files; raised for the docs owner,
-# and the one line it needs is a pointer to ``access.REVISION_REDACTED_FIELDS``.
 REVISION_REDACTED_FIELDS = {
     "aadhaarNumber",
     "pehchanCardNumber",
@@ -321,22 +87,12 @@ REVISION_REDACTED_FIELDS = {
 }
 
 
-#: The five wordings :func:`_redacted_change` writes, as constants rather than five literals inside
-#: the function. They are named here because a SECOND module has to recognise them: ``changes`` is
-#: keyed by column name, so ``records._mask_identity_node`` meets these placeholders on the way out
-#: and must be able to tell one from a stored value WITHOUT trusting the ``redacted`` flag beside it
-#: (see :data:`REDACTED_PLACEHOLDER_PAIRS`).
 _REDACTED_HAD_VALUE = "(value recorded)"
 _REDACTED_CLEARED = "(cleared)"
 _REDACTED_REPLACED = "(value replaced)"
 _REDACTED_EMPTY = "(empty)"
 _REDACTED_STILL_EMPTY = "(still empty)"
 
-#: Every ``(old, new)`` pair :func:`_redacted_change` can produce. THE POINT OF THE SET IS THAT IT IS
-#: CLOSED: a reader holding it can decide "this entry is already one of ours" by comparing against
-#: four constant pairs, instead of believing a ``redacted: True`` key that any client can write into
-#: an ``extraMetadata`` blob. ``tests/test_revision_pii_redaction`` drives all four branches of the
-#: function and asserts each result lands in here, so the two cannot drift apart.
 REDACTED_PLACEHOLDER_PAIRS = frozenset(
     {
         (_REDACTED_EMPTY, _REDACTED_STILL_EMPTY),
@@ -346,42 +102,15 @@ REDACTED_PLACEHOLDER_PAIRS = frozenset(
     }
 )
 
-#: The keys one of these entries has, and no others. Read with :data:`REDACTED_PLACEHOLDER_PAIRS` by
-#: the reader-side recogniser; kept beside the writer so adding a key here is impossible to do
-#: without seeing that something else matches on it.
 REDACTED_CHANGE_KEYS = frozenset({"old", "new", "redacted"})
 
 
 def _redacted_change(old_value: Any, new_value: Any) -> dict[str, Any]:
-    """The audit entry for a :data:`REVISION_REDACTED_FIELDS` column: direction of travel, no value.
-
-    The four transitions get four distinct wordings so that no entry ever has ``old`` equal to
-    ``new``. A consumer that decides whether to draw a row by diffing the two still sees a change on
-    every one of them, which a shared "(redacted)" placeholder on both sides would have hidden.
-
-    ``redacted`` rides along so a machine reader can tell one of these placeholders from a stored
-    value that happens to look like one -- but the flag is a CONVENIENCE for a renderer, never a
-    security decision, because the same key can appear in a client-written Json column. Anything
-    deciding whether it may echo a value compares against :data:`REDACTED_PLACEHOLDER_PAIRS`.
-
-    ALSO CALLED FROM THE READ PATH. ``records._mask_identity_node`` runs this over a HISTORICAL
-    ledger entry (one written before :data:`REVISION_REDACTED_FIELDS` existed, which still holds the
-    real values) so the served row gets the same vocabulary as a new one instead of a pair of
-    identical masks. That is why the wordings are derived from the two values' emptiness rather than
-    from anything only the writer knows.
-    """
     from app.core.deps import is_empty_value
 
     had = not is_empty_value(old_value)
     has = not is_empty_value(new_value)
     if not had and not has:
-        # Two spellings of empty, reached because ``values_match(None, "")`` is False: a payload
-        # sending ``phone: ""`` at an already-NULL column lands here. Nothing was retracted, so the
-        # pair must not say "(cleared)" -- that asserted a retraction on a column that held nothing,
-        # on the one screen an admin reads to find out what was done to a record. The entry is kept
-        # rather than dropped so that the redacted columns log the same ``None``/``""`` churn every
-        # other column already logs; making it a no-op HERE would quietly give five fields a
-        # different diffing rule from the rest of the row.
         return {"old": _REDACTED_EMPTY, "new": _REDACTED_STILL_EMPTY, "redacted": True}
     if not has:
         return {"old": _REDACTED_HAD_VALUE, "new": _REDACTED_CLEARED, "redacted": True}
@@ -391,15 +120,6 @@ def _redacted_change(old_value: Any, new_value: Any) -> dict[str, Any]:
 
 
 def redacted_placeholder(old_value: Any, new_value: Any) -> dict[str, Any]:
-    """The placeholder pair a READER should serve in place of a redacted column's stored values.
-
-    The same four wordings the writer uses, deliberately: a HISTORICAL ledger row (written before
-    :data:`REVISION_REDACTED_FIELDS` existed, and therefore still holding the real old value) must
-    reach a reader looking exactly like a row written today, or the edit-history screen would tell an
-    admin which rows predate the redaction and nothing else useful. ``records._mask_identity_node``
-    is the caller; it is a separate public name from :func:`_redacted_change` only so the read path is
-    not reaching into another module's private helper.
-    """
     return _redacted_change(old_value, new_value)
 
 
@@ -411,41 +131,6 @@ async def record_revision(
     *,
     client: Any = None,
 ) -> None:
-    """Append an immutable RecordRevision for whichever fields in `data` actually change `record`.
-
-    Call with the cleaned update payload BEFORE field-provenance is merged in, so provenance bookkeeping
-    is not mistaken for a content edit. No-op when nothing meaningful changed.
-
-    Fields in :data:`REVISION_REDACTED_FIELDS` are logged as a change WITHOUT their value -- read the
-    argument above that set before widening or narrowing it.
-
-    ── ``client`` IS THE CALLER'S TRANSACTION, AND IT EXISTS BECAUSE THE LEDGER LIED (2026-09-03) ──
-
-    This function used to write through the module-level ``db`` singleton and nothing else, so the
-    audit row COMMITTED on its own, one statement before the ``update`` it claims to describe. Every
-    PATCH route in the repository was two independent commits in a row, and the window between them
-    is not theoretical on this deployment: the database is in another AWS region, ``P2024`` (the
-    connection-pool timeout) is the failure this stack sees most, and a request that dies in that gap
-    leaves a RecordRevision asserting that a field was changed to a value no row anywhere holds.
-    That is worse than a missing audit row and not merely different: the ledger is read by an admin
-    reconstructing who did what, and a phantom entry names an innocent editor as the author of a
-    value nobody ever saved. ``processes.update_process`` already carried a comment making exactly
-    this argument about the 403 half of it; this closes the other half.
-
-    THE CLIENT MUST BE PASSED IN AND CANNOT BE DISCOVERED. Prisma's ``db.tx()`` hands back a
-    DIFFERENT client object, so a callee holding its own ``db`` reference is simply NOT inside its
-    caller's transaction however deep the ``async with`` block is — the same mechanical fact
-    ``access_roster._mirror_cross_roster_suspension`` writes out at length, and the reason a
-    thread-it-through parameter is the only shape that works. The default is deliberately ``None``
-    rather than ``db``: it keeps the fifteen-odd existing four-argument calls (the redaction tests,
-    ``review.edit_reviewed_record``'s sibling paths) working unchanged, and the failure mode of a
-    caller who forgets it is the OLD behaviour — a second commit — not a crash, which is why every
-    call site is listed in this change's report rather than left to be found later.
-
-    The permission READS in :func:`guard_record_edit` deliberately stay on the module client. They
-    ask about grants and ranks, rows no caller's transaction has written, so routing them through
-    the transaction would lengthen it without changing a single answer.
-    """
     from app.core.deps import get_value, values_match
 
     changes: dict[str, Any] = {}
@@ -462,11 +147,6 @@ async def record_revision(
                 "old": jsonable_encoder(old_value),
                 "new": jsonable_encoder(new_value),
             }
-    # THE AADHAAR IS ONE ANSWER STORED IN TWO COLUMNS (services/aadhaar_fingerprint.py), and the
-    # ledger records it as the one field the editor touched, ``aadhaarNumber``, valueless like every
-    # redacted field. The two columns are deliberately NOT in REVISION_REDACTED_FIELDS: they never
-    # reach the ledger at all, because they are folded into that one entry here. Before the backfill a row's number may still sit in the legacy column, so
-    # "had one" asks every column.
     if "aadhaarFingerprint" in changes or "aadhaarLast4" in changes:
         from app.services.aadhaar_fingerprint import has_aadhaar
 
@@ -478,12 +158,6 @@ async def record_revision(
         )
     if not changes:
         return
-    # ``client or db`` would be wrong for the same reason ``os.environ.setdefault`` was wrong in
-    # ``tests/conftest.py``: it asks about truthiness where the question is presence. A Prisma
-    # transaction client is an object with no ``__bool__``, so it is truthy today — but a test double
-    # standing in for one need not be, and a falsy stand-in would silently route the audit row back
-    # to the module singleton, outside the transaction, which is precisely the defect this parameter
-    # closes and the one shape in which it fails without saying so.
     writer = db if client is None else client
     await writer.recordrevision.create(
         data={
@@ -504,66 +178,6 @@ async def guard_record_edit(
     client: Any = None,
     derived: Collection[str] = (),
 ) -> bool:
-    """Authorize a field-changing edit and audit it. Returns True if the user is privileged (admin,
-    owner, a professor+ outranking the record's author, or an EDIT-tier grantee) and may change any
-    populated field/relation; False for an ordinary contributor (who may only fill empty fields —
-    enforced here, raising 403 on a locked field). Always records a revision of the fields that
-    change. Pass the cleaned `data` before provenance is merged.
-
-    ``client`` IS THE CALLER'S TRANSACTION AND IS FORWARDED TO :func:`record_revision` (2026-09-03):
-    every PATCH route now opens ONE ``db.tx()`` spanning this call and its own row update, so the
-    ledger entry and the row it describes commit together or not at all. Read that function's
-    argument for why the parameter cannot be discovered from inside.
-
-    THE 403 ORDERING IS UNCHANGED BY THE TRANSACTION, and that is the point of stating it here. A
-    refusal still happens before anything is written — ``assert_can_contribute_fields`` raises above
-    ``record_revision``, exactly as it did — and the transaction only widens what "before anything is
-    written" covers: a refusal raised by a caller AFTER this returns (the relation guards in
-    ``workshops.update_workshop``) now takes the row update back with it instead of leaving it
-    committed. The permission reads below stay on the module client on purpose; see
-    :func:`record_revision`.
-
-    ── ``derived`` IS THE KEYS THE SERVER COMPUTED, AND IT NARROWS ONE GUARD AND NOT THE OTHER ──
-
-    Names listed here are withheld from :func:`assert_can_contribute_fields` and from NOTHING else.
-    They are still diffed, still audited and still written: :func:`record_revision` below sees the
-    whole of ``data``, because a server-computed column that moves is still a change to the record
-    and belongs in the ledger under the name of whoever asked for it.
-
-    The contributor guard is the one place the distinction matters, because the question it asks is
-    "did the CALLER change a field somebody else populated" — and a value the caller could not have
-    stated is not an answer to it. ``routes/tools.update_tool`` is the caller this exists for:
-    ``_resolve_craft_links`` REPLACES ``data["craftName"]`` with the linked crafts' names joined in
-    link order, discarding whatever the body said. So on a tool whose stored ``craftName`` had
-    drifted from its crafts' current names — a craft renamed since the save (``crafts.update_craft``
-    cascades to no tool), or a name typed into the independently editable box — EVERY non-privileged
-    editor was refused ``403 … change or clear populated field(s): craftName`` over a string the
-    server itself had just written, on a save that only filled an empty box, and for that record
-    permanently. That is the "fill an empty field on someone else's record" permission
-    ``docs/PERMISSIONS.md`` grants to every role, revoked by a derivation.
-
-    WHAT A CONTRIBUTOR MAY DO TO THE SELECTION BEHIND IT IS GUARDED ON ITS OWN TERMS, and exempting
-    the derived name here does not loosen that: ``update_tool`` reads the tool's stored link rows and
-    refuses a non-privileged caller who changes a populated set, through
-    ``deps.assert_can_contribute_relation``. Read that route before widening this.
-
-    ⚠ **AND "POPULATED" THERE HAS TO MEAN THE DENORMALISED NAME AS WELL AS THE JOIN, OR THIS
-    EXEMPTION COMPENSATES FOR NOTHING.** That was a real hole until 2026-09-16.
-    ``ToolDocumentation.craftName`` is NOT NULL while ``craftId`` is nullable, and migration
-    20260915100000 backfilled a ``ToolCraft`` row only where ``craftId`` was set — so a tool whose
-    craft was typed rather than picked, or whose craft was later deleted from the register, carries a
-    populated name over an EMPTY join. Keyed on the join rows alone, the relation guard saw nothing
-    to protect, this guard had already been told to ignore ``craftName``, and any signed-in account
-    could rewrite the craft on somebody else's regulated record and be answered 200. ``update_tool``
-    now asks ``bool(stored) or not is_empty_value(craftName)`` for the craft half. **A key added to
-    ``derived`` is only safe while the thing said to compensate for it actually covers the same
-    ground — check that, not just the list.**
-
-    PASS ONLY KEYS A CALLER CANNOT INFLUENCE. A name listed here is a name no contributor can be
-    refused over, so anything a client can put in the body — including a column the server merely
-    copies OUT of the body, such as ``craftId``/``artisanId``, which are element 0 of the caller's
-    own list — must stay off this set and keep its ordinary guard.
-    """
     from app.core.deps import (
         assert_can_contribute_fields,
         get_value,
@@ -573,22 +187,14 @@ async def guard_record_edit(
 
     owner_id = get_value(record, "createdById")
     uid = get_value(user, "id")
-    # Content admins (``deps.CONTENT_ADMIN_ROLES``) are privileged editors of EVERY record, including
-    # one an ADMIN or the MASTER_ADMIN made (owner's ruling, 2026-10-20).
     privileged = is_content_admin(user) or (owner_id is not None and uid == owner_id)
     if not privileged:
-        # "A professor may edit the data of anyone ranked below them" — checked before the grant
-        # lookup because it costs nothing for the ranks it does not apply to, so nobody below
-        # Professor pays an extra query for a clause that can only ever answer no for them.
         if await may_edit_lower_ranked_record(user, owner_id) or (
             await effective_tier_for_record(user, owner_id, record_type, get_value(record, "id"))
             == "EDIT"
         ):
             privileged = True
         else:
-            # THE SERVER'S OWN COLUMNS ARE WITHHELD FROM THIS GUARD AND FROM NOTHING ELSE — see the
-            # ``derived`` paragraph above. ``data`` itself is never rebuilt, so the ledger write on
-            # the next line, and the update the caller issues after it, both still carry every key.
             assert_can_contribute_fields(
                 record,
                 user,
@@ -603,7 +209,6 @@ async def guard_record_edit(
 async def assert_can_comment(
     user: Any, owner_id: str | None, record_type: str, record_id: str
 ) -> None:
-    """COMMENT tier (or owner/admin) required to comment on a record."""
     tier = await effective_tier_for_record(user, owner_id, record_type, record_id)
     if not tier_at_least(tier, "COMMENT"):
         raise HTTPException(
@@ -613,12 +218,6 @@ async def assert_can_comment(
 
 
 async def owner_download_scope(user: Any, owner_id: str) -> dict[str, set[str]] | None:
-    """Authorize downloading `owner_id`'s data and return what is covered.
-
-    Returns None when ALL of the owner's data is allowed (admin, the global dataset-download
-    permission, the owner themselves, or an active all-data DOWNLOAD+ grant). Returns
-    {recordType: {recordIds}} when only a subset grant applies. Raises 403 when there is no access.
-    """
     from app.core.deps import can_download_dataset, get_value, is_admin
 
     if is_admin(user) or can_download_dataset(user) or get_value(user, "id") == owner_id:

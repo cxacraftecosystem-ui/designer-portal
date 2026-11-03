@@ -1,42 +1,3 @@
-"""Task assignment — who has to record what, where, and how far along they actually are.
-
-THE MODEL
----------
-One ``AssignedTask`` row is always exactly ONE assignee. Handing the same scope to N people writes
-N rows sharing a ``batchId``, so an admin manages "record tools for these 5 researchers" as a single
-unit (``GET /tasks/batches``) while each person still owns, sees and reports progress on their own
-row. That is why there is no many-to-many join here: the row IS one person's to-do item.
-
-A task's SCOPE is five orthogonal dimensions (see ``app.schemas.tasks``):
-``workshopId`` x ``recordTypes[]`` x ``artisanIds[]`` x ``sectionIds[]`` x ``targetCount``.
-Everything an admin needs to express falls out of combining them — ``recordTypes=[product]`` +
-``artisanIds=[A,B,C]`` is "record products for artisans A, B and C"; ``sectionIds=[F]`` +
-``artisanIds=[A,B]`` is "answer section F for artisans A and B". An empty scope (no record types
-AND no sections) is rejected on create: a task with no work in it is a bug, not an empty state.
-
-PROGRESS IS REPORTED *AND* DERIVED
-----------------------------------
-``progressCount`` is what the assignee claims. ``derivedCount`` is what the database can see them
-having actually produced — products they created in that workshop for those artisans, questionnaire
-sections they answered, and so on. The two travel side by side and the derived value NEVER
-overwrites the reported one, because they answer different questions ("how far do you think you
-are" vs "what landed in the repository") and the gap between them is precisely the signal the
-accountability view exists to surface.
-
-Derivation costs one COUNT per (task, record type). To stop a list request becoming a hundred
-serial round trips those counts are de-duplicated by scope signature and run concurrently under a
-small semaphore, and a page larger than :data:`DERIVED_TASK_LIMIT` skips derivation entirely
-(``derivedCount: null``) rather than hammering the connection pool — which this deployment has
-already had to be rescued from once, see ``app.core.db``.
-
-``POST /tasks/batch`` declines derivation outright, and for a sharper reason than page size: the
-de-duplication key includes the assignee, so a batch handed to fifty people de-duplicates to
-nothing and the create would pay fifty COUNTs per record type to report how much of the scope those
-people had already covered BEFORE the task existed. That number is not an answer to anything the
-create was asked, and neither client reads it — both toast the count and refetch the batch list,
-which derives properly.
-"""
-
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -70,19 +31,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 TASK_STATUSES = {"OPEN", "IN_PROGRESS", "DONE", "CANCELLED"}
-# Statuses that still represent outstanding work — the "open"/"overdue" counters on the rollups.
 LIVE_STATUSES = {"OPEN", "IN_PROGRESS"}
 
 INCLUDE = {"assignee": True, "createdBy": True, "workshop": True}
 
 VIEWS = {"assigned", "created", "all"}
 
-# The record kinds a task can ask for, in the order they are shown and titled. A list, not a set,
-# so a generated title reads in a stable, sensible order regardless of the payload's order.
 RECORD_TYPE_ORDER = ["artisan", "product", "process", "tool", "questionnaire", "media"]
 RECORD_TYPES = set(RECORD_TYPE_ORDER)
 
-# kind -> (singular, plural) label, used for generated titles and for the assignment picker.
 RECORD_TYPE_LABELS: dict[str, tuple[str, str]] = {
     "artisan": ("artisan", "artisans"),
     "product": ("product", "products"),
@@ -92,45 +49,15 @@ RECORD_TYPE_LABELS: dict[str, tuple[str, str]] = {
     "media": ("media file", "media files"),
 }
 
-# Derivation guards. A page of 150 tasks with two record types each is ~300 COUNTs; past that we
-# decline rather than degrade the whole API for one oversized request.
 DERIVED_TASK_LIMIT = 150
 DERIVED_CONCURRENCY = 8
 
-# How many task rows the batch/progress rollups scan. Both group in Python (Prisma has no "group by
-# batch, with per-member detail" in one call), so the window has to be explicitly bounded.
-#
-# EVERY read that takes this window orders ``createdAt`` DESC with ``id`` DESC behind it, and so does
-# the paged task list. ``createdAt`` alone is not a total order here: a batch writes all its rows in
-# one statement and they share a timestamp to the millisecond, so the planner is free to return tied
-# rows in a different order every time it is asked. WHAT THE TIEBREAKER BUYS is a total order, and
-# only that: the 2000-row window is the SAME 2000 rows from one request to the next, ``list_tasks``'s
-# offset pages can no longer repeat or drop a row that tied with another on the page before, and the
-# stable ``sorted(grouped, ...)`` below is fed a deterministic input. The tiebreaker is spelled at
-# each call site rather than left to the shared paginator, so these reads are right either way that
-# helper goes.
-#
-# WHAT IT DOES NOT BUY, and must not be read as buying: the cut at 2000 can still land INSIDE a
-# batch. A rollup that has lost two members of five still reports "3 of 5 done" for a batch that is
-# finished — the tiebreaker only makes it tell that lie repeatably instead of intermittently.
-# ``task_progress`` at least owns up to hitting the window (it returns
-# ``"truncated": len(rows) >= ROLLUP_SCAN_LIMIT``); ``list_task_batches`` has no such flag, so its
-# partial rollups are still silent. Closing that is an open job, not something done here.
 ROLLUP_SCAN_LIMIT = 2000
 
-# The assignment dialog's three picker ceilings. NAMED rather than left as literals in the query,
-# because each of them is now read twice — once as the ``take`` (plus one, to detect the cut) and
-# once as the trim — and a cap that disagrees with its own truncation flag reports the exact lie the
-# flag exists to prevent. The numbers themselves are unchanged from when they were literals; what
-# changed is that ``search`` can now reach past them and the answer says when it did not.
 TASK_OPTION_USER_LIMIT = 500
 TASK_OPTION_WORKSHOP_LIMIT = 200
 TASK_OPTION_ARTISAN_LIMIT = 500
 
-
-# ---------------------------------------------------------------------------------------------
-# Validation helpers
-# ---------------------------------------------------------------------------------------------
 
 
 async def require_task(task_id: str) -> Any:
@@ -149,16 +76,6 @@ def assert_status_value(value: str) -> None:
 
 
 def assignable_or_refuse(assigner: Any, assignee: Any | None) -> Any:
-    """The three assignability outcomes, decided against an ALREADY-LOADED user row.
-
-    Split out of :func:`assert_assignable` rather than copied into the batch path, because this
-    file already carries a long note above :func:`has_task_authority` about what one rule written
-    twice over one table costs: the two copies drift and the looser one becomes the real rule.
-
-    THE ORDER OF THE THREE CHECKS IS CONTRACT, not taste. A row that is not there is a 404 before
-    anything else is asked about it, and self-assignment is refused before the tier comparison —
-    which would otherwise 403 an admin for failing to out-rank themselves, naming the wrong problem.
-    """
     if not assignee:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignee not found")
     if assignee.id == get_value(assigner, "id"):
@@ -175,65 +92,29 @@ def assignable_or_refuse(assigner: Any, assignee: Any | None) -> Any:
 
 
 async def assert_assignable(assigner: Any, assignee_id: str) -> Any:
-    """The assignee must exist and rank strictly below the assigner — except the master admin,
-    who may assign work to anyone but themselves."""
     return assignable_or_refuse(assigner, await db.user.find_unique(where={"id": assignee_id}))
 
 
 async def assert_all_assignable(assigner: Any, assignee_ids: list[str]) -> None:
-    """:func:`assert_assignable` for a whole cohort, in ONE query instead of one per person.
-
-    Refusals are raised walking ``assignee_ids`` IN THE CALLER'S ORDER, so a body carrying two
-    different problems fails with exactly the message the per-assignee loop used to give: whichever
-    id comes first in the list decides, and the batch is still all-or-nothing.
-    """
     rows = await db.user.find_many(where={"id": {"in": assignee_ids}})
     by_id = {row.id: row for row in rows}
     for assignee_id in assignee_ids:
         assignable_or_refuse(assigner, by_id.get(assignee_id))
 
 
-# ── AUTHORITY OVER WORK SOMEBODY ELSE HANDED OUT ────────────────────────────────────────────────
-# THE RULE, WRITTEN ONCE BECAUSE IT WAS PREVIOUSLY WRITTEN TWICE AND THE TWO COPIES DISAGREED.
-#
-# An ``AssignedTask`` row belongs to the admin who created it. Being an ADMIN is what lets you hand
-# work OUT; it is not authority over the work another admin handed out. Only the creator — or the
-# master admin, who is the account that has to be able to unstick anything — may withdraw, reassign,
-# cancel or re-scope a row.
-#
-# ``delete_task_batch`` stated exactly that rule in its docstring ("otherwise one admin could quietly
-# delete another's assignments") and enforced it. ``delete_task`` and ``update_task``, over the same
-# rows, tested ``task.createdById != current_user.id and not is_admin(current_user)`` — a comparison
-# every admin short-circuits — so the batch rule was bypassable by iterating: ``GET /tasks?view=all&
-# batchId=…`` is admin-readable and hands over every member id, then N single deletes finish the job
-# with five 204s where one call had returned a 403 explaining why it must not happen. The rows are
-# HARD deleted (``db.assignedtask.delete``) and nothing is written anywhere that says they existed,
-# so the assignees' to-do lists simply empty. ``update_task``'s ``is_manager`` had the same shape and
-# handed a non-creating admin the whole manager arm, reassignment and ``status: CANCELLED`` included.
-#
-# DELETE WAS RELAXED ON THE OWNER'S RULING OF 2026-10-20: any content admin
-# (``deps.CONTENT_ADMIN_ROLES``) withdraws any task or batch, and both delete routes say so with one
-# ``assert_can_delete``. EDITING stays here — the creator or the master admin — and what must not
-# come back is two routes over one table stating opposite rules.
 def has_task_authority(user: Any, tasks: Any) -> bool:
-    """True when *user* may change every row in *tasks*: the master admin, or their creator."""
     if is_master_admin(user):
         return True
     uid = get_value(user, "id")
-    # ALL, not ANY: a batch is only the creator's if every row in it is, and one foreign row in the
-    # set is exactly the case the batch guard exists to refuse.
     return all(get_value(task, "createdById") == uid for task in tasks)
 
 
 def assert_task_authority(user: Any, tasks: Any, *, detail: str) -> None:
-    """:func:`has_task_authority` as a guard. *detail* names the action, because "forbidden" beside a
-    button an admin has every right to press on their OWN tasks is not enough to work out why."""
     if not has_task_authority(user, tasks):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 def dedupe(values: list[str] | None) -> list[str]:
-    """Order-preserving de-duplication with blank ids dropped."""
     seen: set[str] = set()
     out: list[str] = []
     for value in values or []:
@@ -245,8 +126,6 @@ def dedupe(values: list[str] | None) -> list[str]:
 
 
 def normalize_record_types(values: list[str] | None) -> list[str]:
-    """Lower-case, de-duplicate and canonically order the requested record types, rejecting any the
-    system does not know how to route or count."""
     requested = {value.strip().lower() for value in (values or []) if value and value.strip()}
     unknown = sorted(requested - RECORD_TYPES)
     if unknown:
@@ -259,9 +138,6 @@ def normalize_record_types(values: list[str] | None) -> list[str]:
 
 @dataclass(slots=True)
 class ResolvedScope:
-    """A scope whose every id has been proven to exist, with the rows already loaded so the caller
-    can title the task and echo names back without a second round trip."""
-
     workshop: Any | None = None
     recordTypes: list[str] = field(default_factory=list)
     artisans: list[Any] = field(default_factory=list)
@@ -286,13 +162,6 @@ async def resolve_scope(
     target_count: int | None,
     require_work: bool = True,
 ) -> ResolvedScope:
-    """Validate every dimension of a scope and load the rows it points at.
-
-    Ids are checked here rather than left to a foreign key, because ``artisanIds`` and
-    ``sectionIds`` are plain ``String[]`` columns: Postgres will happily store a typo and the task
-    would then silently scope to nothing at all. ``require_work`` is the "a task must ask for
-    something" rule; it is relaxed on PATCH for legacy rows that never carried a scope.
-    """
     workshop = None
     if workshop_id:
         workshop = await db.workshop.find_unique(where={"id": workshop_id})
@@ -345,10 +214,6 @@ async def resolve_scope(
     )
 
 
-# ---------------------------------------------------------------------------------------------
-# Human-readable titles
-# ---------------------------------------------------------------------------------------------
-
 
 def _and_list(items: list[str]) -> str:
     if not items:
@@ -359,12 +224,6 @@ def _and_list(items: list[str]) -> str:
 
 
 def scope_title(scope: ResolvedScope) -> str:
-    """A readable default title derived from the scope.
-
-    "Record products and tools for 3 artisans", "Record 10 tools", "Questionnaire sections C, D",
-    "Questionnaire section F for Ramesh Bhai and Sita Devi". Generated whenever the admin does not
-    type one, because a task list full of "Untitled" is useless to the person working through it.
-    """
     parts: list[str] = []
     if scope.recordTypes:
         plural = scope.targetCount != 1
@@ -374,8 +233,6 @@ def scope_title(scope: ResolvedScope) -> str:
     if scope.sections:
         codes = ", ".join(section.code for section in scope.sections)
         noun = "section" if len(scope.sections) == 1 else "sections"
-        # Lower-cased when it is the trailing half of a combined title ("Record products +
-        # questionnaire sections C, D") so the whole thing still reads as one instruction.
         head = "Questionnaire" if not parts else "questionnaire"
         parts.append(f"{head} {noun} {codes}")
 
@@ -392,23 +249,15 @@ def scope_title(scope: ResolvedScope) -> str:
     return title[:300]
 
 
-# ---------------------------------------------------------------------------------------------
-# Derived (data-backed) progress
-# ---------------------------------------------------------------------------------------------
-
 
 async def _count_records(
     kind: str, assignee_id: str, workshop_id: str | None, artisan_ids: list[str]
 ) -> int:
-    """How many records of ``kind`` this assignee has actually created inside the task's scope."""
     in_artisans: dict[str, Any] | None = {"in": artisan_ids} if artisan_ids else None
 
     if kind == "artisan":
         where: dict[str, Any] = {"createdById": assignee_id}
         if workshop_id:
-            # An artisan reaches a workshop two ways — the explicit column and the WorkshopArtisan
-            # join, kept in lock-step for new rows but the only link on older ones — so both
-            # readings have to count, or work recorded before the column would look undone.
             where["OR"] = [
                 {"workshopId": workshop_id},
                 {"workshops": {"some": {"workshopId": workshop_id}}},
@@ -431,7 +280,6 @@ async def _count_records(
         if workshop_id:
             where["workshopId"] = workshop_id
         if in_artisans:
-            # A process has no artisan of its own; it inherits one through its parent product.
             where["product"] = {"is": {"artisanId": in_artisans}}
         return await db.process.count(where=where)
 
@@ -458,16 +306,6 @@ async def _count_records(
 async def _count_sections(
     assignee_id: str, workshop_id: str | None, artisan_ids: list[str], section_ids: list[str]
 ) -> int:
-    """Questionnaire coverage this assignee has actually produced.
-
-    The unit deliberately follows how the task was scoped, so the number stays comparable to a
-    target:
-      - artisans named -> distinct (artisan, section) PAIRS answered; target = artisans x sections
-      - "all artisans" -> distinct SECTIONS answered; target = sections (there is no honest
-        denominator for "everyone", so counting pairs would be a percentage of nothing)
-    Only non-empty answers written BY this assignee count: a section somebody else filled in is
-    their progress, not this person's.
-    """
     where: dict[str, Any] = {
         "answeredById": assignee_id,
         "question": {"is": {"sectionId": {"in": section_ids}}},
@@ -495,8 +333,6 @@ async def _count_sections(
         for link in get_value(response.interview, "artisans") or []:
             if link.artisanId in scope:
                 pairs.add((link.artisanId, section_id))
-    # The shared questionnaire's sessions (UNIFY C10): this person's takes and typed answers, live
-    # sessions only. Typed or recorded, either counts. Empty, with no query, while v2 is off.
     from app.services import questionnaire_readers
 
     for subject_key, section_id in await questionnaire_readers.covered_pairs(
@@ -510,8 +346,6 @@ async def _count_sections(
 
 
 def _derived_target(task: Any) -> int | None:
-    """The denominator ``derivedCount`` should be read against, or ``None`` when the scope has no
-    honest one (record types with no ``targetCount`` means "as many as apply")."""
     total = 0
     if task.recordTypes:
         if not task.targetCount:
@@ -537,14 +371,6 @@ def _section_key(task: Any, artisan_key: tuple) -> tuple:
 
 
 async def derive_progress(tasks: list[Any]) -> dict[str, dict[str, Any]]:
-    """``taskId -> {"derivedCount", "derivedTarget", "derivedBreakdown"}`` for a whole page.
-
-    Counts are keyed by scope signature and de-duplicated before they run, then executed
-    concurrently under a semaphore — a batch handed to eight people is eight different creators, so
-    the win comes from never running the same COUNT twice inside one response and from overlapping
-    the round trips. Any failure degrades that task to ``None`` instead of failing the request:
-    progress reporting must never be able to take the task list down.
-    """
     if not tasks or len(tasks) > DERIVED_TASK_LIMIT:
         return {}
 
@@ -608,14 +434,8 @@ async def derive_progress(tasks: list[Any]) -> dict[str, dict[str, Any]]:
     return derived
 
 
-# ---------------------------------------------------------------------------------------------
-# Serialisation
-# ---------------------------------------------------------------------------------------------
-
 
 def progress_percent(task: Any) -> int | None:
-    """Self-reported completion, 0-100. ``None`` when the task is open-ended (no ``targetCount``)
-    and unfinished — inventing a number there would be a lie the accountability view then acts on."""
     task_status = get_value(task, "status")
     if task_status == "DONE":
         return 100
@@ -632,33 +452,21 @@ def is_overdue(task: Any) -> bool:
     due = get_value(task, "dueAt")
     if not due or get_value(task, "status") not in LIVE_STATUSES:
         return False
-    # Postgres hands back tz-aware values, but never trust that into a comparison that would 500.
     if due.tzinfo is None:
         due = due.replace(tzinfo=UTC)
     return due < datetime.now(UTC)
 
 
 async def _none() -> list[Any]:
-    """An awaitable empty list, so a skipped read keeps its slot in a ``gather_reads`` wave.
-
-    Same reason as ``questionnaire._zero`` and ``map_points._none``: the wave returns positionally,
-    so a read that turns out to have nothing to look up cannot simply be dropped without renumbering
-    the unpack beside it.
-    """
     return []
 
 
 async def load_scope_lookups(tasks: list[Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Artisan and section rows referenced anywhere on this page, in ONE wave of two queries, so the
-    UI never has to follow up per task."""
     artisan_ids: set[str] = set()
     section_ids: set[str] = set()
     for task in tasks:
         artisan_ids.update(task.artisanIds or [])
         section_ids.update(task.sectionIds or [])
-    # The two reads are of different tables and neither uses the other's rows, so they go out
-    # together — a page of tasks used to pay a cross-region round trip for the artisans and then a
-    # second one for the sections. A page that references neither still issues nothing.
     artisans, sections = await gather_reads(
         db.artisan.find_many(where={"id": {"in": sorted(artisan_ids)}}) if artisan_ids else _none(),
         db.questionnairesection.find_many(where={"id": {"in": sorted(section_ids)}})
@@ -672,7 +480,6 @@ async def load_scope_lookups(tasks: list[Any]) -> tuple[dict[str, Any], dict[str
 
 
 def user_brief(user: Any) -> dict[str, Any] | None:
-    """Just enough to name a person on a task board — never any privilege or password material."""
     if user is None:
         return None
     role = role_value(user)
@@ -691,11 +498,6 @@ def serialize_task(
     section_map: dict[str, Any],
     derived: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    """The stored row plus everything the UI would otherwise have to fetch for itself.
-
-    Strictly ADDITIVE: every key the original endpoint returned is still present and unchanged; the
-    resolved names, labels and progress numbers are extra.
-    """
     payload = public_encode(task)
     payload["workshopTitle"] = get_value(get_value(task, "workshop"), "title")
     payload["artisans"] = [
@@ -718,8 +520,6 @@ def serialize_task(
             for section_id in (task.sectionIds or [])
             if section_id in section_map
         ),
-        # Questionnaire order, not payload order, so a task reads "sections C, D" the way the
-        # questionnaire itself is numbered.
         key=lambda item: item["sortOrder"],
     )
     payload["recordTypeLabels"] = [
@@ -735,7 +535,6 @@ def serialize_task(
 
 
 async def _empty_derived() -> dict[str, dict[str, Any]]:
-    """The awaitable ``{}`` that keeps ``withDerived=false`` in the wave's second slot."""
     return {}
 
 
@@ -744,29 +543,6 @@ async def serialize_tasks(
     with_derived: bool = True,
     lookups: tuple[dict[str, Any], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """*lookups* is the ``(artisans, sections)`` pair :func:`load_scope_lookups` would go and fetch.
-    A caller that has just resolved a scope already holds exactly those rows, so handing them over
-    saves the round trip it would take to read them again (the two queries share one wave now, so it
-    is one trip rather than the two this said before they were gathered).
-
-    ONE CALLER PASSES IT — :func:`create_task_batch` — and the docstring says so rather than
-    describing a convention this file does not keep. That route is the only one whose cost had to
-    come out flat in the number of assignees. :func:`create_task` always holds a resolved ``scope``
-    and :func:`update_task` holds one whenever the patch touched a scope field, so both could hand
-    it over too; each writes ONE row, so the saving there is two queries on one request rather than
-    two hundred, and it is not worth a second hand-over to keep honest against the row it describes.
-    Every read path leaves this unset and the fetch happens."""
-    # THE LOOKUPS AND THE DERIVED COUNTS DO NOT DEPEND ON EACH OTHER, so the two go out together
-    # rather than one after the other: ``load_scope_lookups`` reads the artisans and sections the
-    # page NAMES, ``derive_progress`` counts the records those scopes MATCH, and neither reads the
-    # other's answer. In series that was the lookups' wave and then the counts' wave, one after the
-    # other, on every page of every task board.
-    #
-    # THE WIDTH, STATED BECAUSE IT IS AT THE LINE: ``load_scope_lookups`` issues at most 2 reads and
-    # ``derive_progress`` holds its own semaphore at ``DERIVED_CONCURRENCY`` (8), so this overlaps at
-    # most 10 — exactly ``pool_width()``, the ceiling ``gather_reads`` itself enforces and never
-    # above it (docs/SCALABILITY.md §6). Raising ``DERIVED_CONCURRENCY`` would push one request past
-    # the pool; it is the number to check before touching, not this line.
     if lookups is not None:
         artisan_map, section_map = lookups
         derived = await derive_progress(tasks) if with_derived else {}
@@ -779,11 +555,6 @@ async def serialize_tasks(
 
 
 def batch_summary(tasks: list[Any], serialized: list[dict[str, Any]]) -> dict[str, Any]:
-    """One assignment action rolled back up: who it went to, and how far the group has got.
-
-    ``tasks`` are the raw rows of a single batch (they share a scope) and ``serialized`` the
-    matching enriched output, reused so artisan/section names are resolved exactly once.
-    """
     head = tasks[0]
     head_payload = serialized[0]
     counts = dict.fromkeys(("OPEN", "IN_PROGRESS", "DONE", "CANCELLED"), 0)
@@ -791,8 +562,6 @@ def batch_summary(tasks: list[Any], serialized: list[dict[str, Any]]) -> dict[st
         counts[task.status] = counts.get(task.status, 0) + 1
 
     target = head.targetCount
-    # Percent means "of the work handed out": against targetCount when there is one (so a partly
-    # filled quota shows up), otherwise simply how many of the assignees finished.
     if target:
         denominator = target * len(tasks)
         numerator = sum(min(task.progressCount or 0, target) for task in tasks)
@@ -805,7 +574,6 @@ def batch_summary(tasks: list[Any], serialized: list[dict[str, Any]]) -> dict[st
 
     return {
         "batchId": head.batchId,
-        # Stable grouping key even for the pre-batch rows, which have no batchId of their own.
         "key": head.batchId or f"task:{head.id}",
         "title": head.title,
         "description": head.description,
@@ -842,17 +610,11 @@ def batch_summary(tasks: list[Any], serialized: list[dict[str, Any]]) -> dict[st
     }
 
 
-# ---------------------------------------------------------------------------------------------
-# Assignment
-# ---------------------------------------------------------------------------------------------
-
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_task(
     payload: TaskCreate, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
-    """Single-assignee create. The scope fields are optional here — a bare "title + assignee" task
-    is still valid for ad-hoc work — but anything supplied is validated exactly like a batch."""
     await assert_assignable(current_user, payload.assigneeId)
     scope = await resolve_scope(
         workshop_id=payload.workshopId,
@@ -862,8 +624,6 @@ async def create_task(
         target_count=payload.targetCount,
         require_work=False,
     )
-    # title_case=False: a task title is an INSTRUCTION ("Record 10 tools for Ramesh Bhai"), not a
-    # name, so the name-casing every other write path applies would mangle it into "Record 10 Tools".
     data = clean_data(payload.model_dump(exclude_unset=True), title_case=False)
     data["recordTypes"] = scope.recordTypes
     data["artisanIds"] = scope.artisanIds
@@ -877,15 +637,6 @@ async def create_task(
 async def create_task_batch(
     payload: TaskBatchCreate, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
-    """Assign one scope to several people at once — THE assignment endpoint.
-
-    Writes one row per assignee, all sharing a generated ``batchId``, so the group stays a single
-    manageable unit afterwards. Everything is validated BEFORE the first row is written, so a bad
-    assignee or a typo'd artisan id can never leave half a batch behind.
-
-    The cost is FLAT in the number of assignees — one bulk assignability read, one bulk insert, one
-    indexed re-read — because it has to be; see the comment on the write below.
-    """
     assignee_ids = dedupe(payload.assigneeIds)
     if not assignee_ids:
         raise HTTPException(
@@ -901,7 +652,6 @@ async def create_task_batch(
         target_count=payload.targetCount,
         require_work=True,
     )
-    # Validate every assignee up front (existence + the rank rule) so the batch is all-or-nothing.
     await assert_all_assignable(current_user, assignee_ids)
 
     title = (payload.title or "").strip() or scope_title(scope)
@@ -919,23 +669,6 @@ async def create_task_batch(
         "createdById": current_user.id,
     }
 
-    # ── ONE WRITE AND ONE READ, WHATEVER N IS ───────────────────────────────────────────────────
-    # This was a comprehension of ``db.assignedtask.create`` calls awaited one after another, on top
-    # of one ``find_unique`` per assignee in the validation above: TWO sequential cross-region round
-    # trips per person, for a cohort ``TaskBatchCreate`` sizes at up to ``MAX_ASSIGNEES`` (100). The
-    # database is in another region and this repository measures a round trip at 756 ms, so those
-    # two hops alone reach CloudFront's thirty-second origin timeout at about twenty assignees —
-    # THE assignment endpoint could not finish the assignment it exists to make, and because each
-    # create committed on its own, an admin who retried after the 504 had no way to know how much of
-    # the batch had already landed. The sibling multi-select in
-    # ``workshops.request_workshop_access`` was moved off exactly this shape for exactly this
-    # reason, and says so in its own comment.
-    #
-    # ``create_many`` cannot hand back the rows it wrote, so they are read once by ``batchId`` — a
-    # uuid minted three lines up, over an indexed column (``AssignedTask_batchId_idx``) — and put
-    # back into the order the caller listed the assignees in. That re-ordering is not cosmetic: the
-    # response is a list of people, and an admin who ticked five names reads it against the order
-    # they ticked them, not against whatever order the planner returned.
     await db.assignedtask.create_many(
         data=[{**base, "assigneeId": assignee_id} for assignee_id in assignee_ids]
     )
@@ -943,11 +676,6 @@ async def create_task_batch(
     by_assignee = {row.assigneeId: row for row in rows}
     created = [by_assignee[aid] for aid in assignee_ids if aid in by_assignee]
     if len(created) != len(assignee_ids):
-        # A short read-back must not be a bare ``KeyError`` -> 500. The rows have ALREADY COMMITTED
-        # by the time we are here, so an unexplained 500 puts the admin back in exactly the state
-        # the bulk write was meant to end — an error over a batch that may have fully landed, and
-        # no way to tell without looking. Name the batch in the message so the next step is to open
-        # ``GET /tasks/batches`` rather than to retry and hand the same work out twice.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
@@ -955,12 +683,6 @@ async def create_task_batch(
             ),
         )
 
-    # NO DERIVED COUNTS ON A CREATE — the third thing in here that scaled with the cohort, and the
-    # module docstring says why it is also the least defensible one. The keys stay present and stay
-    # typed the same; ``derivedCount`` is null exactly as it already is for any page over
-    # DERIVED_TASK_LIMIT. Artisans and sections are handed over from ``resolve_scope``, which has
-    # just loaded precisely this batch's ids, so re-reading them would be a round trip (two queries
-    # in one wave, since they were gathered) spent on rows already in hand.
     tasks = await serialize_tasks(
         created,
         with_derived=False,
@@ -978,10 +700,6 @@ async def create_task_batch(
     }
 
 
-# ---------------------------------------------------------------------------------------------
-# Reading
-# ---------------------------------------------------------------------------------------------
-
 
 @router.get("")
 async def list_tasks(
@@ -996,18 +714,6 @@ async def list_tasks(
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
-    """Tasks visible to the caller. view=assigned (default) is my to-do list; view=created and
-    view=all are the admin's planning views.
-
-    Every item carries its resolved workshop title, artisan names and section codes/titles plus
-    both the reported and the derived progress, so a task board renders from this one call. Pass
-    ``withDerived=false`` to skip the data-backed counts when only the list itself is needed.
-
-    ``withStatusCounts=true`` adds ``statusCounts`` — every status's total under the same filters
-    WITHOUT the status filter, i.e. exactly what ``total`` would be for each status asked one by one.
-    The task board's filter chips used to spend four whole list requests (``pageSize=1``) on those
-    numbers; this is one ``GROUP BY`` beside the page.
-    """
     if view not in VIEWS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1015,7 +721,6 @@ async def list_tasks(
         )
     where: dict[str, Any] = {}
     if view == "assigned":
-        # Hard-pinned to the caller: "my tasks" can never be pointed at somebody else's list.
         where["assigneeId"] = current_user.id
     else:
         if not is_content_admin(current_user):
@@ -1035,8 +740,6 @@ async def list_tasks(
         where["batchId"] = batchId
 
     page, page_size, skip = normalize_pagination(page, pageSize)
-    # Count and page together — the shape ``records.count_and_page`` exists for, spelled out here
-    # because this read needs ``include=INCLUDE`` and that helper takes ``relations``.
     reads: list[Any] = [
         db.assignedtask.count(where=where),
         db.assignedtask.find_many(
@@ -1044,9 +747,6 @@ async def list_tasks(
             skip=skip,
             take=page_size,
             include=INCLUDE,
-            # ``id`` last: this read is the one that actually skips, and ``dueAt`` is nullable while
-            # ``createdAt`` is shared across a batch, so without a unique final key page 2 can
-            # repeat or drop rows that sorted equal on page 1.
             order=[{"dueAt": "asc"}, {"createdAt": "desc"}, {"id": "desc"}],
         ),
     ]
@@ -1075,13 +775,6 @@ async def list_task_batches(
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
-    """Assignments grouped back into the action that created them.
-
-    ``workshopId``/``assigneeId``/``status`` select which batches are SHOWN; the progress reported
-    is always for the WHOLE batch, because "3 of 5 done" stops meaning anything if the filter has
-    silently dropped two of the five. Tasks written before batching existed — and single-assignee
-    creates — come back as one-person batches with ``batchId: null``.
-    """
     if view not in {"created", "all"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1097,7 +790,6 @@ async def list_task_batches(
     if statusFilter:
         assert_status_value(statusFilter)
     if assigneeId or statusFilter:
-        # Two passes: pick the batches by matching MEMBER, then re-load those batches in full.
         member_where = dict(where)
         if assigneeId:
             member_where["assigneeId"] = assigneeId
@@ -1124,13 +816,11 @@ async def list_task_batches(
     for task in rows:
         grouped.setdefault(task.batchId or f"task:{task.id}", []).append(task)
 
-    # Newest batch first, keyed off its newest member so editing a batch does not reshuffle the list.
     keys = sorted(grouped, key=lambda key: max(t.createdAt for t in grouped[key]), reverse=True)
     total = len(keys)
     page, page_size, skip = normalize_pagination(page, pageSize)
     window = keys[skip : skip + page_size]
 
-    # Enrich only the page's members — one lookup pass for all of them, not one per batch.
     visible = [task for key in window for task in grouped[key]]
     serialized = {item["id"]: item for item in await serialize_tasks(visible)}
     items = [
@@ -1147,12 +837,6 @@ async def task_progress(
     assigneeId: str | None = Query(None),
     includeFinished: bool = Query(True),
 ) -> dict[str, Any]:
-    """Per-assignee accountability rollup: who has what, and how far along they actually are.
-
-    Reported progress sits next to derived progress on every line, so "says 8, repository says 2"
-    is visible at a glance. Scope it to a workshop with ``workshopId`` (the normal use); leave that
-    off for an organisation-wide picture.
-    """
     workshop = None
     if workshopId:
         workshop = await db.workshop.find_unique(where={"id": workshopId})
@@ -1193,7 +877,6 @@ async def task_progress(
             for task in tasks
         )
         known = [item["derivedCount"] for item in items if item.get("derivedCount") is not None]
-        # With quotas the honest measure is quota fill; without them it is tasks finished.
         if target_total:
             percent = round(100 * min(reported_total, target_total) / target_total)
         else:
@@ -1212,7 +895,6 @@ async def task_progress(
                 "tasks": items,
             }
         )
-    # Busiest-outstanding first: the person with the most unfinished work is the one to chase.
     assignees.sort(
         key=lambda row: (
             -row["openCount"],
@@ -1229,8 +911,6 @@ async def task_progress(
         "doneCount": sum(1 for task in rows if task.status == "DONE"),
         "openCount": sum(1 for task in rows if task.status in LIVE_STATUSES),
         "overdueCount": sum(1 for item in serialized.values() if item.get("isOverdue")),
-        # True when the scan window was hit, so the UI can say "narrow this down" instead of
-        # quietly presenting a partial rollup as the whole truth.
         "truncated": len(rows) >= ROLLUP_SCAN_LIMIT,
         "assignees": assignees,
     }
@@ -1240,64 +920,12 @@ async def task_progress(
 async def task_options(
     current_user: Any = Depends(require_content_admin),
     workshopId: str | None = Query(None),
-    # THE PARAMETER WHOSE ABSENCE MADE THE THREE CAPS BELOW UNREACHABLE. See the docstring.
     search: str | None = Query(None, max_length=120),
 ) -> dict[str, Any]:
-    """Everything the assignment dialog needs, in one call: the record-type catalogue, the users
-    this admin is allowed to assign to, the workshops, the artisans (narrowed to the workshop when
-    one is given) and the questionnaire sections.
-
-    ── THE CAPS ARE FINE; BEING UNREACHABLE AND UNANNOUNCED WAS NOT ────────────────────────────────
-    Three lists here are capped, and on this repository's own measured population (3632 accounts, 731
-    artisans — ``docs/OPEN_FINDINGS.md``, 2026-08-13) two of those caps are live TODAY. There was no
-    search parameter of any kind and no truncation flag on any list, and ``AssignmentBuilder`` builds
-    every picker purely from what arrived, filtering in the browser. So an admin looking for a
-    colleague whose name sorts late in the alphabet was shown the same nothing they would be shown for
-    a colleague who has no account — which is precisely the "hidden from you vs nobody matched"
-    failure the eligible-viewers picker was fixed for on 2026-08-13, reopened in a different endpoint.
-
-    Three things follow, and each of them is load-bearing:
-
-    * **``search`` is folded into the WHERE, not applied to the result.** Searching after the ``take``
-      searches the first 500 names of the alphabet and stops at exactly the ceiling the parameter was
-      added to reach past — the parameter would exist and still not find her. Same argument, verbatim,
-      as ``design_workshop_viewers.eligible_viewers``.
-    * **The rank filter moved INTO the user query.** It used to run in Python over the already-capped
-      500 rows, so the window was drawn from every account in the table — including the professors,
-      admins and the caller themselves, who are then dropped — and the assignable list came back
-      shorter than 500 by however many higher-ranked accounts happened to sort early. The cap now
-      applies to rows that are already assignable, so it can only ever truncate a genuinely long tail.
-    * **Both name orders are total.** ``name`` alone is not a unique sort key on this data: 204
-      accounts share the name "Sync Test" (same OPEN_FINDINGS entry), so which of them fell inside the
-      cut was Postgres's choice and could differ between two identical requests. ``id`` is the
-      tiebreaker; ``date`` on workshops gets the same treatment for the same reason.
-
-    ONE ``search`` FOR ALL THREE LISTS, deliberately, rather than three per-picker parameters. The
-    name matches the one both clients already decode on the viewer picker, and — the argument that
-    settled it — a parameter this route does not declare is silently DISCARDED by FastAPI, so a client
-    sending ``assigneeSearch`` at a server that only knows ``search`` would render a search box that
-    narrows nothing, which is the very defect being fixed here wearing different clothes.
-
-    THE RULE THAT COMES WITH IT, FOR WHOEVER WIRES THE DIALOG: send the term of the picker being typed
-    into, and never read the absence of an already-selected id from a narrowed list as "that record is
-    gone" and clear it. ``ProductForm``'s craft-change handler does exactly that against a capped page
-    and unlinks the artisan; do not repeat it here.
-
-    ``assigneesTruncated`` / ``workshopsTruncated`` / ``artisansTruncated`` are exact rather than
-    guessed — one row more than the cap is read and trimmed — so a list of exactly the cap reports
-    ``False`` honestly and no second COUNT is paid.
-    """
     term = (search or "").strip()
 
-    # AND-composed clauses, never assigned to one ``where["OR"]``: the rank filter is an OR-shaped
-    # membership test and so is the search, and writing both to the same key lets the later one win
-    # outright. If that is the search, the RANK GATE IS GONE and the dialog offers an admin the option
-    # of assigning work to their own superiors.
     user_clauses: list[dict[str, Any]] = [{"id": {"not": get_value(current_user, "id")}}]
     if not is_master_admin(current_user):
-        # A master admin may assign to anybody, which is why they get no role clause at all. For
-        # everyone else this is ``role_rank(user) < role_rank(current_user)`` expressed as the set of
-        # role VALUES that satisfy it — the same predicate, asked of Postgres instead of of Python.
         user_clauses.append(
             {"role": {"in": [r for r, rank in ROLE_RANK.items() if rank < role_rank(current_user)]}}
         )
@@ -1310,8 +938,6 @@ async def task_options(
 
     artisan_clauses: list[dict[str, Any]] = []
     if workshopId:
-        # Both readings of "at this workshop" — the explicit column and the join — so artisans
-        # linked only through WorkshopArtisan still show up in the picker.
         artisan_clauses.append(
             {
                 "OR": [
@@ -1322,15 +948,8 @@ async def task_options(
         )
     if term:
         artisan_clauses.append({"OR": [{"name": contains(term)}, {"place": contains(term)}]})
-    # Two ORs again, and again AND-composed: the workshop narrowing and the search must both hold.
     artisan_where: dict[str, Any] = {"AND": artisan_clauses} if artisan_clauses else {}
 
-    # FOUR INDEPENDENT PICKERS, ONE WAVE. None of the four consumes another's output — that is the
-    # whole shape of this endpoint, "everything the assignment dialog needs, in one call" — so
-    # awaiting them one at a time made the dialog cost four cross-region round trips where it needs
-    # one. Four is well inside ``pool_width()`` (10). Every WHERE is built above the wave so nothing
-    # in it has to wait on a predicate; the take/trim/``truncated`` arithmetic stays below it,
-    # unchanged, and the one-row-over trick that makes each flag exact is untouched.
     users, workshops, artisans, sections = await gather_reads(
         db.user.find_many(
             where={"AND": user_clauses},
@@ -1358,8 +977,6 @@ async def task_options(
     artisans = artisans[:TASK_OPTION_ARTISAN_LIMIT]
 
     if assignees_truncated or workshops_truncated or artisans_truncated:
-        # Reported on the wire AND logged. The log is what an operator reads when an admin says "she
-        # is not in the list": it names the term that was too broad, which the response cannot.
         logger.warning(
             "task options hit a picker ceiling (search=%r, workshopId=%r): assignees=%s "
             "workshops=%s artisans=%s",
@@ -1385,10 +1002,6 @@ async def task_options(
             for w in workshops
         ],
         "artisans": [{"id": a.id, "name": a.name, "place": a.place} for a in artisans],
-        # THE THREE FIELDS THE WIRE HAD NOWHERE TO SAY BEFORE. A cut list that says so can be
-        # narrowed; a cut list that does not is indistinguishable from the whole truth, and that is
-        # what an admin was acting on. Named ``truncated`` in the same word the viewer picker and the
-        # reference picker already use, so neither client is learning a new vocabulary.
         "assigneesTruncated": assignees_truncated,
         "workshopsTruncated": workshops_truncated,
         "artisansTruncated": artisans_truncated,
@@ -1401,7 +1014,6 @@ async def task_options(
 
 @router.get("/{task_id}")
 async def get_task(task_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """One task, enriched exactly like a list item. Visible to the assignee, the creator and admins."""
     task = await require_task(task_id)
     if (
         task.assigneeId != current_user.id
@@ -1415,10 +1027,6 @@ async def get_task(task_id: str, current_user: Any = Depends(get_current_user)) 
     return (await serialize_tasks([task]))[0]
 
 
-# ---------------------------------------------------------------------------------------------
-# Mutation
-# ---------------------------------------------------------------------------------------------
-
 
 @router.patch("/{task_id}")
 async def update_task(
@@ -1426,16 +1034,8 @@ async def update_task(
     payload: TaskUpdate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """The creator (or the master admin) may edit everything — scope, CANCELLED and reassignment
-    included; the assignee may only move the status between OPEN, IN_PROGRESS and DONE, and report
-    ``progressCount``. Another admin, who did not hand this work out, may do neither: see
-    ``has_task_authority`` for why that is the same rule ``DELETE /tasks/batch/{id}`` has always
-    enforced, and what happened while these two routes stated opposite versions of it."""
     task = await require_task(task_id)
     data = payload.model_dump(exclude_unset=True)
-    # Explicit nulls only make sense for the nullable/clearable columns (description, dueAt,
-    # recordType, recordId, workshopId, targetCount). For the required ones — and for the list
-    # columns, where an empty LIST is how you clear — a null means "no change", not "clear".
     for field_name in (
         "title",
         "assigneeId",
@@ -1451,18 +1051,10 @@ async def update_task(
     if new_status is not None:
         assert_status_value(new_status)
 
-    # THE MANAGER ARM IS THE CREATOR'S (or the master admin's), NOT EVERY ADMIN'S — see
-    # ``has_task_authority``. This used to read ``task.createdById == current_user.id or
-    # is_admin(current_user)``, which handed any admin the reassignment and CANCELLED arms over
-    # another admin's assignment while ``DELETE /tasks/batch/{id}`` refused the far less destructive
-    # act of withdrawing the same rows. An admin who is the ASSIGNEE of somebody else's task still
-    # falls through to the assignee arm below, which is the access they should have had all along.
     if has_task_authority(current_user, [task]):
         if data.get("assigneeId") and data["assigneeId"] != task.assigneeId:
             await assert_assignable(current_user, data["assigneeId"])
     elif task.assigneeId == current_user.id:
-        # The assignee owns two things and only two: where the task stands, and how much of it is
-        # done. Scope, due date and reassignment stay with whoever handed the work out.
         extra_fields = set(data) - {"status", "progressCount"}
         if extra_fields:
             raise HTTPException(
@@ -1484,9 +1076,6 @@ async def update_task(
         )
 
     if {"workshopId", "recordTypes", "artisanIds", "sectionIds", "targetCount"} & set(data):
-        # Re-validate the MERGED scope, so a patch touching one dimension cannot leave the row
-        # pointing at a deleted artisan or empty of work. Tasks created without a scope (the legacy
-        # single-record path) are allowed to stay that way.
         scope = await resolve_scope(
             workshop_id=data.get("workshopId", task.workshopId),
             record_types=data.get("recordTypes", task.recordTypes),
@@ -1495,7 +1084,6 @@ async def update_task(
             target_count=data.get("targetCount", task.targetCount),
             require_work=bool(task.recordTypes or task.sectionIds),
         )
-        # Scalar-list columns take an explicit {"set": [...]} on update, unlike create.
         if "recordTypes" in data:
             data["recordTypes"] = {"set": scope.recordTypes}
         if "artisanIds" in data:
@@ -1505,7 +1093,6 @@ async def update_task(
 
     target = data.get("targetCount", task.targetCount)
     if "progressCount" in data:
-        # Never let a quota read as over-run: "8 of 5 done" is not progress, it is a bad client.
         reported = max(0, int(data["progressCount"]))
         data["progressCount"] = min(reported, target) if target else reported
 
@@ -1513,8 +1100,6 @@ async def update_task(
         if new_status == "DONE":
             if task.status != "DONE":
                 data["completedAt"] = datetime.now(UTC)
-            # Finishing a quota task means the quota was met; without this the rollups would go on
-            # showing "DONE — 0 of 10" for everyone who never touched the progress field.
             if target and "progressCount" not in data and (task.progressCount or 0) < target:
                 data["progressCount"] = target
         else:
@@ -1530,8 +1115,6 @@ async def update_task(
 async def delete_task_batch(
     batch_id: str, current_user: Any = Depends(require_content_admin)
 ) -> None:
-    """Withdraw a whole assignment in one action. Any content admin (``deps.CONTENT_ADMIN_ROLES``)
-    may, whoever sent it (owner's ruling, 2026-10-20); the journal line below names who did."""
     tasks = await db.assignedtask.find_many(where={"batchId": batch_id})
     if not tasks:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Batch not found")
@@ -1539,25 +1122,6 @@ async def delete_task_batch(
     _audit_withdrawal(current_user, tasks, scope=f"batch={batch_id}")
 
 
-# THE ONLY TRACE A WITHDRAWN ASSIGNMENT LEAVES. ``AssignedTask`` rows are HARD deleted by the batch
-# route above and the single route below — no ``deletedAt``, no tombstone, no audit table — so the
-# whole event used to be: N designers' to-do lists quietly emptied, and nothing anywhere to answer "who
-# withdrew this, and when". That was the half of the audit finding on these two routes that the
-# authority rule did not close: the rule decides WHO may delete, and says nothing about the deletion
-# being reconstructable afterwards. An admin asking why a task vanished from their team's list now
-# has one line in the journal to find, naming the caller, the assignees whose work was withdrawn and
-# the batch or task id.
-#
-# WARNING and not INFO, and this is not a taste question: the API process configures no root handler,
-# so under uvicorn an app logger's INFO records are dropped entirely and the line would exist only in
-# the tests (the same reasoning is written out at ``managed_secrets.set_secret`` and at the STT
-# provider test in ``routes/settings.py``, which is why all three read "AUDIT " and are greppable
-# together). Never let this become ``logger.info`` "because it is not a problem" — it is not a
-# problem, it is a RECORD, and a record nobody can read is not one.
-#
-# Assignee ids and not names: this must not cost a query, and an id is what the reader of a journal
-# line needs in order to look the row up. Titles are deliberately absent for the same reason — a
-# batch of forty tasks would bury the line it belongs to.
 def _audit_withdrawal(user: Any, tasks: Any, *, scope: str) -> None:
     logger.warning(
         "AUDIT task withdrawal: %s by=%s count=%s assignees=%s",
@@ -1570,13 +1134,7 @@ def _audit_withdrawal(user: Any, tasks: Any, *, scope: str) -> None:
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_task(task_id: str, current_user: Any = Depends(get_current_user)) -> None:
-    """Withdraw ONE assignment. Same rule as the batch above, deliberately: a batch is nothing but
-    ``AssignedTask`` rows sharing a ``batchId``, so the two routes state one rule — content admins,
-    any task."""
     assert_can_delete(current_user)
     task = await require_task(task_id)
     await db.assignedtask.delete(where={"id": task_id})
-    # Logged on the SINGLE route too, and that is the point rather than symmetry for its own sake:
-    # withdrawing a batch one row at a time is exactly the shape the authority fix above refuses, so
-    # the path that was the bypass is the path whose journal line matters most.
     _audit_withdrawal(current_user, [task], scope=f"task={task_id}")

@@ -1,23 +1,3 @@
-"""Artisan QR cards: read, reissue, print one or a sheet, and resolve a scanned or typed code.
-
-Every route answers 404 while cards are off here (``artisan_card.active``: the flag and a key), and
-``/artisan-cards/status`` says ``enabled:false`` so neither client draws a card element.
-
-Resolution, in order (``POST /artisan-cards/resolve``):
-
-1. Parse (``services/artisan_card.parse``): a mistyped short code is a 422 before anything is asked.
-2. A card this portal issued: the QR's tag is verified (a typed code has none), then the code is
-   looked up. A live card is FOUND; a revoked one is REPLACED, with the artisan it belonged to.
-3. A Field Repository card: the link that stores its code (``CrossPortalArtisanLink.remoteCardCode``)
-   answers FOUND via LINK with no network call.
-4. Otherwise the Field Repository is asked (``/cross-portal/peer/cards/resolve``, signed). Its
-   artisan linked here: FOUND via LINK, and the code is stored for next time. Not linked: REMOTE,
-   and with the designer's consent tick, the same prefill ``/cross-portal/artisans/lookup`` returns.
-
-Every kind of miss is the same 404 sentence and counts toward the per-account miss limit; hits
-never count. Every issue, reissue, print and lookup is written to ``ArtisanCardEvent``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -43,7 +23,6 @@ router = APIRouter(tags=["artisan-cards"])
 
 PORTAL_NAME = "Design Prototype Workshop"
 
-#: Cards one sheet request may print.
 SHEET_LIMIT = 200
 
 NO_MATCH = "No artisan matches this card."
@@ -112,7 +91,6 @@ async def reissue_card(
 ) -> dict[str, Any]:
     settings = store.settings_or_404()
     artisan = await _artisan_with_face(artisan_id)
-    # The same people who may edit the artisan (cross_portal._assert_may_edit says who).
     await cross_portal_routes._assert_may_edit(artisan, current_user)
     card = await store.reissue(
         artisan_id,
@@ -121,8 +99,6 @@ async def reissue_card(
         source=_source(payload.source),
         settings=settings,
     )
-    # A linked artisan: tell the Field Repository the new code. A failed push is sent again by the
-    # next refresh of the link.
     await cross_portal_routes.push_card_code(artisan_id, card.code, current_user)
     return await _card_json(artisan, card, settings, current_user)
 
@@ -158,7 +134,6 @@ async def _photo_bytes(artisan_ids: list[str], viewer: Any, wanted: bool) -> dic
 
 
 def _card_file_name(faces: list[Any]) -> str:
-    """One card names its artisan; a sheet is the day's artisan cards (services/naming.py)."""
     if len(faces) == 1:
         face = faces[0]
         return naming.export_filename(
@@ -212,7 +187,6 @@ class SheetIn(BaseModel):
 
 
 async def _roster_ids(workshop_id: str, user: Any) -> list[str]:
-    """The workshop's participants in roster order, then any other artisan filed under it."""
     from app.services.artisan_import import ENTITY_PARTICIPANT, STAGE_PARTICIPANTS
     from app.services.design_workshops import load_workshop_or_404
 
@@ -260,7 +234,6 @@ async def sheet_pdf(payload: SheetIn, current_user: Any = Depends(get_current_us
     by_id = {row.id: row for row in rows}
     unknown = [artisan_id for artisan_id in ids if artisan_id not in by_id]
     if unknown and strict:
-        # All or nothing: a sheet quietly short of two cards is found out at the workshop.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"{len(unknown)} of these artisans can't be printed by you.",
@@ -288,8 +261,6 @@ async def sheet_pdf(payload: SheetIn, current_user: Any = Depends(get_current_us
     await store.log_event(store.ACTION_PRINT, source, user_id=user_id, count=len(faces))
     return _pdf(content, _card_file_name(faces))
 
-
-# ── Resolve ───────────────────────────────────────────────────────────────────────────────────
 
 
 class ResolveIn(BaseModel):
@@ -334,7 +305,6 @@ async def resolve_card(payload: ResolveIn, current_user: Any = Depends(get_curre
     try:
         parsed = artisan_card.parse(payload.input)
     except artisan_card.CardParseError:
-        # One sentence for every way a code can be wrong, as on the Field Repository.
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=BAD_CHECK) from None
 
     if parsed.issuer == store.issuer(settings):
@@ -355,7 +325,6 @@ async def resolve_card(payload: ResolveIn, current_user: Any = Depends(get_curre
             raise await _miss(user_id, source, parsed.code)
         return answer
 
-    # A Field Repository card. A link that already holds its code answers with no network call.
     link = await db.crossportalartisanlink.find_unique(where={"remoteCardCode": parsed.code})
     if link is not None:
         answer = await _found(link.artisanId, "LINK", user_id, source, parsed.code)
@@ -380,7 +349,6 @@ async def resolve_card(payload: ResolveIn, current_user: Any = Depends(get_curre
         raise await _miss(user_id, source, parsed.code)
     await store.log_event(store.ACTION_PEER_RESOLVE, source, user_id=user_id, card_code=parsed.code)
     if not payload.consent:
-        # Nothing of the answer is handed on until the designer ticks that the artisan agreed.
         return {"status": "REMOTE", "issuer": parsed.issuer, "needsConsent": True}
     prefill = await cross_portal_routes.card_prefill(match, current_user)
     return {"status": "REMOTE", "issuer": parsed.issuer, "needsConsent": False, "match": prefill}

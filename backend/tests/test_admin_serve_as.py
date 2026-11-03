@@ -1,45 +1,3 @@
-"""Administrators serving as a workshop's designer, Assistant Director, Regional Director or inspector.
-
-THE OWNER'S RULING OF 2026-10-09 (D3). MASTER_ADMIN, ADMIN and MINISTRY_ADMIN may be APPOINTED, one
-workshop at a time, to any of the four posts, through the same pickers and the same writes as
-everybody else — and the separation of duties that makes that safe is about ONE workshop:
-
-* nobody appoints themselves;
-* one person is never both a workshop's Assistant Director and its Regional Director, nor its
-  inspector and either of those;
-* nobody inspects or supervises a workshop they AUTHORED — a viewer row on it, or stages they wrote
-  — and creating it is not authoring it;
-* whoever holds an inspection or oversight post on a workshop cannot write it, through the admin arm
-  of the loader too, and is refused designer access to it.
-
-WHAT "CANNOT WRITE IT" COVERS was made precise the same day: every write to the workshop's CONTENT
-or its DESIGNER TEAM, by any door — stage saves, the workshop's edit and delete, the artisan list's
-import and unlink, the viewers PUT, the oversight screen's designer doors, deciding an access request
-and printing a join card. The records filed under a workshop are its content too, so the record
-forms are in the list: filing a record into the workshop, on a create or a move, and then ANY write
-to a record filed there — a PATCH of any field, an unfile or a move out, a delete, an interview
-merge with either side there, a tool's artisan links, every edit of an attached questionnaire form —
-for artisans, products, processes, tools, interviews and the designer-authored questionnaire. And so
-are its files: deleting one, setting, refining or re-transcribing its transcript, deciding an
-identity photograph either way, and relinking one out of the workshop or into it. The last three
-doors arrived later the same day: uploading a NEW file into the workshop (tagged to it, or attached
-to a record filed under it), re-queueing a failed job for one of its files, and the review queue's
-edit of a record filed under it or a file it holds — which, besides, no longer re-files a record
-under any workshop for anybody. What a holder KEEPS is every read, appointing OTHER people (under
-the rules above), restore, and the report with its export ledger row. Both lists are tested door
-by door; a holder who scans a join card for their own workshop lands as a foothold, keeps the
-card's seat unspent, and is not told the card was used.
-
-Appointment refusals are 409 with the rule named; a refused write is 403 naming the post. The
-INSPECTOR, ASSISTANT_DIRECTOR and REGIONAL_DIRECTOR tiers must work exactly as they did.
-
-TWO HALVES. The first needs no database and runs in the gating CI job: the pure rules in
-``services/design_workshop_posts`` and the three validators over fake tables. The second is the
-whole thing over Postgres and the real routes, built the way ``tests/test_workshop_join_sync.py``
-builds a database module: one synchronous seed in a private loop, then a ``TestClient``, and no
-database call while the client is alive.
-"""
-
 import asyncio
 import uuid
 from types import SimpleNamespace
@@ -55,10 +13,6 @@ from app.core.db import db
 from app.core.security import create_access_token, hash_password
 from app.services import access_roster, design_workshop_posts as posts
 
-# ════════════════════════════════════════════════════════════════════════════════════════════════
-# 1. THE RULES, PURE
-# ════════════════════════════════════════════════════════════════════════════════════════════════
-
 ME = "A. Sharma (a@x.test)"
 
 
@@ -72,8 +26,6 @@ def _refusals(post: str, *, held=(), authored=(), self_appointed=False) -> list[
 
 
 def test_is_admin_is_still_exactly_the_two_platform_tiers():
-    """The ruling appoints administrators to POSTS; it widens no role set. A MINISTRY_ADMIN serving
-    as a workshop's inspector is still not an admin anywhere else in the product."""
     for role in deps.ROLE_RANK:
         assert deps.is_admin(SimpleNamespace(role=role)) is (role in {"ADMIN", "MASTER_ADMIN"}), role
     assert frozenset({"MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"}) == posts.SERVING_ADMIN_ROLES
@@ -95,7 +47,6 @@ def test_one_person_is_never_both_directors():
     for post, other in (("ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"), ("REGIONAL_DIRECTOR", "ASSISTANT_DIRECTOR")):
         [refusal] = _refusals(post, held={post, other})
         assert "both the Assistant Director and the Regional Director" in refusal
-    # Holding the same post already is not "both".
     assert _refusals("ASSISTANT_DIRECTOR", held={"ASSISTANT_DIRECTOR"}) == []
 
 
@@ -104,7 +55,6 @@ def test_an_inspector_never_supervises_and_a_supervisor_never_inspects():
     assert "is this workshop's Regional Director, so they cannot also inspect it" in as_inspector
     [as_director] = _refusals("ASSISTANT_DIRECTOR", held={"INSPECTOR"})
     assert "inspects this workshop, so they cannot also be its Assistant Director" in as_director
-    # An inspector already on the panel is not refused the panel.
     assert _refusals("INSPECTOR", held={"INSPECTOR"}) == []
 
 
@@ -128,7 +78,6 @@ def test_an_author_never_inspects_or_supervises(post, authored, phrase):
 
 
 def test_authorship_is_no_bar_to_being_a_designer():
-    """Rule 4 is about supervising and inspecting. A co-designer being named a designer is the job."""
     assert _refusals("DESIGNER", authored={posts.DESIGNER_ACCESS, posts.STAGE_WRITES}) == []
 
 
@@ -150,8 +99,6 @@ def test_every_broken_rule_is_named_and_none_is_swallowed_by_another():
 
 
 def test_the_write_refusal_names_every_post_in_one_order():
-    """The web prints this same sentence before a save is even attempted, word for word, so the
-    order of the posts is part of the wording."""
     assert posts.write_refusal({"INSPECTOR"}).startswith("You are this workshop's inspector, so you")
     assert posts.write_refusal({"INSPECTOR", "ASSISTANT_DIRECTOR"}).startswith(
         "You are this workshop's Assistant Director and inspector, so you"
@@ -174,22 +121,16 @@ def test_an_account_problem_is_a_422_and_a_staffing_problem_alone_is_a_409():
     assert account.value.status_code == 422
     assert account.value.detail == "x a Nothing was changed."
 
-    posts.raise_refusals([], [])  # nothing wrong, nothing raised
+    posts.raise_refusals([], [])
 
 
 @pytest.mark.parametrize("role", list(deps.ROLE_RANK))
 def test_only_a_role_that_may_hold_a_post_pays_for_the_write_gates_query(role):
-    """A DESIGNER can hold no supervisory post, so a designer's stage save — the hot path — asks
-    nothing. Everybody who could hold one is asked."""
     expected = role in {"INSPECTOR", "ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"} | set(
         posts.SERVING_ADMIN_ROLES
     )
     assert posts.could_hold_a_supervisory_post(SimpleNamespace(role=role)) is expected
 
-
-# ════════════════════════════════════════════════════════════════════════════════════════════════
-# 2. THE VALIDATORS, OVER FAKE TABLES
-# ════════════════════════════════════════════════════════════════════════════════════════════════
 
 
 def _account(role: str) -> SimpleNamespace:
@@ -206,7 +147,6 @@ class _Users:
 
 @pytest.fixture
 def staffed(monkeypatch: pytest.MonkeyPatch):
-    """The posts readers answering from dicts the test fills in, and every allow-list read clean."""
     state: dict[str, Any] = {"held": {}, "authored": {}}
 
     async def _held(workshop_id, user_ids):
@@ -293,7 +233,6 @@ def test_the_workshops_inspector_or_supervisor_is_refused_a_viewer_row_on_it(sta
     refusal = _grant(monkeypatch, {"u-ADMIN"})
     assert refusal is not None and refusal.status_code == 409
     assert "cannot also be given designer access" in refusal.detail
-    # The SAME account on a workshop it holds no post on is granted without a word.
     staffed["held"] = {}
     assert _grant(monkeypatch, {"u-ADMIN"}) is None
 
@@ -305,7 +244,6 @@ def test_nobody_grants_themselves_designer_access(staffed, monkeypatch):
 
 
 def test_without_a_workshop_the_grant_rule_asks_nothing_about_posts(staffed, monkeypatch):
-    """The create doors pass no workshop: one being created has no posts yet."""
     staffed["held"] = {"u-ADMIN": {"INSPECTOR"}}
     assert _grant(monkeypatch, {"u-ADMIN"}, workshop_id=None) is None
 
@@ -321,9 +259,6 @@ def test_a_role_refusal_and_a_post_refusal_arrive_together_as_one_422(staffed, m
 def test_the_write_gate_refuses_a_holder_by_post_and_asks_nothing_of_a_designer(
     staffed, monkeypatch
 ):
-    """``refuse_a_holders_write`` is the one test both stage-write doors ask: the loader's edit arm
-    and the artisan-list import. A holder is told which post; an administrator holding none passes;
-    a designer is answered from the role alone."""
     staffed["held"] = {"u-ADMIN": {"INSPECTOR"}, "u-MINISTRY_ADMIN": {"REGIONAL_DIRECTOR"}}
     for role, posts_held in (("ADMIN", {"INSPECTOR"}), ("MINISTRY_ADMIN", {"REGIONAL_DIRECTOR"})):
         with pytest.raises(HTTPException) as refused:
@@ -331,7 +266,7 @@ def test_the_write_gate_refuses_a_holder_by_post_and_asks_nothing_of_a_designer(
         assert refused.value.status_code == 403
         assert refused.value.detail == posts.write_refusal(posts_held)
 
-    asyncio.run(posts.refuse_a_holders_write("w1", _account("MASTER_ADMIN")))  # holds nothing here
+    asyncio.run(posts.refuse_a_holders_write("w1", _account("MASTER_ADMIN")))
 
     async def _never(*_args, **_kwargs):
         raise AssertionError("a designer's stage save must not query who serves on the workshop")
@@ -341,9 +276,6 @@ def test_the_write_gate_refuses_a_holder_by_post_and_asks_nothing_of_a_designer(
 
 
 def test_the_artisan_import_asks_the_write_gate_before_it_reads_the_workbook():
-    """The import has its own loader rather than ``load_workshop_or_404``, so the gate is a line in
-    the route — and it must come before the workbook is read, or a holder pays for an upload that
-    was always going to be refused. Held here without a database, for the job that has none."""
     import inspect
 
     from app.api.routes import design_workshop_oversight as routes
@@ -351,8 +283,6 @@ def test_the_artisan_import_asks_the_write_gate_before_it_reads_the_workbook():
     source = inspect.getsource(routes.upload_artisan_list)
     gate = source.find("posts.refuse_a_holders_write(workshop_id, current_user)")
     assert gate != -1, "the artisan import no longer asks whether its caller serves on the workshop"
-    # SINCE C11 (2026-10-17) THE READ AND THE IMPORT LIVE IN `run_artisan_import`, shared with the
-    # designer's door, and the gate is asked before the handler hands over to it.
     assert gate < source.find("run_artisan_import(")
     shared = inspect.getsource(routes.run_artisan_import)
     assert shared.find("_read_artisan_upload(file, request)") < shared.find("import_artisans(")
@@ -369,9 +299,6 @@ def _gate_comes_first(handler: Any, write: str) -> None:
 
 
 def test_every_route_that_writes_the_team_or_unfiles_an_artisan_asks_the_write_gate_first():
-    """Each of these doors has its own loader rather than ``load_workshop_or_404``, so the rule is a
-    line in the route — and it must come before the write, so a holder learns the reason rather
-    than half an outcome. Held without a database, for the job that has none."""
     from app.api.routes import (
         design_workshop_oversight as oversight_routes,
         design_workshop_viewers as viewer_routes,
@@ -386,8 +313,6 @@ def test_every_route_that_writes_the_team_or_unfiles_an_artisan_asks_the_write_g
 
 
 def test_the_doors_a_holder_keeps_do_not_ask_the_write_gate():
-    """Appointing other people, restore and the report are what the ruling leaves a holder. A gate
-    added to one of them would take back something the owner gave, so their absence is pinned."""
     import inspect
 
     from app.api.routes import (
@@ -403,13 +328,10 @@ def test_the_doors_a_holder_keeps_do_not_ask_the_write_gate():
         workshop_routes.generate_report,
     ):
         assert "refuse_a_holders_write" not in inspect.getsource(handler), handler.__name__
-    # The export ledger loads for edit, and says in its own call that a holder may still write it.
     assert "barred_to_post_holders=False" in inspect.getsource(workshop_routes.record_device_export)
 
 
 class _Delegate:
-    """One fake table: answers ``find_unique`` with a fixed row and records anything written."""
-
     def __init__(self, row: Any = None) -> None:
         self.row = row
         self.written: list[Any] = []
@@ -428,9 +350,6 @@ class _Delegate:
 
 
 def test_a_holder_decides_no_access_request_on_their_workshop_either_way(staffed, monkeypatch):
-    """Granting writes the designer team and refusing takes a capture-only foothold off it; both are
-    the team's shape, which its inspector and its directors do not decide. Refused before anything
-    is written, so the queue row waits for another admin untouched."""
     from app.services import design_workshop_access as access
 
     row = SimpleNamespace(
@@ -453,8 +372,6 @@ def test_a_holder_decides_no_access_request_on_their_workshop_either_way(staffed
 
 
 def test_a_holder_prints_no_join_card_for_their_workshop(staffed, monkeypatch):
-    """A card is the designer team by proxy. Asked after the issuer test, so a caller who may not
-    print cards here at all still gets that module's ordinary 404, and before the card exists."""
     from app.services import design_workshop_grants as grants
 
     workshop = SimpleNamespace(id="w1", createdById="u-opener", deletedAt=None)
@@ -482,8 +399,6 @@ def test_a_holder_prints_no_join_card_for_their_workshop(staffed, monkeypatch):
 
 
 def test_the_write_loader_spares_a_holder_only_where_the_caller_says_so(staffed, monkeypatch):
-    """``barred_to_post_holders`` is the one switch, and it is off for the export ledger alone: the
-    same holder through the same loader is refused an edit and allowed the ledger row."""
     from app.services import design_workshops
 
     record = SimpleNamespace(id="w1", createdById="u-opener", deletedAt=None)
@@ -500,16 +415,12 @@ def test_the_write_loader_spares_a_holder_only_where_the_caller_says_so(staffed,
         )
     )
     assert loaded is record
-    # And the read path never asked in the first place.
     assert asyncio.run(design_workshops.load_workshop_or_404("w1", admin)) is record
 
 
 def test_the_designer_directories_leave_the_caller_out_only_for_a_workshop_that_exists(
     monkeypatch,
 ):
-    """``workshopId`` says which door the list feeds. Sent — a viewers PUT or a designer door on a
-    workshop that exists, where naming yourself is a 409 — the reader is left out; absent — a create
-    form, where the creator may name themselves — the list is exactly what it was."""
     from app.api.routes import (
         design_workshop_oversight as oversight_routes,
         design_workshop_viewers as viewer_routes,
@@ -550,8 +461,6 @@ def test_the_designer_directories_leave_the_caller_out_only_for_a_workshop_that_
 
 
 def test_the_directory_queries_leave_the_caller_out_inside_the_where(monkeypatch):
-    """IN the ``WHERE``, never after the ``take``: dropping a row from a capped answer is how a full
-    page stops meaning "there are more", which both directories report on the wire."""
     from app.services import design_workshop_viewers as viewers, designers
 
     sent: list[dict] = []
@@ -580,16 +489,8 @@ def test_the_directory_queries_leave_the_caller_out_inside_the_where(monkeypatch
     assert excluded == [True, True, False, False]
 
 
-# ── The record forms: which records a workshop holds is its content too ─────────────────────────
-
 
 def _serving(monkeypatch, on: dict[str, dict[str, set[str]]]) -> None:
-    """``supervisory_posts_among`` answering from ``{workshop id: {user id: posts}}``.
-
-    Per WORKSHOP, unlike ``staffed``, because the question here is which workshop a record is
-    leaving: the same administrator may serve on one and be a stranger to the next.
-    """
-
     async def _held(workshop_id, user_ids):
         ids = set(user_ids)
         return {uid: frozenset(p) for uid, p in on.get(workshop_id, {}).items() if uid in ids}
@@ -598,13 +499,6 @@ def _serving(monkeypatch, on: dict[str, dict[str, set[str]]]) -> None:
 
 
 def _file(monkeypatch, data: dict[str, Any], user: Any, *, filed_under: str | None):
-    """``assert_payload_workshop`` with the DESTINATION's loader answering from a list.
-
-    Returns ``(refusal or None, the destinations the loader was asked about)``. The loader is
-    replaced because its own refusal of a holder is pinned above
-    (``test_the_write_loader_spares_a_holder_only_where_the_caller_says_so``) and is the half of a
-    filing that was never open; the LEAVE is the half that was.
-    """
     from app.services import design_workshops, record_design_workshop as filing
 
     asked: list[str] = []
@@ -638,9 +532,6 @@ def _file(monkeypatch, data: dict[str, Any], user: Any, *, filed_under: str | No
 def test_a_record_form_refuses_a_holder_taking_a_record_out_of_their_workshop(
     monkeypatch, role, post
 ):
-    """An unfile — ``null``, or the ``""`` a truthiness test would wave through — and a move are
-    both a LEAVE, and a holder is refused it with the write sentence BEFORE the destination is asked
-    anything, so the reason they are given is their post and not somebody else's workshop."""
     _serving(monkeypatch, {"w1": {f"u-{role}": {post}}})
     holder = _account(role)
     for body in ({"designWorkshopId": None}, {"designWorkshopId": ""}, {"designWorkshopId": "w2"}):
@@ -651,10 +542,6 @@ def test_a_record_form_refuses_a_holder_taking_a_record_out_of_their_workshop(
 
 
 def test_a_holder_changes_nothing_on_a_record_filed_under_their_workshop(monkeypatch):
-    """THE LEAVE WAS ONLY TWO OF THE SHAPES (2026-10-09). The records filed under a workshop are its
-    content, so its inspector is refused EVERY PATCH of one — a field edit that never mentions the
-    workshop, and re-sending the workshop it already names, which both clients do on every save —
-    and refused before the destination is asked anything."""
     _serving(monkeypatch, {"w1": {"u-ADMIN": {"INSPECTOR"}}})
     holder = _account("ADMIN")
     for body in ({"notes": "Re-measured."}, {"designWorkshopId": "w1"}, {}):
@@ -665,9 +552,6 @@ def test_a_holder_changes_nothing_on_a_record_filed_under_their_workshop(monkeyp
 
 
 def test_off_their_workshop_a_holders_record_forms_are_answered_exactly_as_before(monkeypatch):
-    """The same administrator, on records filed nowhere or under a workshop they hold nothing on:
-    a PATCH that does not mention the workshop asks nothing, re-sending the workshop the row names
-    is not a filing and asks nothing either (2026-10-19), and unfiles and moves are free."""
     _serving(monkeypatch, {"w1": {"u-ADMIN": {"INSPECTOR"}}})
     holder = _account("ADMIN")
     assert _file(monkeypatch, {"notes": "Re-measured."}, holder, filed_under="w3") == (None, [])
@@ -679,9 +563,6 @@ def test_off_their_workshop_a_holders_record_forms_are_answered_exactly_as_befor
 
 
 def test_everybody_else_takes_a_record_out_and_a_designer_is_asked_nothing(monkeypatch):
-    """The workshop has its holder, and they are the only one refused: an administrator serving on
-    nothing there, and a professor, edit, unfile and move as before. A designer can hold no post, so
-    their save is answered from the role — the hot path costs no query."""
     _serving(monkeypatch, {"w1": {"u-ADMIN": {"INSPECTOR"}}})
     for role in ("MASTER_ADMIN", "MINISTRY_ADMIN", "PROFESSOR", "RESEARCHER"):
         user = _account(role)
@@ -702,11 +583,6 @@ def test_everybody_else_takes_a_record_out_and_a_designer_is_asked_nothing(monke
 
 
 def test_the_questionnaire_form_patch_refuses_a_holder_everything_and_writes_nothing(monkeypatch):
-    """The designer-authored questionnaire is the sixth form: an attached form's sittings print in
-    the workshop's report annexure, so the form is the workshop's content. Its Regional Director —
-    an ADMIN, whom ``_require_owner`` admits — is refused a detach, a move, a re-send, a rename and a
-    deactivation alike, and nothing is written and no destination is asked. Owning the form, or being
-    an admin who serves on nothing there, still lets everybody else change it."""
     from app.api.routes import questionnaire_forms as forms
     from app.schemas.questionnaire import QuestionnaireUpdate
 
@@ -731,8 +607,6 @@ def test_the_questionnaire_form_patch_refuses_a_holder_everything_and_writes_not
     async def _no_reconcile(*_args, **_kwargs):
         return 0
 
-    # The shared question codes (C26) are re-derived after an edit that went through; this
-    # fake client holds no sections, and test_cross_portal_codes covers that pass.
     monkeypatch.setattr(forms.cross_portal_codes, "reconcile_form_question_codes", _no_reconcile)
     _serving(monkeypatch, {"w1": {"u-ADMIN": {"REGIONAL_DIRECTOR"}}})
 
@@ -752,8 +626,6 @@ def test_the_questionnaire_form_patch_refuses_a_holder_everything_and_writes_not
     assert table.written == [], "a refused edit wrote to the questionnaire"
     assert attached_to == [], "the destination was asked before the holder was refused"
 
-    # An administrator who serves on nothing there: the attach check answers as before, and a
-    # detach writes.
     asyncio.run(
         forms.update_questionnaire(
             "q1", QuestionnaireUpdate(designWorkshopId="w1"), _account("MASTER_ADMIN")
@@ -768,8 +640,6 @@ def test_the_questionnaire_form_patch_refuses_a_holder_everything_and_writes_not
     assert table.written[-1] == {"where": {"id": "q1"}, "data": {"designWorkshopId": None}}
 
 
-#: The statements in the record routes that WRITE before the transaction does: a ``Location`` row
-#: and, on the artisan form, possibly a craft. A gate below either of them leaves its row behind.
 _EARLY_WRITES = ("attach_location(", "resolve_craft_id(")
 
 
@@ -782,12 +652,6 @@ def _asks_before(source: str, gate: str, *writes: str, name: str) -> None:
 
 
 def test_every_record_form_passes_the_workshop_its_row_is_filed_under():
-    """``filed_under`` is a REQUIRED keyword, so no route can forget it — but one could pass the
-    wrong thing, and ``None`` on a PATCH would quietly reopen every write a holder is refused. So
-    each PATCH names its own row's column; each create names ``None``, because a row that does not
-    exist yet is filed nowhere; and both ask before ``attach_location`` and the craft lookup, which
-    WRITE, and before the transaction that holds the record's own write — a refused save must leave
-    no ``Location`` and no craft behind. Held without a database, for the job that has none."""
     import inspect
 
     from app.api.routes import artisans, processes, products, questionnaire, tools
@@ -821,9 +685,6 @@ def test_every_record_form_passes_the_workshop_its_row_is_filed_under():
 
 
 def test_every_other_write_to_a_filed_record_asks_about_the_workshop_it_is_filed_under():
-    """The doors that are not a PATCH: each DELETE, the interview merge — about BOTH sides, before
-    the scope refusal and before its transaction — and the tool's two artisan-link routes, each
-    asking with the row's own column before its first write."""
     import inspect
 
     from app.api.routes import artisans, processes, products, questionnaire, tools
@@ -856,9 +717,6 @@ def test_every_other_write_to_a_filed_record_asks_about_the_workshop_it_is_filed
 
 
 def test_every_edit_of_a_questionnaire_form_asks_about_the_workshop_it_is_attached_to():
-    """The seven owner-gated edits and the sitting PATCH, each before the first thing it writes —
-    and the re-upload before it reads the workbook. Starting a sitting and recording answers ask
-    through the loader (``_require_recordable_questionnaire``), whose own refusal is pinned above."""
     import inspect
 
     from app.api.routes import questionnaire_forms as forms
@@ -886,10 +744,6 @@ def test_every_edit_of_a_questionnaire_form_asks_about_the_workshop_it_is_attach
 
 @pytest.mark.parametrize("kind", ["artisan", "product", "tool"])
 def test_a_refused_create_mints_no_location_and_no_craft(monkeypatch, kind):
-    """The three creates that carry a location, refused by the workshop gate — the holder's 403,
-    raised by a stand-in so nothing else is under test — reach neither ``attach_location``, which
-    INSERTS a ``Location`` row, nor the craft lookup, which may insert a craft. Before 2026-10-09 the
-    gate sat below both, and every refused save left a ``Location`` that nothing references."""
     from app.api.routes import artisans, products, tools
 
     module, handler = {
@@ -932,12 +786,8 @@ def test_a_refused_create_mints_no_location_and_no_craft(monkeypatch, kind):
     assert reached == [], f"a refused create reached {reached}"
 
 
-# ── The media doors: the files a workshop holds are its content too (2026-10-09) ────────────────
-
 
 class _Table:
-    """One fake table: ``find_unique`` by id, ``find_many`` by equality on every key it is given."""
-
     def __init__(self, *rows: Any) -> None:
         self.rows = list(rows)
 
@@ -953,8 +803,6 @@ class _Table:
 
 
 class _MediaWorld:
-    """The tables ``design_workshop_posts`` reads to learn which workshops hold a file, faked."""
-
     def __init__(self, *, staged: dict[str, set[str]] | None = None, **tables: Any) -> None:
         self.staged = staged or {}
         self.asked: list[tuple[str, list[str], list[str]]] = []
@@ -991,9 +839,6 @@ def _file_row(media_id: str = "m1", **columns: Any) -> SimpleNamespace:
 
 
 def test_a_file_belongs_to_every_workshop_that_names_it_by_any_of_five_ways(monkeypatch):
-    """Filed there, tagged there, held by a stage there, made into an AI layer there, and hanging off
-    a record filed there — every one is a workshop the file's write would change. A soft-deleted
-    layer does not count, and the stage scan is asked about the media AND the rich-text fields."""
     from app.services.stage_schema import FieldType, stages
 
     world = _MediaWorld(
@@ -1028,9 +873,6 @@ def test_a_file_belongs_to_every_workshop_that_names_it_by_any_of_five_ways(monk
 
 
 def test_the_record_a_file_hangs_off_is_read_through_every_spelling_and_one_hop(monkeypatch):
-    """A step answers through its process, a misc file through its parent file's column and tag,
-    the interview link through either spelling — and the typed column before a tag that names a row
-    an interview merge has since deleted. A parent that is gone, or a link to a craft, is nothing."""
     world = _MediaWorld(
         process=_Table(SimpleNamespace(id="p1", designWorkshopId="w-process")),
         processstep=_Table(SimpleNamespace(id="s1", processId="p1")),
@@ -1061,10 +903,6 @@ def test_the_record_a_file_hangs_off_is_read_through_every_spelling_and_one_hop(
 def test_a_holder_changes_no_file_of_their_workshop_and_everybody_else_is_answered_as_before(
     monkeypatch,
 ):
-    """The media gate is the stage gate's sentence over the file's workshops: the workshop's
-    inspector is refused, an administrator serving on nothing there is not, and a relink asks about
-    where the file would ARRIVE as well as where it is. A designer can hold no post and is answered
-    from the role, before anything is read."""
     _serving(monkeypatch, {"w1": {"u-ADMIN": {"INSPECTOR"}}})
     belongs: dict[str, set[str]] = {"m-held": {"w1", "w9"}, "m-free": {"w9"}}
 
@@ -1102,8 +940,6 @@ def test_a_holder_changes_no_file_of_their_workshop_and_everybody_else_is_answer
 
 
 def test_every_media_door_asks_about_the_files_workshops_before_it_writes():
-    """Held as source, without a database: each door asks after its own permission check and
-    before the first thing it writes or spends — the relink with where the file would arrive."""
     import inspect
 
     from app.api.routes import design_workshops as workshop_routes, media as media_routes
@@ -1130,13 +966,6 @@ def test_every_media_door_asks_about_the_files_workshops_before_it_writes():
 
 
 def test_the_upload_the_job_retry_and_the_review_edit_ask_before_they_write():
-    """The three doors that met the rule later (2026-10-09), held as source without a database.
-
-    The upload asks about the row it is ABOUT to create — after the replay of the caller's own
-    earlier upload, which is answered as before, and before the storage HEAD, the ``Location`` row
-    and the create. The job retry asks about the job's file before its compare-and-set. The review
-    queue's edit asks the record gate or the media gate about the STORED row before its transaction,
-    and refuses ``designWorkshopId`` outright."""
     import inspect
 
     from app.api.routes import media as media_routes, review as review_routes
@@ -1176,9 +1005,6 @@ def test_the_upload_the_job_retry_and_the_review_edit_ask_before_they_write():
 
 
 def test_an_upload_is_read_as_the_row_it_would_become(monkeypatch):
-    """``_upload_as_filed`` hands the media gate the row ``/complete`` is about to write: the
-    workshop a designer filed it under and the link tag, with NO id — so the stage and AI-layer
-    reads answer nothing without a query, and the tag and the filed record are what is asked."""
     from app.api.routes import media as media_routes
     from app.schemas.media import MediaCompleteRequest
 
@@ -1212,14 +1038,8 @@ def test_an_upload_is_read_as_the_row_it_would_become(monkeypatch):
     assert world.asked == [], "a row that does not exist yet was looked for in the stages"
 
 
-# ── The unfiled-records report: a row a design workshop claims is not unfiled (2026-10-09) ────────
-
 
 def test_the_ladder_reads_no_row_a_design_workshop_claims():
-    """The report's candidate reads leave out every record filed under a design workshop and every
-    file filed under one or tagged to one — the tag in any letter case, and written so a file with NO
-    tag, which is most of what genuinely needs a person, is still read. Held as the reads' shape;
-    the database half is ``test_the_unfiled_report_lists_no_row_a_design_workshop_claims``."""
     from app.services import workshop_inference as inference
 
     unfiled = {"workshopId": None, "designWorkshopId": None}
@@ -1233,7 +1053,6 @@ def test_the_ladder_reads_no_row_a_design_workshop_claims():
 
     import inspect
 
-    # Whitespace dropped, so a reflowed call still matches.
     ladder = "".join(inspect.getsource(inference.run_ladder).split())
     for table in (
         "productdocumentation",
@@ -1242,16 +1061,11 @@ def test_the_ladder_reads_no_row_a_design_workshop_claims():
         "artisan",
     ):
         assert f"db.{table}.find_many(where=_UNFILED_RECORD" in ladder, table
-    # Interviews add the soft-delete filter (audit H5, 21 Oct 2026) to the same unfiled clause.
     assert 'db.questionnaireinterview.find_many(where={**_UNFILED_RECORD,"deletedAt":None}' in ladder
     assert "db.mediafile.find_many(where=_UNFILED_MEDIA" in ladder
 
 
 def test_the_unfiled_doors_ask_about_the_design_workshop_before_they_write():
-    """Held as source, without a database: the three routes bind the caller and hand it on; the file
-    door asks the holder gate before its write, the discard asks it and then refuses any claimed row
-    before it counts, deletes or touches storage, and the bulk map works out which rows to leave
-    alone before its first write."""
     import inspect
 
     from app.api.routes import workshops as workshop_routes
@@ -1278,7 +1092,6 @@ def test_the_unfiled_doors_ask_about_the_design_workshop_before_they_write():
 
 
 def test_nobody_takes_themselves_off_a_post_and_the_sentence_says_who_can():
-    """Rule 1's other half: the sentence names the post and the remedy, in the write refusal's order."""
     assert posts.self_release_refusal({"INSPECTOR"}) == (
         "You are this workshop's inspector, and nobody takes themselves off a post: another "
         "administrator has to take you off. Nothing was changed."
@@ -1288,23 +1101,11 @@ def test_nobody_takes_themselves_off_a_post_and_the_sentence_says_who_can():
     )
 
 
-# ════════════════════════════════════════════════════════════════════════════════════════════════
-# 3. THE WHOLE THING, OVER POSTGRES
-# ════════════════════════════════════════════════════════════════════════════════════════════════
-
 PASSWORD = "admin-serve-as-password"
 
-#: A stage outside the cover whose field no profile prefill writes — so a save here is AUTHORSHIP.
 INTRO_STAGE = "INTRODUCTORY_ADMIN_DOCUMENTATION"
 INTRO_ENTITY = "introduction"
 
-#: slug -> (role, display name).
-#:
-#: ``master`` APPOINTS in every test and is never appointed, so its own lists stay empty. ``opener``
-#: OPENS the workshops and has a designer profile, so the opening prefill writes stage 1's cover and
-#: stage 3's designer block under its stamp — which is exactly the administrative write that must not
-#: make it an author. ``ministryOpener`` is used by one test alone, so the dashboard has a creator
-#: nothing else in this module touches.
 ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("master", "MASTER_ADMIN", "Appointing Master Admin"),
     ("opener", "ADMIN", "Opening Admin"),
@@ -1318,9 +1119,6 @@ ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("designer", "DESIGNER", "Rostered Designer"),
 )
 
-#: Every record a form files under a design workshop, and the one path its list, create and PATCH
-#: share. The questionnaire is the designer-authored form, whose attachment prints its sittings in
-#: the workshop's report annexure.
 RECORD_PATHS: dict[str, str] = {
     "artisan": "/api/artisans",
     "product": "/api/products",
@@ -1334,12 +1132,6 @@ RECORD_PATHS: dict[str, str] = {
 async def _seed_filed(
     kind: str, *, author: str, workshop_id: str | None, label: str, parent: str
 ) -> str:
-    """One record of ``kind`` written straight to its table, filed under ``workshop_id`` or nowhere.
-
-    Seeded rather than created through the API for the access request's reason below: the subject is
-    the PATCH, and a create asks for a coordinate, a district and an Aadhaar number that have
-    nothing to do with it. Answers the record's id.
-    """
     filed = {"designWorkshopId": workshop_id} if workshop_id else {}
     if kind == "questionnaire":
         form = await db.questionnaire.create(
@@ -1374,7 +1166,6 @@ async def _seed_filed(
 
 
 def _first_field_of(kind: Any) -> tuple[str, str, str]:
-    """``(stage key, entity key, field key)`` of the registry's first field of ``kind``."""
     from app.services.stage_schema import stages
 
     for spec in stages():
@@ -1386,14 +1177,6 @@ def _first_field_of(kind: Any) -> tuple[str, str, str]:
 
 
 async def _seed_media(people: dict[str, Any], tag: str) -> dict[str, str]:
-    """The files of two workshops, for the media doors (2026-10-09).
-
-    ``held`` gets one file for every way a file belongs to a workshop — tagged to it, held by an
-    IMAGE field of its stage, placed inside a RICH_TEXT field of its stage, filed under it, hanging
-    off an artisan filed under it — and one the Ministry Admin uploaded, for the uploader who is
-    also a holder. ``free``, where nobody serves, gets the controls. Stage rows carry no author, so
-    nobody here is an author of either workshop and anybody may be appointed to them.
-    """
     from app.services.stage_schema import FieldType
     from prisma import Json
 
@@ -1474,8 +1257,6 @@ async def _seed_media(people: dict[str, Any], tag: str) -> dict[str, str]:
     return {"held": held.id, "free": free.id, "pictured": pictured.id, "unfiled": unfiled.id, **files}
 
 
-#: The review queue's record types, the kind ``_seed_filed`` writes for each, and one field its edit
-#: may correct. A file is the seventh: its caption.
 REVIEWED: dict[str, tuple[str, dict[str, str]]] = {
     "artisan": ("artisan", {"notes": "Corrected from the review queue."}),
     "product": ("product", {"remarks": "Corrected from the review queue."}),
@@ -1487,11 +1268,6 @@ REVIEWED: dict[str, tuple[str, dict[str, str]]] = {
 
 
 async def _seed_the_later_doors(people: dict[str, Any], tag: str, *, parent: str) -> dict[str, Any]:
-    """Two workshops — ``held``, where the tests appoint a holder, and ``free``, where nobody
-    serves — and under each: a record of every reviewable kind and a photograph, all by the DESIGNER
-    (below every administrator, so the review edit's own rank gate admits each of them), and a
-    recording with a FAILED transcription job on it, for the retry.
-    """
     author = people["designer"].id
     doors: dict[str, Any] = {}
     for place in ("held", "free"):
@@ -1556,16 +1332,6 @@ async def _seed_the_later_doors(people: dict[str, Any], tag: str, *, parent: str
 
 
 async def _seed_the_unfiled(people: dict[str, Any], tag: str, *, media: dict[str, str]) -> dict:
-    """The unfiled-records report's doors (2026-10-09): one design workshop where the tests appoint
-    a holder, one crafts workshop to file things under, and rows with NO crafts workshop — the ones
-    the report reads — that the design workshop claims by every way there is, beside rows nothing
-    claims.
-
-    Two things are ASKED here, inside the seed's connection, and recorded for the tests: which of
-    these rows the real ladder lists, and the batched holder question
-    (``design_workshop_posts.media_held_among``) beside the file-by-file one
-    (``media_design_workshop_ids``) over every file this module seeds, ``_seed_media``'s included.
-    """
     from datetime import UTC, datetime
 
     from app.services import workshop_inference
@@ -1624,13 +1390,11 @@ async def _seed_the_unfiled(people: dict[str, Any], tag: str, *, media: dict[str
         return row.id
 
     files = {
-        # What the ladder's reads now leave out: the column, and the tag in either spelling.
         "tagged": await upload("tagged", linkedRecordType="designWorkshop", linkedRecordId=held.id),
         "taggedLower": await upload(
             "tagged-lower", linkedRecordType="designworkshop", linkedRecordId=held.id
         ),
         "filed": await upload("filed", designWorkshopId=held.id),
-        # What only the row-by-row question finds: a stage entry, and the record it hangs off.
         "staged": await upload("staged"),
         "onRecord": await upload(
             "on-record",
@@ -1638,13 +1402,11 @@ async def _seed_the_unfiled(people: dict[str, Any], tag: str, *, media: dict[str
             linkedRecordId=ids["filedArtisan"],
             artisanId=ids["filedArtisan"],
         ),
-        # Nothing claims these: a tag naming an artisan filed nowhere, and no tag at all.
         "otherTag": await upload(
             "other-tag", linkedRecordType="artisan", linkedRecordId=ids["looseArtisan"]
         ),
         "loose": await upload("loose"),
         "looseHolder": await upload("loose-holder"),
-        # The bulk map's two: one hanging off a product filed under the held workshop, one free.
         "mapHeld": await upload(
             "map-held",
             linkedRecordType="product",
@@ -1678,8 +1440,6 @@ async def _seed_the_unfiled(people: dict[str, Any], tag: str, *, media: dict[str
         )
     }
 
-    # A SET OF IDS, not a merged dict: both seeds name files "tagged", "filed", "staged" and
-    # "onRecord", and a dict merge would quietly keep only one of each pair.
     seeded = {*files.values(), *(media[key] for key in media if key not in _SEED_MEDIA_PLACES)}
     rows = await db.mediafile.find_many(where={"id": {"in": sorted(seeded)}})
     held_set = {held.id, media["held"]}
@@ -1692,13 +1452,11 @@ async def _seed_the_unfiled(people: dict[str, Any], tag: str, *, media: dict[str
     return ids
 
 
-#: The keys of ``_seed_media``'s answer that name workshops and artisans rather than files.
 _SEED_MEDIA_PLACES = frozenset({"held", "free", "pictured", "unfiled"})
 
 
 @pytest.fixture(scope="module")
 def world():
-    """Every account, before the app starts, in a private loop. See the module docstring."""
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -1737,9 +1495,6 @@ def world():
                     "biography": "Twelve years of administration, none of it fieldwork.",
                 }
             )
-            # ONE WORKSHOP WITH A DESIGNER WAITING TO JOIN IT, seeded rather than filed through the
-            # API: the admin queue is cross-workshop, oldest first and capped, so on a database
-            # other suites have filled a request filed here could sit past the cut and be unfindable.
             asked = await db.designworkshop.create(
                 data={"title": f"Asked to join {tag}", "createdById": people["opener"].id}
             )
@@ -1750,12 +1505,6 @@ def world():
                     "source": "MANUAL",
                 }
             )
-            # RECORDS FILED UNDER WORKSHOPS, for the record forms' doors. Every kind gets three
-            # sets — one per test that reads them, so none depends on another's order — and each
-            # set is a workshop where the test appoints a holder (``held``), one where nobody serves
-            # (``free``), and a record filed under each plus one filed nowhere. ``master`` authors
-            # them all: it holds no post anywhere, and its records are ones every administrator tier
-            # may otherwise edit.
             author = people["master"].id
             craft = await db.craft.create(data={"name": f"Serve-as ikat {tag}"})
             parent = await db.productdocumentation.create(
@@ -1781,8 +1530,6 @@ def world():
                         ids[place] = workshop.id
                     placed = [("atHeld", ids["held"]), ("atFree", ids["free"]), ("loose", None)]
                     if kind == "interview" and purpose == "edited":
-                        # Two sittings on each side, for the merge: either side in a held workshop
-                        # is refused, and a pair where nobody serves is the control.
                         placed += [
                             ("mergeHeld", ids["held"]),
                             ("mergeFree", ids["free"]),
@@ -1828,7 +1575,6 @@ def _id(world: dict[str, Any], slug: str | None) -> str | None:
 
 
 def _open(world: dict[str, Any], title: str) -> str:
-    """A workshop OPENED by ``opener`` with cover values, so the opening prefill writes stages."""
     response = world["client"].post(
         "/api/design-workshops",
         json={
@@ -1880,7 +1626,6 @@ def _viewers(world, workshop_id, slugs, *, as_slug="master"):
 
 
 def _write(world, workshop_id, slug, text="Revive the Barpali ikat motifs for a new market."):
-    """A stage save outside the cover, by ``slug``: the act that makes somebody an AUTHOR."""
     return world["client"].put(
         f"/api/design-workshops/{workshop_id}/stages/{INTRO_STAGE}",
         json={
@@ -1899,8 +1644,6 @@ def _listed(world, path, slug) -> list[str]:
 
 @needs_db
 def test_every_administrator_tier_serves_in_every_supervisory_post(world):
-    """Each of the three tiers as Assistant Director, as Regional Director and as inspector, on three
-    workshops — and each then reads exactly that workshop on the surface of the post it holds."""
     rotation = (
         ("ministry", "admin", "master2"),
         ("admin", "master2", "ministry"),
@@ -1935,8 +1678,6 @@ def test_every_administrator_tier_serves_in_every_supervisory_post(world):
 
 @needs_db
 def test_every_administrator_tier_is_named_a_designer_and_then_writes(world):
-    """All three tiers are content admins since 2026-10-20 (owner's ruling), so each writes every
-    workshop through the admin arm with no viewer row — and naming them designers changes nothing."""
     workshop_id = _open(world, "Team of administrators")
     before = _write(world, workshop_id, "ministry")
     assert before.status_code == 200, "a content admin is a privileged editor of every workshop"
@@ -1984,7 +1725,6 @@ def test_one_person_never_holds_both_director_posts_on_one_workshop(world):
     later = _officers(world, workshop_id, rd="ministry")
     assert later.status_code == 409, "the second slot was taken in a second save"
 
-    # A SWAP is judged on where it lands: the AD becomes the RD while somebody else takes AD.
     swapped = _officers(world, workshop_id, ad="admin", rd="ministry")
     assert swapped.status_code == 200, swapped.text
     assert {row["capacity"]: row["userId"] for row in swapped.json()["oversight"]} == {
@@ -2026,7 +1766,6 @@ def test_an_author_never_inspects_or_supervises_the_workshop(world):
         assert response.status_code == 409, response.text
         assert "holds designer access to this workshop" in response.json()["detail"]
 
-    # A PLATFORM ADMIN NEEDS NO VIEWER ROW TO WRITE — so their authorship is the stages they wrote.
     assert _write(world, workshop_id, "master2").status_code == 200
     stage_writer = _inspectors(world, workshop_id, ["master2"])
     assert stage_writer.status_code == 409, stage_writer.text
@@ -2035,10 +1774,6 @@ def test_an_author_never_inspects_or_supervises_the_workshop(world):
 
 @needs_db
 def test_opening_a_workshop_is_not_authoring_it(world):
-    """``opener`` created these workshops, and the opening wrote stage 1's cover and stage 3's
-    designer block under its stamp. Neither is authorship — an administrator who opened a workshop
-    and wrote none of it may inspect or supervise it — and once they do, the creator column no
-    longer lets them write it."""
     inspected = _open(world, "Opened, then inspected")
     appointed = _inspectors(world, inspected, ["opener"])
     assert appointed.status_code == 200, appointed.text
@@ -2069,9 +1804,6 @@ def test_a_post_holder_is_refused_designer_access_to_the_workshop(world):
 
 @needs_db
 def test_a_post_holder_cannot_write_the_workshop_even_through_the_admin_route(world):
-    """An ADMIN and a MASTER_ADMIN pass the loader on role alone. Holding a post takes that one
-    workshop's write away from them — stage saves, the header and the delete — and giving the post up
-    gives it back."""
     workshop_id = _open(world, "Read only while serving")
     assert _inspectors(world, workshop_id, ["admin"]).status_code == 200
     assert _officers(world, workshop_id, ad="master2").status_code == 200
@@ -2094,7 +1826,6 @@ def test_a_post_holder_cannot_write_the_workshop_even_through_the_admin_route(wo
     assert supervisor.status_code == 403, supervisor.text
     assert "You are this workshop's Assistant Director" in supervisor.json()["detail"]
 
-    # Still readable on the ordinary read, which is the half the post does not take away.
     read = world["client"].get(
         f"/api/design-workshops/{workshop_id}", headers=_headers(world, "admin")
     )
@@ -2108,9 +1839,6 @@ def test_a_post_holder_cannot_write_the_workshop_even_through_the_admin_route(wo
 
 @needs_db
 def test_a_content_admin_holding_a_post_is_still_refused_the_workshop(world):
-    """2026-10-20: a Ministry Admin is a content admin and writes every workshop without a viewer
-    grant. The post-holder refusal is separation of duty, not a missing permission, so it still holds
-    for them, delete included; giving the post up gives the write back."""
     workshop_id = _open(world, "Content admin serving")
     assert _officers(world, workshop_id, ad="ministry").status_code == 200
 
@@ -2128,10 +1856,6 @@ def test_a_content_admin_holding_a_post_is_still_refused_the_workshop(world):
 
 @needs_db
 def test_a_post_holder_cannot_import_an_artisan_list_into_the_workshop(world):
-    """The oversight screen's artisan-list import files stage-3 participant rows through its own
-    loader, so it asks the same write gate itself — before the workbook is read. An assigner who
-    serves on nothing here goes past that gate to the next check, the missing venue location, which
-    is what shows the refusal is the POST and not the role."""
     workshop_id = _open(world, "Artisans while serving")
     assert _officers(world, workshop_id, rd="ministry").status_code == 200
 
@@ -2163,8 +1887,6 @@ def test_the_three_tiers_serve_exactly_as_they_did(world):
     assert workshop_id in _listed(world, "/api/design-workshop-inspections", "inspector")
     assert _write(world, workshop_id, "designer").status_code == 200
 
-    # And their limits: an inspector writes nothing, a directorate officer with no viewer row cannot
-    # open the workshop on the designer's side, and neither tier fits the other's post.
     assert _write(world, workshop_id, "inspector").status_code == 403
     assert _write(world, workshop_id, "ad").status_code == 404
     other = _open(world, "The tiers in the wrong post")
@@ -2176,8 +1898,6 @@ def test_the_three_tiers_serve_exactly_as_they_did(world):
 
 @needs_db
 def test_an_administrator_holding_no_post_sees_two_empty_lists_and_a_designer_is_refused(world):
-    """The surfaces open to whoever MAY hold a post, and what they show is the rows — for ``master``,
-    who appoints in every test here and is appointed in none, nothing at all."""
     assert _listed(world, "/api/design-workshop-inspections", "master") == []
     assert _listed(world, "/api/design-workshop-oversight/assigned", "master") == []
     for path in ("/api/design-workshop-inspections", "/api/design-workshop-oversight/assigned"):
@@ -2213,7 +1933,6 @@ def test_the_pickers_offer_the_administrator_tiers_and_never_the_person_appointi
     for slug in ("master", "ad", "rd", "designer"):
         assert _id(world, slug) not in inspectors, slug
 
-    # THE DESIGNER PICKERS OFFER WHAT THE VIEWER WRITE ACCEPTS — the directorate tiers included.
     for path in ("/api/design-workshops/eligible-viewers", "/api/design-workshop-oversight/designers"):
         designers = offered(path)
         for slug in ("ministry", "ad", "rd", "admin", "master2", "designer"):
@@ -2223,8 +1942,6 @@ def test_the_pickers_offer_the_administrator_tiers_and_never_the_person_appointi
 
 @needs_db
 def test_the_ministry_dashboard_counts_a_creator_only_where_they_wrote_the_workshop(world):
-    """A Ministry Admin who opens a workshop on the oversight screen is its creator and not its
-    designer — until they write it."""
     opened = world["client"].post(
         "/api/design-workshop-oversight/workshops",
         json={"title": f"Opened by the ministry {world['tag']}"},
@@ -2234,9 +1951,6 @@ def test_the_ministry_dashboard_counts_a_creator_only_where_they_wrote_the_works
     workshop_id = opened.json()["id"]
 
     def register_row() -> dict[str, Any] | None:
-        """The opener's row on whichever page it falls. The register is busiest first and this
-        database is shared, so a one-workshop row can sit past the first hundred — walking every
-        page keeps "absent" meaning absent rather than "not on page one"."""
         wanted = _id(world, "ministryOpener")
         page, pages = 1, 1
         while page <= pages:
@@ -2262,15 +1976,9 @@ def test_the_ministry_dashboard_counts_a_creator_only_where_they_wrote_the_works
     assert row["workshopsCreated"] == 1
 
 
-# ── What "does not write it" covers, and what a holder keeps (2026-10-09) ───────────────────────
-
 
 @needs_db
 def test_a_post_holder_cannot_change_the_designer_team_or_unfile_an_artisan(world):
-    """The four doors with loaders of their own — the oversight screen's two designer doors and its
-    artisan unlink, and the viewers PUT — each refuse the workshop's Regional Director and inspector
-    with the write sentence, and write nothing. An assigner who serves on nothing here goes through
-    the same four, which shows the refusal is the post and not the role."""
     workshop_id = _open(world, "Team while serving")
     client = world["client"]
     assert _officers(world, workshop_id, rd="ministry").status_code == 200
@@ -2316,8 +2024,6 @@ def test_a_post_holder_cannot_change_the_designer_team_or_unfile_an_artisan(worl
 
 @needs_db
 def test_a_post_holder_decides_no_access_request_and_prints_no_card_but_lists_them(world):
-    """Deciding who joins and printing a card that lets somebody join are the designer team too.
-    Another admin decides and prints; the holder may still see the cards that exist."""
     workshop_id = world["askedWorkshop"]
     client = world["client"]
     assert _inspectors(world, workshop_id, ["admin"]).status_code == 200
@@ -2353,8 +2059,6 @@ def test_a_post_holder_decides_no_access_request_and_prints_no_card_but_lists_th
 
 @needs_db
 def test_a_post_holder_keeps_reading_appointing_others_restoring_and_reporting(world):
-    """The other half of the ruling, door by door: every read, appointing OTHER people under the
-    separation rules, the report with its ledger row on both paths, and restore."""
     workshop_id = _open(world, "What a holder keeps")
     client = world["client"]
     assert _officers(world, workshop_id, rd="ministry").status_code == 200
@@ -2411,9 +2115,6 @@ def test_a_post_holder_keeps_reading_appointing_others_restoring_and_reporting(w
 
 @needs_db
 def test_the_designer_pickers_leave_the_reader_out_only_for_a_workshop_that_exists(world):
-    """``workshopId`` says the list feeds a door on an existing workshop, where naming yourself is a
-    409; without it the list feeds a create form, and the create lets its creator name themselves —
-    no viewer row for them, their own profile on stage 1 when they lead."""
     workshop_id = _open(world, "Picked for an existing workshop")
     tag = world["tag"]
     me = _id(world, "master")
@@ -2445,16 +2146,10 @@ def test_the_designer_pickers_leave_the_reader_out_only_for_a_workshop_that_exis
     )
 
 
-# ── The record forms: which records a workshop holds is its content too (2026-10-09) ────────────
-
-#: Where a create says it was made and where its subject is — required of every create here but a
-#: process's and a questionnaire's, and read before the refusal under test is reached.
 LOCATION = {"latitude": 21.19, "longitude": 83.58, "state": "Odisha", "district": "Bargarh"}
 
 
 def _fresh_aadhaar() -> str:
-    """A Verhoeff-valid Aadhaar number nobody in a shared database is likely to hold already, so a
-    create that is ADMITTED fails on nothing but what it is testing."""
     import random
 
     from app.services.artisan_identity import verhoeff_ok
@@ -2464,7 +2159,6 @@ def _fresh_aadhaar() -> str:
 
 
 def _new_record_body(world: dict[str, Any], kind: str, workshop_id: str) -> dict[str, Any]:
-    """A complete create body for ``kind``, filed under ``workshop_id``."""
     named = {"place": "Barpali", "artisanName": "Filed by the panel", "craftName": "Sambalpuri Ikat"}
     body = {
         "artisan": {
@@ -2486,7 +2180,6 @@ def _new_record_body(world: dict[str, Any], kind: str, workshop_id: str) -> dict
 
 
 def _refile(world: dict[str, Any], kind: str, record_id: str, workshop_id: str | None, slug: str):
-    """PATCH one record's ``designWorkshopId`` as ``slug``. ``None`` unfiles it."""
     return world["client"].patch(
         f"{RECORD_PATHS[kind]}/{record_id}",
         json={"designWorkshopId": workshop_id},
@@ -2495,8 +2188,6 @@ def _refile(world: dict[str, Any], kind: str, record_id: str, workshop_id: str |
 
 
 def _filed_under(world: dict[str, Any], kind: str, workshop_id: str) -> set[str]:
-    """Which ``kind`` records the kind's own list files under ``workshop_id`` — asked by ``master``,
-    who holds no post, so the answer is the table's and not a scoped view of it."""
     response = world["client"].get(
         RECORD_PATHS[kind],
         params={"designWorkshopId": workshop_id},
@@ -2509,12 +2200,6 @@ def _filed_under(world: dict[str, Any], kind: str, workshop_id: str) -> set[str]
 @needs_db
 @pytest.mark.parametrize("kind", list(RECORD_PATHS))
 def test_a_post_holder_files_no_record_into_the_workshop_and_takes_none_out(world, kind):
-    """THE RECORD FORMS' HALF OF THE ROSTER UNLINK'S REFUSAL. Which records a workshop holds is its
-    content, so its inspector — an ADMIN, whom every record's edit gate admits on role — is refused,
-    with the write sentence, every way a record form could change that: unfiling a record, moving one
-    out, moving one in, filing a loose one in, creating one in it, and for a questionnaire form
-    copying one into it. Its Regional Director is refused the unfile too. Nothing moves and nothing
-    is created."""
     filing = world["filing"][kind]["refused"]
     held, free = filing["held"], filing["free"]
     assert _inspectors(world, held, ["admin"]).status_code == 200
@@ -2539,8 +2224,6 @@ def test_a_post_holder_files_no_record_into_the_workshop_and_takes_none_out(worl
     assert created.json()["detail"] == as_inspector
 
     if kind == "questionnaire":
-        # COPYING a form into the workshop is a filing too — the attachment door the reuse route
-        # adds — and it asks the same loader, so it is refused the same way.
         copied = world["client"].post(
             f"{RECORD_PATHS[kind]}/{filing['atFree']}/reuse",
             json={"designWorkshopId": held},
@@ -2549,8 +2232,6 @@ def test_a_post_holder_files_no_record_into_the_workshop_and_takes_none_out(worl
         assert copied.status_code == 403, copied.text
         assert copied.json()["detail"] == as_inspector
     else:
-        # A questionnaire form is changed by its owner or an admin and by nobody else, so a
-        # Ministry Admin who owns none is turned away before any workshop is asked about.
         director = _refile(world, kind, filing["atHeld"], None, "ministry")
         assert director.status_code == 403, director.text
         assert director.json()["detail"] == posts.write_refusal({"REGIONAL_DIRECTOR"})
@@ -2562,10 +2243,6 @@ def test_a_post_holder_files_no_record_into_the_workshop_and_takes_none_out(worl
 @needs_db
 @pytest.mark.parametrize("kind", list(RECORD_PATHS))
 def test_the_refusal_is_the_post_so_everybody_else_and_the_holder_off_it_still_refile(world, kind):
-    """The other half, which is what keeps the rule about the POST and not the role: on the very
-    workshop that has a holder, an administrator who serves on nothing there moves a record out,
-    unfiles it and files it back; the holder still files records that never touch their workshop,
-    creates included; and once taken off the post, the holder makes the moves they were refused."""
     filing = world["filing"][kind]["kept"]
     held, free = filing["held"], filing["free"]
     assert _inspectors(world, held, ["admin"]).status_code == 200
@@ -2596,7 +2273,6 @@ def test_the_refusal_is_the_post_so_everybody_else_and_the_holder_off_it_still_r
     assert _filed_under(world, kind, held) == {filing["atHeld"]}
 
 
-#: A PATCH that changes one ordinary field of each kind and says nothing about any workshop.
 FIELD_EDITS: dict[str, dict[str, Any]] = {
     "artisan": {"place": "Sambalpur"},
     "product": {"place": "Sambalpur"},
@@ -2610,12 +2286,6 @@ FIELD_EDITS: dict[str, dict[str, Any]] = {
 @needs_db
 @pytest.mark.parametrize("kind", list(RECORD_PATHS))
 def test_a_post_holder_edits_and_deletes_no_record_filed_under_their_workshop(world, kind):
-    """THE REST OF THE RECORD FORMS (2026-10-09). A record filed under a workshop is its content, so
-    the workshop's inspector — an ADMIN, whom every record's edit and delete gate admits on role — is
-    refused a PATCH that never mentions the workshop, and the delete; for the questionnaire form,
-    which has no delete, the deactivation, a new section and a re-upload, the last refused before
-    the workbook is read. Nothing changes. The same administrator edits the twin record on the
-    workshop next door, and ``master``, who serves on nothing, edits this one."""
     filing = world["filing"][kind]["edited"]
     held = filing["held"]
     client = world["client"]
@@ -2640,8 +2310,6 @@ def test_a_post_holder_edits_and_deletes_no_record_filed_under_their_workshop(wo
     for response in refused:
         assert response.status_code == 403, response.text
         assert response.json()["detail"] == as_inspector
-    # Every record seeded under the held workshop is still there — the interviews' set carries the
-    # merge test's sitting beside it.
     seeded = {filing[name] for name in ("atHeld", "mergeHeld") if name in filing}
     assert _filed_under(world, kind, held) == seeded, "a refused write landed"
 
@@ -2658,9 +2326,6 @@ def test_a_post_holder_edits_and_deletes_no_record_filed_under_their_workshop(wo
 
 @needs_db
 def test_a_post_holder_merges_no_sitting_on_either_side_of_their_workshop(world):
-    """A merge rewrites the target and deletes the source, so a sitting in the held workshop on
-    EITHER side refuses its inspector — before the scope refusal a cross-workshop pair would
-    otherwise get. Two sittings where nobody serves merge for the same administrator."""
     filing = world["filing"]["interview"]["edited"]
     assert _inspectors(world, filing["held"], ["admin"]).status_code == 200
     client = world["client"]
@@ -2691,8 +2356,6 @@ def test_a_post_holder_merges_no_sitting_on_either_side_of_their_workshop(world)
 
 @needs_db
 def test_a_post_holder_changes_no_artisan_link_of_a_tool_filed_under_their_workshop(world):
-    """A tool's artisan links are part of the tool: both link routes refuse its workshop's
-    inspector, and the twin tool next door takes the same link from the same administrator."""
     tools = world["filing"]["tool"]["edited"]
     artisan = world["filing"]["artisan"]["edited"]["atFree"]
     assert _inspectors(world, tools["held"], ["admin"]).status_code == 200
@@ -2716,11 +2379,6 @@ def test_a_post_holder_changes_no_artisan_link_of_a_tool_filed_under_their_works
 
 @needs_db
 def test_a_post_holder_changes_no_file_their_workshop_holds_by_any_door(world, monkeypatch):
-    """SEC-5. Every way a file belongs to a workshop, and every door that changes one: its inspector
-    — an ADMIN, whom each of these doors admits on role — is refused with the write sentence, and so
-    is its Regional Director deleting a file they uploaded themselves. Each file is still there and
-    the transcript still reads as recorded. On the workshop next door the same administrator keeps
-    every power, and ``master``, who serves on nothing, rewrites the held workshop's transcript."""
     from app.api.routes import media as media_routes
 
     files = world["media"]
@@ -2794,7 +2452,6 @@ def test_a_post_holder_changes_no_file_their_workshop_holds_by_any_door(world, m
     assert recording["transcriptEditedById"] is None
     assert removed == [], "a refused delete reached object storage"
 
-    # Next door, where nobody serves, the same administrator keeps every power.
     rewritten = client.post(
         f"/api/media/{files['freeAudio']}/transcript",
         json={"text": "Corrected on the second visit."},
@@ -2803,15 +2460,12 @@ def test_a_post_holder_changes_no_file_their_workshop_holds_by_any_door(world, m
     assert rewritten.status_code == 200, rewritten.text
     assert rewritten.json()["transcriptText"] == "Corrected on the second visit."
     assert relink("freeMoved", "unfiled", admin).status_code == 200
-    # Over Postgres, which is the point: until this test the STORE arm had only ever met an
-    # in-memory store, and it answered 500 against the real Json column.
     kept = decide("freeKept", "STORE")
     assert kept.status_code == 200, kept.text
     assert kept.json()["retention"]["decision"] == "STORE"
     deleted = client.delete(f"/api/media/{files['freeDeleted']}", headers=admin)
     assert deleted.status_code == 204, deleted.text
     assert removed == [f"media/{_id(world, 'master')}/serve-as-{world['tag']}-free-deleted"]
-    # And on the held workshop itself, an administrator who serves on nothing there.
     by_master = client.post(
         f"/api/media/{files['filed']}/transcript",
         json={"text": "Corrected by the master admin."},
@@ -2824,11 +2478,6 @@ def test_a_post_holder_changes_no_file_their_workshop_holds_by_any_door(world, m
 def test_a_post_holder_who_scans_their_workshops_join_card_lands_provisional_and_spends_nothing(
     world,
 ):
-    """tests-docs/F3. The workshop's inspector may not hold designer access to it, so scanning its
-    card lands them as a capture-only foothold — the redemption's INELIGIBLE arm, reached through
-    the viewers rule's 409 and not its 422 — and the card's one seat is still there for somebody
-    else. A MINISTRY_ADMIN, because a platform admin is "already a member" of every workshop and
-    never reaches the question."""
     workshop_id = _open(world, "Join card while serving")
     client = world["client"]
     assert _inspectors(world, workshop_id, ["ministry"]).status_code == 200
@@ -2846,7 +2495,6 @@ def test_a_post_holder_who_scans_their_workshops_join_card_lands_provisional_and
     )
     assert scanned.status_code == 200, scanned.text
     assert (scanned.json()["outcome"], scanned.json()["reason"]) == ("PROVISIONAL", "INELIGIBLE")
-    # The card was NOT used, so the answer must not say it was — and it names no post either.
     assert "already been used" not in scanned.json()["detail"], scanned.json()["detail"]
     assert "the card was not used up" in scanned.json()["detail"]
     assert "inspector" not in scanned.json()["detail"]
@@ -2863,11 +2511,8 @@ def test_a_post_holder_who_scans_their_workshops_join_card_lands_provisional_and
     assert _id(world, "ministry") not in {row["userId"] for row in viewers.json()["viewers"]}
 
 
-# ── The later doors: the review queue, a new upload, a retried job (2026-10-09) ──────────────────
-
 
 def _read_back(world: dict[str, Any], review_type: str, record_id: str) -> dict[str, Any]:
-    """One reviewed record, as ``master`` — who serves on nothing — reads it through its route."""
     path = "/api/media" if review_type == "media" else RECORD_PATHS[REVIEWED[review_type][0]]
     response = world["client"].get(f"{path}/{record_id}", headers=_headers(world, "master"))
     assert response.status_code == 200, response.text
@@ -2877,12 +2522,6 @@ def _read_back(world: dict[str, Any], review_type: str, record_id: str) -> dict[
 @needs_db
 @pytest.mark.parametrize("review_type", list(REVIEWED))
 def test_a_post_holder_rewrites_nothing_of_their_workshop_from_the_review_queue(world, review_type):
-    """``POST /api/review/{type}/{id}/edit`` writes a record's fields and a file's caption, and it
-    asked nothing about the workshop. The workshop's inspector — an ADMIN, whom the edit's rank gate
-    admits over a designer's work — is refused with the write sentence for every record type and for
-    a file, and nothing changes. The same administrator corrects the twin next door, ``master``
-    corrects this one, and nobody re-files anything from the queue: ``designWorkshopId`` is a
-    422."""
     doors = world["doors"]
     held, free = doors["held"], doors["free"]
     assert _inspectors(world, held, ["admin"]).status_code == 200
@@ -2918,11 +2557,6 @@ def test_a_post_holder_rewrites_nothing_of_their_workshop_from_the_review_queue(
 
 @needs_db
 def test_a_post_holder_uploads_no_new_file_into_their_workshop(world, monkeypatch):
-    """``POST /api/media/complete`` is the door that ADDS a file, and a file tagged to a workshop or
-    attached to a record filed under it is that workshop's content. Its inspector is refused both,
-    with the write sentence, and nothing is created — a second try at the same key is refused again
-    rather than answered as the replay of a row that exists. The same administrator uploads into
-    the workshop next door, and ``master`` into this one."""
     from app.api.routes import media as media_routes
 
     monkeypatch.setattr(media_routes, "head_object", lambda _key: None)
@@ -2965,11 +2599,6 @@ def test_a_post_holder_uploads_no_new_file_into_their_workshop(world, monkeypatc
 
 @needs_db
 def test_a_post_holder_requeues_no_transcription_of_their_workshops_recording(world):
-    """``POST /api/media/jobs/{id}/retry`` sends a recording back to the provider, and the queue
-    writes the answer onto it as its transcript — ``transcribe-now``'s write, deferred. The
-    workshop's inspector is refused it, and the job is untouched: ``master`` requeues it straight
-    afterwards, which only a job still FAILED allows. The same administrator requeues the recording
-    next door."""
     doors = world["doors"]
     assert _inspectors(world, doors["held"], ["admin"]).status_code == 200
     client = world["client"]
@@ -2991,11 +2620,8 @@ def test_a_post_holder_requeues_no_transcription_of_their_workshops_recording(wo
     assert next_door.json()["status"] == "QUEUED"
 
 
-# ── The unfiled-records report (2026-10-09) ──────────────────────────────────────────────────────
-
 
 def _unfiled(world: dict[str, Any], method: str, bucket: str, name: str, slug: str, **body: Any):
-    """One single-row door of ``/api/workshops/unmapped``, on the seeded row called ``name``."""
     path = f"/api/workshops/unmapped/{bucket}/{world['unfiled'][name]}"
     send = world["client"].delete if method == "DELETE" else world["client"].post
     kwargs: dict[str, Any] = {"headers": _headers(world, slug)}
@@ -3005,7 +2631,6 @@ def _unfiled(world: dict[str, Any], method: str, bucket: str, name: str, slug: s
 
 
 def _crafts_workshop_of(world: dict[str, Any], bucket: str, name: str) -> str | None:
-    """The crafts ``workshopId`` the seeded row called ``name`` carries now, read by ``master``."""
     path = {"media": "/api/media", "products": "/api/products", "artisans": "/api/artisans"}[bucket]
     response = world["client"].get(
         f"{path}/{world['unfiled'][name]}", headers=_headers(world, "master")
@@ -3016,11 +2641,6 @@ def _crafts_workshop_of(world: dict[str, Any], bucket: str, name: str) -> str | 
 
 @needs_db
 def test_the_unfiled_report_lists_no_row_a_design_workshop_claims(world):
-    """Asked of the real ladder in the seed. A record filed under a design workshop and a file filed
-    under one, or tagged to one in either spelling, are not "unfiled" and are not listed; a file the
-    workshop holds only through a stage entry or the record it hangs off is still listed, and the
-    single-row doors answer for it. Rows nothing claims — a file with no tag, a file whose tag names
-    an artisan filed nowhere — are listed as they always were."""
     listed = world["unfiled"]["listed"]
     for name in ("tagged", "taggedLower", "filed", "filedArtisan", "filedProduct"):
         assert listed[name] is False, f"{name} is claimed by a design workshop and was listed"
@@ -3030,10 +2650,6 @@ def test_the_unfiled_report_lists_no_row_a_design_workshop_claims(world):
 
 @needs_db
 def test_the_batched_holder_question_answers_exactly_what_the_file_by_file_one_does(world):
-    """``media_held_among`` asks each of the five ways once for many files; held equal, in the seed,
-    to ``media_design_workshop_ids`` file by file over every file this module seeds — tagged, held
-    by an IMAGE field, inside a RICH_TEXT field, filed, hanging off an artisan or a product — and
-    the controls nothing claims."""
     parity = world["unfiled"]["parity"]
     assert parity["batched"] == parity["fileByFile"]
     media, unfiled = world["media"], world["unfiled"]
@@ -3051,12 +2667,6 @@ def test_the_batched_holder_question_answers_exactly_what_the_file_by_file_one_d
 
 @needs_db
 def test_nobody_discards_from_the_unfiled_report_a_row_a_design_workshop_claims(world, monkeypatch):
-    """D6-UNMAPPED-DISCARD. The report offered ``Delete permanently`` on a workshop's stage photos,
-    its roster artisans and the records filed under it, by a door no rule of the workshop's watched.
-    Its inspector — an ADMIN, whom ``require_admin`` admits — is refused with the write sentence;
-    every other administrator with a 409 naming the workshop and sending them to the record's own
-    screen. Nothing is deleted and storage is not touched. A row nothing claims is still deleted —
-    by the holder too, which shows the refusal is the workshop's and not the caller's."""
     from app.services import workshop_inference
 
     held = world["unfiled"]["held"]
@@ -3096,10 +2706,6 @@ def test_nobody_discards_from_the_unfiled_report_a_row_a_design_workshop_claims(
 
 @needs_db
 def test_a_post_holder_files_no_row_of_their_workshop_from_the_unfiled_report(world):
-    """D6-UNMAPPED-FILE. The single-row file wrote ``workshopId`` onto a record filed under the
-    workshop, and onto a file it holds, for its inspector — writes the record form and the media
-    doors refuse them. Refused now with the write sentence, and nothing is written. The holder still
-    files a row nothing claims, and an administrator serving on nothing there files as before."""
     unfiled = world["unfiled"]
     assert _inspectors(world, unfiled["held"], ["admin"]).status_code == 200
     target = {"workshopId": unfiled["crafts"]}
@@ -3118,12 +2724,6 @@ def test_a_post_holder_files_no_row_of_their_workshop_from_the_unfiled_report(wo
 
 @needs_db
 def test_a_holders_bulk_map_leaves_their_workshops_rows_alone_and_says_so(world, monkeypatch):
-    """D6-UNMAPPED-FILE's bulk half. The plan is the server's own, so a holder's run is not refused
-    whole: the rows of their workshop — a record filed under it, a file hanging off a record filed
-    under it — are left alone and counted as ``heldBack``, with the sentence for the screen, and
-    everything else is stamped. The same run by an administrator serving on nothing there stamps
-    the rows the holder's left. The ladder is replaced by one naming only these rows, so the run
-    writes nothing outside this module's fixture."""
     from app.services import workshop_inference as inference
 
     unfiled = world["unfiled"]
@@ -3177,16 +2777,9 @@ def test_a_holders_bulk_map_leaves_their_workshops_rows_alone_and_says_so(world,
     assert _crafts_workshop_of(world, "products", "mapRecordHeld") == crafts
 
 
-# ── Nobody takes themselves off a post (2026-10-09) ──────────────────────────────────────────────
-
 
 @needs_db
 def test_nobody_takes_themselves_off_an_inspection_or_oversight_post(world):
-    """D6-SELF-RELEASE. The 403 a holder reads says to ask whoever made the appointment to take them
-    off; until now a holder could take themselves off in one call and then write the workshop, the
-    deleted row the only record they held it. Refused now (409) for the inspector panel, the AD slot
-    and the RD slot — emptied or handed to somebody else — and nothing changes. A holder still takes
-    OTHER people off, and another assigner takes the holder off."""
     workshop_id = _open(world, "Nobody takes themselves off")
     client, master = world["client"], _headers(world, "master")
     assert _inspectors(world, workshop_id, ["admin"]).status_code == 200
@@ -3221,7 +2814,6 @@ def test_nobody_takes_themselves_off_an_inspection_or_oversight_post(world):
         "REGIONAL_DIRECTOR": _id(world, "master2"),
     }, "a refused release changed a slot"
 
-    # The Assistant Director takes the inspector off; the master admin takes both directors off.
     assert _inspectors(world, workshop_id, [], as_slug="ministry").status_code == 200
     assert panel() == []
     assert _officers(world, workshop_id, ad=None, rd=None).status_code == 200

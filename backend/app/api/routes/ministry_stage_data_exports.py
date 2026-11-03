@@ -1,15 +1,3 @@
-"""``/api/ministry-dashboard/stage-data-exports`` — the background stage-data export (C15).
-
-Its own module and not a route in ``ministry_dashboard.py``, because that router is read-only by
-construction (every route a GET, swept by ``tests/test_ministry_dashboard_gate.py``) and its
-register CSV is pinned to carry no stage content. This one is the deliberate exception the owner
-ruled for on 2026-10-17: stage data, with identity numbers masked, built in the background. See
-``services/ministry_export.py``.
-
-THE SAME DOOR as the dashboard (``require_ministry_dashboard_reader``), and every job belongs to the
-account that asked: another reader's job is a 404, byte-identical to one that does not exist.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -32,8 +20,6 @@ PENDING_REFUSAL = (
 
 
 class StageDataExportRequest(APIModel):
-    """The dashboard's narrowing at the moment the reader asked. All optional: none is everything."""
-
     search: str | None = Field(default=None, max_length=120)
     standing: str | None = Field(default=None, max_length=32)
     attention: str | None = Field(default=None, max_length=32)
@@ -52,7 +38,6 @@ async def request_stage_data_export(
     payload: StageDataExportRequest,
     current_user: Any = Depends(require_ministry_dashboard_reader),
 ) -> dict[str, Any]:
-    """Queue one export. Answered at once; the queue worker builds the file."""
     pending = await db.ministrydataexport.count(
         where={
             "requestedById": current_user.id,
@@ -74,7 +59,6 @@ async def request_stage_data_export(
 async def list_stage_data_exports(
     current_user: Any = Depends(require_ministry_dashboard_reader),
 ) -> dict[str, Any]:
-    """The caller's own exports, newest first. The file is never in this list — nor read for it."""
     return {
         "items": await exports.list_jobs(str(current_user.id)),
         "keepDays": exports.EXPORT_TTL_DAYS,

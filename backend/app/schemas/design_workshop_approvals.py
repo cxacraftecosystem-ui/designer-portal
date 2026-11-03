@@ -1,48 +1,3 @@
-"""THE APPROVING AUTHORITY'S DECISIONS, PLANNED: approve, send back or withdraw, hand on.
-
-The owner's requirement ends: *"This iterative review loop continues until the sanctioning authority
-is satisfied and clicks 'approve'."* ``schemas/design_workshop_review_loop`` owns the status graph and
-the inspector's send-back; this module owns what each of the approving authority's decisions WRITES,
-the sentences each refusal says, and the bodies the routes accept. ``core/deps.APPROVAL_AUTHORITY_ROLES``
-and rule 7 of ``services/design_workshop_posts`` decide WHO; ``api/routes/design_workshop_approvals.py``
-is the wire.
-
-=======================================================================================
-WHY THIS MODULE IS PURE, AND WHY IT IS HERE
-=======================================================================================
-
-For the review-loop module's reason, which this file is the other half of: every rule below is
-assertable with no database, no event loop and no generated client, which is what lets
-``tests/test_design_workshop_approvals.py`` run in CI's Backend tests job, where there is no
-Postgres. ``records.review_update`` is imported INSIDE the builders that need it, because
-``services/records`` imports ``app.core.db`` at module level. ``test_design_workshop_review_loop.py``
-predicted this file by name, and its sweep of ``*_plans`` builders reaches this module too.
-
-=======================================================================================
-HOW A DECISION IS RECORDED
-=======================================================================================
-
-Every decision is three things in ONE transaction: a compare-and-set update of the workshop (its
-WHERE carries the state the decision was taken against, so a decision that lost a race writes
-nothing), a ``ReviewLog`` row, and — for the decisions that put the report back on its designers'
-desk — a correction-suggestion row in the register they read. ``ReviewLog`` is the one ledger this
-product has and is not changed: its ``status`` is ``RecordStatus``, so a decision says what it was the
-way ``api/routes/review.py`` marks a reviewer's edit, with a prefix on ``notes`` —
-
-    APPROVED                                   an approval (its note, if any)
-    APPROVED        "HANDED_ON: …"             a hand-on: the report's review standing stays approved
-    NEEDS_REVISION                             an inspector's send-back
-    NEEDS_REVISION  "RETURNED_BY_APPROVER: …"  sent back by the approving authority without approval
-    NEEDS_REVISION  "APPROVAL_WITHDRAWN: …"    an approval withdrawn, before or after the hand-on
-
-— and :func:`decision_history_payload` decodes the pair back into what a screen says.
-
-Handing a report on RECORDS that it went, to which office, by whom and — when the authority picked
-one — which exported file, by its checksum. Since 2026-10-18 each decision also e-mails the
-workshop's designers afterwards, and ``/approve-and-hand-on`` e-mails the office an expiring link to
-the file (``services/report_delivery``) — always after the transaction, never inside it.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -69,38 +24,26 @@ from app.schemas.design_workshop_review_loop import (
     SendBackPlans,
 )
 
-# ── THE VOCABULARY ───────────────────────────────────────────────────────────────────────────────
-
-#: The ``ReviewLog.notes`` prefixes, spelled as ``api/routes/review.py`` spells ``EDITED``.
 HANDED_ON = "HANDED_ON"
 APPROVAL_WITHDRAWN = "APPROVAL_WITHDRAWN"
 RETURNED_BY_APPROVER = "RETURNED_BY_APPROVER"
 
-#: What ``/revise`` does from each state, as the detail read names it.
 RETURN = "RETURN"
 WITHDRAW = "WITHDRAW"
 RETURN_FROM_OFFICE = "RETURN_FROM_OFFICE"
 
-#: What one row of the decision history is, once decoded.
 KIND_APPROVED = "APPROVED"
 KIND_APPROVAL_WITHDRAWN = "APPROVAL_WITHDRAWN"
 KIND_RETURNED = "RETURNED"
 KIND_SENT_BACK = "SENT_BACK"
 KIND_HANDED_ON = "HANDED_ON"
 
-#: Where a report goes when nobody has said otherwise: the DCH template is "for submission to the
-#: Development Commissioner (Handicrafts)", and this is that template's own organisation line
-#: (``services/report_templates.py``). Stage 20's "Submitted to" answer wins when the designer gave
-#: one.
 DEFAULT_OFFICE = "Office of the Development Commissioner (Handicrafts)"
 
-#: The longest note a decision may carry — a suggestion's cap, so both registers hold the same size.
 MAX_DECISION_NOTE_CHARS = MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS
 
-#: The longest office name a hand-on may record: stage 20's "Submitted to" box allows the same.
 MAX_HANDED_ON_TO_CHARS = 220
 
-#: How the two approving roles are named on a report's certification line.
 APPROVER_ROLE_LABELS: Mapping[str, str] = {
     "MINISTRY_ADMIN": "Ministry Admin",
     "MASTER_ADMIN": "Master Admin",
@@ -108,31 +51,18 @@ APPROVER_ROLE_LABELS: Mapping[str, str] = {
 
 
 def role_label(role: str | None) -> str:
-    """The approver's role as a report prints it: the two labels above, else the token in words."""
     token = str(role or "").strip()
     if token in APPROVER_ROLE_LABELS:
         return APPROVER_ROLE_LABELS[token]
     return token.replace("_", " ").title() if token else ""
 
 
-# ── THE FREEZE ───────────────────────────────────────────────────────────────────────────────────
-
 
 def is_frozen(status_value: Any, handed_on_at: Any) -> bool:
-    """May this report's CONTENT still change? Not once it is approved, nor once it is handed on.
-
-    **AN APPROVAL THAT DOES NOT COVER THE CONTENT IT NAMES IS NOT AN APPROVAL**, so from the moment a
-    report is APPROVED until the approval is withdrawn every content write is refused, and a report
-    handed on to the office stays that way until the authority returns it. A LEGACY SUBMITTED row —
-    the word's meaning before 2026-09-13, ``handedOnAt`` null — was never approved here and stays as
-    writable as it always was.
-    """
     current = str(getattr(status_value, "value", status_value) or "")
     return current == APPROVED or (current == SUBMITTED and handed_on_at is not None)
 
 
-#: What every content write is told while the report is frozen (403). The designer's next move, and
-#: whose it is, in the designer's terms.
 FROZEN_APPROVED = (
     "This report has been approved, so it can no longer be changed. If something in it needs "
     "correcting, ask the Ministry Admin to withdraw the approval; it then comes back to its designers "
@@ -144,10 +74,6 @@ FROZEN_HANDED_ON = (
 )
 
 
-#: :func:`is_frozen` as a Prisma filter, for the writes that must not land on a frozen report even
-#: when the approval committed after their read: ``save_stage``'s header write and the header edit
-#: carry ``{"NOT": FROZEN_WHERE}`` in their WHERE and refuse on a zero count. Two keys in one dict are
-#: an AND, so the second arm is "SUBMITTED and handed on" — a legacy SUBMITTED row does not match.
 FROZEN_WHERE: Mapping[str, Any] = {
     "OR": [
         {"status": APPROVED},
@@ -157,26 +83,19 @@ FROZEN_WHERE: Mapping[str, Any] = {
 
 
 def frozen_refusal(status_value: Any, handed_on_at: Any) -> str | None:
-    """The 403 sentence for a content write on a frozen report, or ``None`` when it is not frozen."""
     if not is_frozen(status_value, handed_on_at):
         return None
     current = str(getattr(status_value, "value", status_value) or "")
     return FROZEN_APPROVED if current == APPROVED else FROZEN_HANDED_ON
 
 
-# ── WHERE THE REPORT STANDS, PER VERB ────────────────────────────────────────────────────────────
-
-#: 409 when the compare-and-set matched nothing, or the round/read stamp the authority decided
-#: against is no longer the report's: somebody moved it, or its designers changed it, in between.
 CHANGED_AFTER_OPENED = (
     "This report changed after you opened it, so nothing was written. Reload it and read it again "
     "before deciding."
 )
 
-#: 409 for a hand-on of a report that has already been handed on.
 ALREADY_HANDED_ON = "This report has already been handed on to the office. Nothing was written."
 
-#: 422 for a send-back or withdrawal with no sentence.
 REVISE_NOTE_REQUIRED = (
     "Say what needs correcting. The sentence goes to the designers as written, and without one they "
     "are told only that the report came back."
@@ -188,8 +107,6 @@ def _spoken(status_value: str) -> str:
 
 
 def approve_refusal(status_value: str, *, handed_on: bool) -> str | None:
-    """Why a report in this state cannot be approved (422), or ``None`` — PRE_SUBMISSION, or APPROVED,
-    which the route answers as a no-op rather than a refusal (a no-op is never a refusal)."""
     if status_value in (PRE_SUBMISSION, APPROVED):
         return None
     if status_value == NEEDS_REVISION:
@@ -206,8 +123,6 @@ def approve_refusal(status_value: str, *, handed_on: bool) -> str | None:
 
 
 def revise_kind(status_value: str, *, handed_on: bool) -> str | None:
-    """What ``/revise`` would do from this state — :data:`RETURN`, :data:`WITHDRAW`,
-    :data:`RETURN_FROM_OFFICE` — or ``None`` when it does nothing from here."""
     if status_value in UNDER_REVIEW:
         return RETURN
     if status_value == APPROVED:
@@ -218,7 +133,6 @@ def revise_kind(status_value: str, *, handed_on: bool) -> str | None:
 
 
 def revise_refusal(status_value: str, *, handed_on: bool) -> str | None:
-    """Why ``/revise`` cannot be taken from this state (422), or ``None``."""
     if revise_kind(status_value, handed_on=handed_on) is not None:
         return None
     if status_value == SUBMITTED:
@@ -233,7 +147,6 @@ def revise_refusal(status_value: str, *, handed_on: bool) -> str | None:
 
 
 def hand_on_refusal(status_value: str, *, handed_on: bool) -> tuple[int, str] | None:
-    """Why this report cannot be handed on, with its status code, or ``None`` when it is APPROVED."""
     if status_value == APPROVED:
         return None
     if status_value == SUBMITTED and handed_on:
@@ -244,68 +157,34 @@ def hand_on_refusal(status_value: str, *, handed_on: bool) -> tuple[int, str] | 
     )
 
 
-# ── THE WIRE ─────────────────────────────────────────────────────────────────────────────────────
-
 
 class DwApproveIn(BaseModel):
-    """POST to approve a report in Pre-submission.
-
-    ``round`` and ``readAt`` ARE THE REPORT AS THE AUTHORITY READ IT — its ``submissionRound`` and
-    its ``updatedAt`` from the detail read — and both go into the compare-and-set. Every stage save
-    moves ``updatedAt``, so an approval can never cover content its approver did not see: a save in
-    between makes the write match nothing and the answer is a 409 asking for a reload. ``note`` is
-    optional and is kept with the decision.
-    """
-
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     round: int = Field(ge=1)
     readAt: str = Field(min_length=1, max_length=64)
 
 
 class DwDecisionNoteIn(BaseModel):
-    """One field note carried by a send-back (B2): the sentence and what it is about."""
-
     note: str = Field(min_length=1, max_length=MAX_DECISION_NOTE_CHARS)
     stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
 
 
 class DwReviseIn(BaseModel):
-    """POST to send a report back without approving it, withdraw an approval, or return a report
-    that has been handed on — whichever the report's state makes it (``reviseKind`` on the read).
-
-    ``note`` IS MANDATORY and is refused blank in the plan, with :data:`REVISE_NOTE_REQUIRED`, so an
-    absent note and an empty one are told the same sentence. It goes to the designers as written, in
-    the same register as an inspector's corrections, optionally about one stage.
-    """
-
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
-    #: The reader's tray of field notes (B2, 2026-10-17). With notes the sentence above is optional.
     notes: list[DwDecisionNoteIn] = Field(default_factory=list, max_length=MAX_BATCH_NOTES)
 
 
 class DwHandOnIn(BaseModel):
-    """POST to hand an approved report on to the office.
-
-    ``handedOnTo`` defaults to stage 20's "Submitted to", else :data:`DEFAULT_OFFICE`. ``exportId``
-    pins the exported file that went — a ``DwReportExport`` row of this workshop generated at or after
-    the approval. ``note`` is optional — how, or under which reference, it went.
-    """
-
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     handedOnTo: str | None = Field(default=None, max_length=MAX_HANDED_ON_TO_CHARS)
     exportId: str | None = Field(default=None, max_length=64)
 
 
-# ── THE PLANS ────────────────────────────────────────────────────────────────────────────────────
-
 
 class DwApproveAndHandOnIn(BaseModel):
-    """"Approve and hand on" (2026-10-18). ``round`` and ``readAt`` are the approval's guard and are
-    required when the report is still waiting; an already-approved report needs neither."""
-
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     round: int | None = Field(default=None, ge=1)
     readAt: str | None = Field(default=None, max_length=64)
@@ -315,17 +194,10 @@ class DwApproveAndHandOnIn(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class DecisionPlans:
-    """The writes one decision makes, iterable in the order the route applies them: the guarded
-    workshop update FIRST, so a decision that lost a race is found out before anything is inserted;
-    then the correction row (only for the decisions that send the report back); then the audit row.
-    """
-
     workshop: InspectionWritePlan
     log: InspectionWritePlan
     feedback: InspectionWritePlan | None = None
-    #: The further notes of a batch send-back (B2), filed after ``feedback``.
     extra: tuple[InspectionWritePlan, ...] = ()
-    #: The batch's notes as one numbered text, for the designers' e-mail; None for a single note.
     digest: str | None = None
 
     def __iter__(self):
@@ -338,7 +210,6 @@ class DecisionPlans:
 
 
 def _round(round: int) -> int:
-    """The round copied off the workshop, refusing the zero that means the copy was skipped."""
     if int(round) < 1:
         raise InspectionRuleViolation(
             "A decision belongs to a submission cycle, and this workshop's counter reads zero — which "
@@ -383,13 +254,6 @@ def approve_plans(
     note: str | None = None,
     read_at: datetime | None = None,
 ) -> DecisionPlans:
-    """PRE_SUBMISSION -> APPROVED. Two writes; no correction row.
-
-    THE WORKSHOP WRITE IS ``records.review_update`` — the decision cache every screen already reads —
-    plus the approval's own keys: who, when (the cache's own moment, so the two never disagree), and
-    the round. GUARDED on ``(id, PRE_SUBMISSION, round, not deleted)`` and, when the route passes the
-    read stamp, on ``updatedAt`` too: what is approved is exactly what was read.
-    """
     from app.services.records import review_update
 
     cycle = _round(round)
@@ -431,24 +295,6 @@ def revise_plans(
     field_key: str | None = None,
     notes: list[tuple[str | None, str | None, str | None]] | None = None,
 ) -> DecisionPlans:
-    """Back to NEEDS_REVISION, with a mandatory sentence: whichever of the three the state makes it.
-
-    ``notes`` (B2) is a batch of ``(note, stage, field)``: with it the sentence becomes an optional
-    covering note, every note is filed in the same transaction, and the first row is the one marked
-    as sending the report back.
-
-    * **RETURN** (from PRE_SUBMISSION, or NEEDS_REVISION as a no-op that still files the sentence):
-      the inspector's ``send_back_plans`` VERBATIM, its suggestion marked as the authority's and its
-      audit note prefixed ``RETURNED_BY_APPROVER``, guarded on the report still being under review.
-    * **WITHDRAW** (from APPROVED) and **RETURN_FROM_OFFICE** (from a handed-on SUBMITTED — R1): the
-      sentence becomes a correction row with ``sentBack`` and ``byApprovingAuthority`` true, filed
-      against the round the report was approved in — at least 1 by construction, because APPROVED is
-      reachable only from PRE_SUBMISSION, so the ``round >= 1`` CHECK the send-back satisfies is
-      satisfied here too. The decision cache is ``records.review_update`` and EVERY approval and
-      hand-on key is cleared: the report is no longer approved or handed on, and the next approval
-      sets them afresh. The audit note is prefixed ``APPROVAL_WITHDRAWN``. Guarded on the state it was
-      taken from.
-    """
     from app.services.records import review_update
 
     cycle = _round(round)
@@ -539,7 +385,6 @@ def _revise_batch_plans(
     kind: str,
     current_status: str,
 ) -> DecisionPlans:
-    """:func:`revise_plans` carrying a batch: the same guards and cache writes, every note filed."""
     from app.services.records import review_update
 
     if kind == RETURN:
@@ -614,17 +459,6 @@ def hand_on_plans(
     handed_on_to: str | None = None,
     export_id: str | None = None,
 ) -> DecisionPlans:
-    """APPROVED -> SUBMITTED: the approved report is recorded as handed on to the office.
-
-    The decision cache becomes the hand-on (``records.review_update``), the approval keys stay as the
-    approval left them — "approved by X on the 11th" survives into SUBMITTED, which is why they are
-    columns — and the hand-on's own keys say who, when, to which office and with which exported file.
-
-    ``ReviewLog.status`` IS ``APPROVED``, not ``SUBMITTED``: the report's review standing is still
-    approved, ``SUBMITTED`` is not a ``RecordStatus`` token, and the row says what happened with its
-    ``HANDED_ON`` prefix — which carries the office, so the history keeps it after a return clears the
-    column. GUARDED on ``(id, APPROVED, round, not deleted)``.
-    """
     from app.services.records import review_update
 
     cycle = _round(round)
@@ -657,8 +491,6 @@ def hand_on_plans(
     return DecisionPlans(workshop=workshop, log=log)
 
 
-# ── THE READ BACK ────────────────────────────────────────────────────────────────────────────────
-
 
 def _iso(moment: Any) -> str | None:
     return moment.isoformat() if isinstance(moment, datetime) else None
@@ -674,12 +506,6 @@ def _split(notes: str | None, prefix: str) -> tuple[bool, str | None]:
 
 
 def decision_row_payload(row: Any) -> dict[str, Any] | None:
-    """One ``ReviewLog`` row of a design workshop as a decision a screen can name, or ``None`` for a
-    row this decoder does not recognise (it is left out rather than mislabelled).
-
-    ``actorName`` arrives on the row (``include={"reviewer": True}``) and can be ``None`` — a blank
-    name — which a screen prints as "an account no longer named", never a guess.
-    """
     status_value = str(getattr(getattr(row, "status", None), "value", getattr(row, "status", "")) or "")
     notes = getattr(row, "notes", None)
     if status_value == APPROVED:
@@ -708,6 +534,5 @@ def decision_row_payload(row: Any) -> dict[str, Any] | None:
 
 
 def decision_history_payload(rows: Iterable[Any]) -> list[dict[str, Any]]:
-    """Every recognised decision, in the order the rows were given (the reader asks newest first)."""
     decoded = (decision_row_payload(row) for row in rows)
     return [item for item in decoded if item is not None]

@@ -1,15 +1,3 @@
-"""UIDAI's error codes, as the person in front of the screen should read them.
-
-The codes are from Aadhaar Authentication API 2.5 Revision 1 (January 2022), OTP Request API 2.5,
-e-KYC API 2.5 and Circular 3/2026 (pre-production quotas). Every message names the next action and
-never repeats a number. Codes this table does not list fall back to ``GENERIC``, and the code itself
-is kept for the audit line (``AadhaarError.code`` = ``uidai_<code>``).
-
-Two audiences: ``RESIDENT`` messages are shown to the person verifying; ``OPERATOR`` codes mean the
-deployment is misconfigured, so the person is told to try another method and the operator's log
-carries the code.
-"""
-
 from __future__ import annotations
 
 GENERIC = "UIDAI could not verify this Aadhaar just now. Try again, or verify with the QR code or the offline e-KYC file."
@@ -19,7 +7,6 @@ OPERATOR_PROBLEM = (
 )
 
 RESIDENT: dict[str, str] = {
-    # OTP request
     "110": "This Aadhaar has no e-mail address registered with UIDAI. Use the SMS code instead.",
     "111": "This Aadhaar has no mobile number registered with UIDAI, so no code can be sent. Use the QR code or the offline e-KYC file.",
     "112": "This Aadhaar has neither a mobile number nor an e-mail address registered with UIDAI. Use the QR code or the offline e-KYC file.",
@@ -29,7 +16,6 @@ RESIDENT: dict[str, str] = {
     "950": "UIDAI could not send the code. Wait a minute and ask for a new one.",
     "952": "A code was asked for moments ago. Wait 30 seconds before asking again.",
     "953": "Too many codes have been asked for this Aadhaar. UIDAI has paused it for 30 minutes.",
-    # Auth
     "100": "UIDAI says the name on this record does not match the name on the Aadhaar. Check the name, or verify with the QR code or the offline e-KYC file.",
     "330": "This Aadhaar holder has locked their biometrics. That does not affect the code — try again.",
     "331": "This Aadhaar number is locked by its holder. Use the Virtual ID (VID) instead.",
@@ -46,12 +32,10 @@ RESIDENT: dict[str, str] = {
     "996": "This Aadhaar has been cancelled and cannot be verified.",
     "997": "This Aadhaar is suspended and cannot be verified.",
     "998": "That number is not a valid Aadhaar or Virtual ID. Check the digits.",
-    # e-KYC
     "K-100": "UIDAI could not authenticate this Aadhaar for e-KYC. Check the code and try again.",
     "K-955": "UIDAI's e-KYC service had a problem. Try again in a few minutes.",
 }
 
-#: Codes that mean THIS SERVER is set up wrongly — licence keys, AUA code, certificates, signing.
 OPERATOR: frozenset[str] = frozenset(
     {
         "500", "501", "502", "503", "504", "505", "510", "511", "512", "513", "520", "521",
@@ -65,7 +49,6 @@ OPERATOR: frozenset[str] = frozenset(
 
 
 def message_for(code: str | None) -> tuple[str, bool]:
-    """(message, is_operator_problem) for a UIDAI error code."""
     key = (code or "").strip()
     if key in OPERATOR:
         return OPERATOR_PROBLEM, True

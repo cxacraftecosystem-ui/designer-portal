@@ -1,23 +1,3 @@
-"""The coverage map: what the programme has reached, district by district, and where the gaps are.
-
-``/map/points`` (``map_points.py``) plots records where they are. These routes fold the same corpus
-into LGD units (``services/lgd``) so a ministry reader can see COVERAGE: design workshops held and
-planned, field records per district, the shared crafts nobody has documented, and the districts no
-workshop has reached. The folding lives in ``services/coverage``; this module is the doors.
-
-WHO MAY ASK. The ministry's readers (``require_ministry_dashboard_reader``): Ministry Admin and the
-master admin see the whole country; an Assistant or Regional Director sees the design workshops they
-were named on (``ministry_dashboard.scope_clause``), the plan rows of their states
-(``annual_plan.plan_scope``), and only units in those states.
-
-WHO MAY MAP A PLACE. A free-text state or district that does not resolve is listed for the master
-admin and the Ministry Admin, who can map that spelling to an LGD code once (``GeoAlias``). Nothing is
-matched fuzzily or automatically. Every alias write is a ``RecordRevision`` and can be deleted.
-
-NAMES ONLY. The stubs carry an id, a title, a link, a craft code and a financial year. Aadhaar,
-Pehchan, phone and address text are never read into them.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -35,8 +15,6 @@ from app.services.access import record_revision
 
 router = APIRouter(prefix="/map", tags=["map"])
 
-#: Who may map a place spelling to an LGD code: the content admins (``deps.CONTENT_ADMIN_ROLES``,
-#: 2026-10-20). ADMIN joined the master admin and the Ministry Admin that day.
 PLACE_MAPPING_ROLES = CONTENT_ADMIN_ROLES
 
 PLACE_MAPPING_REFUSAL = "Only an admin can map place names."
@@ -73,14 +51,11 @@ def _filters(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from None
 
 
-#: What the choropleth colours by, by the name both portals use. ``records`` was this portal's name
-#: for ``all`` and is still accepted, so a saved link keeps working; the answer always says ``all``.
 COVERAGE_METRICS = ("workshops", "artisans", "all")
 COVERAGE_METRIC_ALIASES = {"records": "all"}
 
 
 def normalise_metric(value: str | None) -> str:
-    """The metric a request asked for, in the shared vocabulary. Anything unknown is ``workshops``."""
     name = (value or "").strip().lower()
     name = COVERAGE_METRIC_ALIASES.get(name, name)
     return name if name in COVERAGE_METRICS else "workshops"

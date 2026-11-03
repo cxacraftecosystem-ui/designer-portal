@@ -1,36 +1,3 @@
-"""One artisan's questionnaire, gathered from every interview they sat in, as a single document.
-
-WHY THIS EXISTS. An interview belongs to an exact SET of artisans at an exact WORKSHOP —
-``artisanSetKey`` is the workshop scope followed by the sorted, comma-joined artisan ids, under a
-unique constraint, and a subset is a different set, so it gets its own entry. That storage rule is
-correct and is NOT changed here: it is what stops five clients recording the same sitting five times.
-The workshop entered the key on 2026-09-20 (migration ``20260920120000``) and makes the scattering
-this module gathers up STRICTLY WIDER, never narrower — the same people at two workshops are now two
-entries where they used to be one — which is an argument for this view, not against it. But it means
-an artisan's answers are scattered across every
-set they happen to appear in, and on the live repository that scattering is the normal case, not an
-edge case: of sixteen artisans, thirteen appear in more than one interview and three appear in four.
-Reading such an artisan today means opening four separate entries and holding them in your head.
-
-This module does the gathering on the READ side only. Nothing here writes, merges or dedupes stored
-rows.
-
-THE THREE THINGS IT REFUSES TO DO QUIETLY, because each is a way a consolidated view becomes worse
-than the four entries it replaced:
-
-1. It never drops the source. Every answer carries the interview it came from, that interview's
-   date, and how many people were in the room. A quote from a five-person sitting is different
-   evidence from the same sentence said alone, and a view that flattens the two is not citable.
-
-2. It never picks a winner. The same question answered twice, differently, in two interviews is a
-   FINDING — an artisan whose account changed — not a data error to be resolved by taking the newest
-   row. Both are shown, most recent first, flagged as a conflict.
-
-3. It never guesses who spoke. See ``_attribution`` below: the schema simply does not record which
-   member of a group answered, so for a group sitting this says so on the row instead of implying
-   the answer was the subject's.
-"""
-
 from datetime import UTC, datetime
 from typing import Any
 
@@ -48,54 +15,26 @@ from app.services.records import (
 from app.services.rich_text import plain_from_stored
 from app.services.s3 import presign_get_url
 
-# How many statements ``consolidate_for_artisan`` issues, whatever the artisan's interview count.
-# Asserted by the route's ``meta.queryCount`` so the number is checkable from a live response rather
-# than trusted from a comment. Wave one: artisan, sections, questions, interviews. Wave two:
-# responses, media, participant links.
 QUERY_COUNT = 7
 
-# A response is attributable to the subject alone.
 SOLE = "SOLE"
-# A response was given in a sitting with other artisans present and CANNOT be attributed to one of
-# them from the stored data.
 GROUP = "GROUP"
 
-# Typed into the questionnaire form (a QuestionnaireResponse row, question-level).
 TYPED = "TYPED"
-# Spoken into a recording attached to the interview (a MediaFile, section-level at best).
 RECORDED = "RECORDED"
 
 
 def _norm_code(value: str | None) -> str:
-    """Uppercase, alphanumerics-only form of a section code.
-
-    Deliberately identical to ``routes/questionnaire._norm_code`` — it mirrors the app's filename
-    ``token()``, which is how a clip's leading filename token resolves back to a section.
-    """
     return "".join(ch for ch in (value or "") if ch.isalnum()).upper()
 
 
 def _aware(value: Any) -> datetime:
-    """A datetime safe to sort against the others, oldest possible when absent.
-
-    Sorting provenance dates mixes columns that are nullable (``interviewDate`` is null on every
-    interview in the live repository) with ones that are not, and Python refuses to order a naive
-    datetime against an aware one. Both cases collapse here so a missing date sorts last under
-    "most recent first" rather than raising.
-    """
     if not isinstance(value, datetime):
         return datetime.min.replace(tzinfo=UTC)
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _interview_date(interview: Any) -> tuple[Any, str]:
-    """The date to show for an interview, AND which column it came from.
-
-    The basis is returned with the value because ``interviewDate`` is optional and is in fact null on
-    every interview currently stored — it stopped being a form field, and ``recordedAt`` is the same
-    fact captured for free. Showing a fallback timestamp with no note would present "when the phone
-    uploaded this" as "when the interview happened"; the reader is told which one they are looking at.
-    """
     for field, basis in (
         ("interviewDate", "interviewDate"),
         ("recordedAt", "recordedAt"),
@@ -108,24 +47,10 @@ def _interview_date(interview: Any) -> tuple[Any, str]:
 
 
 def _attribution(artisan_count: int) -> str:
-    """Can an answer recorded in this interview be attributed to ONE artisan?
-
-    Read the models before trusting any other answer to this. ``QuestionnaireResponse`` is unique on
-    ``(interviewId, questionId)`` and carries no artisan column at all; its ``answeredById`` is a
-    User — the fieldworker who typed it — not the person who spoke. ``QuestionnaireInterviewArtisan``
-    is a bare join of interview to artisan with no per-response link. A recording is likewise
-    attached to the interview, not to a participant.
-
-    So the data supports exactly one inference: when the sitting had a single artisan, everything
-    recorded in it is theirs. When it had several, the stored row does not say who answered, and this
-    view must not invent it. Misattributing a quote is the failure this repository exists to avoid,
-    so the ambiguity is reported on the row rather than resolved.
-    """
     return SOLE if artisan_count <= 1 else GROUP
 
 
 def _provenance(interview_meta: dict[str, Any]) -> dict[str, Any]:
-    """The source block copied onto every answer row: which sitting, when, and who else was there."""
     return {
         "interviewId": interview_meta["id"],
         "interviewTitle": interview_meta["title"],
@@ -140,90 +65,15 @@ def _provenance(interview_meta: dict[str, Any]) -> dict[str, Any]:
 
 
 def _may_take(media: Any, media_owners: set[str] | None) -> bool:
-    """Whether this caller may be handed the fetchable URL for one media row.
-
-    ``None`` is ``records.ALL_MEDIA_URLS`` — professor and above. Otherwise the row's uploader has to
-    be in the resolved set: the caller themselves, or a researcher who granted them data access.
-
-    "OR A HOLDER OF THE GLOBAL DATASET-DOWNLOAD PERMISSION" USED TO STAND IN THAT SENTENCE AND IT WAS
-    NOT TRUE. ``can_download_dataset`` is a grantable boolean a RESEARCHER can hold, and
-    ``records.media_url_owners`` deliberately stopped consulting it — its docstring carries the
-    measurement and the two download surfaces that decide the opposite for the same account. This
-    predicate reads whatever that function returns, so the sentence described a widening that had
-    already been deleted underneath it, which is the worst kind of stale comment: it tells a reader
-    the gate is looser than it is, and the next person to "restore consistency" would put the hole
-    back.
-
-    NO DESIGN-WORKSHOP ARM HERE, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.
-    ``records.media_url_scope`` answers "whose media bytes may travel" in two halves: the uploaders,
-    and the design workshops this account may open, whose files are recognised by the TAG
-    ``linkedRecordType="designWorkshop"`` plus the workshop id (``dictation_consent.MEDIA_TAG``). The
-    second half would be nearly free to honour here — unlike most hand-built payloads, this predicate
-    is handed the ORM ROW, which still carries both tag columns, so no plumbing would be needed. What
-    it would buy is nothing, and the reason is which rows this document is built from.
-
-    ``consolidate_for_artisan`` selects media by ``questionnaireInterviewId``, and the only writer of
-    that column in this repository is ``records.media_relation_data``, which DERIVES it from the link
-    type: it returns that key for the tags ``questionnaire`` and ``questionnaireinterview`` and
-    nothing at all for ``designWorkshop`` (that tag has no column on MediaFile — the whole reason the
-    workshop half has to be a tag test). Its two callers (``POST /media/complete`` and
-    ``POST /media/{id}/relink`` — true as of 2026-08-27; check
-    ``grep -rn media_relation_data backend/app``) write the tag and the key from the SAME pair, and
-    ``MediaCompleteRequest`` carries no ``questionnaireInterviewId`` for a client to send past them.
-    The two questionnaires are also different features that share a word: this one consolidates
-    ``QuestionnaireInterview`` sittings with artisans, whose only workshop column is a ``Workshop``,
-    while a design workshop's questionnaire is the ``Questionnaire``/``QuestionnaireForm*`` family
-    keyed by ``designWorkshopId`` and read by ``services/questionnaire_forms``. Neither writes a media
-    row the other can see.
-
-    So the arm could never fire, and honouring it would cost a second round trip — the workshop
-    lookup inside ``media_url_scope`` — on a document whose whole shape is an argument about round
-    trips (see ``consolidate_for_artisan``'s QUERY BUDGET: seven statements in two gathered waves,
-    the same for an artisan in four interviews and one in forty). Adding a query that cannot change
-    an answer is exactly what that budget forbids.
-
-    THIS PREDICATE CANNOT BECOME A SECOND, COMPETING COPY OF THE ENCODER'S RULE, WHICH IS WHY IT IS
-    SAFE FOR IT TO DIVERGE. ``records._redact_sensitive`` recognises a media node by ``objectKey`` and
-    scrubs the takeable keys off it; the entry ``consolidate_for_artisan`` builds carries no
-    ``objectKey`` at all (see the comment beside its ``"url"`` key), so the encoder walks straight
-    past it and this function is the ONLY gate on those bytes — not a duplicate of one. The day a
-    questionnaire clip genuinely can carry the workshop tag, widen it HERE by adding the tag test as
-    a second arm, and take the workshop ids from ``media_url_scope`` rather than folding the
-    co-designer's id into ``media_owners``: the uploader set means "may take that uploader's data
-    everywhere", and this document reaches every sitting an artisan has ever been in.
-    """
     return media_owners is None or get_value(media, "uploadedById") in media_owners
 
 
 def _readable_url(media: Any) -> str | None:
-    """This clip's ``url`` as the page should receive it: stored today, signed once the flag is on.
-
-    THE SECOND HALF OF A ONE-DOOR CHANGE, and it exists because this module deliberately walks
-    around the door. ``records._sign_media_url`` swaps a permanent CDN URL for a 15-minute signature
-    on every media node the encoder walks; the entry this module builds carries no ``objectKey``, so
-    the encoder never walks it (see the comment beside the ``"url"`` key, and :func:`_may_take` for
-    why that divergence is deliberate and safe). Without this the consolidated questionnaire would be
-    the one read surface in the API still handing out permanent links after the flag went on — and
-    the one that would keep working after the bucket flip is verified, which is precisely how a
-    forgotten surface stays forgotten.
-
-    The entitlement is NOT re-decided here. :func:`_may_take` has already said yes by the time this
-    is called; this only changes how long the string stays good for.
-
-    Fails to the stored URL, never raises: same trade, same reasons, as the encoder's own signing —
-    a storage misconfiguration must not turn one artisan's consolidated document into a 500.
-    """
     stored = get_value(media, "url")
     ttl = presigned_read_ttl()
     object_key = get_value(media, "objectKey")
     if ttl is None or not object_key or not isinstance(stored, str) or not stored:
         return stored
-    # THE SAME HELPER THE ENCODER USES, NOT A SECOND SPELLING OF IT. This module deliberately walks
-    # around ``public_encode``'s door (see the docstring above), so it is also the module most likely
-    # to be forgotten when the rule on the other side changes — and the rule here is a security one:
-    # the stored ``mimeType`` is the caller's string, and an S3 ``response-content-type`` override
-    # beats both the object's header and any CDN rule. One import, one answer, one place to change
-    # it. Deferred inside the function because ``api/routes/media`` reaches this package. (2026-09-03)
     from app.api.routes.media import signed_read_headers
 
     mime_type, disposition = signed_read_headers(get_value(media, "mimeType"))
@@ -233,8 +83,6 @@ def _readable_url(media: Any) -> str | None:
             filename=str(get_value(media, "originalFilename") or object_key),
             mime_type=mime_type,
             expires_in=ttl,
-            # A player for what a page plays, an attachment for everything else — see
-            # ``records._sign_media_url`` and ``signed_read_headers`` for the argument.
             disposition=disposition,
         )
     except Exception:  # noqa: BLE001 — a misconfigured store must not 500 the document.
@@ -242,64 +90,14 @@ def _readable_url(media: Any) -> str | None:
 
 
 def _answer_key(text: str | None) -> str:
-    """Normalised answer text, for deciding whether two answers actually differ.
-
-    Whitespace and case only. Anything cleverer (stemming, fuzzy distance) would start silently
-    merging answers that a reader would want to see side by side, which is the behaviour this whole
-    module is built to prevent.
-
-    **FLATTENED FIRST, AND THAT IS A CORRECTNESS FIX RATHER THAN TIDINESS.** ``answerText`` is a
-    ``String?`` that has held plain prose since this feature was written and, since the answer box
-    became a ``RichTextField`` on 2026-08-31, sometimes holds a serialised document instead (see
-    ``rich_text``'s "rich text inside a plain String column" section). Two sittings that gave the
-    SAME answer — one typed plainly, one typed after somebody bolded a word — then produced two
-    different keys, so ``distinct`` held two members and the artisan's question was flagged as a
-    CONFLICT: the screen says "these two accounts disagree" over two identical sentences, which is
-    the wrong answer dressed as a right one. The rows reaching :func:`consolidate_for_artisan` are
-    already flattened where they are built, so this call is an identity no-op for them; it is here
-    because this function's CONTRACT is "normalised answer text", and a later caller handing it a
-    raw column value must not silently get a JSON string back.
-    """
     return " ".join(str(plain_from_stored(text or "")).split()).casefold()
 
 
 async def consolidate_for_artisan(
     artisan_id: str, current_user: Any, workshop_ids: list[str] | None = None
 ) -> dict[str, Any] | None:
-    """Build the consolidated questionnaire document for one artisan, or ``None`` if no such artisan.
-
-    QUERY BUDGET — the reason this is shaped the way it is. The database is in a different AWS region
-    from the web box, so a round trip costs 200-400ms and the only number that moves this page is how
-    many run in SERIES. The obvious implementation asks per interview (answers, media, participants)
-    and grows with the artisan's interview count: for an artisan in four sittings that is thirteen
-    sequential trips, four seconds before anything renders. This issues seven statements in two
-    gathered waves regardless of interview count — wave two only waits because it needs the interview
-    ids wave one produced. An artisan in four interviews and an artisan in forty cost the same.
-
-    Visibility is the shared ``viewable_where`` predicate, not a second rule written here: the
-    interviews this returns are exactly the interviews the caller can already list, and media is
-    additionally filtered by its own ``uploadedById`` owner column the way the export path does.
-
-    ``workshop_ids`` narrows the document to the interviews taken AT those workshops, through the SAME
-    ``record_filters`` clause builder every other screen uses (the reserved "none" value included).
-    That is what lets a reader draw a conclusion from ONE workshop: "what did this artisan tell us at
-    last week's workshop" is a different document from "everything this artisan has ever said", and the
-    summary counts, the conflict flags and the sources panel all have to be computed over the narrowed
-    set rather than filtered afterwards — a conflict between two workshops is not a conflict inside
-    one of them, and post-filtering would leave the flag set with only one answer under it.
-    """
-    # Not a query — it reads the caller's rank and returns a predicate — so it can be resolved before
-    # the wave rather than costing a trip of its own.
     vis = await viewable_where(current_user)
     media_vis = await viewable_where(current_user, owner_field="uploadedById")
-    # WHOSE recordings this caller may actually be handed. Resolved once for the whole document, before
-    # the wave, because it is a single grant lookup and every recording entry below consults it.
-    #
-    # THE UPLOADER HALF ONLY, NAMED SO IT IS VISIBLY A CHOICE. ``records.media_url_scope`` would also
-    # return the design workshops this account may open, and nothing this document carries can be
-    # tagged with one — the media below is selected by ``questionnaireInterviewId``, a column written
-    # only from the ``questionnaire``/``questionnaireinterview`` link types. ``_may_take`` sets out the
-    # derivation in full, and what to change on the day it stops holding.
     media_owners = await media_url_owners(current_user)
 
     interview_where: dict[str, Any] = {
@@ -332,9 +130,6 @@ async def consolidate_for_artisan(
         if media_vis:
             media_where = {"AND": [media_where, media_vis]}
         responses, media_rows, links = await gather_reads(
-            # No `question` include: wave one already loaded every question, and a relation include
-            # is its own round trip inside this call (see records.hydrate_relations). The prompt and
-            # section come off that map instead.
             db.questionnaireresponse.find_many(
                 where={"interviewId": {"in": interview_ids}}, include={"answeredBy": True}
             ),
@@ -346,7 +141,6 @@ async def consolidate_for_artisan(
     else:
         responses, media_rows, links = [], [], []
 
-    # --- Who was in each sitting -------------------------------------------------------------
     participants: dict[str, list[str]] = {}
     for link in links:
         name = get_value(get_value(link, "artisan"), "name")
@@ -372,7 +166,6 @@ async def consolidate_for_artisan(
             "attribution": _attribution(len(names)),
         }
 
-    # --- Where the questionnaire's own order comes from ---------------------------------------
     section_by_id = {s.id: s for s in sections}
     section_id_by_code = {s.code: s.id for s in sections}
     section_id_by_norm_code = {_norm_code(s.code): s.id for s in sections if _norm_code(s.code)}
@@ -382,28 +175,8 @@ async def consolidate_for_artisan(
         if question.sectionId in section_by_id:
             questions_by_section.setdefault(question.sectionId, []).append(question)
 
-    # --- Typed answers, grouped by the question they answer -----------------------------------
     answers_by_question: dict[str, list[dict[str, Any]]] = {}
     for response in responses:
-        # ── THE RICH-TEXT READ BOUNDARY FOR THIS DOCUMENT, AND IT IS ONE LINE ON PURPOSE ─────────
-        # ``QuestionnaireResponse.answerText`` is a ``String?`` holding plain prose on almost every
-        # row and, since the answer box became a ``RichTextField`` on 2026-08-31, a serialised
-        # rich-text document on the rest. Flattened HERE, before anything reads it, because this one
-        # value then goes four ways: onto the web consolidated page, onto the Android consolidated
-        # screen, into the ``consolidated.csv`` a researcher archives, and into :func:`_answer_key`,
-        # which decides whether two sittings CONFLICT. Left raw, the first three printed
-        # ``{"blocks":[{"kind":"PARAGRAPH",…}]}`` at a reader and the fourth read two identical
-        # sentences as a disagreement. Flattening at each of the four instead would be four chances
-        # to add a fifth without it.
-        #
-        # ``plain_from_stored`` returns a plain string BY IDENTITY, so every answer recorded before
-        # the editor existed travels exactly as it did — no re-wrapping, no re-spacing.
-        #
-        # AND IT COMES BEFORE THE EMPTINESS TEST, which is the second half of the fix. A rich-text
-        # box that was focused and left alone still saves
-        # ``{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}``; ``is_empty_value`` on that raw string is
-        # False, so a blank answer would have been consolidated as a real one, counted in
-        # ``typed_total`` and shown as an empty row under the artisan's name.
         answer_text = plain_from_stored(response.answerText)
         if is_empty_value(answer_text) and is_empty_value(response.notes):
             continue
@@ -416,7 +189,6 @@ async def consolidate_for_artisan(
                 "sourceId": response.id,
                 "answerText": answer_text,
                 "notes": response.notes,
-                # C28: drafted by a model from the transcript and kept by a person; None = typed.
                 "answerOrigin": get_value(response, "answerOrigin"),
                 "recordedByName": get_value(get_value(response, "answeredBy"), "name"),
                 "sortAt": _aware(meta["date"]),
@@ -424,16 +196,6 @@ async def consolidate_for_artisan(
             }
         )
 
-    # --- Recorded answers -----------------------------------------------------------------------
-    # A clip resolves to a section three ways, and they are the SAME three the completion matrix
-    # uses (routes/questionnaire._derived_completed_sections): the questionId an app wrote into
-    # extraMetadata, the sectionCode it wrote there, or the leading token of the nomenclatured
-    # filename. Measured against the live repository those rules place 321 of 566 interview clips;
-    # two further filename shapes were tried and placed five more between them, which does not buy a
-    # second, disagreeing answer to "which section is this clip". The 240 that resolve to nothing —
-    # 237 of them one artisan's batch, uploaded with no section signal at all — are listed under
-    # `unfiled` rather than dropped, because a recording this view silently omits is a recording a
-    # researcher will conclude does not exist.
     recordings_by_section: dict[str, list[dict[str, Any]]] = {}
     recordings_by_question: dict[str, list[dict[str, Any]]] = {}
     unfiled: list[dict[str, Any]] = []
@@ -456,33 +218,9 @@ async def consolidate_for_artisan(
             "mediaId": media.id,
             "filename": media.originalFilename,
             "mediaType": media.mediaType,
-            # WITHHELD AT THE SOURCE, not by the encoder. This entry is a hand-built dict, so it does
-            # not carry the ``objectKey`` marker ``records._redact_sensitive`` recognises a media node
-            # by — the scrub would walk straight past it and ship the URL. The entitlement is therefore
-            # applied here, against the same grant set every other media surface uses.
-            #
-            # A missing URL is a first-class state on this page: the transcript and the answer text are
-            # the document, and the audio is the evidence behind them. A reader who may not take the
-            # file still gets the whole account; the player simply is not offered.
-            #
-            # SIGNED WHEN ``MEDIA_PRESIGNED_READS`` IS ON, THROUGH THE SAME HELPER THE ENCODER USES.
-            # This is a player on a page — the same kind of surface as ``GET /media``, and named as
-            # such in ``records._sign_media_url``'s decision table — so it gets the same 15-minute
-            # inline signature. It has to be asked for HERE for exactly the reason the comment above
-            # gives: no ``objectKey`` on the node means the encoder's walk never sees it. The helper
-            # reads the flag itself and is a no-op while the flag is off, so this line is unchanged
-            # in every deployment that has not worked through the runbook.
             "url": _readable_url(media) if _may_take(media, media_owners) else None,
             "transcriptText": media.transcriptText,
             "transcriptStatus": media.transcriptStatus,
-            # TRUE OR ABSENT, NEVER FALSE, and the missing third value is the point. The stamp behind
-            # this was added on 2026-08-31 and is NULL both for a transcript nobody has edited and for
-            # every row stored before the column existed — and those are different facts. Shipping
-            # ``False`` would collapse them and print "these are the machine's words" over transcripts
-            # a researcher may well have rewritten through ``POST /media/{id}/transcript``, which has
-            # been able to replace one all along. So this page can say "Edited" and can say nothing,
-            # and it never says "Not edited": that claim is only sound where the machine's own copy is
-            # in hand to compare against, which is true in the interview form and not here.
             "transcriptEdited": True if getattr(media, "transcriptEditedAt", None) else None,
             "recordedByName": None,
             "sortAt": _aware(get_value(media, "recordedAt") or get_value(media, "createdAt")),
@@ -495,12 +233,7 @@ async def consolidate_for_artisan(
         else:
             unfiled.append(entry)
 
-    # --- Assemble in the questionnaire's own order --------------------------------------------
-    # By section, then by question — NOT by interview. Reading one artisan as one document is the
-    # entire point; ordering by source would just re-create the four entries this replaces.
     def newest_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        # Most recent first: an artisan's current account leads, and the earlier one sits under it
-        # where the change is visible. Interview id breaks ties so repeated loads never reshuffle.
         rows.sort(key=lambda row: (row["sortAt"], row["interviewId"]), reverse=True)
         for row in rows:
             row.pop("sortAt", None)
@@ -547,9 +280,6 @@ async def consolidate_for_artisan(
                 "title": section.title,
                 "sortOrder": section.sortOrder,
                 "questions": question_payloads,
-                # Clips that name a section but not a question. They sit under the section heading
-                # because that is genuinely all the data says; pinning them to a question would be
-                # the same invention this module refuses to make about speakers.
                 "recordings": section_recordings,
             }
         )
@@ -582,18 +312,9 @@ async def consolidate_for_artisan(
         },
         "meta": {"queryCount": QUERY_COUNT},
     }
-    # The artisan's own identity numbers are never selected onto this payload, but the encode runs
-    # with no viewer anyway: it is the repository-wide guarantee that Aadhaar and Pehchan cannot
-    # leave through a surface nobody has audited yet, and this is such a surface.
-    # The caller is named so the identity masking is judged against them rather than defaulting to
-    # masked, and ``media_urls`` is passed for the same reason it is resolved above — this payload is
-    # hand-built, so the encoder cannot recognise its recording entries as media nodes.
     return public_encode(payload, current_user, media_urls=media_owners)
 
 
-# Column order matches how the document reads on screen — section, question, answer, then the
-# provenance that makes the answer citable. `ID` first is the CSV convention the /export downloads
-# already follow (services/csv_export): a data extract needs a stable key to join on.
 CSV_COLUMNS = (
     "Source ID",
     "Section code",
@@ -616,8 +337,6 @@ CSV_COLUMNS = (
     "Recorded by",
     "Interview ID",
     "Source file",
-    # C28, appended so every earlier column keeps its position: "machine-suggested" (kept as the
-    # model drafted it), "machine-suggested, edited", or blank for an answer a person typed.
     "Answer origin",
 )
 
@@ -636,8 +355,6 @@ def _csv_row(
         row.get("notes") or "",
         row.get("transcriptStatus") or "",
         row.get("attribution"),
-        # Spelled out as a word rather than left implicit in "GROUP": a spreadsheet column that reads
-        # "No" cannot be skimmed past the way an enum can.
         "Yes" if row.get("attribution") == SOLE else "No - group sitting, speaker not recorded",
         "; ".join(row.get("coParticipants") or []),
         "Yes" if conflict else "",
@@ -655,7 +372,6 @@ def _csv_row(
 
 
 def consolidated_rows(payload: dict[str, Any]) -> list[list[Any]]:
-    """Flatten the document into CSV rows, in the order it reads on screen."""
     rows: list[list[Any]] = []
     for section in payload.get("sections", []):
         code = section.get("code") or ""
@@ -665,7 +381,6 @@ def consolidated_rows(payload: dict[str, Any]) -> list[list[Any]]:
             for answer in question.get("answers", []):
                 rows.append(_csv_row(code, title, question.get("prompt") or "", conflict, answer))
         for recording in section.get("recordings", []):
-            # No question to name: the clip resolved to this section and no further.
             rows.append(_csv_row(code, title, "(section recording)", False, recording))
     for recording in payload.get("unfiled", []):
         rows.append(

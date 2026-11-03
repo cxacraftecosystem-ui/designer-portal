@@ -1,25 +1,3 @@
-"""The Ministry dashboard's stage-data export (owner decision C15, 2026-10-17).
-
-One spreadsheet, a sheet per record type (the entity registry ``design_workshop_data.tables()``),
-across the workshops the requester's dashboard filters and scope select — with every identity
-number masked — built in the BACKGROUND by the queue worker, because a few hundred workshops of
-stage rows is minutes of openpyxl on a box the API shares.
-
-WHO. The Ministry dashboard's readers (``deps.MINISTRY_DASHBOARD_ROLES``): Assistant and Regional
-Directors over the workshops they were posted to, the Ministry Admin and the master admin over the
-estate. The scope is re-read from the requester's account when the job RUNS, so a posting removed
-between the request and the run narrows the file rather than leaking it.
-
-WHAT IS LEFT OUT, AND SAID ON THE README SHEET. Media are cells of ids (never bytes or URLs, the
-registry's own export rule). A designer's own custom questions are withheld: their columns are
-defined per workshop and nothing here can tell which of them holds an identity number. Every field
-the registry marks as an Aadhaar or Pehchan number, or whose key names one, is masked to its last
-four characters — including values a designer typed in full.
-
-WHERE THE FILE LIVES. In the ``MinistryDataExport`` row, for :data:`EXPORT_TTL_DAYS`, then purged by
-the worker. Only the account that asked may download it.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -37,18 +15,11 @@ from app.services.stage_schema import TextFormat, stages
 
 log = logging.getLogger(__name__)
 
-#: How long a finished file is kept before the worker purges it.
 EXPORT_TTL_DAYS = 7
-#: How many workshops one export reads. Past it the README says the file stopped.
 MAX_EXPORT_WORKSHOPS = 1000
-#: How many stage rows one export writes, across every sheet.
 MAX_EXPORT_ROWS = 200_000
-#: How many workshops' stage entries are read per query while an export runs — the job never
-#: holds every workshop's raw entries at once, only the flattened, masked rows it will write.
 EXPORT_READ_BATCH = 50
-#: How many exports one account may have waiting or running at once.
 MAX_PENDING_PER_USER = 3
-#: A RUNNING job older than this is assumed to belong to a worker that died, and is re-queued.
 STALE_AFTER = timedelta(minutes=30)
 MAX_ATTEMPTS = 3
 
@@ -58,7 +29,6 @@ _IDENTITY_KEY = re.compile(r"aadhaar|pehchan|cardno|identitynumber", re.IGNORECA
 
 
 def identity_columns() -> frozenset[str]:
-    """Every ``entityKey.fieldKey`` column whose value is an identity number, to be masked."""
     keys: set[str] = set()
     for stage in stages():
         for entity in stage.entities:
@@ -74,7 +44,6 @@ def identity_columns() -> frozenset[str]:
 
 
 def mask_row(row: dict[str, str], masked: frozenset[str]) -> dict[str, str]:
-    """The row with every identity cell masked. An empty cell stays empty."""
     out = dict(row)
     for key in masked.intersection(out):
         if out[key]:
@@ -94,13 +63,6 @@ def _sheet_title(title: str, used: set[str]) -> str:
 
 
 class WorkbookCollector:
-    """The export's rows, gathered one batch of workshops at a time, then written once.
-
-    Split from :func:`build_workbook` so the job can read and flatten a batch, drop the raw entries,
-    and read the next — and so both CPU-bound halves can run off the event loop the queue worker
-    shares with the media queue and the email outbox. Pure: no database.
-    """
-
     def __init__(self) -> None:
         self.masked = identity_columns()
         self.per_entity: dict[str, list[dict[str, str]]] = {}
@@ -111,11 +73,8 @@ class WorkbookCollector:
         self.workshops = 0
 
     def add(self, workshops: list[tuple[Any, list[Any]]]) -> None:
-        """Flatten and mask ``[(workshop record, its live stage entries)]`` into the collector."""
         for record, entries in workshops:
             self.workshops += 1
-            # No custom-section definition is passed, so a designer's own questions come back from
-            # `flatten` as unreadable rows — counted as withheld, never as "newer form versions".
             grouped, unknown_entities = dw.flatten(record, entries)
             self.unknown += sum(
                 item.rows for item in unknown_entities if item.entity_key != dw.CUSTOM_ENTITY_KEY
@@ -160,11 +119,6 @@ def build_workbook(
     workshops_total: int,
     generated_at: datetime,
 ) -> tuple[bytes, int]:
-    """The .xlsx and the number of stage rows it holds. Pure: no database.
-
-    ``workshops`` is ``[(workshop record, its live stage entries)]``. One sheet per registry entity
-    that has at least one row, in registry order, each row carrying the workshop identity columns.
-    """
     collector = WorkbookCollector()
     collector.add(workshops)
     return collector.workbook(
@@ -240,18 +194,12 @@ def _write_workbook(
 
 
 def export_filename(at: datetime) -> str:
-    # NAMING 2.1: a snapshot that can repeat within a day carries its time.
     return naming.export_filename(
         "Ministry", "Export", "xlsx", at=at, with_time=True, subject="Stage Data"
     )
 
 
 def job_payload(row: Any) -> dict[str, Any]:
-    """One export as the dashboard lists it. Never the file itself.
-
-    ``row`` is a model or a raw-query mapping (:func:`list_jobs`), so both shapes are read.
-    """
-
     def get(key: str) -> Any:
         return row.get(key) if isinstance(row, dict) else getattr(row, key, None)
 
@@ -282,9 +230,6 @@ def job_payload(row: Any) -> dict[str, Any]:
     }
 
 
-#: Every column the list shows and NOT ``content``. The list is polled while a job runs, and a
-#: model read would pull each stored workbook (several MB apiece) across the wire every poll only to
-#: drop it; prisma-client-py's ``find_many`` has no ``select``, so the read is spelled out here.
 _LIST_SQL = (
     'SELECT "id", "status", "filters", "workshopCount", "rowCount", "fileName", "fileSizeBytes", '
     '"error", "createdAt", "finishedAt", "expiresAt" FROM "MinistryDataExport" '
@@ -293,7 +238,6 @@ _LIST_SQL = (
 
 
 async def list_jobs(user_id: str, *, take: int = 20) -> list[dict[str, Any]]:
-    """The account's own exports, newest first, without the stored files."""
     rows = await db.query_raw(_LIST_SQL, user_id, take)
     return [job_payload(row) for row in rows]
 
@@ -314,7 +258,6 @@ async def _claim(row: Any, worker_id: str) -> bool:
 
 
 async def run_export(row: Any) -> None:
-    """Build one claimed export and store the file, or record why it failed."""
     from app.api.routes.ministry_dashboard import _design_where
     from app.core.deps import can_see_ministry_dashboard
     from app.services import ministry_dashboard as register
@@ -350,14 +293,11 @@ async def run_export(row: Any) -> None:
     records = await db.designworkshop.find_many(
         where=where, order=[{"updatedAt": "desc"}, {"id": "asc"}], take=MAX_EXPORT_WORKSHOPS
     )
-    # ONE BATCH OF WORKSHOPS AT A TIME, flattened off the event loop: the raw entries of a batch are
-    # dropped before the next is read, and openpyxl never runs on the loop the worker shares.
     collector = WorkbookCollector()
     for start in range(0, len(records), EXPORT_READ_BATCH):
         batch = records[start : start + EXPORT_READ_BATCH]
         entries = await db.dwstageentry.find_many(
             where={"designWorkshopId": {"in": [str(r.id) for r in batch]}, "deletedAt": None},
-            # `createdAt`, `id`: a save's new rows share one `create_many` timestamp; `id` makes it total.
             order=[{"designWorkshopId": "asc"}, {"ordinal": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         by_workshop: dict[str, list[Any]] = {}
@@ -379,7 +319,6 @@ async def run_export(row: Any) -> None:
     )
     from prisma.fields import Base64
 
-    # `update_many`, which answers a count: `update` would read the stored workbook straight back.
     await db.ministrydataexport.update_many(
         where={"id": row.id},
         data={
@@ -398,13 +337,6 @@ async def run_export(row: Any) -> None:
 
 
 async def recover_and_purge(now: datetime | None = None, *, recover: bool = True) -> None:
-    """Re-queue exports a dead worker left RUNNING; drop files past their keep-until date.
-
-    ``recover=False`` skips the two stale-lock sweeps and keeps the expiry: a lock is only stale after
-    :data:`STALE_AFTER` (thirty minutes), so the queue process sweeps for it once a minute rather than
-    on every five-second pass (``worker.RECOVERY_INTERVAL_SECONDS``), while an expired file still stops
-    being READY on the pass it expires, as before.
-    """
     now = now or datetime.now(UTC)
     if recover:
         await _recover_stale(now)
@@ -440,10 +372,6 @@ async def _recover_stale(now: datetime) -> None:
 async def process_next_ministry_exports(
     *, worker_id: str, limit: int = 1, recover: bool = True
 ) -> int:
-    """The worker's turn: recover, purge, then build up to ``limit`` queued exports. Returns built.
-
-    ``recover`` is :func:`recover_and_purge`'s: the queue process passes False between its once-a-
-    minute sweeps."""
     await recover_and_purge(recover=recover)
     queued = await db.ministrydataexport.find_many(
         where={"status": QUEUED}, order={"createdAt": "asc"}, take=limit
@@ -455,7 +383,7 @@ async def process_next_ministry_exports(
         try:
             await run_export(row)
             built += 1
-        except Exception as exc:  # one bad export must never stop the worker
+        except Exception as exc:
             log.exception("ministry export %s failed", row.id)
             await db.ministrydataexport.update(
                 where={"id": row.id},

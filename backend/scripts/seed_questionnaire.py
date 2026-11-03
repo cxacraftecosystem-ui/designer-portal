@@ -16,8 +16,6 @@ async def main() -> None:
         for section_index, section in enumerate(sections, start=1):
             section_code = section["code"]
             section_title = section["title"]
-            # A section code is unique within its form since the unification (U5); the global
-            # instrument's sections are the ones with the retired instrument's id.
             section_record = await db.questionnairesection.find_first(
                 where={"code": section_code, "questionnaireId": "questionnaire-retired-global-form"}
             )
@@ -56,7 +54,6 @@ async def main() -> None:
                         },
                     )
                 count += 1
-        # The shared question codes (C26), derived from section and wording, for every row.
         coded = await cross_portal_codes.reconcile_question_codes(db)
         print(f"Seeded questionnaire questions: {count} (question codes changed: {coded})")
     finally:

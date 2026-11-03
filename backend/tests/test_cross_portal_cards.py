@@ -1,17 +1,3 @@
-"""Field Repository cards on the designer portal, through the cross-portal channel.
-
-The documentation portal is replaced by a fake ``peer_call`` (the signing layer it stands for is
-pinned in tests/test_cross_portal_identity.py); the database is real. Pinned here:
-
-* an F card resolves through an existing link with no network call;
-* an F card for an artisan not linked here is REMOTE, asking for consent, and with the consent tick
-  carries the same prefill the Aadhaar lookup does;
-* a peer answer for an artisan linked here is FOUND via LINK, and the code is kept for next time;
-* the peer saying nothing is the one 404; the peer unreachable is a 503;
-* linking from a card records matchedBy=CARD, sends this portal's card code and keeps theirs;
-* refresh keeps their latest code and re-sends ours, so a reissue push that failed lands later.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -139,7 +125,6 @@ def world():
                         "matchedBy": "AADHAAR",
                     }
                 )
-            # A link the other side has recorded, so refresh goes straight to the read.
             from datetime import UTC, datetime
 
             await db.crossportalartisanlink.update(
@@ -162,7 +147,6 @@ def world():
 
 
 def _code(seed: str) -> str:
-    """A valid Crockford code made from a test tag."""
     text = "".join(ch for ch in seed.upper() if ch in ac.ALPHABET)
     return (text + "0000000000")[:10]
 
@@ -223,7 +207,6 @@ def test_a_peer_answer_for_an_artisan_linked_here_is_found_and_the_code_is_kept(
     assert response.json()["status"] == "FOUND"
     assert response.json()["via"] == "LINK"
     assert response.json()["artisan"]["id"] == world["linked_no_code"]
-    # Kept: the next scan needs no network call.
     world["peer"].answers.clear()
     world["peer"].calls.clear()
     again = _resolve(client, admin, ac.short_code("F", code))
@@ -264,7 +247,6 @@ def test_linking_from_a_card_records_card_and_swaps_codes(client, admin, world):
     assert link_body["matchedBy"] == "CARD"
     own = client.get(f"/api/artisans/{world['to_link']}/card", headers=admin).json()
     assert link_body["remoteCardCode"] == own["code"]
-    # The client's word is not taken: a different expected record is refused.
     peer.calls.clear()
     wrong = client.post(
         f"/api/cross-portal/artisans/{world['to_link']}/link",
@@ -300,14 +282,12 @@ def test_reissue_pushes_the_new_code_and_a_failed_push_is_resent_on_refresh(clie
     assert first.status_code == 200, first.text
     assert ("PUT", put_path, {"remoteCardCode": first.json()["code"]}) in peer.calls
 
-    # The Field Repository is down for the next reissue: the card is still issued here.
     peer.calls.clear()
     peer.answers[("PUT", put_path)] = PeerUnavailable(UNAVAILABLE)
     second = client.post(f"/api/artisans/{artisan_id}/card/reissue", json={"reason": "LOST"}, headers=admin)
     assert second.status_code == 200
     new_code = second.json()["code"]
 
-    # The next refresh sends it again, and keeps the code their answer carries.
     peer.calls.clear()
     remote_code = _code("THEIRS" + world["tag"])
     peer.answers[("PUT", put_path)] = (200, {"updated": True})

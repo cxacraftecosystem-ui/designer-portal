@@ -1,12 +1,3 @@
-"""Designer-portal's shared questionnaire end to end, on a real migrated Postgres (stream U1).
-
-With ``QUESTIONNAIRE_V2`` switched on for the test: a form whose sections live in the shared tables,
-bound to a design workshop, takes a session with only a guest (A18); the guest's answer is locked
-to its author (A11, ANSWER_LOCKED per item, P15); the old sitting routes reach the same rows through
-``shims_dr`` with their old shapes (UNIFY 4.5); the readers and the annexure see the session (C10,
-A12); and a soft-deleted session disappears from all of them until it is restored (A14).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -85,12 +76,10 @@ def test_a_guest_session_on_a_bound_form_locks_and_shims_and_reads(monkeypatch: 
         try:
             ids = await _seed(client, tag)
             lead, other, admin = _user(ids["lead"]), _user(ids["other"]), _user(ids["admin"], "ADMIN")
-            # The start sheet's form: the only binding (mirrored from the attachment).
             resolved = await bindings.resolve_for_workshop(design_workshop_id=ids["dw"], client=client)
             assert resolved["questionnaireId"] == ids["form"]
             assert await shims_dr.form_is_unified(ids["form"], client=client)
 
-            # A18: a session with only a guest saves; the title is generated.
             create = S.SessionCreate(
                 clientKey=f"ck{tag}", questionnaireId=ids["form"], designWorkshopId=ids["dw"], sessionDate=date(2026, 10, 22),
                 respondents=[S.RespondentInput(name="Shopper at Johari Bazaar", kind="GUEST")],
@@ -105,16 +94,13 @@ def test_a_guest_session_on_a_bound_form_locks_and_shims_and_reads(monkeypatch: 
             item = {"respondentId": rid, "questionLineageId": lineage, "sessionId": sid, "text": "Block prints sell best", "note": "Asked twice"}
             saved = await answers.put_answers(S.AnswersPut(items=[S.AnswerItem(**item)]), lead)
             assert saved["results"][0]["status"] == "SAVED"
-            # A11 / P15: another researcher on the session cannot change it; the lead's answer stands.
             await sessions.add_researcher(client, sid, ids["other"], "CONTRIBUTOR")
             locked = await answers.put_answers(S.AnswersPut(items=[S.AnswerItem(**{**item, "text": "Dyes", "baseVersion": 1})]), other)
             assert locked["results"][0]["status"] == "FORBIDDEN" and locked["results"][0]["code"] == "ANSWER_LOCKED"
             assert (await answers.put_answers(S.AnswersPut(items=[S.AnswerItem(**{**item, "text": "Dyes", "baseVersion": 1})]), admin)
                     )["results"][0]["status"] == "SAVED", "an admin may change it"
-            # The lock is shown before an edit is refused: the current answer says who wrote it (P15).
             locked_current = locked["results"][0]["current"]
             assert locked_current["actorId"] == ids["lead"] and locked_current["actorName"] == "Lead"
-            # Decision C8: a document sent alone is flattened into the canonical text; both are kept.
             lineage2 = (await client.query_raw('SELECT "lineageId" FROM "QuestionnaireQuestion" WHERE "id" = $1', ids["q2"]))[0]["lineageId"]
             doc = {"blocks": [{"kind": "BULLET_ITEM", "spans": ["Indigo"]}, {"kind": "BULLET_ITEM", "spans": ["Madder"]}]}
             rich = await answers.put_answers(S.AnswersPut(items=[S.AnswerItem(
@@ -123,7 +109,6 @@ def test_a_guest_session_on_a_bound_form_locks_and_shims_and_reads(monkeypatch: 
             assert stored["text"] == "• Indigo\n• Madder"
             assert stored["richText"] and "Madder" in stored["richText"]
 
-            # The old sitting routes, through the shim: same shapes, the lock reported per question.
             entry = await shims_dr.create_entry(ids["form"], SimpleNamespace(title="Typed title", respondentName="Visitor", notes="Met at the stall"), lead)
             assert entry["respondentName"] == "Visitor" and entry["title"] == "Typed title" and entry["notes"] == "Met at the stall"
             batch = SimpleNamespace(answers=[SimpleNamespace(questionId=ids["q1"], answerText="Cotton", notes=None)])
@@ -136,7 +121,6 @@ def test_a_guest_session_on_a_bound_form_locks_and_shims_and_reads(monkeypatch: 
             listed = await shims_dr.entries_for_form(ids["form"])
             assert {e["id"] for e in listed} == {sid, entry["id"]}
 
-            # C10 / A12: the readers and the annexure see the sessions.
             counts = await questionnaire_readers.session_counts([ids["form"]], client=client)
             assert counts[ids["form"]]["count"] == 2
             assert (await questionnaire_readers.answer_counts([sid], client=client))[sid] == 2, "the typed answer and the rich-text one"
@@ -144,7 +128,6 @@ def test_a_guest_session_on_a_bound_form_locks_and_shims_and_reads(monkeypatch: 
             mine = [i for i in items if i.questionnaire_id == ids["form"]]
             assert mine and {s.respondent_name for s in mine[0].printed_sittings} == {"Shopper at Johari Bazaar", "Visitor"}
 
-            # A14: a soft-deleted session is invisible to every reader until restored (content admin).
             from fastapi import HTTPException
 
             with pytest.raises(HTTPException):
@@ -182,9 +165,6 @@ def test_an_old_global_form_create_lands_on_the_primary_form(monkeypatch: pytest
 
 
 def test_a_session_keeps_the_start_sheet_fix_and_an_admin_sets_the_global_default(monkeypatch: pytest.MonkeyPatch, v2_on) -> None:
-    """C9: the start sheet's GPS fix becomes the session's Location (never asked on an edit). B32:
-    ``PUT /questionnaires/{id}/default`` is an admin's; one default at a time; a session whose
-    workshop has nothing bound is offered it."""
     from fastapi import HTTPException
 
     from app.api.routes import questionnaire_forms as forms_routes
@@ -218,7 +198,6 @@ def test_a_session_keeps_the_start_sheet_fix_and_an_admin_sets_the_global_defaul
                 S.SessionCreate(clientKey="x", questionnaireId="f", sessionDate=date(2026, 10, 22),
                                 respondents=[S.RespondentInput(name="V", kind="GUEST")], location={"latitude": 120, "longitude": 0})
 
-            # B32: only an admin; the old default is cleared; clearing touches this form only.
             other = f"g{tag}"
             await client.execute_raw(
                 'INSERT INTO "Questionnaire" ("id", "title", "ownerId", "isDefault", "updatedAt") VALUES ($1, $2, $3, false, now())',
@@ -246,9 +225,6 @@ def test_a_session_keeps_the_start_sheet_fix_and_an_admin_sets_the_global_defaul
 
 
 def test_a_researcher_may_use_a_bound_shared_default_or_own_form_on_a_workshop(monkeypatch: pytest.MonkeyPatch, v2_on) -> None:
-    """Decision 4 and owner amendment 2: under a workshop a researcher who does not manage
-    questionnaires may start a session on any form bound to it, the type default, the global
-    default, or their own or a shared form; anyone else's unbound form is refused."""
     from fastapi import HTTPException
 
     from app.core import db as core_db

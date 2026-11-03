@@ -82,10 +82,6 @@ from app.services.records import (
     viewable_where,
 )
 
-# csv_response is SHARED with the export router rather than restated: both hand a researcher a .csv
-# over the same Content-Disposition and charset, and a download that saves differently depending on
-# which endpoint produced it is exactly the drift that helper exists to prevent. (export.py imports
-# from data_browser.py for the same reason; nothing in that chain imports this module back.)
 from app.services.standard_values import StandardValueError, apply_interview_values
 from app.services.text_format import by_count, count_noun
 from app.services.workshop_access import (
@@ -100,8 +96,6 @@ router = APIRouter(prefix="/questionnaire", tags=["questionnaire"])
 
 
 def _norm_code(value: str | None) -> str:
-    """Uppercase, alphanumerics-only form of a section code — mirrors the app's filename token() so a
-    clip filename's leading section token resolves back to its section."""
     return "".join(ch for ch in (value or "") if ch.isalnum()).upper()
 
 
@@ -111,22 +105,14 @@ _REAL_WORD_RE = re.compile(r"\b(?!and\b)[a-zA-Z]{2,}\b", re.IGNORECASE)
 
 
 def section_codes_from_title(title: str | None, valid_codes: set[str]) -> set[str]:
-    """Best-effort section codes named in an interview's TITLE — the only completion signal for
-    interviews recorded BEFORE the clip-filename nomenclature existed. Researchers titled those by the
-    sections covered, e.g. "Section K & L", "section F", or "Rudraprayag G,H,I,J,Q". Only tokens that
-    exactly match a real section code count, so unrelated words are ignored; admins can still override.
-    """
     if not title:
         return set()
     found: set[str] = set()
-    # Letters right after the word "section"/"sections", through a short run of separators, stopping at
-    # the first real word (2+ letters that isn't "and") so we don't sweep up the rest of the title.
     for match in _SECTION_IN_TITLE_RE.finditer(title):
         run = _REAL_WORD_RE.split(match.group(1))[0]
         for token in re.split(r"[^a-zA-Z]+", run):
             if len(token) == 1 and token.upper() in valid_codes:
                 found.add(token.upper())
-    # Bare comma-separated single-letter runs, e.g. "G,H,I,J,Q".
     for match in _LETTER_RUN_RE.finditer(title):
         for token in re.split(r"[^a-zA-Z]+", match.group(1)):
             if len(token) == 1 and token.upper() in valid_codes:
@@ -134,13 +120,6 @@ def section_codes_from_title(title: str | None, valid_codes: set[str]) -> set[st
     return found
 
 
-# What an interview carries on the wire — the widest payload in the app: six relations, two of them
-# nested. Read as a Prisma ``include`` that was TWELVE sequential statements for a page of four
-# interviews, and every one of them is a round trip. They load in one parallel wave instead (see
-# services/records.py), on the write paths too: those hydrate the row they just saved, so this is
-# the single description of an interview's relations. (Written when a hop was a cross-region ~750ms;
-# co-located and ~1-2ms since 2026-09-02, ``services/concurrency.py``. Twelve statements in series
-# still cost twelve times one, which is the whole reason this list exists in one place.)
 RELATIONS = (
     Relation("createdBy", "user", "createdById"),
     Relation("location", "location", "locationId"),
@@ -163,91 +142,24 @@ RELATIONS = (
 )
 
 
-# WHY EVERY INTERVIEW ENCODE BELOW NAMES THE CALLER. ``public_encode(obj)`` with no viewer is not
-# "the default"; it is the CHEAPEST SAFE answer — mask every identity number and withhold every
-# media URL — and it is the answer a route reaches by not thinking about the question. This module
-# used to take it on ALL SIX of its interview responses, and ``RELATIONS`` declares ``media`` right
-# above, so every interview came back with its recordings listed and their ``url``/``publicUrl``/
-# ``objectKey`` popped off — plus, since 2026-08-27, ``transcriptText``/``transcriptSummary``, which
-# ride the same entitlement (``records._MEDIA_TAKEABLE_KEYS``). The clips ARE the interview on this
-# instrument: ``_derived_completed_sections`` reads section coverage off the clip FILENAMES, so a
-# questionnaire screen that cannot play back what it just proved exists is the whole record. Fixed
-# the way ``products.py`` and ``tools.py`` fix it and not a second way — ``media_url_owners(viewer)``
-# for the uploader half — so a grantee who may download a researcher's data can play their
-# recordings and nobody else can.
-#
-# THE UPLOADER HALF ALONE, DELIBERATELY, which is the decision those two modules record under "WHY
-# THIS MODULE STAYS ON THE UPLOADER HALF". A row reaches an interview's ``media`` list through
-# ``MediaFile.questionnaireInterviewId``; a design-workshop attachment is tagged
-# ``linkedRecordType="designWorkshop"`` and carries no interview id, so it cannot appear here.
-# ``media_workshops`` is therefore left at its empty default by decision, not by nobody asking.
-# Naming the caller also lifts the Aadhaar/Pehchan mask for the ranks entitled to it, which is the
-# same policy artisans.py, media.py and search.py already apply on their own reads.
-
 _DUPLICATE_SET_DETAIL = (
     "An interview already exists for this exact set of artisans. There is a single shared entry per "
     "artisan set — open it to add or view answers instead of creating another."
 )
 
-#: Machine-readable tag on the duplicate-set refusal, so a client branches on a constant rather than
-#: on prose. Same discipline as ``records.assert_unchanged``'s ``"record_changed"`` and
-#: ``artisans._identity_conflict``'s ``"artisan_identity_conflict"``.
 _DUPLICATE_SET_CODE = "duplicate_artisan_set"
 
 
 async def duplicate_set_detail(set_key: str) -> dict[str, Any]:
-    """The 409 body for an artisan set another interview already holds — the sentence AND the holder.
-
-    THE SENTENCE IS UNCHANGED AND STILL THE ``message``. ``frontend/lib/api.describeApiDetail`` reads
-    ``detail.message`` out of an object detail (api.ts:160) and Android's ``outboxConflictSentence``
-    already decodes the object shape ``artisans.py::_identity_conflict`` sends, so moving from a bare
-    string to ``{code, message, …}`` costs no client its words. What it ADDS is the half a client
-    could not have: WHICH interview is in the way.
-
-    Without it the refusal is unactionable. The owner's ruling of 2026-09-20 is that an edit may FOLD
-    into the holding interview the way a create already does — but only on a confirmation that names
-    it ("D Black Pottery already covers this set. Move this interview's sections and recordings into
-    it?"), and a client holding only prose cannot render that sentence, let alone call
-    ``POST /questionnaire/interviews/{id}/merge-into/{targetId}`` afterwards.
-
-    ⚠ **THE LOOKUP GOES THROUGH THE MODULE CLIENT, NEVER THE CALLER'S TRANSACTION, AND THAT IS
-    LOAD-BEARING.** This is called from ``replace_interview_artisans``'s ``except
-    UniqueViolationError`` branch, which may be running inside ``update_interview``'s ``db.tx()``. A
-    unique violation ABORTS a Postgres transaction: every subsequent statement on that connection
-    fails with ``current transaction is aborted``, so asking the caller's ``tx`` for the holder would
-    turn a 409 into a 500 on exactly the path this exists to serve. ``db`` is a different connection
-    and answers a plain ``SELECT`` under MVCC while the doomed transaction waits to roll back.
-
-    A holder that has vanished between the violation and this read (the row deleted by a concurrent
-    request) yields ``None`` ids rather than a second failure: the keys stay present and stable so a
-    client parses one shape, and the sentence still reads correctly on its own.
-    """
     holder = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
     return {
         "code": _DUPLICATE_SET_CODE,
         "message": _DUPLICATE_SET_DETAIL,
-        # STABLE KEYS, present whether or not the holder was found. A client that branches on
-        # ``existingInterviewId`` being non-null offers the move; one that finds it null falls back
-        # to the sentence, which is exactly what every client did before this key existed.
         "existingInterviewId": get_value(holder, "id"),
         "existingInterviewTitle": get_value(holder, "title"),
     }
 
 
-#: The two separators inside an ``artisanSetKey``: ``"<workshopId>|<designWorkshopId>|<id>,<id>,…"``.
-#:
-#: NEITHER CHARACTER CAN OCCUR INSIDE A VALUE, which is what makes the concatenation unambiguous.
-#: Every id in this key is a cuid — ``c`` followed by base-36 digits — so no id contains ``|`` or
-#: ``,``, and therefore no two different (scope, artisan set) pairs can spell the same string by
-#: accident. Were a separator ever to become a legal character in an id, ``("w", ["a|b"])`` and
-#: ``("w|a", ["b"])`` would collide and two unrelated sittings would fight over one row.
-#:
-#: Named constants rather than four string literals because FOUR languages have to agree on them
-#: character for character — this module, the recompute in migration ``20260920120000``,
-#: ``frontend/components/questionnaires/interviewArtisans.ts`` and the handset's
-#: ``interviewGroupKey``. ``backend/tests/test_questionnaire_artisan_set_scope.py`` reads the
-#: TypeScript source and asserts it spells the key the same way; a literal repeated in four files is
-#: a definition nobody can grep for, let alone hold together.
 _SET_KEY_SCOPE_SEPARATOR = "|"
 _SET_KEY_ID_SEPARATOR = ","
 
@@ -255,54 +167,9 @@ _SET_KEY_ID_SEPARATOR = ","
 def artisan_set_key(
     artisan_ids: list[str], *, workshop_id: str | None, design_workshop_id: str | None
 ) -> str | None:
-    """Deterministic key for the exact set of artisans an interview covers, WITHIN ONE WORKSHOP.
-
-    Format: ``"<workshopId>|<designWorkshopId>|<sorted, de-duplicated, comma-joined artisan ids>"``,
-    with ``""`` standing in for a workshop that is not named. Returns ``None`` for an empty artisan
-    set (artisan-less interviews are not deduped — Postgres treats NULLs as distinct under a unique
-    index, so several of them may coexist). A subset of the artisans yields a different key, i.e. a
-    separate entry, exactly as it always did.
-
-    ── WHY THE SCOPE IS INSIDE THE KEY AND NOT BESIDE IT (2026-09-20) ──────────────────────────────
-
-    ``QuestionnaireInterview.artisanSetKey`` is a single-column ``@unique``, so before this change ONE
-    artisan set could hold ONE interview ACROSS THE WHOLE REPOSITORY. The field repository
-    (documentation-portal) hit the same defect and recorded it in migration ``20260913100000``: the
-    same artisans sitting for a second instrument FOLDED into their first sitting
-    (``create_interview`` looks the key up and merges), so the 3rd Craft Toolkit Workshop's answers
-    were written onto the 2nd workshop's interview. Here the collision is between WORKSHOPS rather
-    than between instruments — two workshops interviewing the same artisans are two sittings, and the
-    second one could not be recorded at all.
-
-    That repository's fix CANNOT BE COPIED. It moved the index to ``@@unique([questionnaireId,
-    artisanSetKey])``, and this repository's ``QuestionnaireInterview`` HAS NO ``questionnaireId`` —
-    checked against schema.prisma, the live database and the generated Prisma client. Its scope
-    columns are ``workshopId`` and ``designWorkshopId``, and **both are nullable**.
-
-    ⚠ **A COMPOSITE INDEX OVER THOSE TWO COLUMNS WOULD SILENTLY TURN THE DEDUPE OFF.** NULLs are
-    DISTINCT in a Postgres unique index, so ``@@unique([workshopId, designWorkshopId,
-    artisanSetKey])`` would stop constraining the case that actually dominates this corpus: on
-    2026-09-20, 31 of the 44 interviews name no workshop at all. Two unattached interviews for the
-    same artisans would both be allowed, the fold ``create_interview`` depends on would stop folding,
-    and the duplicate explosion migration ``20260622120000`` was written to clean up (133 rows for 18
-    real sets) would start again — with no error anywhere to say so. Putting the scope INSIDE the key
-    keeps ONE non-null string per (scope, set) and therefore has no nullability hazard at all.
-
-    ── WHY EVERY CALLER MUST NAME THE SCOPE, AND WHY THESE ARGUMENTS HAVE NO DEFAULTS ──────────────
-
-    Defaulting them to ``None`` would make "I forgot the scope" and "this interview is unattached"
-    the same call. A caller that forgot would compute the unattached key for a workshop interview:
-    ``by-artisans`` would answer with the wrong row, or a create would fold a workshop sitting into an
-    unattached one. Keyword-only and REQUIRED means that mistake is a ``TypeError`` at the call site
-    the moment the suite imports this module, not a wrong row in production.
-    """
     unique = sorted({aid for aid in artisan_ids if aid})
     if not unique:
         return None
-    # ``or ""`` rather than ``if is not None`` on purpose: a client may spell "no workshop" as either
-    # ``null`` or ``""`` (the web form's pickers hold ``""``, ``lib/api.ts`` sends
-    # ``workshopId: workshop.workshopId || null``), and those two must not produce two different keys
-    # for the same sitting — that is the same fold-splitting failure this function exists to prevent.
     scope = (workshop_id or "", design_workshop_id or "")
     return _SET_KEY_SCOPE_SEPARATOR.join(
         [*scope, _SET_KEY_ID_SEPARATOR.join(unique)]
@@ -310,20 +177,6 @@ def artisan_set_key(
 
 
 def default_interview_date(data: dict[str, Any]) -> dict[str, Any]:
-    """Derive ``interviewDate`` server-side when the client did not send one. Mutates ``data``.
-
-    ``interviewDate`` is no longer a form field. Asking a researcher to type the date of the interview
-    they are recording right now was pure friction, and it was answered wrongly often enough (last
-    week's date left in the form, a typo'd year) that the value could not be trusted for the date
-    filters and exports built on it. ``recordedAt`` is the same fact captured for free: the client
-    stamps it when the interview is actually recorded.
-
-    The column STAYS — it is provenance for every interview created while the field existed, and old
-    clients may still send it, in which case the value they sent is honoured untouched. It is only
-    ever derived when absent, so a real answer is never overwritten. ``recordedAt`` itself may also be
-    absent (it is DB-defaulted to ``now()``), so "now" is the last resort — the same instant the
-    database would have stamped.
-    """
     if data.get("interviewDate") is None:
         data["interviewDate"] = data.get("recordedAt") or datetime.now(UTC)
     return data
@@ -354,11 +207,6 @@ def section_question_data(section: Any) -> dict[str, str]:
 async def section_payloads(active_only: bool = True) -> list[dict[str, Any]]:
     section_where = {"isActive": True} if active_only else {}
     question_where: dict[str, Any] = {"isActive": True} if active_only else {}
-    # The two reads are independent — the questions are grouped onto their sections in Python below,
-    # not by the database — so they go out together. MEASURED: ``GET /questionnaire/questions`` was
-    # 2,466 ms against production, which the round-trip model resolves to 3.41 trips: auth plus
-    # exactly these two in series (docs/SCALABILITY.md §1.2). ``/questionnaire/sections`` and the two
-    # other callers of this helper get the same trip back.
     sections, questions = await gather_reads(
         db.questionnairesection.find_many(where=section_where, order={"sortOrder": "asc"}),
         db.questionnairequestion.find_many(
@@ -379,22 +227,6 @@ async def section_payloads(active_only: bool = True) -> list[dict[str, Any]]:
 
 
 async def write_interview_set_key(interview_id: str, set_key: str | None, *, writer: Any) -> None:
-    """Write one interview's ``artisanSetKey``, turning the unique violation into the named 409.
-
-    Extracted from :func:`replace_interview_artisans` (2026-09-20) because there is now a SECOND
-    caller: a PATCH that moves an interview to another workshop WITHOUT touching its artisans changes
-    the key too (the scope is part of it), and it must refuse in the same words — a client cannot be
-    expected to parse two different shapes for "somebody else already covers this set here".
-
-    ⚠ ``duplicate_set_detail`` reads the holder through ``db`` and NOT through ``writer``, and that is
-    deliberate; its own docstring carries the argument. A unique violation aborts the caller's
-    Postgres transaction, so asking THAT connection for the holder would raise ``current transaction
-    is aborted`` and turn this 409 into a 500 on exactly the path it exists to serve.
-    """
-    # THE UNIQUE INDEX IS GONE SINCE THE SWITCH-ON (migration 20261108093000: a v2 session is a dated
-    # event and the same people may sit twice), so the old form's one-interview-per-set rule is
-    # checked here, in the same words, before the write. The violation branch stays for a database
-    # that still carries the index.
     finder = getattr(writer.questionnaireinterview, "find_first", None)
     if set_key and finder is not None:
         holder = await finder(where={"artisanSetKey": set_key, "id": {"not": interview_id}, "deletedAt": None})
@@ -413,12 +245,6 @@ async def write_interview_set_key(interview_id: str, set_key: str | None, *, wri
             where={"id": interview_id}, data={"artisanSetKey": set_key}
         )
     except UniqueViolationError as exc:
-        # THE 409 IS RAISED FROM INSIDE THE CALLER'S TRANSACTION WHERE THERE IS ONE, AND THAT IS
-        # WHAT MAKES IT CLEAN — ``crafts.update_craft``'s argument, applied to the other unique
-        # index. A unique violation aborts the transaction in Postgres whatever this handler does,
-        # so raising here takes the caller's other writes back with it instead of answering 409
-        # beside a committed edit. Nothing after this line runs, so no statement is issued on an
-        # already-aborted transaction.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=await duplicate_set_detail(set_key or "")
         ) from exc
@@ -427,17 +253,6 @@ async def write_interview_set_key(interview_id: str, set_key: str | None, *, wri
 async def resync_interview_set_key(
     interview_id: str, *, workshop_id: str | None, design_workshop_id: str | None, client: Any = None
 ) -> None:
-    """Recompute one interview's set key from its CURRENT links under a (possibly new) scope.
-
-    WHY THIS EXISTS AT ALL (2026-09-20). The scope is now part of the key, so moving an interview
-    between workshops changes its key even though not one artisan moved. ``update_interview`` only
-    calls :func:`replace_interview_artisans` when the payload carries ``artisanIds``, and a PATCH that
-    re-files a sitting under another workshop routinely carries nothing else. Without this call that
-    row would keep the OLD workshop's prefix, and BOTH halves of the guard would then be wrong: the
-    destination workshop would be left unguarded (a second interview for the same people could be
-    created there), while the origin workshop's slot would stay occupied by a row that has left it —
-    blocking a legitimate new sitting with a 409 naming an interview that is no longer there.
-    """
     writer = db if client is None else client
     links = await writer.questionnaireinterviewartisan.find_many(where={"interviewId": interview_id})
     set_key = artisan_set_key(
@@ -456,46 +271,12 @@ async def replace_interview_artisans(
     design_workshop_id: str | None,
     client: Any = None,
 ) -> None:
-    """Rewrite the artisan set on one interview, links and cached set key together.
-
-    ``workshop_id`` / ``design_workshop_id`` ARE THE SCOPE THE ROW WILL HAVE AFTER THIS SAVE, not the
-    one it had before — the key carries them (see :func:`artisan_set_key`), and ``update_interview``
-    may be changing the workshop in the same PATCH. They are required keyword arguments for the reason
-    that function's docstring gives: a defaulted scope makes "I forgot" indistinguishable from
-    "unattached", and the cost of that confusion is a sitting folded into the wrong workshop's row.
-
-    ``client`` CARRIES THE CALLER'S TRANSACTION, AND IT IS THE SAME PARAMETER
-    ``workshops.replace_workshop_artisans`` takes, for the same two failures (2026-09-03). This is a
-    ``UPDATE`` of the interview row's ``artisanSetKey`` followed by a ``DELETE`` of every link and an
-    ``INSERT`` of the new set — three commits in a row until the caller could hand a transaction
-    down. A failure between the delete and the insert committed the WIPE: the artisans a researcher
-    picked for a group sitting, gone, with the save reporting an error, and the join rows are the
-    only record of who was in that interview. A failure between the key and the links left the row
-    claiming a set it does not have, which is worse than either half — the uniqueness guard on
-    ``artisanSetKey`` is what stops a second interview being opened for the same people, so a stale
-    key blocks a legitimate save with a 409 nobody can explain.
-
-    The parameter cannot be defaulted away or discovered: ``db.tx()`` hands back a DIFFERENT client,
-    so a callee writing through the module singleton is not in the caller's transaction however the
-    ``async with`` reads. ``None`` remains accepted because ``create_interview`` genuinely has no
-    transaction to offer — it writes the row and then the links, and folding that into one is a
-    separate change with its own argument.
-    """
     writer = db if client is None else client
     unique_ids = sorted({aid for aid in artisan_ids if aid})
     set_key = artisan_set_key(
         unique_ids, workshop_id=workshop_id, design_workshop_id=design_workshop_id
     )
 
-    # Short-circuit when the artisan set is unchanged. A plain edit (new responses/media, title, notes)
-    # re-sends the same artisanIds; rewriting the unique set key + links on every such save is both
-    # wasteful and the ONLY thing that could trip the one-interview-per-set guard. Skipping it means an
-    # ordinary edit can never 409 ON THE LINKS. We still heal a key that does not match — which since
-    # 2026-09-20 is no longer only a drifted cache: the SCOPE is in the key, so an edit that re-files
-    # the sitting under another workshop reaches here with the same artisans and a different key, and
-    # that rewrite genuinely CAN collide with the interview already covering these people at the
-    # destination. It therefore goes through ``write_interview_set_key`` rather than writing blind, so
-    # the answer is the same named 409 as every other route to the same conflict instead of a 500.
     current = await writer.questionnaireinterviewartisan.find_many(
         where={"interviewId": interview_id}
     )
@@ -505,21 +286,10 @@ async def replace_interview_artisans(
             await write_interview_set_key(interview_id, set_key, writer=writer)
         return
 
-    # The set is genuinely changing. Validate every artisan up front so a bad id can't leave a
-    # half-rewritten link set, then keep the unique set key in lock-step with the links. ONE query
-    # answers "do all of these exist" — asking per artisan cost a round trip each, and a group
-    # interview names a dozen. The link is co-located since 2026-09-02 (~1-2ms), so the twelve are
-    # milliseconds rather than nine seconds; what makes the single query matter MORE now is that
-    # this runs inside ``update_interview``'s transaction, where a dozen statements is a dozen
-    # chances to outlive the block's timeout.
     if unique_ids:
         found = await writer.artisan.find_many(where={"id": {"in": unique_ids}})
         if len(found) != len(unique_ids):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-    # The key first and the links second, through the shared writer so the unique violation comes back
-    # as the named 409 rather than a 500. See ``write_interview_set_key`` for why the holder is read on
-    # ``db`` and not on ``writer``, and do not "tidy" that read onto the transaction to match the
-    # statements around it.
     await write_interview_set_key(interview_id, set_key, writer=writer)
     await writer.questionnaireinterviewartisan.delete_many(where={"interviewId": interview_id})
     if unique_ids:
@@ -532,7 +302,6 @@ ANSWER_OWNED_BY_OTHER = "ANSWER_OWNED_BY_OTHER"
 
 
 def answer_owned_by_other_detail(question_ids: list[str]) -> dict[str, Any]:
-    """The 403 body for answers somebody else wrote: a code, a sentence, and which questions."""
     one = len(set(question_ids)) == 1
     return {
         "code": ANSWER_OWNED_BY_OTHER,
@@ -551,40 +320,6 @@ def answer_owned_by_other_detail(question_ids: list[str]) -> dict[str, Any]:
 async def upsert_responses(
     interview_id: str, responses: list[Any], current_user: Any, *, client: Any = None
 ) -> None:
-    """Save a batch of answers: validate once, read once, insert once, and update only what changed.
-
-    This was THREE ROUND TRIPS PER ANSWER — a question existence check, a read of the stored answer,
-    and the upsert. A questionnaire section carries dozens of questions and the app submits the whole
-    section, so a single save cost A HUNDRED SEQUENTIAL ROUND TRIPS, which on the cross-region
-    database of the time was minutes of wall time (co-located and ~1-2ms a hop since 2026-09-02 —
-    ``services/concurrency.py`` — so the same hundred would now be a fraction of a second, and the
-    "minutes" is history rather than a claim about today). All of the validation and all of the
-    reading now happen in one statement each, every genuinely new answer goes in with one insert, and
-    the only per-row writes left are the answers whose text or notes ACTUALLY differ from what is
-    stored.
-
-    THE COUNT IS WHAT MATTERS AND IT MATTERS MORE THAN IT DID, because this now runs inside
-    ``update_interview``'s transaction: statements are how long that block holds a connection, not
-    only how long the request takes.
-
-    Skipping the unchanged rows is not merely an optimisation: it also stops a save that touched one
-    answer from re-stamping ``answeredById`` on every other answer in the section, which would have
-    taken authorship of work the saver never edited. The permission rule directly below is unchanged
-    — only the original contributor or an admin may alter an answer that already has text.
-
-    ``client`` CARRIES THE CALLER'S TRANSACTION (2026-09-03), so that the PATCH route's scalar edit,
-    its artisan links and this batch of answers are one commit. Without it, a 403 raised by the
-    permission rule below — the ordinary case of two researchers editing one section — left the
-    interview's scalar changes and its rewritten artisan set committed behind a refusal, and the
-    obvious retry re-sent everything.
-
-    **AND THE TWO READS GO SEQUENTIAL WHEN THERE IS ONE.** ``services/concurrency.gather_reads``
-    says it in its own docstring: an interactive transaction is ONE connection, so awaiting two
-    queries concurrently on it is not a parallel read, it is two statements racing for one socket.
-    Outside a transaction they still overlap, which is what that helper is for and where the saving
-    actually is (this is called with a whole section's answers). The cost inside one is a single
-    extra round trip on a co-located link.
-    """
     if not responses:
         return
     writer = db if client is None else client
@@ -610,15 +345,6 @@ async def upsert_responses(
 
     to_create: list[dict[str, Any]] = []
     to_update: list[tuple[str, dict[str, Any]]] = []
-    # ONE ENTRY PER QUESTION, LAST WINS. ``QuestionnaireResponse`` is UNIQUE on
-    # ``(interviewId, questionId)``, and a body naming the same question twice built two INSERTs for
-    # it — a unique-violation escaping as a bare 500, i.e. a schema-valid request turned into a
-    # server error. The validation pass above already collapses the ids (``sorted({...})``); only
-    # this loop did not, so the two disagreed about what the batch contained.
-    #
-    # LAST WINS, and not ``skip_duplicates`` on the insert: skipping would silently drop an answer a
-    # researcher typed, and first-wins would contradict the update branch below, where two entries
-    # for one stored row simply run two updates and the later one stands.
     deduped = {response.questionId: response for response in responses}
     conflicts: list[str] = []
     for response in deduped.values():
@@ -634,10 +360,6 @@ async def upsert_responses(
                 }
             )
             continue
-        # UNCHANGED FIRST, AUTHORSHIP SECOND (H4, 21 Oct 2026). Both clients send every answer they
-        # hold, so a second researcher adding to a shared interview re-sent the first one's answers
-        # word for word, and the authorship rule refused the whole save over rows it was never going
-        # to write. An identical answer changes nothing and is nobody's to refuse.
         if existing.answerText == response.answerText and existing.notes == response.notes:
             continue
         if (
@@ -654,7 +376,6 @@ async def upsert_responses(
                     "answerText": response.answerText,
                     "notes": response.notes,
                     "answeredById": current_user.id,
-                    # C28: a person's edit of a machine-suggested answer keeps that provenance.
                     "answerOrigin": answer_drafts.origin_after_edit(
                         getattr(existing, "answerOrigin", None),
                         existing.answerText,
@@ -665,28 +386,15 @@ async def upsert_responses(
         )
 
     if conflicts:
-        # EVERY conflicting question, named, so a client can offer "send without these" instead of
-        # a dead end (the Android outbox parked such a sitting for good). Raised before any write.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=answer_owned_by_other_detail(conflicts),
         )
 
-    # Validation for the WHOLE batch has already run, so nothing below can leave a half-written set.
-    #
-    # THE PER-ROW UPDATES ARE THE ONE UNBOUNDED THING IN THIS FUNCTION, and inside a caller's
-    # transaction that is a statement count the caller has to reason about rather than a private
-    # detail — see the note at ``update_interview``'s ``db.tx()``. It is bounded by what actually
-    # CHANGED and not by the batch size (the comparison above is what makes those two different
-    # numbers), so the ordinary save of a section issues one insert and nothing else.
     if to_create:
         await writer.questionnaireresponse.create_many(data=to_create)
     for row_id, data in to_update:
         await writer.questionnaireresponse.update(where={"id": row_id}, data=data)
-    # AN ANSWER IS PART OF THE INTERVIEW'S VERSION. Answers live in their own table, so without this
-    # a second interviewer's answers left the interview's ``updatedAt`` where it was, and a
-    # correction queued on a phone against that ``updatedAt`` would pass its precondition and
-    # replace answers its author never saw. Only when something was actually written.
     if to_create or to_update:
         await writer.questionnaireinterview.update(
             where={"id": interview_id}, data={"updatedAt": datetime.now(UTC)}
@@ -757,18 +465,6 @@ async def update_section(
 
 
 async def answered_question_ids(question_ids: list[str]) -> set[str]:
-    """Which of these global-questionnaire questions carry an answer with actual TEXT against them.
-
-    The twin of ``_answered_question_ids`` in services/questionnaire_forms.py, deliberately written
-    to the same test rather than to a simpler one: a BLANK answer row does not count. The app writes
-    one when a researcher opens a section, tabs through it and saves, and treating that as "answered"
-    would freeze the wording of a question nobody has ever answered — which would turn the rule below
-    from a protection into an obstruction, and obstructions get worked around.
-
-    Filtered in Python rather than in the ``where`` clause for the reason stated there too: "not
-    null" is not the test. An answer saved as a single space is null-ish to a person and non-null to
-    Postgres, and only Python knows that.
-    """
     if not question_ids:
         return set()
     rows = await db.questionnaireresponse.find_many(where={"questionId": {"in": question_ids}})
@@ -780,14 +476,6 @@ async def delete_section(
     section_id: str,
     _: Any = Depends(require_content_admin),
 ) -> None:
-    """Take a section out of use. Its questions stop being asked; every recorded answer stays.
-
-    THE ANSWERED QUESTIONS ARE STAMPED ``retiredAt`` AND THE REST ARE NOT, which is the same
-    distinction ``QuestionnaireFormQuestion.retiredAt`` draws in the custom builder: "retired while
-    carrying evidence" and "switched off before anybody answered" are two different facts about a
-    question, and a column that meant both would answer neither. It costs one extra read of the
-    section's responses, on a route an admin presses a handful of times a year.
-    """
     await require_section(section_id)
     questions = await db.questionnairequestion.find_many(where={"sectionId": section_id})
     answered = await answered_question_ids([q.id for q in questions])
@@ -830,7 +518,6 @@ async def create_question(
         data={
             **section_question_data(section),
             "prompt": payload.prompt.strip(),
-            # The shared question code (C26), from the section and the wording; None off the file.
             "questionCode": cross_portal_codes.question_code(section.code, payload.prompt.strip()),
             "sortOrder": sort_order,
             "isActive": payload.isActive,
@@ -852,51 +539,6 @@ async def update_question(
     payload: QuestionnaireQuestionUpdate,
     _: Any = Depends(require_questionnaire_manager),
 ) -> dict[str, Any]:
-    """Edit one question of the GLOBAL questionnaire — under this repository's one edit rule.
-
-    ================================================================================================
-    REWORDING AN ANSWERED QUESTION SUPERSEDES IT. IT USED TO OVERWRITE IT.
-    ================================================================================================
-
-    The rule is stated in full in services/questionnaire_forms.py and it is not this feature's rule
-    or that one's, it is the repository's: AN ANSWER IS EVIDENCE, AND THE WORDS IT WAS GIVEN UNDER
-    ARE PART OF THAT EVIDENCE. The custom questionnaire builder has honoured it since it was written
-    (``guard_question_edit`` / ``supersede_question``). This endpoint — on the ONE global instrument
-    every researcher in the repository answers — did not: it wrote the new prompt straight over the
-    old one with no answer check anywhere, so
-
-        "How many looms do you own?"      answered "12" by nineteen artisans
-        reworded to "How many weavers work with you?"
-
-    silently re-attributed nineteen recorded answers to a question nobody had ever been asked. The
-    answers were never in danger of being DELETED — ``QuestionnaireResponse.questionId`` is ON DELETE
-    RESTRICT — and that is precisely what made this so quiet: every safeguard in the schema was
-    pointed at the wrong hazard. The completion matrix, the consolidated per-artisan document and
-    its CSV all read those answers, and the .docx built from them goes to a ministry.
-
-    WHAT HAPPENS NOW, and it neither fails nor overwrites: the original is retired with its original
-    wording and keeps its answers, the new wording is created as a new question in the same section
-    at the same position, and ``supersededById`` links them. The manager gets the correction they
-    asked for and no recorded answer changes meaning. The response carries ``action`` so a client can
-    say so.
-
-    THE FIELDS THAT ARE NOT THE WORDING ARE STILL FREELY EDITABLE on an answered question — position,
-    section, active flag. None of them alters what a recorded answer asserts. That is the same line
-    the custom builder draws, and drawing it anywhere else would freeze questionnaires that merely
-    need reordering.
-
-    A QUESTION THAT HAS ALREADY BEEN SUPERSEDED REFUSES A SECOND REWORD with a 409 naming its
-    replacement. ``supersededById`` holds one id, so superseding a superseded row would overwrite the
-    first link and lose the middle of the chain — the reader would be left with a retired question
-    pointing at a replacement two steps away and no way to know a step was missing. The manager's
-    real intent is to edit the CURRENT wording, and the message says where to find it.
-
-    THE RESPONSE IS STILL THE QUESTION ROW, with keys added rather than wrapped around it. The web
-    editor ignores this body entirely and re-reads ``/questionnaire/sections`` afterwards, so a
-    wrapper would have been safe today and would have broken silently for any client that reads
-    ``.id`` or ``.prompt`` — and on a supersede ``.id`` is the one thing a client most needs, because
-    the row it was editing is no longer the row to edit. It gets the REPLACEMENT.
-    """
     question = await require_record(db.questionnairequestion, question_id)
     data = clean_data(payload.model_dump(exclude_unset=True))
     if "prompt" in data:
@@ -929,14 +571,9 @@ async def update_question(
                 "sectionCode": data.get("sectionCode", question.sectionCode),
                 "sectionTitle": data.get("sectionTitle", question.sectionTitle),
                 "prompt": new_prompt,
-                # The replacement's code follows ITS wording, never the original's (C26).
                 "questionCode": cross_portal_codes.question_code(
                     data.get("sectionCode", question.sectionCode), new_prompt
                 ),
-                # The replacement stands exactly where the original stood. `QuestionnaireQuestion`
-                # carries no uniqueness on sortOrder (only `QuestionnaireSection` does), so the
-                # retired row and its replacement sharing a position is legal — and the retired row
-                # is filtered out of every list that asks for active questions only.
                 "sortOrder": data.get("sortOrder") or question.sortOrder,
                 "isActive": data.get("isActive", True),
             }
@@ -956,7 +593,6 @@ async def update_question(
             "detail": SUPERSEDED_DETAIL,
         }
 
-    # The shared question code follows the section and wording this row will have AFTER the write.
     data["questionCode"] = cross_portal_codes.question_code(
         data.get("sectionCode", question.sectionCode), data.get("prompt", question.prompt)
     )
@@ -969,22 +605,6 @@ async def delete_question(
     question_id: str,
     _: Any = Depends(require_content_admin),
 ) -> None:
-    """Take a question out of use. It stops being asked; every answer recorded against it stays.
-
-    THIS HAS ALWAYS BEEN A RETIRE RATHER THAN A DELETE — it only ever set ``isActive = false`` — and
-    that half of the rule was therefore already honoured here. What it did not do was SAY SO in the
-    row: an answered question and one nobody ever touched came out of this endpoint identical, so
-    there was no way afterwards to tell a question that carries evidence from one an admin switched
-    off the day it was typed. ``retiredAt`` records the difference, exactly as it does on
-    ``QuestionnaireFormQuestion``.
-
-    STILL 204, unlike the custom builder's DELETE which answers 200 with an action. There the two
-    outcomes genuinely differ — a question with no answers is really deleted and disappears, one with
-    answers is retired and stays visible — so a client that assumed "gone" would draw the wrong list.
-    Here BOTH outcomes are the same outcome: the question stops being asked and its answers stay.
-    There is nothing for a client to branch on, and inventing a body to say so would change a
-    contract for no information.
-    """
     await require_record(db.questionnairequestion, question_id)
     answered = await answered_question_ids([question_id])
     data: dict[str, Any] = {"isActive": False}
@@ -1018,14 +638,8 @@ async def list_interviews(
     statusFilter: str | None = None,
     dateFrom: datetime | None = None,
     dateTo: datetime | None = None,
-    # WHOSE RECORDS. Reading is open to every signed-in account, so "the records I filed" is no
-    # longer a side effect of the visibility filter and has to be asked for. Without this the
-    # My Activity page had to fetch page 1 of the WHOLE repository and sift it client-side, which
-    # silently under-reported the moment the repository outgrew one page.
     createdBy: str | None = None,
-    # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete. See ``list_artisans``.
     completeness: str | None = None,
-    # THE TRASH (audit H5, 21 Oct 2026): content admins only, newest deletion first.
     deletedOnly: bool = False,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
@@ -1038,18 +652,6 @@ async def list_interviews(
         )
     where: dict[str, Any] = {"deletedAt": {"not": None} if deletedOnly else None}
 
-    # The read predicate, composed the way every other record list composes it: nested under AND so
-    # it can never be overwritten by the free-text OR below, which is exactly how a filter like this
-    # gets silently dropped (`where["OR"] = [...]` replaces the key outright).
-    #
-    # It is EMPTY today. Reading the repository is open to every signed-in account, and that is the
-    # deliberate policy — see the banner above ``records.viewable_where``. It was not always: this
-    # route was once the only record list without a row filter at all, and the note that replaced this
-    # one recorded the consequence, that a CROWDSOURCE_VOLUNTEER could page through every interview a
-    # hundred at a time. What changed is not the tier's entitlement to READ but the whole
-    # repository's: everybody may now read everything, and what an interview's answers are protected
-    # BY is the download gate on the CSV plus the identity masking in ``public_encode`` — not
-    # concealment of the record's existence from the people documenting alongside it.
     and_filters: list[dict[str, Any]] = []
     vis = await viewable_where(current_user)
     if vis:
@@ -1064,9 +666,6 @@ async def list_interviews(
     if artisanId:
         where["artisans"] = {"some": {"artisanId": artisanId}}
     if designWorkshopId:
-        # The design & prototype workshop filter — a plain equality on the column. See
-        # `api/routes/artisans.list_artisans` for why it is not an OR and why the reserved word
-        # "none" is not accepted on a singular filter.
         where["designWorkshopId"] = designWorkshopId
     if workshopId:
         where["workshopId"] = workshopId
@@ -1080,9 +679,6 @@ async def list_interviews(
     if and_filters:
         where["AND"] = and_filters
     add_date_range(where, "interviewDate", dateFrom, dateTo)
-    # The page and the URL scope do not depend on one another, so they are issued together — the
-    # shape ``products.list_products`` uses for the identical pair. See the banner above
-    # ``_DUPLICATE_SET_DETAIL`` for why the viewer and ``media_urls`` are named at all.
     (total, items), media_urls = await gather_reads(
         count_and_page(
             db.questionnaireinterview,
@@ -1105,7 +701,6 @@ async def list_interviews(
 
 
 async def _user_names(user_ids: list[str | None]) -> dict[str, str]:
-    """id -> name for these accounts, one statement; unknown ids are simply absent."""
     ids = sorted({uid for uid in user_ids if uid})
     if not ids:
         return {}
@@ -1113,86 +708,12 @@ async def _user_names(user_ids: list[str | None]) -> dict[str, str]:
     return {user.id: user.name for user in users}
 
 
-# Scalar fields a "create for an existing set" may back-fill on the canonical interview — but ONLY
-# when that field is still empty, so one researcher's create can never overwrite another's content.
-# workshopId joins the list so a later create can name the workshop an earlier one left blank.
-#
-# ⚠ ``workshopId`` IS NOW ALL BUT UNREACHABLE HERE, AND IT IS KEPT ANYWAY — read this before deleting
-# it as dead code (2026-09-20). The fold is reached by looking an ``artisanSetKey`` up, and that key
-# now carries the workshop scope, so a create naming workshop X can only ever find a row whose key
-# already says X: "incoming names a workshop, the holder has none" no longer describes a row this
-# function can be handed. The one state that still reaches it is a row whose key has DRIFTED from its
-# own columns — which ``scripts/reconcile_interview_set_keys.py`` exists to heal and which an
-# out-of-band artisan merge can still produce. On that row the fill is exactly as correct as it was
-# before, and the ``stamp_workshop_submission`` machinery below it (late-submission stamp, PENDING
-# pin, ``record=existing`` so a re-link cannot launder an unapproved late stamp) is what keeps it so.
-# Removing the field would take that machinery with it and leave the drifted case silently filing a
-# workshop link with no submission stamp at all.
-#
-# AND ON THAT DRIFTED ROW THE FILL IS A REPAIR, WHICH IS WHY NOTHING HERE RECOMPUTES THE KEY. The row
-# was FOUND by ``find_unique(artisanSetKey=set_key)`` where ``set_key`` carries the INCOMING payload's
-# workshop, so writing that same workshop onto the row's column makes the column agree with the key it
-# was already filed under. Recomputing the key instead would be the dangerous half — it can collide,
-# and colliding in the middle of a fold would turn a successful contribution into a 409.
 _MERGEABLE_FILL_FIELDS = ("title", "place", "language", "notes", "interviewDate", "workshopId")
 
 
 async def assert_referenced_records_exist(
     artisan_ids: list[str], responses: list[Any] | None
 ) -> None:
-    """Refuse a create whose body names an artisan or a question that does not exist.
-
-    ── THE DEFECT THIS CLOSES (2026-09-20) ─────────────────────────────────────────────────────────
-
-    ``create_interview`` validated NOTHING before writing. It computed ``artisanSetKey`` from the raw
-    payload, INSERTED the interview row with that key, and only then called
-    :func:`replace_interview_artisans` — which is where "do these artisans exist" is asked — and
-    :func:`upsert_responses`, which asks the same of the question ids. Both raise 404. Neither the
-    create nor the two calls after it sit in a transaction, so **the 404 left the interview row
-    committed**: a caller saw a failure, retried, and the repository kept a permanent interview with
-    no artisans, no answers, and a client-authored value sitting in a repository-wide UNIQUE index.
-
-    The same hole is on the fold path, one frame along: :func:`merge_into_interview` commits its fill
-    ``update`` and then calls ``upsert_responses``, so a bad question id left the fill standing.
-
-    ``update_interview`` is NOT affected and needs no call here — it runs its guard, its update, its
-    links and its answers inside one ``db.tx()``, so its 404s roll back. This is exactly the
-    difference ``replace_interview_artisans``' docstring names when it says ``create_interview``
-    "genuinely has no transaction to offer".
-
-    ── WHY VALIDATION AND NOT A TRANSACTION ───────────────────────────────────────────────────────
-
-    Wrapping the create would be the other fix and it is the WRONG one here, because the create path
-    deliberately catches ``UniqueViolationError`` and folds into the winner of the race. A unique
-    violation ABORTS a Postgres transaction — every later statement on that connection fails with
-    "current transaction is aborted" — so inside ``db.tx()`` that recovery could not run at all. It
-    is the same property :func:`duplicate_set_conflict` documents about reading the holder on ``db``
-    rather than on the caller's ``tx``. Validating first keeps the race recovery working AND leaves
-    nothing behind, which a transaction alone would not achieve.
-
-    ── WHERE IT SITS, AND WHY NOT EARLIER ─────────────────────────────────────────────────────────
-
-    In ``create_interview`` it runs AFTER ``assert_can_create_records`` and before the first write.
-    Not earlier: the create gate deliberately sits after the fold so that a CROWDSOURCE_VOLUNTEER or
-    FIELD_CONTRIBUTOR can answer an entry that already exists, and one with nothing to fold into is
-    owed "Researcher access or above" — a 403 about who they are. Validating ahead of that turned it
-    into a 404 about the records they named, which is the wrong answer AND reports the existence of
-    rows to an account that may not create them. ``tests/test_permission_matrix`` pins both halves.
-
-    ── WHAT THIS MEANS FOR THE KEY, WHICH IS COMPUTED EARLIER ─────────────────────────────────────
-
-    ``artisan_set_key`` is derived from these very ids and is computed further up, for the fold
-    LOOKUP. That is a read: an id that does not resolve simply produces a key that matches no row,
-    so nothing is written and nothing is polluted. What matters is that the key is only ever
-    PERSISTED below this check. ``artisanIds`` is ``list[str]`` with no format check, so ``["a|b"]``
-    was a value a client could get into a column whose separators are load-bearing, and migration
-    ``20260920120000`` rests on the premise that no STORED key contains a ``|``. Refusing unknown
-    ids before any write is what makes that premise true rather than hoped for: a cuid contains no
-    separator, and anything that is not a real id no longer reaches the column.
-
-    ONE QUERY EACH, and concurrently — this is outside any transaction, so the two genuinely
-    overlap. ``gather_reads`` is the helper that says why that is only true outside one.
-    """
     artisans = sorted({aid for aid in artisan_ids if aid})
     question_ids = sorted({r.questionId for r in (responses or []) if r.questionId})
     if not artisans and not question_ids:
@@ -1201,8 +722,6 @@ async def assert_referenced_records_exist(
         db.artisan.find_many(where={"id": {"in": artisans}}),
         db.questionnairequestion.find_many(where={"id": {"in": question_ids}}),
     )
-    # The SAME 404 the two callees raise, and deliberately the same opaque detail: which of the ids
-    # a caller sent is unknown is not a question this endpoint answers. It is only raised EARLIER.
     if len(found_artisans) != len(artisans) or len({q.id for q in found_questions}) != len(
         question_ids
     ):
@@ -1215,14 +734,6 @@ async def merge_into_interview(
     current_user: Any,
     check: WorkshopSubmissionCheck | None = None,
 ) -> dict[str, Any]:
-    """Fold a create-for-an-already-existing-set into the single canonical interview.
-
-    Fills only empty scalar fields (never clobbers a populated one), upserts the submitted answers
-    (``upsert_responses`` already blocks a non-owner from changing someone else's answer), and returns
-    the canonical row so the client attaches any media to the shared entry. When this fold is what
-    first links the interview to a workshop, that link is a workshop submission like any other, so it
-    carries the same late-submission stamp and PENDING pin.
-    """
     incoming = payload.model_dump()
     fill = {
         field: incoming.get(field)
@@ -1230,54 +741,14 @@ async def merge_into_interview(
         if not is_empty_value(incoming.get(field)) and is_empty_value(get_value(existing, field))
     }
     if "workshopId" in fill:
-        # Seed from the stored metadata so stamping the submission never drops the canonical
-        # interview's existing extraMetadata (field provenance and anything else already recorded).
-        #
-        # THIS SEED IS NOT THE ONE ``merge_field_provenance`` NOW DOES, AND DELETING IT AS A
-        # DUPLICATE REOPENS THE LOSS IT LOOKS LIKE A COPY OF. That function grew its own seed off
-        # the stored row so an ordinary PATCH stops destroying the column — but this fold path
-        # never calls it. What runs here is ``stamp_workshop_submission`` -> ``merge_extra``, and
-        # ``merge_extra`` bases its result on ``data["extraMetadata"]``, i.e. on THIS payload,
-        # never on the record. ``fill`` is built fresh from the incoming body a dozen lines up, so
-        # with this seed removed the update would write ``{"workshopSubmission": ...}`` and nothing
-        # else over a live row's whole metadata column — the same silent, unrevisioned deletion,
-        # reached by folding a create into an existing artisan set instead of by editing.
-        #
-        # Seeding the SERVER-OWNED ``workshopSubmission`` key along with the rest is safe here and
-        # deliberate: ``stamp_workshop_submission`` runs immediately after and is its single writer,
-        # so whatever the seed carried in is replaced from the authoritative value or dropped
-        # outright when there is none. It cannot be laundered in from the caller either, because
-        # ``fill`` holds only the six ``_MERGEABLE_FILL_FIELDS`` scalars.
-        #
-        # ``record=existing`` IS WHAT MAKES THAT REPLACEMENT HONEST, and this is the one path where
-        # forgetting it looks harmless. The other bare ``stamp_workshop_submission(data, check=...)``
-        # calls are true creates with no row behind them; this one is a fold onto a row that already
-        # exists and may already carry an unapproved late stamp while unlinked (PATCHing
-        # ``workshopId`` to null yields an empty check, so the stamp is CARRIED and the link is the
-        # only thing cleared). Stamped from the fresh in-window check alone, ``needsAdminApproval``
-        # would come back False and a late interview would become approvable by any reviewer — the
-        # laundering-by-re-link that ``stamp_workshop_submission``'s own docstring says a move must
-        # not achieve. With the record passed, the re-link branch fires and the flag survives.
         existing_extra = get_value(existing, "extraMetadata")
         if isinstance(existing_extra, dict):
             fill["extraMetadata"] = dict(existing_extra)
         stamp_workshop_submission(fill, check=check, record=existing)
         pin_pending_if_late(fill, current_user, check=check, record=existing)
         jsonify_metadata(fill)
-    # ``existing`` is passed in bare — only its scalar columns are read above — and ``update`` hands
-    # back the saved row, so the canonical interview is never read a third time just to answer with it.
     canonical = existing
-    # THE FOLD'S HALF OF THE SAME HOLE (2026-09-20), and it is reached by a path the create gate
-    # never sees — every lower-tier contributor answering a shared entry arrives here. ``fill`` is
-    # committed below and ``upsert_responses`` raises 404 for an unknown question id AFTER it, with
-    # no transaction around the pair: a single bad id in a section's worth of answers left the
-    # scalar fill standing behind a refusal, and the obvious retry re-sent the lot.
-    #
-    # Only the QUESTIONS are checked here. The artisans are not this path's to judge — the set is
-    # whatever the canonical row already holds, and this fold does not rewrite the links.
     await assert_referenced_records_exist([], payload.responses)
-    # ONE TRANSACTION FOR THE FILL AND THE ANSWERS (H4, 21 Oct 2026). The 403 ``upsert_responses``
-    # raises for an answer somebody else wrote used to arrive with the scalar fill already committed.
     async with db.tx() as tx:
         if fill:
             canonical = await tx.questionnaireinterview.update(
@@ -1286,8 +757,6 @@ async def merge_into_interview(
         if payload.responses:
             await upsert_responses(existing.id, payload.responses, current_user, client=tx)
     await hydrate_relations([canonical], RELATIONS)
-    # The viewer, so the client that just folded into the shared entry can DRAW its recordings rather
-    # than being told they exist. See the banner above ``_DUPLICATE_SET_DETAIL``.
     return await attach_completeness(
         "interview", public_encode(canonical, current_user, media_urls=await media_url_owners(current_user))
     )
@@ -1298,30 +767,15 @@ async def create_interview(
     payload: QuestionnaireInterviewCreate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    # An artisan merged since the client last looked is named by its survivor.
     payload.artisanIds = await redirect_ids(payload.artisanIds) or []
-    # Workshop entries: enforce assignment BEFORE the dedupe short-circuit, so folding into an
-    # existing interview can never be used to slip past a workshop the user is not assigned to.
     check = await enforce_workshop_submission(current_user, payload.workshopId)
-    # THE DESIGN & PROTOTYPE WORKSHOP, gated for the same reason and BEFORE the dedupe
-    # short-circuit for the same reason as the line above: folding into an existing interview
-    # must not be a way to file a record under a workshop the caller cannot open. It is a
-    # different scope with different machinery — `workshopId` is `WorkshopAssignment`,
-    # `designWorkshopId` is creator / admin / `DesignWorkshopViewer` — so it is a second gate
-    # rather than a replacement. See `services/record_design_workshop.py`.
     await assert_may_file_under(payload.designWorkshopId, current_user)
-    # THE RETIRED GLOBAL FORM, WITH QUESTIONNAIRE_V2 ON (UNIFY 4.5): an old build's create becomes a
-    # session on the design workshop's primary form, returned in this route's shape. With no form
-    # to resolve to, the route below runs as before, so an old build never sees a new error code.
     shimmed = await shims_dr.create_global_interview(payload, current_user)
     if shimmed is not None:
         await hydrate_relations([shimmed], RELATIONS)
         return await attach_completeness(
             "interview", public_encode(shimmed, current_user, media_urls=await media_url_owners(current_user))
         )
-    # RETIRED ONCE THE FORMS ARE UNIFIED (UNIFY U5): the old global form no longer exists, so a create
-    # that resolves to no form is refused in this route's own words rather than writing a row keyed
-    # by the old one-interview-per-artisan-set (which the switch-on drops).
     from app.questionnaire import forms as unified_forms
 
     if await unified_forms.authoring_unified():
@@ -1329,49 +783,20 @@ async def create_interview(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This design workshop has no questionnaire yet. Ask an admin to bind one, then try again.",
         )
-    # One interview per exact artisan set PER WORKSHOP: if one already exists for this set under the
-    # workshop being filed under, fold into it instead of creating a duplicate. This holds for EVERY
-    # client (web + old/new app) regardless of UI.
-    #
-    # THE SCOPE NARROWED ON 2026-09-20 AND THAT IS THE POINT OF THE CHANGE, not a side effect: the
-    # same artisans interviewed at a second workshop used to fold into their FIRST workshop's row,
-    # writing the second sitting's answers onto the first's record. Within one workshop the fold is
-    # exactly what it always was. See ``artisan_set_key``.
     set_key = artisan_set_key(
         payload.artisanIds,
         workshop_id=payload.workshopId,
         design_workshop_id=payload.designWorkshopId,
     )
     if set_key:
-        # Bare row: the merge only reads scalar columns off it, and hydrates the relations once at
-        # the end — so the common "fold into the existing entry" path stops paying for six relation
-        # statements it was about to discard.
         existing = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
         if existing is not None:
             return await merge_into_interview(existing, payload, current_user, check)
 
-    # Everything above this line REACHES an interview that already exists; everything below OPENS a
-    # new one, and only that is a create. The gate sits here rather than on the signature because a
-    # field contributor or volunteer answering the questionnaire for an already-interviewed artisan
-    # set posts to this same endpoint and folds into the canonical row — refusing them at the door
-    # would take away the contribution path these two tiers exist for.
     assert_can_create_records(current_user)
-    # ⚠ AFTER THE CREATE GATE AND BEFORE THE FIRST WRITE, and both halves of that are load-bearing.
-    #
-    # BEFORE THE WRITE, because nothing on this path is in a transaction: the 404s raised further
-    # down by ``replace_interview_artisans`` and ``upsert_responses`` used to leave the interview
-    # row committed behind the refusal. See ``assert_referenced_records_exist``.
-    #
-    # AFTER THE GATE, because moving it earlier silently rewrites the permission contract. A
-    # CROWDSOURCE_VOLUNTEER or FIELD_CONTRIBUTOR with nothing to fold into must be told "Researcher
-    # access or above" — a 403 about who they are — and validating first turned that into a 404
-    # about the records they named, which is both the wrong answer and one that reports on the
-    # existence of rows to an account that may not create them.
-    # ``tests/test_permission_matrix`` pins both halves and caught exactly this.
     await assert_referenced_records_exist(payload.artisanIds, payload.responses)
     data = clean_data(payload.model_dump(exclude={"artisanIds", "responses"}))
     _standardise(apply_interview_values, data)
-    # No longer a user-facing field: fall back to when the interview was actually recorded.
     default_interview_date(data)
     data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
@@ -1380,20 +805,15 @@ async def create_interview(
     merge_field_provenance(data, current_user, previous=None)
     jsonify_metadata(data)
     apply_status_policy_create(current_user, data)
-    # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
     try:
         created = await db.questionnaireinterview.create(data=data)
     except UniqueViolationError:
-        # Race: a concurrent request won the create for this set. Fold into the canonical row.
         existing = await db.questionnaireinterview.find_first(where={"artisanSetKey": set_key})
         if existing is not None:
             return await merge_into_interview(existing, payload, current_user, check)
         raise
     if payload.artisanIds:
-        # The SAME scope the key above was computed under, and it must stay that way: this call
-        # recomputes the key from its arguments and writes it over the one just inserted, so a
-        # different scope here would silently move the row out from under the guard that chose it.
         await replace_interview_artisans(
             created.id,
             payload.artisanIds,
@@ -1402,8 +822,6 @@ async def create_interview(
         )
     if payload.responses:
         await upsert_responses(created.id, payload.responses, current_user)
-    # The row we just inserted IS the response; only its links and answers were written afterwards,
-    # and those load in one wave here instead of a re-read followed by six more statements.
     await hydrate_relations([created], RELATIONS)
     return await attach_completeness(
         "interview", public_encode(created, current_user, media_urls=await media_url_owners(current_user))
@@ -1417,27 +835,6 @@ async def interview_for_artisan_set(
     designWorkshopId: str | None = Query(default=None),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any] | None:
-    """The single canonical interview for an EXACT set of artisans UNDER ONE WORKSHOP, or ``null``.
-
-    Lets a client show the one shared entry — and which sections/questions others have already
-    recorded — before offering to create. A subset of the artisans is a different set, so it will not
-    match here. Declared before ``/{interview_id}`` so the literal path wins the route match.
-
-    ── WHY THE TWO WORKSHOP PARAMETERS ARE NOT OPTIONAL DECORATION (2026-09-20) ────────────────────
-
-    This route exists to answer the question ``create_interview`` is about to answer for itself, and
-    the two answers have to agree or the banner lies. Since the workshop scope became part of
-    ``artisanSetKey``, asking by artisans ALONE asks a question the key can no longer answer: it would
-    always look up the UNATTACHED sitting. A researcher filing under a workshop would be shown the
-    unattached entry's recordings ("already started, sections A and D answered") and then have their
-    save open a brand-new row — or, worse, be shown nothing while a sitting for exactly these people
-    at this workshop sat one row away, and duplicate it.
-
-    They are Pythonic-optional because OMITTING THEM IS A REAL ANSWER — "the interview that is filed
-    under no workshop" is the case 31 of this corpus's 44 interviews are in on 2026-09-20 — and
-    because an older client that sends neither keeps getting exactly the rows it always got for that
-    case. ``None`` and ``""`` are the same answer here for the reason ``artisan_set_key`` gives.
-    """
     set_key = artisan_set_key(
         artisanIds, workshop_id=workshopId, design_workshop_id=designWorkshopId
     )
@@ -1447,8 +844,6 @@ async def interview_for_artisan_set(
     if not interview:
         return None
     await hydrate_relations([interview], RELATIONS)
-    # This is the route a client calls BEFORE offering to create, so it is the first place the
-    # existing entry's recordings are drawn. See the banner above ``_DUPLICATE_SET_DETAIL``.
     return await attach_completeness(
         "interview", public_encode(interview, current_user, media_urls=await media_url_owners(current_user))
     )
@@ -1458,47 +853,13 @@ COMPLETION_STATUSES = {"COMPLETED", "NEEDS_REVIEW", "NEEDS_REDO"}
 
 
 async def _zero() -> int:
-    """An awaitable 0, so a conditional count keeps its slot in a ``gather_reads`` wave.
-
-    Same reason as ``map_points._none``: the wave returns positionally, so a skipped read cannot simply
-    be omitted without renumbering every unpack below it.
-    """
     return 0
 
 
 async def _no_rows() -> list[dict[str, Any]]:
-    """An awaitable empty result set — :func:`_zero` for a query rather than for a count."""
     return []
 
 
-# ── THE WHOLE-REPOSITORY COMPLETION MATRIX'S TWO NARROW READS (2026-09-03) ──────────────────────────
-#
-# ``_derived_completed_sections`` answers a question about BOOLEANS — did any question in this
-# section get an answer, is there a clip filed against it — and it used to answer it by loading every
-# interview in the repository with ``include={"artisans", "responses", "media"}`` and NO ``take``,
-# then reading the full text of every answer and the ``extraMetadata`` of every media row in Python.
-# The columns it dragged across the region to compute a tick are the widest in the schema:
-# ``QuestionnaireResponse.answerText`` is a whole spoken answer, and ``MediaFile.extraMetadata``
-# carries an EXIF summary per photograph. It is the FIRST read the View Data screen issues.
-#
-# These two statements answer the same two questions with the rows the answer actually needs — one
-# (interview, section) pair per recorded section, and one small tuple of section SIGNALS per media
-# row — so the payload stops scaling with how much people wrote and starts scaling with how many
-# sections exist. Both are ``DISTINCT``, so a section answered forty times arrives once.
-#
-# ONE DIVERGENCE, NAMED RATHER THAN LEFT TO BE FOUND. ``is_empty_value`` calls Python's
-# ``str.strip()``, which removes every character ``str.isspace()`` admits — the ASCII six plus a
-# handful of Unicode separators (NBSP, the EM-space family, IDEOGRAPHIC SPACE). ``btrim`` takes an
-# explicit character set and this one lists the ASCII six, because the alternatives are worse: a
-# ``\uXXXX`` escape is a runtime error on a non-UTF8 server, and ``[[:space:]]`` is defined by the
-# server's ctype rather than by Python's table, so neither is actually exact and both read as though
-# they were. So an answer consisting of nothing but a non-breaking space counts as recorded here and
-# as empty on the per-artisan view, which still walks the rows in Python. Nobody can reach that state
-# from either client and no such row exists on the repository today; it is written down because the
-# scoped and unscoped branches now compute the same tick two ways, and the day they disagree this is
-# the paragraph that says how. The proper fix is to put BOTH branches on these statements — the
-# scoped ones only need an ``interviewId = ANY($1)`` — and it is deliberately not done in the change
-# that introduced them, because it would alter what the most-used view on the screen reports.
 _RECORDED_RESPONSE_SECTIONS_SQL = r"""
     SELECT DISTINCT r."interviewId" AS interview_id, q."sectionId" AS section_id
     FROM "QuestionnaireResponse" r
@@ -1508,12 +869,6 @@ _RECORDED_RESPONSE_SECTIONS_SQL = r"""
       AND btrim(r."answerText", E' \t\n\r\f\v') <> ''
 """
 
-# The three section signals a questionnaire media row can carry, and NOTHING else off the row — the
-# ``->>`` projections are what keep the EXIF blob in the database. ``->>`` on a JSONB value that is
-# not an object returns NULL rather than raising, which is exactly the ``isinstance(meta, dict)``
-# guard the Python path applies, and ``split_part(..., '_', 1)`` is ``.split("_", 1)[0]`` for the
-# clip-filename nomenclature (SECTIONCODE_QUESTION_INTERVIEW_DURATION_STAMP) — including its
-# behaviour on a filename holding no underscore, where both return the whole name.
 _MEDIA_SECTION_SIGNALS_SQL = r"""
     SELECT DISTINCT
       m."questionnaireInterviewId"                           AS interview_id,
@@ -1528,84 +883,31 @@ _MEDIA_SECTION_SIGNALS_SQL = r"""
 async def _derived_completed_sections(
     artisan_id: str | None = None, workshop_ids: list[str] | None = None
 ) -> dict[str, set[str]]:
-    """artisanId -> set of sectionIds with recorded content in ANY interview containing the artisan.
-
-    "Containing" covers the artisan interviewed alone, in a group, or as part of a larger superset —
-    a section recorded for any interview the artisan belongs to counts as completed for that artisan.
-    A section counts as recorded in an interview when it has a non-empty response, or media tagged
-    (in ``extraMetadata``) with that section's question or code.
-
-    The three reads do not depend on one another, so they are issued together rather than in series.
-    ``artisan_id`` narrows the interview scan to the interviews that artisan belongs to: the
-    per-artisan View Data view asks about ONE artisan, and reading every interview in the repository
-    (with every answer and every media row attached) to answer that is the difference between a page
-    that stays fast at a hundred artisans and one that does not.
-
-    ``workshop_ids`` narrows it to the interviews taken AT those workshops, which is what makes the
-    matrix answerable per workshop: "which sections did we cover at last week's workshop" is a
-    different question from "which sections has this artisan ever answered", and before this the
-    matrix could only answer the second one. The clause is built by the SHARED
-    ``record_filters.workshop_clause`` so the interview scope means exactly what it means everywhere
-    else, the reserved "none" value included.
-
-    ── AND WHEN NEITHER IS GIVEN, WHICH IS THE DEFAULT VIEW (2026-09-03) ────────────────────────────
-
-    Both narrowings above are optional, and the View Data screen's own first load supplies NEITHER —
-    so the unscoped branch was the one that mattered most and the only one nothing protected. It
-    issued ``find_many`` over EVERY interview in the repository with responses and media attached and
-    no ``take``, and computed a grid of ticks from full answer text and per-photograph EXIF. That
-    branch now asks two narrow statements for exactly the pairs a tick is made of; see
-    :data:`_RECORDED_RESPONSE_SECTIONS_SQL` for what they return, why they are raw SQL, and the one
-    place where they and the Python walk can disagree.
-
-    THE SCOPED BRANCHES ARE UNTOUCHED ON PURPOSE. They are already bounded — by one artisan's
-    interviews, or by one workshop's — and their in-Python walk is the definition every other reader
-    of this rule follows. Moving them onto the statements below is the right end state and is a
-    change to what the most-used view reports, so it is not smuggled in beside a performance fix.
-    """
     interview_where: dict[str, Any] = (
         {"artisans": {"some": {"artisanId": artisan_id}}} if artisan_id else {}
     )
     resolved = resolve_workshop_ids(workshop_ids)
     if resolved is not None:
         ids, include_unassigned = resolved
-        # An interview carries its own ``workshopId`` foreign key, so it takes the ordinary branch of
-        # the shared clause builder rather than the workshop-table one.
         clause = workshop_clause(ids, include_unassigned)
         interview_where.setdefault("AND", []).append(clause or {"id": {"in": []}})
-    # SCOPED IS "the caller narrowed this to something", asked of the WHERE rather than of the two
-    # parameters, because that is the thing the read is actually bounded by: ``workshop_ids`` can
-    # resolve to no clause at all, and an empty ``interview_where`` is the unbounded scan whatever
-    # arrived at the door.
     scoped = bool(interview_where)
     questions, sections, interviews, response_section_rows, media_signal_rows = await gather_reads(
         db.questionnairequestion.find_many(),
         db.questionnairesection.find_many(),
         db.questionnaireinterview.find_many(
-            # Deleted interviews never count (audit H5); added here and not to ``interview_where``
-            # so the "scoped" test above still means what the caller narrowed.
             where={**interview_where, "deletedAt": None},
-            # The artisan links are needed on BOTH branches — they are what turns "this interview
-            # covered section K" into "this artisan has section K" — but the answers and the media
-            # rows are only walked on the scoped one. Asking for them unscoped is what made this the
-            # heaviest read on the screen.
             include=(
                 {"artisans": True, "responses": True, "media": True} if scoped else {"artisans": True}
             ),
         ),
-        # Their slots are held with ``_no_rows`` rather than dropped, for the reason ``_zero`` exists:
-        # ``gather_reads`` returns positionally.
         _no_rows() if scoped else db.query_raw(_RECORDED_RESPONSE_SECTIONS_SQL),
         _no_rows() if scoped else db.query_raw(_MEDIA_SECTION_SIGNALS_SQL),
     )
     section_by_question = {q.id: q.sectionId for q in questions if q.sectionId}
     section_id_by_code = {s.code: s.id for s in sections}
-    # Normalised code -> sectionId, matching how the app builds clip filenames (uppercase, strip
-    # non-alphanumerics) so the SECTION_QUESTION_... nomenclature resolves back to its section.
     section_id_by_norm_code = {_norm_code(s.code): s.id for s in sections if _norm_code(s.code)}
     valid_codes = {_norm_code(s.code) for s in sections if _norm_code(s.code)}
-    # interviewId -> the sections the two narrow statements say were recorded in it. Empty on the
-    # scoped branches, where the same verdicts are reached by walking the rows below instead.
     by_interview: dict[str, set[str]] = {}
     for row in response_section_rows:
         interview_id = row.get("interview_id")
@@ -1616,8 +918,6 @@ async def _derived_completed_sections(
         interview_id = row.get("interview_id")
         if not interview_id:
             continue
-        # The same three signals the media walk below reads, in the same order and with the same
-        # lookups — the SQL only chose the columns, it decided nothing.
         hits = {
             section_by_question.get(row.get("question_id")),
             section_id_by_code.get(row.get("section_code")),
@@ -1629,9 +929,6 @@ async def _derived_completed_sections(
     completed: dict[str, set[str]] = {}
     for interview in interviews:
         recorded: set[str] = set()
-        # Title-named sections: the only signal for pre-nomenclature recordings (titled by section).
-        # Read off the interview row on BOTH branches — the title is a column, so narrowing the
-        # include never cost it.
         for code in section_codes_from_title(interview.title, valid_codes):
             section_id = section_id_by_norm_code.get(code)
             if section_id:
@@ -1652,9 +949,6 @@ async def _derived_completed_sections(
                     code_section = section_id_by_code.get(meta.get("sectionCode"))
                     if code_section:
                         recorded.add(code_section)
-                # Fallback: the audio clip filename leads with the section code
-                # (SECTIONCODE_QUESTION_INTERVIEW_DURATION_STAMP), the only section signal carried by
-                # the app's recorded questionnaire clips.
                 first_token = (media.originalFilename or "").split("_", 1)[0]
                 code_section = section_id_by_norm_code.get(_norm_code(first_token))
                 if code_section:
@@ -1668,59 +962,22 @@ async def _derived_completed_sections(
 @router.get("/completion")
 async def completion_matrix(
     artisanId: str | None = None,
-    # The workshop scope, from the shared filter vocabulary: repeatable or comma-joined workshop ids
-    # plus the reserved value "none"; omitted means every workshop. It narrows BOTH halves of the
-    # matrix — which artisans are rows, and which interviews count towards a cell — because a matrix
-    # that scoped only one of the two would show a workshop's artisans against every interview they
-    # have ever sat in, which is precisely the confusion the control exists to remove.
     workshopIds: list[str] | None = Query(None),
     _: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Completion matrix: artisans (rows) x active sections (columns). Each populated cell carries the
-    data-derived completion flag and any admin override (COMPLETED/NEEDS_REVIEW/NEEDS_REDO). Pass
-    ``artisanId`` to scope it to a single artisan (the per-artisan View Data view), and/or
-    ``workshopIds`` to scope it to one or more workshops."""
-    # Four independent questions — which sections are active, which artisans are in scope, what the
-    # data says is recorded, and what an admin has overridden — asked in one wave instead of one
-    # after the other. The matrix was TEN SEQUENTIAL ROUND TRIPS, and it is the first thing the View
-    # Data screen loads. (Ten cross-region hops was seven or eight seconds when that was measured;
-    # co-located since 2026-09-02 it is tens of milliseconds either way — ``services/concurrency.py``
-    # carries the correction in full. The four-into-one shape is unchanged and is still the right
-    # one; it is simply no longer the difference between a usable screen and an unusable one.)
     status_where = {"artisanId": artisanId} if artisanId else {}
     artisan_where: dict[str, Any] = {"id": artisanId} if artisanId else {}
 
-    # WHICH ARTISANS ARE ROWS, under a workshop scope. An artisan belongs to a workshop two ways and
-    # both count: the ``workshopId`` column on the artisan record, and the WorkshopArtisan roster that
-    # carried the link before that column existed — the same OR ``GET /artisans?workshopId=`` uses. An
-    # artisan who merely SAT IN an interview at the workshop counts too, because that is what makes
-    # them a row worth checking; without it a workshop whose roster was never filled in would show an
-    # empty matrix while its interviews sat right there.
     resolved_workshops = resolve_workshop_ids(workshopIds)
     if resolved_workshops is not None:
         artisan_where.setdefault("AND", []).append(artisan_workshop_clause(*resolved_workshops))
 
-    # HOW MANY INTERVIEWS THIS SCOPE CANNOT SEE, asked in the same wave so it costs no round trip.
-    #
-    # An interview with a NULL ``workshopId`` counts towards NO workshop scope. That is correct — it
-    # genuinely does not say which workshop it was taken at — but it is also the exact shape of the bug
-    # this number exists to make visible: the matrix used to answer "nothing was covered here" while
-    # twenty-five interviews sat in the repository unlinked, and there was nothing on screen to tell a
-    # reader that a filter, not the fieldwork, was the reason.
-    #
-    # Only asked when a scope is actually narrowing. With no scope, or with the reserved "none" value in
-    # play, those interviews ARE in the derived scan, so there is no shortfall to report and a non-zero
-    # number would be a warning about nothing.
     unassigned_relevant = resolved_workshops is not None and not resolved_workshops[1]
     sections, artisan_rows, derived, overrides, unassigned_interviews = await gather_reads(
         db.questionnairesection.find_many(where={"isActive": True}, order={"sortOrder": "asc"}),
         db.artisan.find_many(where=artisan_where, order={"name": "asc"}),
         _derived_completed_sections(artisanId, workshopIds),
         db.questionnairesectionstatus.find_many(where=status_where, include={"setBy": True}),
-        # Narrowed to the one artisan on the per-artisan view, where the question is about them; left
-        # repository-wide on the full matrix, because the artisans in scope are not known until the read
-        # beside this one has returned and a second wave to refine a warning count is a round trip spent
-        # on a sentence.
         count_unassigned_interviews([artisanId] if artisanId else None)
         if unassigned_relevant
         else _zero(),
@@ -1752,7 +1009,6 @@ async def completion_matrix(
                     "setByName": get_value(override.setBy, "name") if override else None,
                 }
             )
-    # Defensively drop overrides that point at now-inactive sections from the matrix output.
     cells = [c for c in cells if c["sectionId"] in section_ids]
     return {
         "sections": [
@@ -1761,15 +1017,7 @@ async def completion_matrix(
         ],
         "artisans": [{"id": a.id, "name": a.name} for a in artisans],
         "cells": cells,
-        # THE SHORTFALL, stated rather than left to be inferred from an empty matrix. Zero whenever the
-        # scope cannot hide anything (no workshop chosen, or "none" explicitly included). See the read
-        # above; both clients render a notice when this is non-zero and an admin gets the way to fix it.
         "unassignedInterviews": int(unassigned_interviews or 0),
-        # An admin mark is a judgement about (artisan, section) across the REPOSITORY — the override
-        # table is keyed on those two columns alone and carries no workshop — so a marked cell shows
-        # under every workshop scope, while the green DERIVED from recordings is scoped to the workshops
-        # chosen. Said on the wire so both clients can say it in the legend instead of each deciding
-        # whether it matters.
         "overridesAreRepositoryWide": True,
     }
 
@@ -1779,14 +1027,11 @@ async def set_completion_cell(
     payload: CompletionCellUpdate,
     current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
-    """Content admins only: set or clear the manual status for one (artisan, section) cell."""
     from app.questionnaire import kinds
 
     await require_record(db.artisan, payload.artisanId)
     await require_record(db.questionnairesection, payload.sectionId)
     key = {"artisanId_sectionId": {"artisanId": payload.artisanId, "sectionId": payload.sectionId}}
-    # One vocabulary end to end (COMPLETED, NEEDS_REVIEW, NEEDS_REDO); an older client's
-    # MARKED_COMPLETE is accepted and stored as COMPLETED.
     try:
         payload.status = kinds.normalise_section_status(payload.status)
     except ValueError as exc:
@@ -1822,8 +1067,6 @@ async def get_interview(
 ) -> dict[str, Any]:
     interview = await require_live_record(db.questionnaireinterview, interview_id)
     await hydrate_relations([interview], RELATIONS)
-    # The detail read — the one screen that plays the sitting back. See the banner above
-    # ``_DUPLICATE_SET_DETAIL``.
     return await attach_completeness(
         "interview", public_encode(interview, current_user, media_urls=await media_url_owners(current_user))
     )
@@ -1840,90 +1083,27 @@ async def update_interview(
         payload.artisanIds = await redirect_ids(payload.artisanIds) or []
     data = clean_data(
         payload.model_dump(exclude_unset=True, exclude={"artisanIds", "responses"}),
-        # ``QuestionnaireInterview``'s own nullable scalars, so an explicit null actually CLEARS
-        # them. Without this the null was stripped and the PATCH answered 200 having changed
-        # nothing — the box looked empty on the form and the old value stayed in the database,
-        # which for ``notes`` (free text about the people interviewed) means a retraction the
-        # researcher believed they had made and had not. ``workshopId`` is already global; ``title``,
-        # ``status``, ``recordedAt`` and ``recordedTimezone`` are NOT NULL and stay out.
         clearable=("interviewDate", "place", "language", "notes"),
     )
     _standardise(apply_interview_values, data, interview)
-    # The precondition is a question, not a column: popped before anything reads ``data``, asked
-    # inside the transaction below. See ``records.take_expected_updated_at``.
     expected_updated_at = take_expected_updated_at(data)
-    # Moving a record into (or between) workshops is a workshop submission too, so the create-time
-    # guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None
     if "workshopId" in data and data.get("workshopId") != interview.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
-    # Same gate on the PATCH, its destination keyed on PRESENCE. See the create above and
-    # `services/record_design_workshop.py`. `filed_under` is the workshop the stored row names, whose
-    # inspector and two directors may not change this sitting at all — its fields, its artisans, its
-    # answers, an unfile or a move out (2026-10-09). Above ``attach_location``, which WRITES a
-    # ``Location`` row, so a refused PATCH leaves none behind.
     await assert_payload_workshop(data, current_user, filed_under=interview.designWorkshopId)
     if shims_dr.enabled() and getattr(interview, "clientKey", None):
-        # A SHARED-QUESTIONNAIRE SESSION edited by an old build (UNIFY 4.5): the typed title is kept
-        # as legacyTitle, artisans become participant changes (one with takes is never dropped) and
-        # responses become answers, all through the package; the columns left go through below.
         shims_dr.legacy_title_change(data)
         await shims_dr.patch_global_interview(interview, payload, current_user)
         payload.artisanIds = None
         payload.responses = None
     data = await attach_location(data)
-    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
-    # ends in ``record_revision``, which used to COMMIT on its own several statements before the
-    # update below — so a request that died in the gap (P2024 on a cross-region pool, a dropped
-    # connection) left a RecordRevision asserting that an interview's notes or title had changed to
-    # something no row holds. ``client=tx`` is load-bearing, not decoration: ``db.tx()`` hands back a
-    # DIFFERENT client, so a callee writing through the module singleton is not inside this block
-    # however it reads. The full argument lives in ``access.record_revision``.
-    #
-    # THE COST, STATED AND NOT HIDDEN: an artisans-only or responses-only PATCH arrives here with
-    # ``data == {}``, and this still opens and commits a transaction that writes nothing — two extra
-    # round trips on a link that is already the slowest thing in the request. The obvious saving is a
-    # branch that runs the guard outside the transaction when ``data`` is empty, and it is refused
-    # deliberately: it would put the SAME authorization call in two places, which is the "second
-    # authorization rule to keep in step with the first" that the ``{}`` probe in
-    # ``processes.update_process`` was written to avoid. One rule, one call site, two round trips.
-    #
-    # THE TWO RELATION WRITES ARE NOW INSIDE IT TOO (2026-09-03), which is what the note that used
-    # to stand here deferred. Both helpers take ``client`` and both use it for every statement they
-    # issue, so the whole save — the ledger entry, the interview's own columns, its ``artisanSetKey``
-    # and link set, and the batch of answers — is one commit. What that closes is not hypothetical:
-    # ``upsert_responses`` raises 403 when somebody edits an answer another researcher wrote, which
-    # is the ORDINARY case of two people working one section, and until this block reached it that
-    # refusal arrived with the interview's scalar edit and its rewritten artisan roster already
-    # committed. The researcher retries, having no way to know half of it landed.
-    #
-    # ``replace_interview_artisans`` also closes a delete-then-insert window on the link set — the
-    # committed WIPE of a group sitting's artisans, ``replace_workshop_artisans``' defect on the
-    # other table — and its 409 on the unique ``artisanSetKey`` now takes the scalar update back
-    # with it instead of standing beside it.
-    #
-    # THE STATEMENT COUNT IS THE COST, AND IT IS THE ONE THING TO WATCH HERE. A bare ``db.tx()``
-    # carries Prisma's default 5-second timeout. Fixed statements in this block: the revision, the
-    # interview update, the link count, and up to four from ``replace_interview_artisans`` — nine at
-    # most, which is ``workshops.update_workshop``'s block almost exactly. ``upsert_responses`` adds
-    # one insert plus ONE UPDATE PER CHANGED ANSWER, and that last number is bounded by the payload
-    # rather than by this code, so this site can exceed the workshops one on a save that rewrites a
-    # whole section of previously answered questions. On the co-located database this deployment now
-    # runs (~1-2ms a statement) that is milliseconds; on a link where it is not, this is the block
-    # that would hit the timeout first. Raise ``db.tx(timeout=...)`` here before splitting the
-    # transaction — a split is what put the ledger and the row in different commits to begin with.
     async with db.tx() as tx:
-        # Before any write in the block, so a refusal rolls nothing back. A None passes.
         assert_expected_updated_at(interview, expected_updated_at)
-        # And then claimed, so two corrections composed against one version cannot both pass.
         await claim_expected_updated_at(tx.questionnaireinterview, interview, expected_updated_at)
         privileged = await guard_record_edit(
             interview, current_user, data, "questionnaire", client=tx
         )
         await apply_status_policy_update(current_user, interview, data)
-        # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's
-        # edit) and pinned after the status policy, so an already-flagged record cannot be
-        # self-approved.
         stamp_workshop_submission(data, check=check, record=interview)
         pin_pending_if_late(data, current_user, check=check, record=interview)
         merge_field_provenance(data, current_user, previous=interview)
@@ -1931,21 +1111,9 @@ async def update_interview(
         jsonify_metadata(data)
         if data:
             await tx.questionnaireinterview.update(where={"id": interview_id}, data=data)
-        # THE SCOPE THIS ROW WILL HAVE WHEN THE BLOCK COMMITS, which is what the set key must be built
-        # from — not the scope it had on the way in.
-        #
-        # ⚠ THE DEFAULT ARGUMENT TO ``.get`` IS THE STORED VALUE, AND `` or interview.workshopId``
-        # WOULD BE A BUG, not a shorter spelling of it. ``data`` holds a workshop key only when the
-        # caller SENT one (``exclude_unset=True``), and an explicit ``null`` SURVIVES ``clean_data``
-        # because both columns are in ``CLEARABLE_KEYS`` — that null is a deliberate unfiling. A
-        # falsy-test would read it as "not sent", keep the old workshop in the key, and leave the row
-        # unfiled while its key still claimed the workshop it had just left.
         after_workshop_id = data.get("workshopId", interview.workshopId)
         after_design_workshop_id = data.get("designWorkshopId", interview.designWorkshopId)
         if payload.artisanIds is not None:
-            # THROUGH ``tx`` BECAUSE IT MUST SEE THIS TRANSACTION'S OWN WRITES. On the module client
-            # this count would be answered from outside the block — the same reason
-            # ``workshops.update_workshop`` moved its two counts onto the transaction.
             link_count = await tx.questionnaireinterviewartisan.count(
                 where={"interviewId": interview_id}
             )
@@ -1964,17 +1132,6 @@ async def update_interview(
             interview.workshopId,
             interview.designWorkshopId,
         ):
-            # RE-FILED UNDER ANOTHER WORKSHOP WITHOUT TOUCHING THE ARTISANS — the ordinary shape of
-            # "this sitting was logged against the wrong workshop". The scope is part of the key since
-            # 2026-09-20, so the key has changed even though the roster has not, and the branch above
-            # never runs on this payload. ``resync_interview_set_key`` states what goes wrong when
-            # this is skipped: the destination loses its guard AND the origin keeps a slot occupied by
-            # a row that has left it. Runs only on a REAL move, so an ordinary PATCH pays nothing.
-            #
-            # No contribution check here on purpose: this does not change the artisan roster, it
-            # restates a key derived from it. The move itself is already gated above by
-            # ``enforce_workshop_submission`` and ``assert_payload_workshop``, and ``guard_record_edit``
-            # has already ruled on whether this account may edit this row at all.
             await resync_interview_set_key(
                 interview_id,
                 workshop_id=after_workshop_id,
@@ -1983,8 +1140,6 @@ async def update_interview(
             )
         if payload.responses is not None:
             await upsert_responses(interview_id, payload.responses, current_user, client=tx)
-    # Re-read the row itself (the PATCH may have changed its columns), but graft the six relations on
-    # in one parallel wave rather than letting the include walk them one after another.
     updated = await db.questionnaireinterview.find_unique(where={"id": interview_id})
     await hydrate_relations([updated], RELATIONS)
     return await attach_completeness(
@@ -1992,30 +1147,6 @@ async def update_interview(
     )
 
 
-# --- Folding one interview into another, on the researcher's explicit instruction ----------------
-#
-# THE RULING THIS SERVES (owner, 2026-09-20). Two researchers recorded ONE artisan set as TWO
-# interviews, each titled by the sections it covered — "D Black Pottery" and an "F" one; the
-# practice ``section_codes_from_title`` documents. The F sitting omitted an artisan. Adding that
-# artisan makes F's artisan-set key EQUAL D's, ``replace_interview_artisans`` hits the unique index,
-# and the correction dies as a 409 with nowhere to go. A CREATE for a taken set has always folded
-# (``merge_into_interview``); an EDIT could not fold at all.
-#
-# The ruling: **let an edit fold, as a create already does — explicitly, never silently.** The 409
-# above now NAMES the holder (``duplicate_set_detail``), the client offers "D Black Pottery already
-# covers this set. Move this interview's sections and recordings into it?", and this route is what
-# the researcher's *yes* calls. Nothing here is automatic: the refusal still refuses, and the fold
-# happens only because a person asked for it by calling a second, differently-named endpoint.
-#
-# WHAT IS DELIBERATELY NOT REUSED. ``merge_into_interview`` is the CREATE path and is untouched —
-# it folds a PAYLOAD into a row, filling empty scalars and upserting submitted answers. This folds a
-# ROW into a row: it has two stored sides to reconcile, a source to remove, and media to repoint,
-# none of which that function has or should grow. The two share the discipline (fill empty, never
-# clobber) and nothing else.
-
-#: ``QuestionnaireInterviewUpdate.title`` is ``max_length=220``. The merged title must stay inside it
-#: or the surviving interview becomes one a client can never PATCH the title of again — a refusal
-#: manufactured by this route, on a field it widened, for every later edit.
 _MERGED_TITLE_MAX = 220
 
 _MERGE_SELF_CODE = "merge_self"
@@ -2023,9 +1154,6 @@ _MERGE_SCOPE_CODE = "merge_cross_scope"
 _MERGE_CONFLICT_CODE = "merge_answer_conflict"
 _MERGE_COVERAGE_CODE = "merge_artisan_coverage"
 
-#: The two columns that say WHICH BODY OF FIELDWORK an interview belongs to in this repository, and
-#: therefore the pair a merge may not cross. See ``merge_interview_into`` for why these and not
-#: ``questionnaireId`` — which this repo's ``QuestionnaireInterview`` does not have.
 _MERGE_SCOPE_FIELDS = ("workshopId", "designWorkshopId")
 
 
@@ -2034,14 +1162,6 @@ def _merge_scope(interview: Any) -> tuple[Any, ...]:
 
 
 def _answer_disagreements(source_row: Any, target_row: Any) -> list[str]:
-    """Which of a response's text columns the two rows BOTH fill and fill differently.
-
-    Identical text is not a disagreement. A value only one side has is not a disagreement — it is
-    something to carry across. ``notes`` is asked alongside ``answerText`` because both are a
-    researcher's own words typed against that question, and losing one under a 200 is the same
-    failure as losing the other; the refusal below names which of the two differs, so the message is
-    never vaguer than the fact.
-    """
     differing: list[str] = []
     for field in ("answerText", "notes"):
         mine, theirs = get_value(source_row, field), get_value(target_row, field)
@@ -2053,7 +1173,6 @@ def _answer_disagreements(source_row: Any, target_row: Any) -> list[str]:
 
 
 async def _duplicate_pair_aliases(pair_id: str | None, user: Any) -> dict[str, str]:
-    """The two artisans of a likely-duplicate pair, each standing for the other. Admins only."""
     if not pair_id:
         return {}
     if not is_content_admin(user):
@@ -2072,105 +1191,8 @@ async def merge_interview_into(
     interview_id: str,
     target_id: str,
     current_user: Any = Depends(get_current_user),
-    # THE DUPLICATE-ARTISAN MERGE'S DOOR IN (services/artisan_merge.blockers_for). Two interviews that
-    # would cover the same artisans once two records of one person are merged can never pass refusal
-    # 3 below, because each covers one of the two records and the other does not. Naming an open
-    # likely-duplicate pair (admins only) lets the two records stand for each other in that check
-    # and nowhere else; the answers then sit on the target, which the artisan merge points at the
-    # surviving record a moment later.
     duplicatePairId: str | None = Query(default=None, max_length=64),
 ) -> dict[str, Any]:
-    """Move this interview's answers, recordings and section coverage onto ``target_id``; remove it.
-
-    Answers with the surviving interview, hydrated and encoded for the caller, so the client can
-    redraw the whole screen from one response instead of re-fetching.
-
-    ── THE GATE: ``access.guard_record_edit``, THE SAME PREDICATE ``update_interview`` USES ────────
-
-    Reused rather than invented, and it is the right one because THIS IS AN EDIT OF ``{id}`` — the
-    largest one there is. Every populated field's worth of content on the source moves off it, so
-    the question "may this account change fields somebody else populated on this interview?" is
-    exactly the question being asked, and ``guard_record_edit`` is the one place this repository
-    answers it. The privileged tier it returns — admin, the record's own author, a professor
-    outranking that author, or an EDIT-tier grantee — is therefore required, and required for a
-    reason rather than for caution: the contributor tier's whole definition is "may FILL EMPTY
-    fields on someone else's record", and no part of a merge fills an empty field. Anyone who could
-    already rewrite this interview through ``PATCH /questionnaire/interviews/{id}`` can merge it, and
-    nobody else can — **no new privilege, no second authorization rule to keep in step with the
-    first.** The call also appends the RecordRevision, so a merge is in the ledger under the name of
-    whoever asked for it, which matters more here than on a PATCH because the source row is gone
-    afterwards and the ledger is the only place left that says where it went.
-
-    ``assert_can_delete`` IS ALSO REQUIRED SINCE 2026-10-20. The owner's ruling of that day counts a
-    merge that removes its source as a delete, and deletes belong to content admins
-    (``deps.CONTENT_ADMIN_ROLES``) alone; the edit gate below still applies on top.
-
-    ── REFUSAL 1: ONE BODY OF FIELDWORK, 422 ───────────────────────────────────────────────────────
-
-    ⚠ **THE CONTRACT ASKS FOR "both interviews must belong to the same questionnaire/instrument",
-    AND THIS REPOSITORY'S ``QuestionnaireInterview`` HAS NO ``questionnaireId``** — see
-    ``prisma/schema.prisma``'s ``QuestionnaireInterview`` and ``\\d "QuestionnaireInterview"`` on the
-    live database: there is one global instrument here, its ``QuestionnaireSection.code`` is still
-    ``@unique`` repository-wide, and the ``Questionnaire`` model in this schema is a DIFFERENT
-    family (a designer's own .xlsx-authored form, parent of ``QuestionnaireFormEntry``, which no
-    interview points at). The field repository's ``20260913100000_questionnaire_instruments`` added
-    that column; this one has not. No column is invented here.
-
-    What IS enforced is the scope that exists: ``workshopId`` and ``designWorkshopId`` must match
-    EXACTLY, NULL to NULL included. Those are what file an interview under a body of work in this
-    repo — ``designWorkshopId``'s own schema note calls it "what puts the consolidated questionnaire
-    under a design workshop" — so a merge across either silently re-files one workshop's answers into
-    another's consolidated view and report annexure, which is the harm the instrument check exists to
-    prevent. Strict equality also keeps the gate above honest: because no merge can move a record
-    ACROSS a scope, this route needs neither ``enforce_workshop_submission`` nor
-    ``assert_may_file_under``, and so requires no privilege an edit of ``{id}`` does not. The day
-    ``questionnaireId`` lands here, add it to :data:`_MERGE_SCOPE_FIELDS` and nothing else changes.
-
-    ── REFUSAL 2: TWO ANSWERS TO ONE QUESTION, 409 ─────────────────────────────────────────────────
-
-    ⚠ **REFUSE, DO NOT GUESS.** When both rows answer the same question with different text, every
-    such question is named in the refusal and NOTHING is moved. Silently picking a winner would
-    destroy a researcher's words under a 200, which is the worst outcome available on this route —
-    and it is not recoverable, because the losing row goes with the source. 409 rather than 422: the
-    request is well-formed and the state is what refuses it, the same reading
-    ``records.assert_unchanged`` and the duplicate-set refusal above take. Identical text is not a
-    conflict; an answer only one side has is not a conflict and is carried across (``answerText``
-    filled from the source also carries the source's ``answeredById``, because those are that
-    person's words — filling a bare ``notes`` does NOT re-stamp authorship of an answer they did not
-    write).
-
-    ── REFUSAL 3: AN ARTISAN ONLY THE SOURCE COVERS, 422 ───────────────────────────────────────────
-
-    BEYOND THE LETTER OF THE CONTRACT, AND HERE IS WHY IT IS NOT SCOPE CREEP. The roster is not
-    moved: ``QuestionnaireInterviewArtisan`` rows cascade away with the source, and adding them to
-    the target would rewrite the target's ``artisanSetKey`` — the one-row-per-artisan-set premise
-    that ``by-artisans``, the consolidated view and the shared-entry banner all rest on, and a key
-    that could collide with a THIRD interview halfway through this transaction. So if the source
-    covers an artisan the target does not, that artisan's answers would survive on a row they are
-    not linked to, and ``_derived_completed_sections`` and ``consolidate_for_artisan`` both walk the
-    LINKS — the answers would simply stop appearing anywhere for that person. That is silent loss of
-    exactly the kind refusal 2 exists to prevent, so it is refused in the same voice. **It cannot
-    fire on the flow the ruling describes:** there the source's set is a SUBSET of the holder's (the
-    edit that would have equalised them is what was refused), and a subset never names an artisan the
-    holder lacks.
-
-    ── WHAT MOVES, AND WHY THE TITLE IS PART OF IT ─────────────────────────────────────────────────
-
-    * **Responses** the target has no row for are repointed. Shared questions keep the target's row,
-      with empty columns filled from the source.
-    * **Media** is repointed — ``MediaFile.questionnaireInterviewId``. Non-negotiable and not an
-      extra: ``MediaFile``'s FK is ``onDelete: SetNull``, so a merge that removed the source without
-      repointing would ORPHAN every recording rather than move it, and on this instrument the
-      recordings ARE the interview.
-    * **The sections named in the title.** Researchers title these by section, and
-      ``_derived_completed_sections`` reads ``interview.title`` as a completion signal — the ONLY one
-      for pre-nomenclature recordings, which is precisely the corpus this fold is for. Deleting the
-      source therefore deletes "section F" from the completion matrix even though every answer and
-      clip moved. So when the source's title names a section code the target's does not, the source
-      title is APPENDED to the target's (never replacing it, and only then), which is what "move this
-      interview's SECTIONS into it" means on this schema. ``extraMetadata.mergedFrom`` records the
-      move either way.
-    """
     assert_can_delete(current_user)
     if interview_id == target_id:
         raise HTTPException(
@@ -2183,11 +1205,6 @@ async def merge_interview_into(
     source = await require_live_record(db.questionnaireinterview, interview_id)
     target = await require_live_record(db.questionnaireinterview, target_id)
 
-    # NOT BY A HOLDER OF EITHER SIDE'S WORKSHOP (2026-10-09). The merge rewrites the target and
-    # deletes the source, so it is a write to both, and a sitting filed under a design workshop is
-    # that workshop's content, which its inspector and its two directors do not change. Asked of
-    # BOTH sides, and before the scope refusal below, so a holder is told about their post whichever
-    # side it is on — and the day the scope rule loosens, this rule does not loosen with it.
     for side in sorted({source.designWorkshopId or "", target.designWorkshopId or ""} - {""}):
         await assert_may_write_a_record_filed_under(side, current_user)
 
@@ -2208,10 +1225,6 @@ async def merge_interview_into(
             },
         )
 
-    # Five reads, none of which depends on another, so they go together rather than in series — the
-    # same argument every other read fan-out in this module makes. ``question`` is included on the
-    # SOURCE side alone: it is needed only to name a conflicting question in the refusal, and the
-    # target's prompts are the same rows.
     source_rows, target_rows, source_links, target_links, sections = await gather_reads(
         db.questionnaireresponse.find_many(
             where={"interviewId": interview_id}, include={"question": True}
@@ -2252,11 +1265,7 @@ async def merge_interview_into(
             if not is_empty_value(get_value(row, field)) and is_empty_value(get_value(other, field))
         }
         if "answerText" in fill:
-            # The words are the source contributor's, so the attribution goes with them. Only when
-            # the ANSWER moves: filling a bare ``notes`` must not take authorship of an answer this
-            # person never wrote, which is the rule ``upsert_responses`` enforces on its own path.
             fill["answeredById"] = row.answeredById
-            # C28: and the words keep their origin, or a drafted answer would land unlabelled.
             fill["answerOrigin"] = get_value(row, "answerOrigin")
         if fill:
             fills.append((other.id, fill))
@@ -2309,20 +1318,12 @@ async def merge_interview_into(
 
     target_data: dict[str, Any] = {}
     if moving_codes:
-        # The researcher's own title first, verbatim — nothing is invented and the existing title is
-        # never replaced. The fallback names the codes alone when the two titles will not fit inside
-        # ``_MERGED_TITLE_MAX``; if even that will not fit, the title is left exactly as it is and
-        # ``mergedFrom`` below is the only record, which is better than shipping a title a later
-        # PATCH can never re-send.
         candidate = f"{target.title} + {source.title}"
         if len(candidate) > _MERGED_TITLE_MAX:
             candidate = f"{target.title} (sections {', '.join(moving_codes)})"
         if len(candidate) <= _MERGED_TITLE_MAX:
             target_data["title"] = candidate
 
-    # SEEDED FROM THE STORED ROW, for ``merge_into_interview``'s reason one screen up: an update that
-    # writes ``{"mergedFrom": …}`` alone over a live ``extraMetadata`` column silently deletes the
-    # field provenance and everything else already in it.
     stored_extra = get_value(target, "extraMetadata")
     extra = dict(stored_extra) if isinstance(stored_extra, dict) else {}
     history = extra.get("mergedFrom")
@@ -2340,25 +1341,10 @@ async def merge_interview_into(
     target_data["extraMetadata"] = extra
     jsonify_metadata(target_data)
 
-    # ONE TRANSACTION, for ``update_interview``'s reason and one more. Everything below writes: the
-    # ledger entry, the target's title and provenance, the moved answers, the moved recordings and
-    # the removal of the source. A failure part-way through without this block is the shape that has
-    # no safe half — recordings repointed onto a row whose answers never arrived, or a source deleted
-    # behind an error the client reads as "try again".
-    #
-    # THE STATEMENT COUNT, stated as this module states it everywhere: the revision, one target
-    # update, one bulk response move, one bulk media move, one delete — five fixed — plus ONE per
-    # shared question the source can fill on the target. That last number is bounded by the OVERLAP
-    # between two interviews rather than by anything this code controls, exactly as
-    # ``upsert_responses`` is inside the PATCH block. Raise ``db.tx(timeout=…)`` here before
-    # splitting this up.
     async with db.tx() as tx:
         privileged = await guard_record_edit(
             source,
             current_user,
-            # Not columns — nothing on the source is being SET. They are what the ledger has to say
-            # about a row that is about to stop existing: where its content went. ``record_revision``
-            # reads an absent attribute as None, so both register as changes and are logged.
             {"mergedIntoInterviewId": target.id, "mergedIntoTitle": target.title},
             "questionnaire",
             client=tx,
@@ -2379,31 +1365,16 @@ async def merge_interview_into(
             )
         for row_id, data in fills:
             await tx.questionnaireresponse.update(where={"id": row_id}, data=data)
-        # BEFORE THE DELETE, ALWAYS. ``MediaFile.questionnaireInterviewId`` is ``onDelete: SetNull``
-        # (schema.prisma), so a delete that ran first would not fail — it would quietly detach every
-        # recording from every interview, which is the silent version of losing them.
         await tx.mediafile.update_many(
             where={"questionnaireInterviewId": interview_id},
             data={"questionnaireInterviewId": target_id},
         )
-        # The source's artisan links and its remaining (duplicate, identical-or-empty) responses go
-        # with it: both FKs are ``onDelete: Cascade``.
         await tx.questionnaireinterview.delete(where={"id": interview_id})
 
     survivor = await db.questionnaireinterview.find_unique(where={"id": target_id})
     await hydrate_relations([survivor], RELATIONS)
     return public_encode(survivor, current_user, media_urls=await media_url_owners(current_user))
 
-
-# --- One artisan's questionnaire, gathered across every interview they sat in --------------------
-#
-# Lives on the questionnaire router rather than under /artisans because what it returns is
-# questionnaire content — sections, questions, answers, the interviews they came from — merely keyed
-# by an artisan. The artisan router's surfaces are about identity (name, craft, Aadhaar), which is
-# the one thing this view must never carry.
-#
-# Declared after /interviews/{interview_id} because the paths cannot collide: these begin with the
-# literal /artisans.
 
 
 async def _consolidated_or_404(
@@ -2418,26 +1389,9 @@ async def _consolidated_or_404(
 @router.get("/artisans/{artisan_id}/consolidated")
 async def consolidated_questionnaire(
     artisan_id: str,
-    # The workshop scope, from the shared filter vocabulary. Omitted means every interview this
-    # artisan belongs to, which is the document's original meaning and stays the default.
     workshopIds: list[str] | None = Query(None),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """This artisan's answers from every interview they belong to, as one ordered document.
-
-    Ordered by questionnaire section then question — not by interview — so it reads as a single
-    account. Every answer carries the interview it came from, that interview's date and the number of
-    artisans in the sitting; a question answered differently in two interviews keeps BOTH answers,
-    newest first, with ``conflict`` set. See services/questionnaire_consolidation for why nothing here
-    picks a winner and why a group sitting's answers are not attributed to one person.
-
-    Pass ``workshopIds`` to read the document as it stands FOR THOSE WORKSHOPS. The whole document is
-    recomputed over the narrowed interview set — summary counts, conflict flags and sources alike —
-    rather than being filtered after the fact, because a disagreement between two workshops is not a
-    disagreement within one of them.
-
-    The stored one-interview-per-artisan-SET rule is untouched: this reads, it never merges.
-    """
     return await _consolidated_or_404(artisan_id, current_user, workshopIds)
 
 
@@ -2447,30 +1401,8 @@ async def consolidated_questionnaire_csv(
     workshopIds: list[str] | None = Query(None),
     current_user: Any = Depends(get_current_user),
 ) -> Response:
-    """The same document as a CSV — the artifact a researcher cites.
-
-    GATED, and it did not used to be. The old justification was that this "returns exactly the rows
-    the JSON endpoint already returned to this same caller", which was true while READING was itself
-    owner-scoped: whoever could open the document could already have transcribed it. Reading is open
-    now (``records.viewable_where``), and the repository's rule is that everybody may LOOK at every
-    record while taking data out stays earned. A CSV is taking data out — it is the file, not the view
-    — so the entitlement is checked here rather than inherited from the page beside it.
-
-    The check is ``owner_download_scope`` against the ARTISAN'S OWNER, not the blanket
-    dataset-download permission that /export/*.csv uses. Those are whole-table dumps and deserve the
-    blunter gate; this is one artisan's document, so the right question is "may you download THIS
-    researcher's data" — which is yes for an admin, for a global dataset downloader, for the
-    researcher who recorded the artisan, and for anyone holding a DOWNLOAD+ grant from them. A subset
-    grant that does not name this artisan is a 403, and so is no grant at all.
-
-    One row per ANSWER, not per question, because that is what keeps a conflict legible in a
-    spreadsheet: the two competing answers are two rows sharing a question, each with its own
-    interview and date, rather than one cell with both crammed in.
-    """
     artisan = await require_record(db.artisan, artisan_id)
     scope = await owner_download_scope(current_user, get_value(artisan, "createdById"))
-    # ``None`` means "all of that owner's data". A subset grant has to actually name this artisan;
-    # otherwise the caller holds a download right over some other record entirely.
     if scope is not None and artisan_id not in scope.get("artisans", set()):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -2484,7 +1416,6 @@ async def consolidated_questionnaire_csv(
     for row in consolidated_rows(payload):
         writer.writerow(row)
     name = payload.get("artisan", {}).get("name") or artisan_id
-    # NAMING 2.1: DesignWorkshop_Questionnaire_2026-10-18_Giriraj-Prasad-Chhipa_Export.csv
     return csv_response(
         naming.export_filename("Questionnaire", "Export", "csv", subject=name),
         output.getvalue(),
@@ -2495,18 +1426,8 @@ async def consolidated_questionnaire_csv(
 async def delete_interview(
     interview_id: str, current_user: Any = Depends(get_current_user)
 ) -> None:
-    """Delete an interview. Content admins only (owner, 21 Oct 2026: one rule on every path).
-
-    A SOFT delete (audit H5). This was ``questionnaireinterview.delete``, which cascaded away the
-    answers, the participant links and the AI drafts, and left every recording unlinked
-    (``MediaFile.questionnaireInterviewId`` is SetNull). Now only ``deletedAt``/``deletedById`` are
-    written and ``artisanSetKey`` is freed, so the set can be interviewed again; everything else
-    stays linked, and ``POST /interviews/{id}/restore`` brings it back whole.
-    """
     assert_can_delete(current_user)
     interview = await require_live_record(db.questionnaireinterview, interview_id)
-    # Not by the inspector or a director of the workshop it is filed under, admins included: its
-    # records are its content (``services/record_design_workshop``, 2026-10-09).
     await assert_may_write_a_record_filed_under(interview.designWorkshopId, current_user)
     await db.questionnaireinterview.update(
         where={"id": interview_id},
@@ -2518,7 +1439,6 @@ async def delete_interview(
     )
 
 
-#: The restore's refusal when a live interview took the artisan set while this one was deleted.
 INTERVIEW_SET_TAKEN = "INTERVIEW_SET_TAKEN"
 
 
@@ -2526,12 +1446,6 @@ INTERVIEW_SET_TAKEN = "INTERVIEW_SET_TAKEN"
 async def restore_interview(
     interview_id: str, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
-    """Undo an interview's soft delete. Content admins only; idempotent on a live interview.
-
-    The artisan-set key is recomputed from the links it kept. When another live interview now holds
-    that set, the restore is refused with a 409 naming it (``INTERVIEW_SET_TAKEN``): merge or delete
-    that one first. Whoever holds a post on the workshop it is filed under is refused, as on delete.
-    """
     interview = await require_record(db.questionnaireinterview, interview_id)
     await assert_may_write_a_record_filed_under(interview.designWorkshopId, current_user)
     if interview.deletedAt is not None:
@@ -2568,7 +1482,6 @@ async def restore_interview(
 
 
 def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:
-    """The shared standard values (``services/standard_values``): a value off its list is a 422."""
     try:
         apply(data, stored)
     except StandardValueError as exc:

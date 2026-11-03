@@ -1,34 +1,3 @@
-"""THE MINISTRY PACK'S SHEETS: pure functions from already-read rows to ``xlsx_report`` sheet dicts.
-
-No database, no storage, no clock. :mod:`app.services.ministry_exports` reads the rows and hands
-them here as plain dicts; this module decides what the Excel workbook says and what the PDF summary
-counts, so both can be tested without Postgres.
-
-    sheet = {"name": str, "color": "#RRGGBB", "columns": [label, ...], "rows": [[cell, ...], ...]}
-
-── WHAT IS IN A PACK ───────────────────────────────────────────────────────────────────────────
-
-Summary first (period, snapshot, scope, standing and period-activity counts, a by-state table, the
-data-protection note and, when the cap was hit, a truncation note), then one sheet per record type
-the Ministry keeps a register of: Workshops, Sanction orders, Annual plan, Inspections and Report
-hand-ons.
-
-── WHAT IS NOT, AND WHY ────────────────────────────────────────────────────────────────────────
-
-NO STAGE ANSWERS. ``deps.DESIGN_WORKSHOP_DATA_EXPORT_ROLES`` is ``{ADMIN, MASTER_ADMIN}``: a Ministry
-Admin may read design-workshop stage data on screen and may not take it out of the product (owner
-rulings of 2026-08-30 and 2026-09-13). One pack goes to every recipient, Ministry Admins included,
-so the pack carries the registers the Ministry already downloads (``/ministry-dashboard/
-design-workshops.csv``, ``/annual-plan/export.xlsx``) and nothing from inside a workshop. No
-questionnaire answers, transcripts, media, URLs or AI layers either.
-
-NO CONTACT DETAILS. A sanction order's designer e-mail is left out, and :func:`scrub_sheet` runs over
-every sheet anyway: phone and e-mail columns are dropped, identity numbers are cut to their last four
-digits, any twelve-digit run in free text is masked the same way, a mobile number or e-mail address
-typed into free text is removed, and any value that is a URL is blanked. The registers above should never carry those values; the scrub is what makes "should" a
-guarantee for a file that leaves the product.
-"""
-
 from __future__ import annotations
 
 import re
@@ -41,12 +10,9 @@ from app.services.ministry_dashboard import STANDING_GROUPS, group_of
 from app.services.records import mask_identity_number
 from app.services.stage_schema import ENUMS
 
-#: The scheme key for a workshop whose kind was never stated (``workshopKind IS NULL``). Without it
-#: those workshops would silently drop out of every pack.
 UNSTATED = "UNSTATED"
 UNSTATED_LABEL = "Scheme not yet stated"
 
-#: The data-protection sentence both files carry, word for word.
 DATA_PROTECTION_NOTE = (
     "Registers only: no stage answers, contact details, photographs, recordings or links. "
     "Identity numbers, where any appear, show their last four digits."
@@ -76,8 +42,6 @@ MONTHS = (
     "December",
 )
 
-#: The register columns of ``/ministry-dashboard/design-workshops.csv``, in that file's order, then
-#: what the pack adds. Kept as the CSV's labels so the two files read alike.
 WORKSHOP_COLUMNS: tuple[str, ...] = (
     "Workshop code",
     "Title",
@@ -109,13 +73,8 @@ WORKSHOP_COLUMNS: tuple[str, ...] = (
 )
 
 
-# --------------------------------------------------------------------------------------
-# Schemes and periods
-# --------------------------------------------------------------------------------------
-
 
 def scheme_keys() -> list[str]:
-    """The six ``WORKSHOP_KIND`` tokens in registry order, then :data:`UNSTATED`."""
     return [*ENUMS["WORKSHOP_KIND"].keys(), UNSTATED]
 
 
@@ -140,7 +99,6 @@ def parse_period(period: str) -> tuple[int, int] | None:
 
 
 def period_label(period: str) -> str:
-    """``"2026-09"`` -> ``"September 2026"``."""
     parsed = parse_period(period)
     if parsed is None:
         return str(period)
@@ -149,7 +107,6 @@ def period_label(period: str) -> str:
 
 
 def period_bounds(period: str, tz: Any) -> tuple[datetime, datetime]:
-    """The period's first instant and the next period's first instant, in UTC, for India time."""
     parsed = parse_period(period)
     if parsed is None:
         raise ValueError(f"Not a period: {period!r}")
@@ -160,7 +117,6 @@ def period_bounds(period: str, tz: Any) -> tuple[datetime, datetime]:
 
 
 def plan_year_for(period: str) -> int:
-    """The financial year (April to March) a period falls in, as the annual plan stores its ``planYear``."""
     parsed = parse_period(period)
     if parsed is None:
         raise ValueError(f"Not a period: {period!r}")
@@ -168,24 +124,15 @@ def plan_year_for(period: str) -> int:
     return year if month >= 4 else year - 1
 
 
-# --------------------------------------------------------------------------------------
-# Scrub
-# --------------------------------------------------------------------------------------
-
 _DROP_SUFFIXES = (".phone", ".email")
 _IDENTITY_SUFFIXES = (".aadhaarnumber", ".pehchancardnumber", ".artisancardno")
 _DROP_LABEL = re.compile(r"\b(phone|mobile|e-?mail)\b", re.IGNORECASE)
 _IDENTITY_LABEL = re.compile(r"aadhaar|pehchan|artisan card", re.IGNORECASE)
 _URL = re.compile(r"^\s*https?://", re.IGNORECASE)
-#: Twelve digits in a row, or in the 4-4-4 groups Aadhaar is printed in, standing alone: not inside a
-#: longer number and not inside a word (a checksum's hex keeps its digits).
 _TWELVE = re.compile(r"(?<![0-9A-Za-z])(\d{4})[ -]?(\d{4})[ -]?(\d{4})(?![0-9A-Za-z])")
-#: An Indian mobile number typed into free text (a venue, a title, a note): ten digits from 6-9, with
-#: an optional +91 / 91 / 0 in front and one space or dash in the middle, standing alone.
 _MOBILE = re.compile(
     r"(?<![0-9A-Za-z+])(?:(?:\+|00)?91[ -]?|0)?[6-9]\d{4}[ -]?\d{5}(?![0-9A-Za-z])"
 )
-#: An e-mail address typed into free text.
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 
@@ -196,13 +143,6 @@ def _mask_runs(text: str) -> str:
 
 
 def scrub_sheet(sheet: dict[str, Any]) -> dict[str, Any]:
-    """Make one sheet safe to leave the product. Returns a new dict; the input is not changed.
-
-    A column is matched on its KEY when the sheet carries ``keys`` (stage-shaped sheets do) and on its
-    label otherwise: phone and e-mail columns are dropped, identity-number columns keep their last four
-    digits, and in every remaining cell a twelve-digit run is masked, a mobile number or e-mail address
-    is removed and a URL is blanked.
-    """
     columns = list(sheet.get("columns") or [])
     keys = [str(k).lower() for k in (sheet.get("keys") or [])]
     if len(keys) != len(columns):
@@ -245,10 +185,6 @@ def scrub_sheet(sheet: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# --------------------------------------------------------------------------------------
-# Cells
-# --------------------------------------------------------------------------------------
-
 
 def _aware(value: Any) -> datetime | None:
     if not isinstance(value, datetime):
@@ -284,7 +220,6 @@ def money_text(value: Decimal | None) -> str:
 
 
 def indian_number(value: Any) -> str:
-    """``1234500`` -> ``"12,34,500"``; decimals kept to two places when present."""
     amount = _money(value) or Decimal(0)
     negative = amount < 0
     whole, _, fraction = f"{abs(amount):.2f}".partition(".")
@@ -306,20 +241,10 @@ def _in_period(value: Any, start: datetime, end: datetime) -> bool:
     return moment is not None and start <= moment < end
 
 
-# --------------------------------------------------------------------------------------
-# Counts
-# --------------------------------------------------------------------------------------
-
 
 def compute_counts(
     workshops: list[dict[str, Any]], start: datetime, end: datetime, *, truncated: bool
 ) -> dict[str, Any]:
-    """The pack's figures, from real timestamps only. ``start``/``end`` bound the period in UTC.
-
-    Standing counts are what the workshops stand at NOW (the snapshot); the four "in period" counts
-    are events whose timestamp falls inside the period. ``handedInInPeriod`` reads the LAST hand-in,
-    which is the only one the row keeps.
-    """
     standing = dict.fromkeys(STANDING_GROUPS, 0)
     participants = 0
     sanctioned = Decimal(0)
@@ -354,7 +279,6 @@ def empty_counts() -> dict[str, Any]:
 
 
 def by_state(workshops: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """``[{state, workshops, completed, participants}]``, most workshops first, unnamed last."""
     table: dict[str, dict[str, Any]] = {}
     for row in workshops:
         name = str(row.get("state") or "").strip() or "State not given"
@@ -370,10 +294,6 @@ def by_state(workshops: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key=lambda e: (e["state"] == "State not given", -e["workshops"], e["state"].lower()),
     )
 
-
-# --------------------------------------------------------------------------------------
-# Sheets
-# --------------------------------------------------------------------------------------
 
 
 def _summary_sheet(
@@ -629,14 +549,6 @@ def _handon_sheet(
 def build_sheets(
     data: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
-    """Every sheet of one pack, Summary first, each scrubbed. Returns ``(sheets, counts, by_state)``.
-
-    ``data`` keys: ``period``, ``periodLabel``, ``scheme``, ``schemeLabel``, ``snapshotAt``,
-    ``monthToDate``, ``revision``, ``truncated``, ``cap``, ``periodStart``/``periodEnd`` (UTC),
-    ``workshops`` (flat dicts, soft-deleted already excluded by the reader — and excluded here again),
-    ``progress`` (by workshop id), ``feedback`` (by workshop id), ``exports`` (by export id),
-    ``annualPlan`` and ``planYearLabel``.
-    """
     workshops = [row for row in data.get("workshops") or [] if not row.get("deletedAt")]
     counts = compute_counts(
         workshops, data["periodStart"], data["periodEnd"], truncated=bool(data.get("truncated"))
@@ -655,7 +567,6 @@ def build_sheets(
 
 
 def all_cells(sheets: Iterable[dict[str, Any]]) -> Iterable[Any]:
-    """Every header and cell, for the tests' "nothing like this anywhere" sweeps."""
     for sheet in sheets:
         yield sheet.get("name")
         yield from sheet.get("columns") or []

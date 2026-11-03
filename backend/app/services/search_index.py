@@ -1,23 +1,3 @@
-"""What one record looks like in the search index: one builder per type (docs/SEARCH.md).
-
-``build(entity_type, entity_id)`` reads one record and returns the ``SearchDocument`` row for it, or
-``None`` when the record is gone, soft-deleted or has nothing to index (the indexer then deletes the
-document). The indexer (``services/search_indexer.py``) writes what this returns; nothing else
-decides what goes into the index.
-
-EVERY BUILDER IS AN ALLOWLIST. A field is in the document only because it is named below. Aadhaar,
-Pehchan, phone, e-mail, date of birth and the stated address are never named, and :func:`scrub`
-removes anything shaped like an identity number or an e-mail address from the free text that is, so
-a phone number typed into a remark does not become searchable either.
-
-``audience`` is ``ALL`` (every signed-in account may read it) or ``DW`` (design-workshop data: read
-by professor and above, or by an account the workshop is visible to). ``shareable`` says whether the
-record may be shown to the Field Repository at all: it names no artisan, or every artisan it names
-is linked across the portals (the designer-side record of the artisan's consent). A record that
-names an artisan only as free text is never shareable, and neither is design-workshop data, whose
-stage answers name participants as free text.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -30,13 +10,11 @@ from urllib.parse import quote
 from app.core.db import db
 from app.services import design_workshop_data as dw_data
 
-#: Longest body kept. Far below the 1 MB tsvector ceiling even for a long transcript.
 BODY_LIMIT = 100_000
 
 AUDIENCE_ALL = "ALL"
 AUDIENCE_DW = "DW"
 
-#: Where each type's read-only view lives on the web. ``{id}`` is the entity id, URL-quoted.
 OPEN_PATHS: dict[str, str] = {
     "artisans": "/artisans/{id}",
     "crafts": "/crafts/{id}",
@@ -52,13 +30,10 @@ OPEN_PATHS: dict[str, str] = {
     "media": "/media/{id}",
 }
 
-#: Questionnaire prompts whose answers are identity, never indexed.
 _IDENTITY_PROMPT = re.compile(
     r"aadha+r|pehchan|phone|mobile|e-?mail|date of birth|\bdob\b|address|bank|account|ifsc",
     re.IGNORECASE,
 )
-#: Identity-shaped text inside free text: e-mail addresses and runs of ten or more digits (phone,
-#: Aadhaar, card numbers), spaces and dashes allowed between the digits.
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _LONG_NUMBER = re.compile(r"(?<!\d)(?:\d[ \-]?){9,}\d(?!\d)")
 
@@ -68,14 +43,11 @@ def open_path(entity_type: str, entity_id: str) -> str:
 
 
 def cluster_key(name: str | None) -> str | None:
-    """The cluster's index key: lower case, single spaces, trimmed. Same rule as the SQL
-    ``search_cluster_key`` in the migration."""
     key = re.sub(r"\s+", " ", (name or "")).strip().lower()
     return key or None
 
 
 def scrub(text: str | None) -> str:
-    """Free text with e-mail addresses and identity-length numbers taken out."""
     if not text:
         return ""
     return _LONG_NUMBER.sub(" ", _EMAIL.sub(" ", str(text))).strip()
@@ -105,7 +77,6 @@ def content_hash(doc: dict[str, Any]) -> str:
 
 
 async def _all_linked(artisan_ids: list[str]) -> bool:
-    """Every named artisan carries a cross-portal link (their recorded consent on this portal)."""
     if not artisan_ids:
         return True
     linked = await db.crossportalartisanlink.count(where={"artisanId": {"in": artisan_ids}})
@@ -156,7 +127,6 @@ def _doc(entity_type: str, entity_id: str, **fields: Any) -> dict[str, Any]:
 
 
 def _codes(*crafts: Any) -> list[str]:
-    """Each craft's shared code (C26), and its slug when it is on the master list (2026-10-20)."""
     present = [c for c in crafts if c is not None]
     slugs = (getattr(c, "slug", None) for c in present if getattr(c, "subCategoryId", None))
     return _ids(*(getattr(c, "craftCode", None) for c in present), *slugs)
@@ -309,7 +279,6 @@ async def _interview(entity_id: str) -> dict[str, Any] | None:
         where={"id": entity_id},
         include={"artisans": True, "location": True, "responses": {"include": {"question": True}}},
     )
-    # A soft-deleted interview (audit H5) leaves search exactly as a removed one did.
     if row is None or row.deletedAt is not None:
         return None
     answers: list[str] = []
@@ -346,8 +315,6 @@ def _media_kind(row: Any) -> str:
     return str(row.mediaType).split(".")[-1].title() if row.mediaType else "File"
 
 
-#: The tag a file carries for each record it can hang off (``records.media_relation_data``), for a
-#: file whose typed column was never filled.
 _MEDIA_TAGS: dict[str, tuple[str, ...]] = {
     "artisan": ("artisan",),
     "product": ("product",),
@@ -374,8 +341,6 @@ def _media_link(row: Any, kind: str, column: str) -> str | None:
 
 
 async def _media_artisans(row: Any) -> tuple[list[str], bool]:
-    """Every artisan a file names, directly or through the product, tool or interview it hangs
-    off, and whether one of them is named only as free text (then it is never shareable)."""
     product = getattr(row, "product", None)
     if product is None and (product_id := _media_link(row, "product", "productId")):
         product = await db.productdocumentation.find_unique(where={"id": product_id})
@@ -453,9 +418,6 @@ async def _transcript(entity_id: str) -> dict[str, Any] | None:
 
 
 async def _transcript_english(row: Any) -> str | None:
-    """The English of the transcript's turns (services/transcript_pipeline), so an English search
-    finds a Hindi interview. Only while its words may still leave the server: a withdrawal stops new
-    English being indexed, and the embeddings already stored are kept (D32)."""
     try:
         from app.services import transcript_pipeline, transcript_portal
 
@@ -552,7 +514,6 @@ async def _process(entity_id: str) -> dict[str, Any] | None:
         return None
     steps = sorted(row.steps or [], key=lambda s: s.sortOrder)
     product = row.product
-    # A process is its product's: it names the product's artisan and shares only when they do.
     artisan_ids = _ids(product.artisanId if product else None)
     free_text = bool(product and (product.artisanName or "").strip() and not product.artisanId)
     return _doc(
@@ -589,7 +550,6 @@ BUILDERS: dict[str, Callable[[str], Awaitable[dict[str, Any] | None]]] = {
 
 
 async def build(entity_type: str, entity_id: str) -> dict[str, Any] | None:
-    """The document for one record, or ``None`` (delete it). Unknown types build nothing."""
     builder = BUILDERS.get(entity_type)
     if builder is None:
         return None
@@ -603,7 +563,6 @@ async def build(entity_type: str, entity_id: str) -> dict[str, Any] | None:
 
 
 async def _media_of(where: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """The media and transcript documents of the files matching any of ``where``."""
     if not where:
         return []
     out: list[tuple[str, str]] = []
@@ -619,8 +578,6 @@ def _tagged(kind: str, ids: list[str]) -> list[dict[str, Any]]:
 
 
 async def dependents_of_artisan(artisan_id: str) -> list[tuple[str, str]]:
-    """The records whose ``shareable`` depends on this artisan's link: the records naming them,
-    the processes of their products, and every file on them, their products, tools or interviews."""
     products = await db.productdocumentation.find_many(where={"artisanId": artisan_id})
     tools = await db.tooldocumentation.find_many(where={"artisanId": artisan_id})
     interviews = await db.questionnaireinterviewartisan.find_many(where={"artisanId": artisan_id})
@@ -647,8 +604,6 @@ async def dependents_of_artisan(artisan_id: str) -> list[tuple[str, str]]:
 
 
 async def dependents_of(entity_type: str, entity_id: str) -> list[tuple[str, str]]:
-    """The documents that take their artisans (so their ``shareable``) from this record: an
-    artisan's records, a product's processes and files, a tool's or an interview's files."""
     if entity_type == "artisans":
         return await dependents_of_artisan(entity_id)
     if entity_type == "products":

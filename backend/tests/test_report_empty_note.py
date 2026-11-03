@@ -1,41 +1,3 @@
-"""The empty-note rule: what a report prints for a field that was never filled in.
-
-THIS IS THE SERVER HALF OF A CROSS-SURFACE DEFECT, AND IT IS THE HALF THAT IS RIGHT. The office's
-copy of a report prints "Not recorded." once for every unfilled REQUIRED field, so a reviewing
-officer can see which answers a partly captured workshop is missing. The handset's copy prints
-nothing at all for the same fields — ``ReportScreen.kt``'s ``renderEntity`` drops every unfilled
-field with ``if (!DwValues.isFilled(stored)) return@forEach``, and its ``cellRuns`` has no
-equivalent of the substitution either, so the divergence is in the TABLE path as well as the prose
-one. The phone's own Data completeness annexure then scores the same draft and prints the shortfall
-in its Outstanding column, so one document states the gap in one section and hides it in another.
-
-The handset is the side that has to move, and ``ReportScreen.kt`` belongs to another lane. What this
-file does is nail the target down so the two surfaces cannot converge on the WRONG answer — which is
-a live risk while a parity defect is being closed, because deleting four lines from ``_printable``
-would also make the two documents agree, and it would agree by hiding the gap in both. Every
-assertion below is a statement about what the handset must be made to do:
-
-* an unfilled REQUIRED field prints the note;
-* an unfilled OPTIONAL field prints nothing (printing negatives for every blank Advanced-tier field
-  would bury the report in them);
-* the note reaches all three presentations — prose, key-value grid and table cell — because a
-  required blank hidden in a table is exactly as invisible as one hidden in prose;
-* a PHOTOGRAPH is exempt, because a missing photograph is not a sentence. The exemption is by ROLE
-  and by IMAGE-ness and NOT by ``is_media``, and the difference is now visible: IMAGE and IMAGE_LIST
-  carry GALLERY, a role ``_printable`` is never asked for, and ``format_value`` prints nothing for
-  them in any case. The seventeen FILE, AUDIO and VIDEO fields carry the KEY_VALUE default and now
-  print "1 document attached" through ``_value``, so an unfilled REQUIRED one prints the note like
-  any text field — which is the correct outcome and not an oversight: "the sanction order is
-  missing" is exactly the sentence an officer needs.
-
-``show_empty_note`` is not a per-template escape hatch in practice: it is declared once on each side
-(``report_templates.ReportTemplate.show_empty_note`` and ``ReportTemplates.kt``'s ``showEmptyNote``)
-and no template on either surface overrides it, so this applies to all six.
-
-No database and no network: the builder is driven directly over synthetic entities, the same way
-``test_report_rich_text_fields`` drives it.
-"""
-
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.services.report_builder import ReportBuilder, WorkshopData
 from app.services.report_model import (
@@ -95,7 +57,6 @@ def _entity(
 
 
 def _text(builder: ReportBuilder) -> str:
-    """Everything the document says, whatever kind of block it landed in."""
     parts: list[str] = []
     for block in builder.doc.build().blocks:
         if isinstance(block, ParagraphBlock):
@@ -107,10 +68,6 @@ def _text(builder: ReportBuilder) -> str:
     return " | ".join(parts)
 
 
-# --------------------------------------------------------------------------------------
-# 1. The rule itself, at the source
-# --------------------------------------------------------------------------------------
-
 
 def test_an_unfilled_required_field_is_printable_with_the_note():
     builder = _builder()
@@ -120,9 +77,6 @@ def test_an_unfilled_required_field_is_printable_with_the_note():
 
 
 def test_an_unfilled_optional_field_is_not_printable_at_all():
-    """The other half of the rule, and it is not symmetry for its own sake: a missing required field
-    says the record is incomplete, a missing optional one says nothing, and a report that printed
-    "Not recorded." for every blank Advanced-tier field would bury the reader in negatives."""
     builder = _builder()
     entity = _entity(ReportRole.NARRATIVE, required=False)
     assert builder._printable(entity, {}, {ReportRole.NARRATIVE}) == []
@@ -136,30 +90,11 @@ def test_a_filled_field_prints_its_value_and_never_the_note():
 
 
 def test_an_unfilled_required_photograph_prints_no_note():
-    """A missing photograph is not a sentence. Images go through ``_images``, which never
-    substitutes, and ``_printable`` is asked for NARRATIVE, KEY_VALUE, COVER_FIELD, TABLE_COLUMN,
-    BULLETS and METRIC — never for the GALLERY role every IMAGE and IMAGE_LIST field in the
-    registry carries. So a required IMAGE field left empty prints nothing at all. The handset must
-    keep this exemption when it adopts the rest of the rule; substituting here would put
-    "Not recorded." where a picture belongs, in a gallery, under a heading that promises
-    photographs.
-
-    THE EXEMPTION IS BY ROLE AND BY IMAGE-NESS, NOT BY ``is_media``, and this docstring used to
-    read "``_printable`` is only ever asked for the non-media roles" — false since FILE, AUDIO and
-    VIDEO started printing "1 document attached" from their KEY_VALUE default. Those seventeen
-    fields DO reach ``_printable``, and a required one left blank now prints the note, which is
-    right: an absent sanction order is a gap an officer must see, while an absent photograph is a
-    gap the gallery already shows by being empty.
-    """
     builder = _builder()
     entity = _entity(ReportRole.GALLERY, required=True, ftype=FieldType.IMAGE, label="Photograph")
     builder._render_narrative(entity, {}, 1)
     assert NOTE not in _text(builder)
 
-
-# --------------------------------------------------------------------------------------
-# 2. …and it survives every presentation the value can land in
-# --------------------------------------------------------------------------------------
 
 
 def test_the_note_reaches_the_prose(monkeypatch):
@@ -177,10 +112,6 @@ def test_the_note_reaches_the_key_value_grid():
 
 
 def test_the_note_reaches_a_table_cell():
-    """THE PATH A PARTIAL FIX WOULD MISS, and the handset's ``cellRuns`` is where it will have to be
-    made. A required blank hidden in a table is exactly as invisible as one hidden in prose, and the
-    stage that shows this worst — prototype rows with a required field left blank on several of them
-    — is a TABLE presentation."""
     builder = _builder()
     entity = _entity(ReportRole.TABLE_COLUMN, required=True)
     builder._render_table(entity, [{}], template("DETAILED_TECHNICAL").sections[0], 1)
@@ -190,10 +121,6 @@ def test_the_note_reaches_a_table_cell():
 
 
 def test_a_row_of_nothing_but_blanks_still_prints_one_note_per_required_field():
-    """The section-level note is NOT a substitute for this one — the handset's only empty note today
-    is per-SECTION (``if (!wrote && template.showEmptyNote)``), which fires when an entire stage
-    produced nothing. A row with one filled field and two blank required ones prints its value and
-    two notes here, and printed one value and nothing else on the phone."""
     builder = _builder()
     entity = EntitySpec(
         key="prototype",

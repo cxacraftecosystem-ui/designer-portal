@@ -1,39 +1,3 @@
-"""MINISTRY EXPORT PACKS: the monthly schedule, the work queue, building a pack, and the digest.
-
-On the 1st of every month (India time, at or after ``MINISTRY_EXPORTS_RUN_HOUR_IST``) the queue
-worker queues one pack per scheme for the month before, builds them one per loop pass, stores the
-files under ``MINISTRY_EXPORTS_PREFIX`` in the media bucket, and — once every pack of that month has
-finished — e-mails each subscribed recipient one digest. A Ministry Admin, admin or the master admin
-can also generate any past month, or the current month to date, on ``/ministry-exports``; that never
-sends mail.
-
-── IDEMPOTENT PER MONTH ────────────────────────────────────────────────────────────────────────
-
-``MinistryExportPack @@unique([period, scheme])``. The scheduler inserts what is missing and treats a
-unique violation as "already there"; regenerating bumps ``revision`` on the same row and storage keys
-carry the revision, so an earlier file is never overwritten. The digest is deduplicated by outbox
-topic ``ministry-packs:{period}``: a recipient with any message on that topic is not sent another.
-
-── ONE PACK PER PASS ───────────────────────────────────────────────────────────────────────────
-
-The worker box is small and a build stops the media queue while it runs, so :func:`maybe_run` claims
-at most one pack per call (a compare-and-set on ``status``, as ``media_queue._lock_job``), renders
-off the event loop, and caps rows at ``MINISTRY_EXPORTS_MAX_WORKSHOPS`` with a note in both files.
-
-── STORAGE ─────────────────────────────────────────────────────────────────────────────────────
-
-``exports/ministry/{period}/{scheme}/r{revision}/ministry-pack-{scheme-slug}-{period}.xlsx|.pdf``.
-Not ``media/`` (public-read) and not ``backups/`` (put-only for the API key). Terraform gives the key
-Put/Get on ``exports/*`` and expires the prefix after ``ministry_export_days`` (400); there is no
-delete permission and none is needed.
-
-── PERMISSIONS ─────────────────────────────────────────────────────────────────────────────────
-
-Checked when a recipient is added (:func:`eligibility`), when mail is sent (again), and when a link
-is minted (the route's guard). A pack is built at whole-estate scope, so only whole-estate roles —
-:data:`design_workshop_oversight.OVERSIGHT_ASSIGNER_ROLES` — may receive or open one.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -88,24 +52,14 @@ MIME = {
     "pdf": "application/pdf",
 }
 
-#: How long the bucket keeps a pack's files: Terraform's ``ministry_export_days`` default. The page
-#: shows "files removed" after it; the row stays.
 FILES_RETAINED_DAYS = 400
-#: A pack BUILDING longer than this was abandoned by a dead worker.
 STALE_BUILDING_AFTER = timedelta(minutes=30)
-#: Retry backoff after the 1st, 2nd and 3rd failed attempt.
 BACKOFF = (timedelta(minutes=5), timedelta(minutes=20), timedelta(minutes=60))
-#: The scheduler's own checks (queue the month, recover stale rows, send the digest) run this often.
 CHECK_EVERY = timedelta(minutes=10)
-#: The scheduled digest goes out only in the first week of the month that owes it. A worker that was
-#: down on the 1st still catches up, but someone subscribed or reactivated on the 20th is not sent
-#: last month's "packs are ready" e-mail; their first digest is next month's.
 DIGEST_WINDOW = timedelta(days=7)
 MAX_ERROR_LENGTH = 200
 
-#: The refusal, word for word on the web guard as well (``frontend/lib/permissions.ts``).
 REFUSAL = "For Ministry Admins, admins and the master admin."
-#: When a file's object is gone because the lifecycle rule removed it.
 FILES_REMOVED = "This pack's files have been removed after 13 months. Generate it again."
 STORAGE_UNREACHABLE = "Storage did not answer. Try again in a minute."
 
@@ -119,10 +73,6 @@ def _now() -> datetime:
 def topic_for(period: str) -> str:
     return f"ministry-packs:{period}"
 
-
-# --------------------------------------------------------------------------------------
-# Periods
-# --------------------------------------------------------------------------------------
 
 
 def _shift(year: int, month: int, by: int) -> tuple[int, int]:
@@ -142,11 +92,6 @@ def previous_period(now: datetime | None = None) -> str:
 
 
 def period_for(now_ist: datetime, run_hour: int = 6) -> str | None:
-    """The month the scheduler owes at this moment, or ``None`` before the run hour on the 1st.
-
-    Always the month BEFORE the current one; from the run hour on the 1st through the rest of the
-    month (so a worker that was down on the 1st catches up when it comes back).
-    """
     local = now_ist.astimezone(IST)
     if local.day == 1 and local.hour < max(0, min(int(run_hour), 23)):
         return None
@@ -154,7 +99,6 @@ def period_for(now_ist: datetime, run_hour: int = 6) -> str | None:
 
 
 def digest_open(now_ist: datetime, run_hour: int = 6) -> bool:
-    """Whether the scheduled digest for the month ``period_for`` owes may still be sent."""
     local = now_ist.astimezone(IST)
     hour = max(0, min(int(run_hour), 23))
     opens = local.replace(day=1, hour=hour, minute=0, second=0, microsecond=0)
@@ -165,10 +109,6 @@ def is_future(period: str, now: datetime | None = None) -> bool:
     return period > current_period(now)
 
 
-# --------------------------------------------------------------------------------------
-# Eligibility
-# --------------------------------------------------------------------------------------
-
 
 def role_of(user: Any) -> str:
     role = getattr(user, "role", None)
@@ -176,7 +116,6 @@ def role_of(user: Any) -> str:
 
 
 async def eligibility(users: list[Any]) -> dict[str, str | None]:
-    """``{user id: None when eligible, else a short reason}`` — role, address and platform access."""
     from app.services.access_roster import barred_among
 
     barred = await barred_among([str(u.email) for u in users if getattr(u, "email", None)])
@@ -194,18 +133,8 @@ async def eligibility(users: list[Any]) -> dict[str, str | None]:
     return out
 
 
-# --------------------------------------------------------------------------------------
-# Queue
-# --------------------------------------------------------------------------------------
-
 
 async def ensure_scheduled(period: str, now: datetime | None = None) -> int:
-    """Queue a SCHEDULED pack for every scheme of ``period`` that has none. Returns how many.
-
-    A row that already exists is left alone — that is the idempotency — with one exception: a pack
-    built while the month was still running (``monthToDate``) is regenerated once the month is over,
-    so the scheduled pack is always the whole month.
-    """
     moment = now or _now()
     existing = {
         row.scheme: row for row in await db.ministryexportpack.find_many(where={"period": period})
@@ -226,10 +155,8 @@ async def ensure_scheduled(period: str, now: datetime | None = None) -> int:
                 )
                 created += 1
             except UniqueViolationError:
-                pass  # another worker or an on-demand request got there first: already there
+                pass
         elif row.monthToDate and row.status in (READY, EMPTY):
-            # Not FAILED: a failed month-to-date row keeps its old flag, and requeuing it here would
-            # retry it every ten minutes for the rest of the month.
             await _requeue(row, trigger=SCHEDULED, requested_by=None, now=moment)
     return created
 
@@ -237,7 +164,6 @@ async def ensure_scheduled(period: str, now: datetime | None = None) -> int:
 async def _requeue(
     row: Any, *, trigger: str, requested_by: str | None, now: datetime | None = None
 ) -> bool:
-    """Regenerate a finished pack: same row, next revision, files cleared until the new ones land."""
     updated = await db.ministryexportpack.update_many(
         where={"id": row.id, "revision": row.revision, "status": {"in": list(TERMINAL)}},
         data={
@@ -263,11 +189,6 @@ async def _requeue(
 
 
 async def request_packs(period: str, schemes: list[str], user_id: str | None) -> list[Any]:
-    """On-demand generation for ``period``. Never sends mail. Returns the rows, in scheme order.
-
-    No row: one is created. QUEUED or BUILDING: returned unchanged. READY, EMPTY or FAILED:
-    regenerated (revision bumped).
-    """
     wanted = [key for key in scheme_keys() if not schemes or key in schemes]
     out: list[Any] = []
     for scheme in wanted:
@@ -298,7 +219,6 @@ async def request_packs(period: str, schemes: list[str], user_id: str | None) ->
 
 
 async def recover_stale(now: datetime | None = None) -> int:
-    """A pack BUILDING for over 30 minutes goes back to QUEUED, or to FAILED once attempts are spent."""
     moment = now or _now()
     stale = await db.ministryexportpack.find_many(
         where={"status": BUILDING, "lockedAt": {"lt": moment - STALE_BUILDING_AFTER}}, take=50
@@ -329,7 +249,6 @@ async def recover_stale(now: datetime | None = None) -> int:
 
 
 async def claim(row: Any, worker_id: str, now: datetime | None = None) -> Any | None:
-    """Take one QUEUED pack, atomically. Of two claimers exactly one gets the row."""
     moment = now or _now()
     claimed = await db.ministryexportpack.update_many(
         where={"id": row.id, "status": QUEUED, "revision": row.revision},
@@ -351,7 +270,6 @@ async def process_next_pack(
     worker_id: str = "queue-service",
     now: datetime | None = None,
 ) -> Any | None:
-    """Claim and build at most ONE due pack. Returns the row as it was left, or ``None``."""
     settings = settings or get_settings()
     moment = now or _now()
     row = await db.ministryexportpack.find_first(
@@ -364,7 +282,7 @@ async def process_next_pack(
         return None
     try:
         await build_pack(pack, settings)
-    except Exception as exc:  # one bad pack must never take the worker down
+    except Exception as exc:
         logger.exception(
             "ministry exports: pack %s (%s %s) failed", pack.id, pack.period, pack.scheme
         )
@@ -396,10 +314,6 @@ async def _fail_or_retry(pack: Any, error: str, now: datetime) -> None:
     )
 
 
-# --------------------------------------------------------------------------------------
-# Building
-# --------------------------------------------------------------------------------------
-
 
 def storage_key(settings: Settings, period: str, scheme: str, revision: int, file: str) -> str:
     prefix = (settings.ministry_exports_prefix or "exports/ministry/").strip("/") + "/"
@@ -407,7 +321,6 @@ def storage_key(settings: Settings, period: str, scheme: str, revision: int, fil
 
 
 def file_name(period: str, scheme: str, file: str) -> str:
-    """``DesignWorkshop_Ministry_2026-09_Skill-Upgradation_Monthly-Report.xlsx`` (services/naming.py)."""
     return naming.export_filename(
         "Ministry", "Monthly-Report", file, period=period, subject=scheme_slug(scheme).replace("-", " ")
     )
@@ -459,7 +372,6 @@ def _group_value(row: Any, aggregate: str, field: str) -> Any:
 
 
 async def _load(pack: Any, settings: Settings) -> dict[str, Any]:
-    """Read everything one pack needs. Whole estate; soft-deleted workshops excluded."""
     from app.services.annual_plan_xlsx import plan_year_label
     from app.services.ministry_dashboard import PROGRESS_SCORE_CAP, beneficiary_counts, progress_for
 
@@ -553,7 +465,6 @@ async def _load(pack: Any, settings: Settings) -> dict[str, Any]:
 
 
 def _render(data: dict[str, Any]) -> tuple[bytes, bytes, dict[str, Any]]:
-    """Both files and the counts. Synchronous; called in a thread."""
     from app.services.ministry_pack_pdf import build_pack_pdf
     from app.services.xlsx_report import build_report_workbook
 
@@ -580,11 +491,6 @@ def _render(data: dict[str, Any]) -> tuple[bytes, bytes, dict[str, Any]]:
 
 
 async def build_pack(pack: Any, settings: Settings | None = None) -> None:
-    """Build one claimed pack and mark it READY (or EMPTY). Raises on failure; the caller retries.
-
-    The files are stored BEFORE the row says READY, and the READY write is a compare-and-set on the
-    claim, so no READY row ever points at a file that was not written.
-    """
     from app.services import s3
     from app.services.stage_schema import registry_version
 
@@ -647,14 +553,8 @@ async def build_pack(pack: Any, settings: Settings | None = None) -> None:
     )
 
 
-# --------------------------------------------------------------------------------------
-# Digest
-# --------------------------------------------------------------------------------------
-
 
 async def send_period_digest(period: str, settings: Settings | None = None) -> int:
-    """One e-mail per eligible recipient, once every pack of ``period`` has finished. Returns how many
-    were queued. Recipients with any message on the period's topic already are skipped."""
     settings = settings or get_settings()
     if not mailer.mail_configured(settings):
         return 0
@@ -709,20 +609,10 @@ async def send_period_digest(period: str, settings: Settings | None = None) -> i
     return queued
 
 
-# --------------------------------------------------------------------------------------
-# The worker's entry point
-# --------------------------------------------------------------------------------------
-
 
 async def maybe_run(
     settings: Settings | None = None, now: datetime | None = None, *, force: bool = False
 ) -> None:
-    """Called on every pass of the queue worker. A no-op while ``MINISTRY_EXPORTS_ENABLED`` is off.
-
-    Every pass: build at most one due pack (so an on-demand request is picked up within a pass).
-    Every ten minutes (or with ``force``): recover stale builds, queue the month the schedule owes,
-    and send its digest when it is complete, if still inside ``DIGEST_WINDOW``.
-    """
     global _next_check
     settings = settings or get_settings()
     if not settings.ministry_exports_enabled:
@@ -745,14 +635,9 @@ async def maybe_run(
 
 
 def reset_schedule_gate() -> None:
-    """For tests: forget when the scheduler last checked."""
     global _next_check
     _next_check = None
 
-
-# --------------------------------------------------------------------------------------
-# Payloads
-# --------------------------------------------------------------------------------------
 
 
 def _iso(value: Any) -> str | None:
@@ -795,7 +680,6 @@ def pack_payload(
 
 
 async def mail_tallies(periods: list[str]) -> dict[str, dict[str, int]]:
-    """``{period: {queued, sent, failed}}`` from the digest topic, one query for the page."""
     by_topic = await email_outbox.latest_by_topics([topic_for(p) for p in periods])
     out: dict[str, dict[str, int]] = {}
     for period in periods:

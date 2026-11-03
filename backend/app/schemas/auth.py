@@ -7,40 +7,9 @@ from app.schemas.common import APIModel
 
 
 class LoginRequest(APIModel):
-    """The sign-in body. ``email`` is a misnomer since 2026-08-30 and the name was kept anyway.
-
-    ── WHY THE FIELD IS STILL CALLED ``email`` WHEN IT NO LONGER HAS TO BE ONE ────────────────────
-
-    A designer may now sign in with their email address, their phone number **or** their empanelment
-    number (``app/services/identity.py`` resolves all three). The obvious change is to rename this
-    to ``identifier``. It was not made, and the reason is that this is the front door of a product
-    that is live: both shipped clients POST ``{"email": ..., "password": ...}``, the Android build in
-    people's hands is not upgraded by a backend deploy, and a rename with a compatibility alias is
-    two spellings of one field that must agree for ever. One name, widened, is the smaller thing to
-    keep true.
-
-    ``EmailStr`` WAS REMOVED FROM THIS FIELD, WHICH IS THE WHOLE CHANGE ON THIS SIDE. Pydantic would
-    have refused ``DES/2024/0142`` at the wire with a 422 that named the ``email`` field, before any
-    handler could resolve anything — which is the same failure the web input's ``type="email"`` used
-    to produce in the browser. Nothing is lost by the removal: an address that is not an address
-    simply fails to resolve to an account, and the answer to that is the same 401 as a wrong
-    password. See ``routes/auth.login``, which explains why that answer is deliberately unchanged.
-
-    THE LENGTH BOUND IS NOT VALIDATION, IT IS A BUDGET. Anything past 320 characters (the longest
-    legal email address) is refused before it can be normalised, digested or looked up — a megabyte
-    posted at the sign-in route should cost a 422 and not a regex pass.
-    """
-
     email: str | None = Field(default=None, max_length=320)
     password: str | None = Field(default=None, min_length=8)
     googleIdToken: str | None = None
-    # ── MICROSOFT AND YAHOO: an authorization code, and what proves this caller started the flow ──
-    #
-    # Not an ID token, unlike Google: see ``app/services/oidc_sign_in.py`` for why these two
-    # providers' codes are redeemed here. All five travel together or not at all. The verifier's
-    # alphabet and length are RFC 7636's; the nonce is the RAW value whose SHA-256 the client put in
-    # the authorization request. The bounds are budgets, like ``email``'s: nothing longer is ever
-    # legitimate, so nothing longer is ever forwarded.
     oidcProvider: Literal["MICROSOFT", "YAHOO"] | None = None
     oidcCode: str | None = Field(default=None, min_length=1, max_length=4096)
     oidcCodeVerifier: str | None = Field(
@@ -80,68 +49,23 @@ class TokenResponse(APIModel):
 
 
 class IssuePasswordLinkRequest(APIModel):
-    """An account provisioner asking for a password link for somebody else's account.
-
-    No ``purpose``: it is derived (``credential_links.purpose_for``) from whether the account has a
-    password and whether it has ever signed in, because the two purposes differ only in a lifetime
-    and a provisioner choosing "invite" for an account somebody is already using would mint a
-    three-day credential for a live account.
-    """
-
     userId: str = Field(min_length=1, max_length=64)
-    #: ``COPY_LINK`` (the default, and all a client that predates e-mail ever sends): the link comes
-    #: back to be copied. ``EMAIL``: it is queued to the account's own address and does not come
-    #: back at all. Refused with a 422 when mail is not configured.
     delivery: Literal["COPY_LINK", "EMAIL"] = "COPY_LINK"
 
 
 class PasswordLinkCheckRequest(APIModel):
-    """Asking whether a link is still good, with the token in the BODY (2026-10-09).
-
-    ``POST /auth/set-password/check`` answers exactly what ``GET /auth/set-password?token=…``
-    answers, and exists because a query string is part of the request line, which anything in front
-    of the API may write down (``docs/OPEN_FINDINGS.md``). So the field takes exactly what the GET's
-    query parameter takes: any string, the empty one and an absent one answered "missing", and NO
-    length bound — a token past ``credential_links.MAX_TOKEN_LENGTH`` is "malformed" from
-    ``credential_links.verify_token``, before any HMAC, as it is through the GET. A bound here would
-    turn that answer into a 422 the GET never gives.
-    """
-
     token: str | None = None
 
 
 class SetPasswordRequest(APIModel):
-    """Redeeming a link. Unauthenticated by necessity — the whole point is that the person cannot
-    sign in — which is why the token is the entire authority and is checked four ways."""
-
     token: str = Field(min_length=1, max_length=1024)
     password: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
 
 
 class ChangePasswordRequest(APIModel):
-    """The signed-in account changing its own password.
-
-    ``currentPassword`` is required for every account that HAS a password, even one carrying
-    ``mustChangePassword``: that flag means "the password you were given was not chosen by you", not
-    "anybody at this keyboard may replace it". An account with NO password at all (Google, Microsoft
-    or Yahoo only) sends none and SETS a first password instead — allowed only with a provider sign-in
-    made in the last few minutes for this account: ``googleIdToken``, or the five ``oidc*`` fields the
-    Microsoft and Yahoo sign-in sends (see ``routes/auth._require_fresh_provider_proof``). It is
-    optional on the wire for that reason; an empty one for an account with a password is simply wrong.
-
-    Both fields share the one ceiling (``security.MAX_PASSWORD_LENGTH``) the admin forms use, so any
-    temporary password an administrator can set is one this form can accept back.
-    """
-
     currentPassword: str = Field(default="", max_length=MAX_PASSWORD_LENGTH)
     newPassword: str = Field(min_length=8, max_length=MAX_PASSWORD_LENGTH)
-    #: The second step, for a FIRST password on an account that has two-step verification on
-    #: (2026-10-17): a six-digit code or a recovery code. Ignored on an ordinary change, where the
-    #: current password is the proof. The bound is a budget, like ``TwoFactorCodeRequest.code``'s.
     twoFactorCode: str | None = Field(default=None, max_length=64)
-    #: THE FRESH PROVIDER PROOF for a first password (2026-10-17), shaped exactly like the sign-in's:
-    #: a Google ID token, or a Microsoft/Yahoo authorization code with what proves this caller started
-    #: the flow. Ignored on an ordinary change. Same bounds as ``LoginRequest``'s.
     googleIdToken: str | None = Field(default=None, max_length=8192)
     oidcProvider: Literal["MICROSOFT", "YAHOO"] | None = None
     oidcCode: str | None = Field(default=None, min_length=1, max_length=4096)
@@ -163,41 +87,20 @@ class ChangePasswordRequest(APIModel):
 
 
 class ForgotPasswordRequest(APIModel):
-    """``POST /auth/forgot-password``: the address a signed-out person asks a link for.
-
-    A malformed address is the one refusal this door gives about its body (422) — it is about the
-    request, never about an account. The bound is a budget, like ``LoginRequest.email``'s.
-    """
-
     email: EmailStr = Field(max_length=320)
 
 
-# ── TWO-STEP VERIFICATION ─────────────────────────────────────────────────────────────────────────
-#
-# snake_case, unlike every other body in this file, because the two portals implement one shared
-# spec with one wire shape and the clients are copied between them. See app/services/two_factor.py.
-
 
 class TwoFactorChallengeResponse(APIModel):
-    """What ``POST /auth/login`` answers, with a 200, when the first factor was right and the account
-    has two-step verification on. No session: the token is accepted only by
-    ``POST /auth/two-factor/verify``."""
-
     two_factor_required: Literal[True] = True
     challenge_token: str
 
 
 class TwoFactorCodeRequest(APIModel):
-    """A six-digit authenticator code or an ``xxxx-xxxx`` recovery code, told apart by shape. The
-    bound is a budget, like ``LoginRequest.email``'s: nothing longer is ever either."""
-
     code: str = Field(min_length=1, max_length=64)
 
 
 class DatasetTokenRequest(LoginRequest):
-    """``POST /api/datasets/token``'s body: the sign-in body, plus the second step for an account that
-    has two-step verification on. A six-digit authenticator code or a recovery code."""
-
     twoFactorCode: str | None = Field(default=None, max_length=64)
 
 

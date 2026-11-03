@@ -1,11 +1,3 @@
-"""The 2026-10-18 notice templates and the pure helpers around them — no database.
-
-Every new kind renders a subject, a text part and an HTML part; the office's report link is a sealed
-secret and is refused without one; the daily digest's boundary is 09:00 India time; the office
-addresses are cleaned and refused by entry; a hand-in preference outside the three words reads as
-EACH; the outbox's status words collapse to the three a screen shows.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -74,8 +66,8 @@ def test_a_sanction_link_names_the_order() -> None:
 
 
 def test_the_digest_boundary_is_nine_in_the_morning_india_time() -> None:
-    before_nine = datetime(2026, 10, 18, 3, 0, tzinfo=UTC)  # 08:30 IST
-    after_nine = datetime(2026, 10, 18, 4, 0, tzinfo=UTC)  # 09:30 IST
+    before_nine = datetime(2026, 10, 18, 3, 0, tzinfo=UTC)
+    after_nine = datetime(2026, 10, 18, 4, 0, tzinfo=UTC)
     assert email_outbox.digest_cutoff(before_nine) == datetime(2026, 10, 17, 3, 30, tzinfo=UTC)
     assert email_outbox.digest_cutoff(after_nine) == datetime(2026, 10, 18, 3, 30, tzinfo=UTC)
 

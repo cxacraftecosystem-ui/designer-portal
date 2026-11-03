@@ -1,13 +1,3 @@
-"""The e-mail outbox (``app/services/email_outbox.py``): queueing, the drain, retries, the send log,
-the opt-out, and who a review notice goes to.
-
-No database: the module's ``db`` is replaced by a small in-memory table that answers exactly the
-calls the outbox makes and fails loudly on any other (the convention
-``test_design_workshop_send_back_guard`` states for its own stubs). SES is replaced at
-``mailer.send``. The database-backed half — the migration, the preference routes, a link issued
-for e-mail — is ``test_email_db.py``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -117,8 +107,6 @@ class _Users:
 
 
 class _Notifications:
-    """The in-app list (``app/services/notifications.notify`` writes one row per notice)."""
-
     def __init__(self) -> None:
         self.rows: list[SimpleNamespace] = []
 
@@ -268,8 +256,6 @@ def test_a_review_notice_goes_to_each_designer_who_has_not_opted_out(world: Any)
         prefs={"chitra": False, "asha": True}, sent_back=True,
     )
     recipients = sorted(r.recipientId for r in world.db.emailmessage.rows)
-    # The opted-out designer and the inspector who acted are never written to; the creator, a
-    # designer, is.
     assert queued == 3
     assert recipients == ["asha", "bina", "creator"]
     assert {r.kind for r in world.db.emailmessage.rows} == {mailer.REVIEW_SENT_BACK}
@@ -300,10 +286,6 @@ def test_a_notice_failure_never_reaches_the_inspector(world: Any, monkeypatch: p
     ) == 0
 
 
-# --------------------------------------------------------------------------------------
-# The in-app half (C25): every notice is written to the activity list by the same call.
-# --------------------------------------------------------------------------------------
-
 
 def test_every_designer_gets_the_notice_in_app_even_with_mail_off(world: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     off = _configured(mail_from_address=None)
@@ -332,7 +314,6 @@ def test_an_opt_out_stops_only_the_e_mail(world: Any) -> None:
     assert [r.recipientId for r in world.db.emailmessage.rows] == ["asha"]
     by_user = {r.userId: r for r in world.db.notification.rows}
     assert set(by_user) == {"asha", "chitra"}
-    # The in-app row remembers the e-mail queued beside it; the opted-out one has none.
     assert by_user["asha"].emailMessageId == world.db.emailmessage.rows[0].id
     assert by_user["chitra"].emailMessageId is None
 
@@ -377,7 +358,6 @@ def test_notify_keeps_only_app_paths_and_clips_long_text(world: Any) -> None:
     delivery = asyncio.run(notifications.notify(_person("asha"), "X", "t" * 500, "b" * 5000))
     assert len(delivery.notification.title) == notifications.MAX_TITLE_LENGTH
     assert len(delivery.notification.body) == notifications.MAX_BODY_LENGTH
-    # An in-app-only notice (no template) never touches the outbox.
     assert world.db.emailmessage.rows == []
 
 
@@ -395,10 +375,6 @@ def test_the_serialized_notice_says_read_in_words() -> None:
     out = notifications.serialize(row)
     assert out["read"] is False and out["readAt"] is None and out["createdAt"].startswith("2026-10-17")
 
-
-# --------------------------------------------------------------------------------------
-# Reserved, non-deliverable addresses (identical in both portals)
-# --------------------------------------------------------------------------------------
 
 
 def _queue_notice(address: str) -> Any:

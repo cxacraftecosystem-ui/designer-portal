@@ -47,12 +47,8 @@ logger = logging.getLogger(__name__)
 
 TRANSCRIPTION = "TRANSCRIPTION"
 MEASUREMENT = "MEASUREMENT"
-#: Summary, key quotes and translation of a transcript (services/transcript_insights). Text only:
-#: it never loads the audio, and it is not held back by the processing window or the transcription
-#: rate-limit cooldown. Drained only while its AI capability flag is on.
 TRANSCRIPT_INSIGHTS = "TRANSCRIPT_INSIGHTS"
 AUDIO_ISOLATION = "AUDIO_ISOLATION"
-#: A questionnaire take's byte check (app/questionnaire/recordings.verify_sha).
 SHA_VERIFY = "SHA_VERIFY"
 QUEUED = "QUEUED"
 PROCESSING = "PROCESSING"
@@ -63,103 +59,22 @@ RATE_LIMITED = "RATE_LIMITED"
 
 STALE_PROCESSING_AFTER = timedelta(minutes=30)
 
-# ── SIZE GATES ON THE TWO OBJECT READS THIS MODULE MAKES ───────────────────────────────────────
-#
-# Neither read had a gate of any kind. Both pulled the whole object into the heap of whichever
-# process ran them — the queue worker for a drained job, the WEB process for "Transcribe now",
-# which bypasses the queue — and the largest live object in this deployment is 668.44 MiB against
-# a 1 GiB box (MEASURED, docs/SCALABILITY.md §5.1). The provider ceilings in `services/ai` were
-# consulted only after `len(content)`, i.e. after the cost they exist to avoid had been paid.
-#
-# THE TWO JOB TYPES GET DIFFERENT NUMBERS BECAUSE THEY HAVE DIFFERENT COSTS.
-#
-# TRANSCRIPTION now streams the object to a temp FILE and hands the provider that path, so what it
-# spends is disk, not RAM. This ceiling is therefore a disk bound: it stops one pathological object
-# filling the box's root volume, and at 1 GiB it admits everything in the archive today. It is
-# deliberately NOT lowered by `budget_bytes`: Deepgram takes the audio as a raw body and `requests`
-# streams a file handle straight through, so a memory-derived cap here would refuse a recording that
-# rung could genuinely have transcribed. The residual RAM cost is the multipart rungs' send-time
-# copy, which `ai._upload_body` documents and which needs a streaming multipart encoder to close.
-#
-# MEASUREMENT genuinely needs every byte in the heap — a vision model is sent base64 of the whole
-# image, and there is no half of a base64 — so its ceiling IS memory-derived, and it is small. A
-# grid-sheet photograph is a phone photograph: p90 across this repository's media is 14.28 MiB.
 MAX_TRANSCRIBE_FETCH_BYTES = 1024 * 1024 * 1024
 MAX_MEASUREMENT_BYTES = 32 * 1024 * 1024
 
-# Rate-limit backoff. When transcription is throttled (HTTP 429/503), we pause transcription for a
-# growing cooldown and requeue the job WITHOUT consuming an attempt — so every clip is transcribed
-# eventually instead of burning out its retries. Measurement jobs keep flowing through the cooldown.
 RATE_LIMIT_BASE_SECONDS = 30
 RATE_LIMIT_MAX_SECONDS = 900
 
 
-# ── WHO IS ALLOWED TO DRAIN, AND WHY THE ELECTION LIVES HERE RATHER THAN IN main.py ────────────
-#
-# A single, host-wide lock file elects ONE media-queue drain per box. The jobs run ffmpeg and paid
-# provider calls and read whole media files; letting two drains run in parallel saturated the small
-# EC2 box's CPU and RAM, which made ordinary API requests (presign, complete, …) slow enough that
-# CloudFront's origin-response timeout fired and clients saw HTTP 504.
-#
-# THE ELECTION USED TO ARBITRATE ONLY HALF THE FIELD, WHICH IS WHY IT MOVED (2026-09-03). It lived
-# in ``app/main.py`` as a private helper and was consulted by the uvicorn lifespan alone, so the
-# only claimant it could ever turn away was a SECOND UVICORN WORKER — and there is no second
-# uvicorn worker: the Dockerfile pins ``--workers 1``, with a comment recording the outage
-# ``--workers 2`` caused. Meanwhile the drain that actually runs in production, ``app/worker.py``'s
-# ``fieldrepo-queue.service``, took the lock into account not at all. So the one contention the lock
-# was named for — two drains on one host — was precisely the one it did not arbitrate: an operator
-# who started the queue unit on a box whose API still had ``MEDIA_QUEUE_WORKER_ENABLED`` true got
-# two drains, both selecting on ``status: QUEUED``, and ``_lock_job``'s CAS defends only the
-# instant of claiming. It does NOT defend the recording: two drains interleave batches, each
-# honestly claims different jobs, and the box is billed for both while serving requests with what
-# is left. Production escaped because the web box ships ``MEDIA_QUEUE_WORKER_ENABLED=false``
-# explicitly (DEPLOY_AWS.md) — a deployment convention, not a guard, and the flag's own default was
-# ``True`` until this same change.
-#
-# BOTH ENTRY POINTS NOW ACQUIRE IT, from here, so neither can be fixed without the other. There is
-# no third home for this: ``main.py`` importing ``worker.py`` (or the reverse) would drag a systemd
-# entry point into the web process's import graph, and a new module for eleven lines would be a
-# file whose only reader is a lock. It sits in the module that owns the drain.
-#
-# "HOST-WIDE" MEANS THE EC2 BOX, NOT A KUBERNETES NODE (noted 2026-09-03). ``tempfile.gettempdir()``
-# is per-container on k8s — the api pod and the queue pod each hold their own ``/tmp``, so both
-# would win this election and it would elect nobody. There the protection is still the container's
-# explicit ``MEDIA_QUEUE_WORKER_ENABLED: "false"`` (infra/k8s/base/deployment-api.yaml says so) —
-# a convention, which is exactly what this lock exists to replace on the single-box deployment that
-# actually serves production. If those manifests are ever applied, the election needs a shared home
-# (a lease, a Postgres advisory lock) before the flag can be trusted any less there.
 QUEUE_LOCK_PATH = os.path.join(tempfile.gettempdir(), "design-workshop-media-queue.lock")
 
 
 def acquire_queue_worker_lock(path: str | None = None) -> Any | None:
-    """Try to become THE media-queue drain for this host.
-
-    Returns a held lock handle on success, or ``None`` when another process already holds it. The
-    handle must be kept for the process's lifetime — closing it releases the lock — which is why
-    both callers park it on something long-lived rather than dropping it on the floor.
-
-    AN OS ADVISORY FILE LOCK (``fcntl.flock``) WHERE THERE IS ONE, AND A GRANT WHERE THERE IS NOT.
-    On a platform without ``fcntl`` — local Windows development, which is the only one — this
-    returns a sentinel and the drain runs. That is deliberate rather than a gap: the lock exists to
-    arbitrate two processes on the deployed Linux box, and refusing to run on a developer's machine
-    because the arbitration primitive is missing would turn "no contention to arbitrate" into "no
-    queue at all".
-
-    ``flock`` LOCKS THE OPEN FILE DESCRIPTION, NOT THE PROCESS, so two calls in ONE process contend
-    exactly as two processes do — each ``open`` creates a distinct description and the second
-    ``LOCK_EX | LOCK_NB`` fails with ``EWOULDBLOCK``. That is what makes the election testable
-    without spawning anything, and it is a property of ``flock`` rather than an accident:
-    ``fcntl``-style POSIX record locks would have granted the second acquisition and made this
-    silently useless in-process.
-
-    *path* is for tests, which must not fight whatever real drain is running on the developer's own
-    machine for the shared path. Production passes nothing.
-    """
     lock_path = path or QUEUE_LOCK_PATH
     try:
-        import fcntl  # POSIX only (the EC2 host); absent on Windows dev boxes.
+        import fcntl
     except ImportError:
-        return object()  # No multi-process contention to arbitrate — run the queue here.
+        return object()
     try:
         handle = open(lock_path, "w")  # noqa: SIM115 - kept open for the process lifetime
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -170,48 +85,11 @@ def acquire_queue_worker_lock(path: str | None = None) -> Any | None:
         return None
 
 
-# PER-PROCESS STATE, AND IN PRODUCTION THERE ARE TWO PROCESSES. This used to read "Single elected
-# worker (see main.py), so module-level cooldown state is safe", and both halves of that sentence are
-# false. There is no multi-worker uvicorn to elect between (Dockerfile pins ``--workers 1``, with a
-# comment recording the outage ``--workers 2`` caused), and the election in main.py is not what runs
-# the drain in production anyway: ``app/worker.py`` is a standalone systemd unit
-# (``fieldrepo-queue.service``) and the web box ships ``MEDIA_QUEUE_WORKER_ENABLED=false``
-# (DEPLOY_AWS.md). So the drain's cooldown lives in the QUEUE process's memory, while
-# ``POST /media/jobs/process`` — the "Run queue now" button — drains inside the UVICORN process,
-# whose copy of these two globals is always empty. An admin pressing that button during a 429 storm
-# therefore walks straight through a backoff the queue process is observing and re-hits the throttled
-# provider. In dev both run in one process and the state genuinely is shared, which is why this never
-# showed up in testing.
-#
-# THE PAUSE IS NO LONGER CARRIED BY THESE TWO GLOBALS ALONE. They still hold the LADDER — how many
-# consecutive 429s have been seen and therefore how long the next pause is — because that is a
-# judgement about one provider conversation and only the process having it can make it. The pause
-# ITSELF is now written where both processes can see it: ``_park_transcription_jobs_until`` pushes
-# every queued transcription job's ``runAfter`` out to the cooldown deadline, so the web process's
-# selection query (``runAfter <= now``, which it was already running) declines to hand the button any
-# transcription work without needing to know a cooldown exists. The database was already the right
-# place for this and was already half-used for it: ``_defer_rate_limited_job`` has always pushed the
-# ONE job it broke on, which is why the hole was easy to miss — the throttled job was held back and
-# the other forty were not.
-#
-# THE OBVIOUS ALTERNATIVE WAS REJECTED FOR A CONCRETE REASON. An ``AppSetting`` column holding
-# ``transcriptionCooldownUntil`` is the shape this wants, and ``AppSetting`` is a fixed-column
-# singleton, so it needs a schema migration — off limits in this pass. ``runAfter`` is not a
-# substitute chosen to dodge that: it is what the column MEANS ("do not run this before"), it needs
-# no new state to fall out of date, and it is already the predicate the drain selects on.
-#
-# WHAT IS STILL PER-PROCESS, SO NOBODY RE-DISCOVERS IT AS A BUG: a transcription job enqueued DURING
-# a cooldown gets ``runAfter = now`` and can be picked up by the button, because the park is a sweep
-# at the moment of throttling and not a standing predicate. That is self-correcting — the provider
-# 429s it, the batch breaks, and the sweep runs again with a longer ladder — and it costs one
-# request rather than the whole backlog, which is the difference this change is for.
 _rate_limit_cooldown_until: datetime | None = None
 _consecutive_rate_limits = 0
 
 
 class RateLimited(Exception):
-    """Raised when a transcription call is throttled. Carries an optional provider Retry-After (s)."""
-
     def __init__(self, retry_after: float | None = None) -> None:
         super().__init__("Transcription rate-limited")
         self.retry_after = retry_after
@@ -220,16 +98,6 @@ class RateLimited(Exception):
 
 
 def _transcription_in_cooldown(now: datetime | None = None) -> bool:
-    """THIS PROCESS'S OWN VIEW OF THE PAUSE, AND ON PURPOSE IT IS NOT THE ONLY ONE.
-
-    It answers from module state, so in the web process it is always False — which is exactly the
-    hole that made the "Run queue now" button walk through a backoff the queue process was
-    observing. It is NOT the place that was fixed: reaching into the database from a hot predicate
-    that runs on every drain pass would buy a round trip per pass to re-derive something
-    ``_park_transcription_jobs_until`` has already written onto the rows the selection query reads.
-    The pause is enforced by ``runAfter``; this stays as the cheap in-process shortcut that keeps the
-    drain from even asking for transcription work it knows is parked.
-    """
     return (
         _rate_limit_cooldown_until is not None
         and (now or datetime.now(UTC)) < _rate_limit_cooldown_until
@@ -237,16 +105,6 @@ def _transcription_in_cooldown(now: datetime | None = None) -> bool:
 
 
 def _enter_rate_limit_cooldown(retry_after: float | None) -> datetime:
-    """Advance the backoff ladder and return the deadline the whole queue is now paused until.
-
-    IT RETURNS THE DEADLINE BECAUSE THE CALLER HAS TO PERSIST IT. The ladder is computed here and
-    nowhere else; handing the answer back is what lets ``_defer_rate_limited_job`` and
-    ``_park_transcription_jobs_until`` write the SAME instant onto the rows instead of each
-    re-deriving a number from ``retry_after``. The deferred job used to be pushed
-    ``RATE_LIMIT_BASE_SECONDS`` while this pause could be thirty times that, so the row said the job
-    was runnable long before the process holding the pause agreed — two accounts of one decision,
-    and the shorter one was the one a second process could see.
-    """
     global _rate_limit_cooldown_until, _consecutive_rate_limits
     _consecutive_rate_limits += 1
     if retry_after and retry_after > 0:
@@ -309,60 +167,6 @@ async def enqueue_media_processing_jobs(
     *,
     design_workshop_id: str | None = None,
 ) -> list[Any]:
-    """Queue the processing this upload asked for. **Transcription is gated on the artisan's consent.**
-
-    ================================================================================================
-    THE HOLE THIS CLOSES, AND IT WAS THE WIDEST DOOR ONTO A PAID PROVIDER IN THE REPOSITORY
-    ================================================================================================
-
-    ``DesignWorkshop.dictationConsent`` — the artisan's recorded answer to *"may recordings and
-    dictation from this workshop leave the phone to be written down by a transcription service outside
-    it"* — was read in exactly one place: the gate on ``POST /design-workshops/{id}/dictate``. This
-    function is where the recordings actually go. Every design-workshop AUDIO clip reaches
-    ``ai.transcribe_audio_bytes`` through a job created HERE, by one of two callers, and neither read
-    the column:
-
-    * ``POST /media/complete`` — and note that the auto-enqueue in :func:`_job_requests` is NOT the
-      live path. **Both shipped clients ask for TRANSCRIPTION explicitly** on every audio upload
-      (``WorkshopRepository.uploadDesignWorkshopMedia`` sends ``listOf("TRANSCRIPTION")``;
-      ``frontend/lib/media.ts``'s ``resolveProcessing`` adds it whenever ``transcribeAudio``, which
-      defaults to true). So a gate placed only on the ``requested is None`` branch would have closed a
-      door nobody uses and left the one the fleet drives through wide open. The gate is therefore on
-      the REQUEST, not on how the request was arrived at.
-    * ``workshop_transcripts.enqueue_stage_transcriptions``, from ``save_stage`` — which reported
-      ``"transcriptionsQueued": 1`` to a designer on a workshop whose consent was NOT_RECORDED, in the
-      same minute that ``POST /{id}/dictate`` refused the same workshop with a 409.
-
-    **THE FAILURE IN ONE SENTENCE:** an artisan who was asked and said no had their eleven-minute
-    recording sent to ElevenLabs, Deepgram or OpenAI anyway, because the answer they gave governed the
-    thirty-second dictation and not the interview — and the app told them so
-    (``DwDictationConsent.kt``'s ``DW_CONSENT_MEDIA_NOT_GATED``: *"this answer was not given the power
-    to stop that. Until it is, do not attach a recording of anybody who has said no."*). That sentence
-    is now false in the artisan's favour, and correcting it is an Android change this lane cannot make.
-
-    ================================================================================================
-    WHY THE GATE IS HERE AND NOT IN THE TWO ROUTES
-    ================================================================================================
-
-    One choke point, because "one gate with a door beside it is not a gate" is the lesson this feature
-    has already paid for twice — ``POST /design-workshops/dictate`` retired to a 410, and
-    ``POST /media/transcribe`` narrowed to admin. Every TRANSCRIPTION job in this system is created by
-    the loop below. A check in ``media.py`` and a check in ``workshop_transcripts.py`` would be two
-    places to forget, and a third caller added next season would arrive ungated by default. Here, a new
-    caller is gated whether or not its author has read this file.
-
-    ``design_workshop_id`` is for a caller that knows the workshop from something other than the file —
-    ``save_stage`` holds it in a path parameter. It is optional rather than required because
-    ``/media/complete`` genuinely does not know it and must not be made to invent one; the row's own
-    ``linkedRecordType``/``linkedRecordId`` tag answers for that path. See
-    ``dictation_consent.MEDIA_TAG``.
-
-    **MEASUREMENT IS NOT GATED, deliberately.** It sends a photograph of an object on a grid sheet to a
-    vision model. That is not a recording of anybody's voice, no consent question in this repository
-    asks about it, and ``ENQUEUEABLE_PROCESSING_REQUESTS`` already refuses it at the only route that
-    could request it. Gating it on an answer nobody gave about photographs would be the same overreach
-    §6 of this module's docstring warns about, in the other direction.
-    """
     settings = settings or get_settings()
     requests = _job_requests(media, processing_requests)
     if TRANSCRIPTION in requests:
@@ -379,8 +183,6 @@ async def enqueue_media_processing_jobs(
     target_data = _target_data(media)
     created_jobs: list[Any] = []
     for request in sorted(requests):
-        # AT MOST ONE OPEN JOB PER CLIP AND TYPE, so re-uploading or re-saving a stage never pays
-        # twice. `openKey` is the database's guarantee; this read covers rows from before it existed.
         existing = await db.mediaprocessingjob.find_first(
             where={"mediaFileId": media_id, "jobType": request, "status": {"in": [QUEUED, PROCESSING]}}
         )
@@ -418,36 +220,6 @@ async def enqueue_media_processing_jobs(
 
 
 async def _record_transcription_refused(media: Any, verdict: Any) -> None:
-    """Write the consent refusal onto the clip, so a designer is TOLD rather than left with silence.
-
-    **THE ALTERNATIVE WAS THE REAL RISK OF FAILING CLOSED.** A recording that is simply never
-    transcribed looks exactly like a recording the worker has not got to yet: the transcripts screen
-    shows it with no text, the annexure leaves it out, and ``report_annexures.missing_transcript_note``
-    counts it among the clips that "have no transcript yet". A designer would wait for a night that
-    never comes, and the feature would be reported as broken rather than as refused — which is how a
-    privacy gate gets ripped out by somebody debugging a support ticket.
-
-    ``FAILED`` and not a new status token. It is already in this module's vocabulary, both clients
-    already render it, and — decisively — it is deliberately absent from
-    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES``, so the clip becomes a candidate again on the
-    next save of its stage. That is exactly the behaviour a refusal needs: **the moment the artisan
-    changes their mind and somebody records GRANTED, the next stage save picks the recording up.** A
-    terminal status would have needed a person to find every refused clip by hand.
-
-    The sentence in ``transcriptError`` is the gate's own field copy, unabbreviated. Never raises: this
-    is a note about a send that did not happen, and failing to write the note must not turn into a
-    failed upload or a failed stage save.
-
-    **IT WILL NOT WRITE OVER A TRANSCRIPT THAT ALREADY EXISTS**, which is this file's own hardest-won
-    lesson applied to a new writer. ``_transcript_write`` records what happened the last time something
-    here wrote a status without looking: *"writing that empty result verbatim NULLED OUT a transcript
-    that was already stored … destroyed it the moment the provider was down, and nothing else holds a
-    copy."* The same shape is reachable here — a clip transcribed months ago under a grant since
-    withdrawn, whose uploader retries ``/media/complete`` — and marking that row FAILED would leave a
-    stored transcript sitting under a status saying it failed, which is a lie about the row and hides it
-    from every screen that filters on the status. Nothing is sent either way; the refusal held. What is
-    skipped is only the note, on the one row where the note would be false.
-    """
     media_id = str(_value(media, "id") or "")
     if not media_id:
         return
@@ -468,7 +240,6 @@ async def _record_transcription_refused(media: Any, verdict: Any) -> None:
 
 
 async def _create_open_job(data: dict[str, Any]) -> Any:
-    """Create a QUEUED job carrying its ``openKey`` (cleared again when the job finishes)."""
     return await db.mediaprocessingjob.create(
         data={**data, "openKey": open_key(str(data["mediaFileId"]), str(data["jobType"]))}
     )
@@ -490,39 +261,13 @@ async def process_next_media_jobs(
     recover: bool = True,
     skip_insights: bool = False,
 ) -> dict[str, int]:
-    """Drain a batch of media processing jobs.
-
-    ``skip_insights=True`` is the queue process's main loop: translation and summary jobs have their
-    own lane (:func:`run_insights_lane`) that runs beside it, so a long transcription never holds an
-    English translation back.
-
-    ``recover=False`` FOR ANY CALLER THAT IS NOT THE QUEUE PROCESS, and the reason is a double
-    transcription. :func:`recover_stale_processing_jobs` decides a job is dead purely from the age of
-    ``lockedAt`` against a 30-minute cutoff — there is no liveness check on ``lockedBy``, and there
-    cannot be a cheap one across two hosts. Inside the queue process that is safe by construction: it
-    is serial, so a job it is itself holding cannot also be a job it is between batches on. From the
-    WEB process it is not: ``POST /media/jobs/process`` runs there (see the note above
-    ``_rate_limit_cooldown_until``), and a provider call that has hung past thirty minutes in the
-    queue process is flipped back to QUEUED by the button, then honestly re-locked — ``_lock_job``'s
-    CAS matches on ``status: QUEUED`` and the recovery has just made that true, so the compare-and-set
-    succeeds and defends nothing. The same recording is sent twice, billed twice, and the two results
-    race to write ``MediaFile.transcriptText``.
-
-    Recovery is not lost by skipping it here: the queue process sweeps once a minute
-    (``worker.RECOVERY_INTERVAL_SECONDS``), and again on the very next pass when a sweep fails, so a
-    genuinely dead lock is cleared within about a minute instead of within one button press.
-    """
     settings = settings or get_settings()
     batch_size = max(1, limit or settings.media_queue_batch_size)
     if recover:
         await recover_stale_processing_jobs()
     now = datetime.now(UTC)
     where: dict[str, Any] = {"status": QUEUED, "runAfter": {"lte": now}}
-    # Lighter MEASUREMENT jobs always run; transcription only when the gate below allows it.
     app_settings = await load_app_settings()
-    # THE PAUSE FIRST (owner hold, 18 Oct 2026): while AppSetting.transcriptionPaused is set no
-    # transcription job is selected at all, so every one stays QUEUED and untouched. Then the
-    # nightly window. The idle-load bypass is gone: a quiet box says nothing about provider credit.
     allow_transcription = (
         not transcription_paused(app_settings)
         and within_processing_window(app_settings)
@@ -536,8 +281,6 @@ async def process_next_media_jobs(
         or not transcript_insights.enabled()
         or transcript_pipeline.holds_translation(app_settings)
     ):
-        # The lane's work, switched off, or the monthly transcript budget is used up: leave queued
-        # insights jobs where they are rather than failing them.
         held_back.append(TRANSCRIPT_INSIGHTS)
     if len(held_back) == 1:
         where["jobType"] = {"not": held_back[0]}
@@ -562,17 +305,8 @@ async def process_next_media_jobs(
             await _process_job(locked, settings)
             succeeded += 1
             if locked.jobType == TRANSCRIPTION:
-                _clear_rate_limit_cooldown()  # a clean success ends any backoff
+                _clear_rate_limit_cooldown()
         except RateLimited as exc:
-            # Throttled: requeue this job without consuming an attempt, then pause transcription for a
-            # cooldown and stop draining the batch so we don't keep hammering a throttled provider.
-            #
-            # THE LADDER IS ADVANCED FIRST BECAUSE THE DEADLINE IT PRODUCES IS WHAT BOTH WRITES USE.
-            # Moving ``_enter_rate_limit_cooldown`` below them would leave each write deriving its
-            # own number from ``retry_after`` — which is the split (a row saying "runnable in 30s"
-            # under a process pausing for 900) this ordering exists to close. The park runs after the
-            # defer so it sees that job already back at QUEUED; it does not touch it again, because
-            # its ``lt`` predicate excludes a row already sitting exactly on the deadline.
             until = _enter_rate_limit_cooldown(exc.retry_after)
             await _defer_rate_limited_job(job, until)
             await _park_transcription_jobs_until(until)
@@ -584,16 +318,6 @@ async def process_next_media_jobs(
 
 
 async def _defer_rate_limited_job(job: Any, until: datetime) -> None:
-    """Requeue a throttled transcription job, restoring its pre-lock attempt count so rate limiting
-    never exhausts its retries — it will be picked up again after the cooldown.
-
-    ``until`` IS THE COOLDOWN DEADLINE, NOT A DELAY OF THIS FUNCTION'S OWN. It used to take
-    ``retry_after`` and derive ``RATE_LIMIT_BASE_SECONDS`` from it whenever the provider named no
-    number — thirty seconds, while the process pausing itself in the same breath could be pausing
-    for nine hundred. The row therefore advertised the job as runnable during a window in which the
-    only process that knew better was refusing to run it, and a second process reading only the row
-    took the offer. One deadline, written to both places.
-    """
     await db.mediaprocessingjob.update(
         where={"id": job.id},
         data={
@@ -608,33 +332,6 @@ async def _defer_rate_limited_job(job: Any, until: datetime) -> None:
 
 
 async def _park_transcription_jobs_until(until: datetime) -> None:
-    """Hold every queued transcription job back until the cooldown expires.
-
-    THE COOLDOWN HAD TO BECOME VISIBLE TO A SECOND PROCESS, AND THIS IS WHERE IT BECOMES SO. The
-    backoff lives in module globals; ``app/worker.py`` runs the drain in its own systemd unit while
-    ``POST /media/jobs/process`` — the media panel's "Run queue now" button — drains inside the
-    uvicorn process, whose copy of those globals is always empty (the web box ships
-    ``MEDIA_QUEUE_WORKER_ENABLED=false``; see the note above ``_rate_limit_cooldown_until``). So an
-    admin who sees the queue growing during a 429 storm and presses the button walked straight
-    through a pause the queue process was observing and re-hit the throttled provider — with the
-    whole backlog, because ``_defer_rate_limited_job`` had held back only the single job the batch
-    broke on. In dev both run in one process and the state genuinely is shared, which is why this
-    never showed up in testing.
-
-    ``runAfter`` CARRIES IT RATHER THAN A NEW COLUMN. It already means "do not run this before", it
-    is already the predicate ``process_next_media_jobs`` selects on, and it therefore needs no
-    reader anywhere: a process that knows nothing about cooldowns declines the work for the right
-    reason. The alternative — an ``AppSetting`` row — needs a schema migration and a second thing to
-    keep in step with the queue.
-
-    ``runAfter: {"lt": until}`` SO A LONGER HOLD IS NEVER SHORTENED. A job already parked past this
-    deadline (by a previous, longer rung of the ladder, or by a provider's own Retry-After) keeps
-    the later time; this only ever pushes rows outwards. Dropping that condition would let a second
-    429 with a short Retry-After pull the whole backlog forward into a provider still refusing it.
-
-    Attempts are untouched, deliberately: being throttled is not a failed attempt, which is the
-    invariant ``_defer_rate_limited_job`` already exists to protect.
-    """
     await db.mediaprocessingjob.update_many(
         where={"jobType": TRANSCRIPTION, "status": QUEUED, "runAfter": {"lt": until}},
         data={"runAfter": until},
@@ -642,34 +339,11 @@ async def _park_transcription_jobs_until(until: datetime) -> None:
 
 
 def _size_label(size_bytes: int) -> str:
-    """A byte count as a person reads it on screen."""
     megabytes = size_bytes / (1024 * 1024)
     return f"{megabytes:.1f} MB" if megabytes < 10 else f"{megabytes:,.0f} MB"
 
 
 async def _oversize_reason(media: Any, ceiling: int, *, what: str) -> str | None:
-    """Why this object is too big for *what*, or ``None`` to go ahead. Cheap claim, then the fact.
-
-    TWO CHECKS, IN COST ORDER. ``MediaFile.sizeBytes`` is whatever the client declared at
-    ``POST /media/complete`` — bounded only from below by the schema and never reconciled against
-    the stored object — so it is consulted first because it costs nothing at all, and it turns away
-    the honest large recording before anything is asked of storage. ``s3.head_object`` then reads
-    the REAL ``ContentLength`` and no bytes, which is the only number in this system that is a fact.
-
-    ``head_object`` answering ``None`` (storage would not say) is NOT read as "small": the caller
-    still passes the same ceiling to its fetch — ``download_to_temp(max_bytes=)`` on the
-    transcription path, ``get_object_bytes(max_bytes=)`` on the measurement one — and both count
-    what actually lands.
-
-    THAT SENTENCE WAS HALF FALSE UNTIL 2026-09-03, and it is recorded rather than quietly corrected
-    because it is the shape of promise that goes stale silently. It named ``download_to_temp``
-    alone, which is what the TRANSCRIPTION caller does; the MEASUREMENT caller below then called
-    ``get_object_bytes(objectKey)`` — a function that until that date accepted no bound at all — so
-    for an image storage would not size, this returned ``None`` ("go ahead") and the very next line
-    read the object unbounded into the heap of a 1 GiB box. The gate was exactly as strong as the
-    HEAD, on the one path where the HEAD had already failed. ``get_object_bytes`` now takes
-    ``max_bytes`` and the promise above is true of both callers again.
-    """
     declared = 0
     try:
         declared = int(_value(media, "sizeBytes") or 0)
@@ -690,47 +364,14 @@ async def _oversize_reason(media: Any, ceiling: int, *, what: str) -> str | None
 
 
 async def transcribe_media_now(media: Any, settings: Settings | None = None) -> dict[str, Any]:
-    """Transcribe one audio media file immediately and store the result, applying the transcription
-    mode configured in the settings page (RAW / REFINED / REFINED+TRANSLATED). This is the admin
-    "Transcribe now" action: it bypasses the queue AND the off-peak window so the result is produced on
-    the spot. Mirrors the worker's TRANSCRIPTION path so a manual run and a queued run agree. Never
-    raises on an AI failure — it records the status/error on the media row and returns the result so the
-    caller can surface it.
-
-    **IT BYPASSES THE QUEUE, SO IT NEEDS THE QUEUE'S GATE OF ITS OWN.** This function reaches
-    ``transcribe_audio_bytes`` without passing through ``_process_job``, which is precisely the shape of
-    the two doors this feature has already had to close — the retired id-less ``/dictate`` and
-    ``POST /media/transcribe``. An admin pressing "Transcribe now" on a recording whose artisan refused
-    would otherwise send it, and would be the one caller for whom nothing on screen said so.
-
-    **AND AN ADMIN IS NOT AN EXCEPTION HERE, which is a departure from this repository's own note that
-    "the consent gate has never been a refusal an admin could meet".** That observation is true of the
-    routes it was written about, and it is an argument about PERMISSION: an admin is inside
-    ``DESIGN_WORKSHOP_ROLES`` and can record a GRANTED decision themselves, so the gate cannot restrain
-    them. It is not an argument for sending. Recording the grant is a visible, attributed, logged act
-    with the artisan's name on the row; sending anyway is the same outcome with no record that anybody
-    decided it. An admin who believes the artisan agreed has a route for saying so, and this refusal
-    names it. :class:`dictation_consent.SendRefused` is raised — see that class for why not a result."""
     settings = settings or get_settings()
-    # ``resolve_from_stages`` for the drain's reason above, and this route needed it just as badly:
-    # measured on the running API, an admin pressing "Transcribe now" on an untagged clip that a stage
-    # of a REFUSED workshop names got HTTP 200 and the recording went to all three providers.
     verdict = await dictation_consent.transcription_verdict(media, resolve_from_stages=True)
     if not verdict.may_send:
         raise dictation_consent.SendRefused(verdict)
-    # THE PAUSE HOLDS HERE TOO, after consent (the more useful sentence). "Transcribe now"
-    # bypasses the queue and the window, never the pause.
     if transcription_paused(await load_app_settings()):
         raise transcription_jobs.TranscriptionPaused()
     await transcribe_choice.mark_requested(media, transcribe_choice.BUTTON)
     media_id = str(_value(media, "id"))
-    # THE SIZE GATE BEFORE THE STATUS WRITE, so a refusal does not leave the row saying PROCESSING
-    # for something this server is never going to process.
-    #
-    # AND IT MATTERS MORE HERE THAN IN THE QUEUE, for the reason this function's docstring gives
-    # about consent: this path bypasses the queue, so it runs in the single-worker WEB process. An
-    # oversized read here does not slow a background drain down — it takes every in-flight request
-    # on the box down with it.
     oversize = await _oversize_reason(media, MAX_TRANSCRIBE_FETCH_BYTES, what="transcribe")
     if oversize is not None:
         await db.mediafile.update(
@@ -745,16 +386,11 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
             "message": oversize,
         }
     await db.mediafile.update(where={"id": media_id}, data={"transcriptStatus": PROCESSING})
-    # STREAMED TO A TEMP FILE, NOT READ INTO THE HEAP. `transcribe_audio_bytes` takes the path and
-    # hands it to whichever provider rung answers, so the recording is never a `bytes` in this
-    # process. See `s3.download_to_temp` and `ai._upload_body`.
     try:
         source_path = await workdir.owned(
             download_to_temp, _value(media, "objectKey"), max_bytes=MAX_TRANSCRIBE_FETCH_BYTES
         )
     except ObjectTooLarge as exc:
-        # `head_object` could not size it and the transfer itself hit the bound. Same terminal
-        # answer as the gate above, with the real number in it.
         message = (
             f"This file is too large to transcribe (the limit is "
             f"{_size_label(exc.limit_bytes)}). Nothing was spent."
@@ -775,13 +411,10 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
             media,
             settings,
             source_path=source_path,
-            # The uploader: it is one designer's own recording, so their own key is offered first.
             user_id=_value(media, "uploadedById"),
             transcribe=transcribe_audio_bytes,
         )
     finally:
-        # The temp file dies with this call whatever happened to the transcript — a failed provider
-        # run that left a copy of every recording on disk would fill the box within a day.
         discard_temp(source_path)
     mode = transcription_mode(await load_app_settings())
     if (
@@ -801,13 +434,10 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
             }
     status = str(result.get("status") or FAILED).upper()
     if status == RATE_LIMITED:
-        # Throttled even on a manual run — keep it QUEUED so the background worker finishes it later.
         await db.mediafile.update(
             where={"id": media_id},
             data={"transcriptStatus": QUEUED, "transcriptError": result.get("message")},
         )
-        # "Queued" must never be a dead end: if no queue job exists for this clip (e.g. it was
-        # uploaded without a transcription request), create one so the worker actually picks it up.
         pending = await db.mediaprocessingjob.find_first(
             where={
                 "mediaFileId": media_id,
@@ -824,21 +454,17 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
                 "mediaFileId": media_id,
                 **_target_data(media),
             }
-            # requestedById is a real FK to User, so fall back to NULL (not a placeholder string)
-            # when the uploader is unknown.
             uploader_id = _value(media, "uploadedById")
             if uploader_id:
                 job_data["requestedById"] = str(uploader_id)
             try:
                 await _create_open_job(job_data)
             except UniqueViolationError:
-                pass  # another request opened the job a moment ago; one is enough
+                pass
         return result
     write = _transcript_write(result, status)
     await db.mediafile.update(where={"id": media_id}, data=write)
     if status == COMPLETED and write.get("transcriptText"):
-        # The recording is transcribed now; a job still queued for it would transcribe it again
-        # (and bill it again) when the queue reaches it. Close it as done.
         await db.mediaprocessingjob.update_many(
             where={"mediaFileId": media_id, "jobType": TRANSCRIPTION, "status": QUEUED},
             data={"status": COMPLETED, "completedAt": datetime.now(UTC), "openKey": None, "error": None},
@@ -849,16 +475,6 @@ async def transcribe_media_now(media: Any, settings: Settings | None = None) -> 
 
 
 def _transcript_write(result: dict[str, Any], status: str) -> dict[str, Any]:
-    """The MediaFile columns to write for a finished transcription run.
-
-    A FAILED or UNAVAILABLE run carries ``text: None`` (see services/ai.py), and writing that empty
-    result verbatim NULLED OUT a transcript that was already stored: re-running transcription on a
-    clip that already had a good transcript — the admin "Transcribe now" button, or a requeued job —
-    destroyed it the moment the provider was down, and nothing else holds a copy. A run that produced
-    no text therefore records only its status and its error; the previous transcript stays, and the
-    failure is still visible in ``transcriptStatus``/``transcriptError``. Clearing a transcript stays
-    a deliberate act: POST /media/{id}/transcript is the one path that overwrites stored text.
-    """
     data: dict[str, Any] = {
         "transcriptStatus": status,
         "transcriptError": None if status in {COMPLETED, "EMPTY"} else result.get("message"),
@@ -872,54 +488,11 @@ def _transcript_write(result: dict[str, Any], status: str) -> dict[str, Any]:
 
 
 async def recover_stale_processing_jobs() -> int:
-    """Unstick jobs whose worker died holding the lock — and BURY the ones that killed it.
-
-    ================================================================================================
-    THE POISON PILL THIS GUARD ENDS
-    ================================================================================================
-
-    This function used to requeue EVERY ``PROCESSING`` row older than the cutoff, unconditionally.
-    The attempts ladder was consulted nowhere in it, because the ladder lived entirely in
-    :func:`_handle_job_failure` — and that function is reached only by an exception RAISED IN THIS
-    PROCESS. A job that takes the process down with it raises nothing anybody catches: an OOM kill,
-    a SIGKILL from a supervisor, an ffmpeg child that eats the box, a deploy's ``systemctl restart``
-    landing mid-provider-call. So the one class of job that most needs a ladder was the one class
-    that could never climb it.
-
-    **THE FAILURE IN ONE SENTENCE:** a recording that OOM-kills the worker was resurrected every
-    thirty minutes, for ever, and took the whole drain down with it on each pass — so every OTHER
-    clip in the queue was starved by a job that had already failed more times than its own
-    ``maxAttempts`` allows.
-
-    ``attempts`` IS ALREADY THE RIGHT NUMBER TO READ, WHICH IS WHY NO NEW COLUMN APPEARS HERE.
-    :func:`_lock_job` increments it at the instant of claiming, before any work is attempted — so a
-    row sitting in ``PROCESSING`` has ALREADY spent the attempt it is on, and ``attempts >=
-    maxAttempts`` on a stale row means "this job has been given every run it is entitled to and each
-    one ended without a word". A job killed on its first of three attempts is still requeued
-    exactly as before; only the row that has exhausted the ladder is buried. That is the same
-    predicate ``_handle_job_failure`` uses, deliberately, so a job cannot die two different deaths
-    depending on whether its worker was alive enough to raise.
-
-    THE CLIP IS FINALISED THROUGH THE SHARED WRITER and not by a second ``update_many`` spelled out
-    here — see :func:`_finalize_failed_clip` for the ``transcriptText``-preserving predicate it
-    carries. A clip left at ``transcriptStatus="QUEUED"`` under a job nobody will ever run again is
-    the exact trap that function's docstring is about, and duplicating its predicate would be two
-    copies of a rule that has already been got wrong once.
-
-    THE ERROR NAMES THE WORKER, because ``lockedBy`` is the only evidence left of what happened:
-    there is no traceback, no provider response and no log line in this process. "Interrupted while
-    held by queue-service" is what tells an operator to go and read that unit's journal rather than
-    look for an application bug.
-    """
     cutoff = datetime.now(UTC) - STALE_PROCESSING_AFTER
     stale_jobs = await db.mediaprocessingjob.find_many(
         where={"status": PROCESSING, "lockedAt": {"lt": cutoff}},
         take=25,
     )
-    # The return value counts REQUEUED jobs only (corrected 2026-09-03): since the poison-pill arm
-    # landed, a stale row can also be BURIED, and a caller reading "N recovered" over a sum of the
-    # two over-reports the moment that arm starts firing — a job finalized as FAILED was not
-    # recovered by any reading of the word.
     requeued = 0
     for job in stale_jobs:
         now = datetime.now(UTC)
@@ -959,14 +532,6 @@ async def recover_stale_processing_jobs() -> int:
 
 
 def _attempts_exhausted(job: Any) -> bool:
-    """Whether this job has spent every run its ``maxAttempts`` allows.
-
-    Read defensively because it decides whether a row is buried: a ``maxAttempts`` that is absent,
-    NULL or zero is treated as the settings floor of 1 rather than as "no attempts allowed", so a
-    malformed row is requeued once rather than finalised on sight. ``enqueue_media_processing_jobs``
-    writes ``max(settings.media_queue_job_max_attempts, 1)``, so a zero here can only come from a
-    row an operator inserted by hand.
-    """
     try:
         attempts = int(_value(job, "attempts") or 0)
     except (TypeError, ValueError):
@@ -979,9 +544,6 @@ def _attempts_exhausted(job: Any) -> bool:
 
 
 async def _lock_job(job_id: str, worker_id: str) -> Any | None:
-    # Read first for the attempts counter, then claim ATOMICALLY: the update only matches while the
-    # row is still QUEUED, so of two concurrent claimers exactly one sees count==1 and the loser
-    # backs off with None instead of double-processing the job.
     job = await db.mediaprocessingjob.find_unique(where={"id": job_id})
     if not job or job.status != QUEUED:
         return None
@@ -1007,14 +569,11 @@ async def _lock_job(job_id: str, worker_id: str) -> Any | None:
 async def _process_job(job: Any, settings: Settings) -> None:
     media = job.mediaFile
     if job.jobType == SHA_VERIFY:
-        # A questionnaire take (app/questionnaire): hash the stored object (streamed, never held
-        # whole) and apply the identical-bytes rules. Calls no outside service.
         from app.questionnaire import recordings as v2_recordings
 
         result = await v2_recordings.verify_sha(media.id)
         await _complete_job(job.id, result)
         return
-    # Text only, and first: an insights job never reaches the S3 reads below.
     if job.jobType == TRANSCRIPT_INSIGHTS:
         await _process_insights_job(job, media)
         return
@@ -1022,37 +581,10 @@ async def _process_job(job: Any, settings: Settings) -> None:
         await _process_isolation_job(job, media)
         return
     if job.jobType == TRANSCRIPTION:
-        # RE-READ AT THE MOMENT OF SENDING, AND THIS IS THE CHECK THAT MAKES A WITHDRAWAL MEAN
-        # SOMETHING. The enqueue gate is not sufficient on its own, and the module docstring of
-        # `dictation_consent` names the exact scenario: "An artisan agrees on the 3rd, nine dictations
-        # go to a provider over the following week, the artisan changes their mind on the 9th." A job
-        # queued under the grant sits in this table until the off-peak window opens; without this line
-        # the withdrawal on the 9th would stop nothing that was already queued, and the recordings
-        # would leave after the artisan had said stop.
-        #
-        # It costs one primary-key read per transcription job, on a path that is about to spend a
-        # provider round trip and stream the whole file out of object storage — and it is BEFORE the
-        # bytes are fetched, so a refused job does not even pull the audio.
-        #
-        # ``resolve_from_stages`` BECAUSE A JOB CARRIES NO WORKSHOP AND THE CLIP MAY NOT EITHER, which
-        # is the hole this argument closes and it was measured on the running API rather than reasoned
-        # about: a clip uploaded through ``POST /media/complete`` with no ``designWorkshop`` tag is
-        # queued here with nothing anywhere naming a workshop — correctly, since at that instant none
-        # does — and is written into a stage field only afterwards, which is the ordinary order of
-        # events. From then on the stage says whose recording it is. Without this the drain read only
-        # the absent tag, answered NOT_WORKSHOP_MATERIAL, and handed the recording of an artisan who
-        # had REFUSED to ElevenLabs, Deepgram and OpenAI in turn. See
-        # ``dictation_consent.stage_attached_workshop_ids``; the extra read happens only for a clip
-        # that carries no tag at all, which is never a clip either shipped client uploaded.
         verdict = await dictation_consent.transcription_verdict(media, resolve_from_stages=True)
         if not verdict.may_send:
             await _finalize_refused_job(job, verdict)
             return
-        # THE SIZE GATE, AND THEN A STREAM RATHER THAN A READ. Both are new; this line used to be an
-        # unconditional `get_object_bytes` shared with the MEASUREMENT branch below, which pulled the
-        # whole object — up to the 668.44 MiB one this deployment actually holds — into the worker's
-        # heap before anything had asked how big it was. The refusal is terminal and it is written to
-        # the row where a designer sees it, rather than being retried until the attempts run out.
         oversize = await _oversize_reason(media, MAX_TRANSCRIBE_FETCH_BYTES, what="transcribe")
         if oversize is not None:
             await _apply_transcription_result(
@@ -1071,9 +603,6 @@ async def _process_job(job: Any, settings: Settings) -> None:
                 download_to_temp, media.objectKey, max_bytes=MAX_TRANSCRIBE_FETCH_BYTES
             )
         except ObjectTooLarge as exc:
-            # Storage would not size it and the transfer hit the bound. Terminal, and NOT left to
-            # the ordinary retry: every attempt would re-download the same oversized object over
-            # the same link before failing in the same place.
             await _apply_transcription_result(
                 job,
                 {
@@ -1093,34 +622,18 @@ async def _process_job(job: Any, settings: Settings) -> None:
                 media,
                 settings,
                 source_path=source_path,
-                # The person who ASKED for this job; the uploader for a sweep; else the organisation.
                 user_id=getattr(job, "requestedById", None) or getattr(media, "uploadedById", None),
                 job=job,
                 transcribe=transcribe_audio_bytes,
             )
         finally:
-            # Before the refinement hop below, which is a chat call over text and has no use for the
-            # audio: holding the file across it would keep a copy of every recording on disk for the
-            # length of a second provider round trip.
             discard_temp(source_path)
-        # Apply the configured transcription mode: RAW keeps the plain transcript; REFINED rewrites it
-        # into a clean interviewer/interviewee dialogue; REFINED_TRANSLATED also translates to English.
-        # The refined text is stored as the transcript (raw stays in transcriptSummary) and still lands
-        # COMPLETED — i.e. awaiting human approval through the existing transcript-approval flow.
         mode = transcription_mode(await load_app_settings())
         if (
             result.get("status") == "COMPLETED"
             and mode in {"REFINED", "REFINED_TRANSLATED"}
             and result.get("text")
         ):
-            # THE SECOND HOP IS OPTIONAL AND MUST NEVER COST THE FIRST ONE. The provider has already
-            # been paid and the raw transcript is sitting in ``result`` at this line; letting an
-            # exception out of the refine call sent the whole run to ``_handle_job_failure``, which
-            # writes a job status and — until the fix above — left the clip at QUEUED with the
-            # transcript discarded unwritten. Refinement is a formatting and translation pass over
-            # text we already hold, so its failure is a degradation, not a failure of the job: fall
-            # back to the raw text and let the run land COMPLETED. Anyone who "simplifies" this by
-            # removing the try re-creates a defect that throws away money and testimony together.
             try:
                 refined = await refine_transcript_text(
                     result.get("text"), mode == "REFINED_TRANSLATED", settings
@@ -1143,13 +656,6 @@ async def _process_job(job: Any, settings: Settings) -> None:
         await _apply_transcription_result(job, result)
         return
     if job.jobType == MEASUREMENT:
-        # STILL A WHOLE READ, AND DELIBERATELY SO — but gated, which it was not. A vision model is
-        # sent base64 of the entire image inside a JSON body, and there is no half of a base64, so
-        # streaming to a temp file would buy nothing here except a second copy on disk beside the
-        # one in the heap. What was missing was any bound at all: `MAX_MEASUREMENT_BYTES` lowered by
-        # what the box says is free (see `services/memory_budget`) is that bound, and the refusal
-        # terminates the job with a message instead of letting an oversized photograph OOM the
-        # worker on every attempt.
         ceiling = budget_bytes(MAX_MEASUREMENT_BYTES)
         oversize = await _oversize_reason(media, ceiling, what="measure")
         if oversize is not None:
@@ -1158,25 +664,11 @@ async def _process_job(job: Any, settings: Settings) -> None:
                 {"available": False, "status": UNAVAILABLE, "analysis": None, "message": oversize},
             )
             return
-        # THE SAME CEILING CARRIED INTO THE FETCH, WHICH IS WHAT MAKES THE GATE ABOVE A GUARANTEE.
-        # ``_oversize_reason`` promises that a ``None`` from ``head_object`` is not read as "small"
-        # because the caller bounds the download — and until 2026-09-03 this caller did not: it
-        # called ``get_object_bytes(objectKey)``, which took no bound, so an image storage would not
-        # size was read into the heap of a 1 GiB box whatever its length. That is precisely the
-        # case a bound is for; the HEAD covers the others. ``download_to_temp`` was the alternative
-        # and was rejected here for the reason the paragraph above gives: a vision model is sent
-        # base64 of the whole image, so a temp file would buy a second copy on disk beside the one
-        # in the heap and no reduction in peak memory at all.
         try:
             content = await asyncio.to_thread(
                 get_object_bytes, media.objectKey, max_bytes=ceiling
             )
         except ObjectTooLarge as exc:
-            # Storage would not size it and the transfer hit the bound. Terminal through the SAME
-            # arm the gate above uses, and NOT left to the ordinary retry: every attempt would pull
-            # the same oversized object over the same link before failing in the same place. The
-            # number is a floor — the read stopped the moment it passed the limit — and the sentence
-            # says "at least" rather than implying anything was measured that was not.
             await _apply_measurement_result(
                 job,
                 {
@@ -1205,11 +697,9 @@ async def _apply_transcription_result(job: Any, result: dict[str, Any]) -> None:
     status = str(result.get("status") or FAILED).upper()
     message = result.get("message")
     if status == RATE_LIMITED and result.get("reason") == "budget":
-        # EVERY BUDGET IS USED UP: wait for the next window, no attempt spent, no ladder climbed.
         await _defer_for_budget(job, message)
         return
     if status == RATE_LIMITED:
-        # Leave the clip QUEUED and let the queue back off + retry without consuming an attempt.
         await db.mediafile.update(
             where={"id": job.mediaFileId},
             data={"transcriptStatus": QUEUED, "transcriptError": message},
@@ -1228,24 +718,8 @@ async def _apply_transcription_result(job: Any, result: dict[str, Any]) -> None:
 
 
 async def _process_insights_job(job: Any, media: Any) -> None:
-    """Summary, quotes and translation for one transcript.
-
-    CONSENT IS RE-READ HERE, AT SEND TIME, for the reason the TRANSCRIPTION branch gives: a job
-    queued under a grant must not leave after the artisan withdrew it. A refusal is terminal and
-    sends nothing.
-
-    The requester's own key when a person asked (Regenerate), and only then is a run counted
-    against that person's daily AI allowance: once for a run that got an answer, which is a stored
-    version or a refusal that closes the job (a key the provider refused, a declined request). A
-    busy or unreachable provider retries and spends nothing, so one Regenerate never costs more
-    than one. Automatic runs and the backfill carry no requester: the deployment's key, and
-    nobody's allowance.
-    """
-    # Read fresh: a Regenerate can claim an automatic job after it was queued or picked up.
     requested_by = await transcript_insights.job_requester(job)
     if requested_by is None:
-        # An automatic run never replaces a researcher's edits, even if they edited after it was
-        # queued.
         current = await transcript_insights.current_insight(job.mediaFileId)
         if current is not None and current.editedAt is not None:
             await _complete_job(job.id, {"status": "SKIPPED", "reason": "edited"})
@@ -1257,13 +731,9 @@ async def _process_insights_job(job: Any, media: Any) -> None:
         media, send=dictation_consent.INSIGHTS, resolve_from_stages=True
     )
     if not verdict.may_send:
-        # The transcript is non-empty here, so the clip note in _finalize_refused_job (written only
-        # onto a clip with no transcript) is a no-op and only the job is closed.
         await _finalize_refused_job(job, verdict)
         return
     try:
-        # Turns (Scribe) are translated turn by turn with the summary in the same Gemini pass; a
-        # transcript without turns takes the old path (services/transcript_pipeline.generate).
         outcome = await transcript_pipeline.generate(media, user_id=requested_by)
     except transcript_insights.InsightsUnavailable as exc:
         await _finalize_unavailable_job(job.id, {"status": UNAVAILABLE}, str(exc))
@@ -1274,8 +744,6 @@ async def _process_insights_job(job: Any, media: Any) -> None:
             return
         if exc.retry:
             raise RuntimeError(str(exc)) from None
-        # A refused key or a declined request gives the same answer every time: spend once and
-        # close it now rather than once per attempt.
         await _spend_insights_allowance(requested_by)
         await _finalize_unavailable_job(job.id, {"status": FAILED}, str(exc))
         return
@@ -1284,7 +752,6 @@ async def _process_insights_job(job: Any, media: Any) -> None:
 
 
 async def _spend_insights_allowance(user_id: str | None) -> None:
-    """Count one Regenerate run against its requester. Automatic runs have no requester."""
     if not user_id:
         return
     await ai_verb_cap.spend(user_id, ai_verb_cap.ist_day(), transcript_insights.CAP_VERB)
@@ -1369,36 +836,6 @@ def _measurement_update_data(
     status: str,
     analysis: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """What a finished MEASUREMENT job writes onto the product or tool: the ANALYSIS, never the columns.
-
-    **THIS FUNCTION USED TO PUT THE MODEL'S NUMBER STRAIGHT INTO A COSTED DIMENSION.** It read
-    ``analysis["lengthInches"]`` / ``["breadthInches"]`` and, whenever the column was empty, wrote them
-    onto ``ProductDocumentation`` / ``ToolDocumentation`` — a background worker filling a printed,
-    costed field with a vision model's estimate that no person had ever seen, let alone accepted.
-    ``api/routes/media.py``'s ``ENQUEUEABLE_PROCESSING_REQUESTS`` had already closed the only route
-    that could ask for such a job, in a refusal whose own sentence is "a dimension no human ever saw
-    must not be written onto a record that is used for costing"; a queue row created before that
-    landed, or by an operator driving the database directly, still reached these two lines. The front
-    door was gated and this side door was not.
-
-    THE OTHER RESOLUTION AND WHY IT WAS REFUSED. The alternative was to keep writing the columns and
-    stamp them ``VISION_MODEL`` with ``by``/``byName`` absent, since no person accepted them. That is
-    honest about the origin but it manufactures a documented dimension that satisfies
-    ``MeasurementMethod.requires_acceptance`` for nobody — a number in a costing field that the law
-    ``services/measurement_provenance`` states ("a method that is irreproducible additionally requires
-    acceptance by a named person") says may not be there at all. Recording it and refusing to write it
-    is strictly better: nothing is lost.
-
-    NOTHING IS LOST, AND THAT IS THE REASON THIS IS SAFE. The reading is still stored in
-    ``measurementAnalysis`` and the job still reports through ``measurementAnalysisStatus``, so both
-    clients show the analysis exactly as before and a person can read it and type or accept the value
-    — which is the gesture that makes the number recordable. Only the silent write is gone, and
-    restoring it is re-adding the two column assignments this docstring describes.
-
-    OWNER DECISION, FLAGGED RATHER THAN ASSUMED: whether this writer should stop entirely (what it now
-    does) or write stamped is a behaviour change for anyone driving the API directly, so it is the repo
-    owner's to confirm. The reversible default is the one that cannot produce a false record.
-    """
     data: dict[str, Any] = {
         "measurementImageId": media_id,
         "measurementAnalysisStatus": status,
@@ -1442,21 +879,6 @@ async def _finalize_unavailable_job(job_id: str, result: dict[str, Any], message
 
 
 async def _finalize_refused_job(job: Any, verdict: Any) -> None:
-    """Close a queued transcription that consent will not permit. Terminal, and it says why.
-
-    ``FAILED`` immediately and NOT a retry, which is the opposite of every other failure in this file.
-    The retry ladder above exists for conditions that clear by themselves — a provider that is down, a
-    rate limit, a worker that died holding a lock. This one clears only when a person records a
-    different answer, and re-attempting it every few minutes until ``maxAttempts`` is spent would put
-    the same refusal in the log three times and tell a reader that something was being retried.
-
-    IT DOES NOT RAISE, so the batch keeps draining. A refused clip is not an error in the queue; it is
-    the queue working. Raising here would count it as a failure in the pass's tally, page whoever reads
-    that tally, and — through ``_handle_job_failure`` — reschedule it.
-
-    The clip itself is written by :func:`_record_transcription_refused`, which leaves it eligible for a
-    later pass once the answer changes.
-    """
     await _record_transcription_refused(job.mediaFile, verdict)
     await db.mediaprocessingjob.update(
         where={"id": job.id},
@@ -1472,45 +894,10 @@ async def _finalize_refused_job(job: Any, verdict: Any) -> None:
 
 
 async def _handle_job_failure(job_id: str, exc: Exception) -> None:
-    """Record a failed attempt on the job — and, once the ladder is spent, on the CLIP as well.
-
-    THE CLIP USED TO BE LEFT BEHIND, AND QUEUED IS A TRAP. ``MediaFile.transcriptStatus`` is written
-    back only by :func:`_apply_transcription_result`, which is reached only after the provider has
-    answered. Every raise BEFORE that point — the consent read, the size gate, ``download_to_temp``,
-    ``transcribe_audio_bytes`` itself, ``load_app_settings``, ``refine_transcript_text`` — lands here
-    instead, and here used to update the job and nothing else. So a clip whose S3 object was briefly
-    unreachable overnight ended with the job FAILED and the clip still reading
-    ``transcriptStatus="QUEUED"``, ``transcriptError=None``. While QUEUED was ALSO on
-    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES`` that was terminal: every later stage save
-    skipped the clip, ``/media/complete`` could not rescue it either (``_finish_pending_media``
-    re-enqueues only when the row has NO job, and a FAILED job is still a job), and the only escapes
-    were the admin-only "Transcribe now" button and ``POST /media/jobs/{id}/retry``.
-
-    THIS IS THE SECOND HALF OF A FIX WHOSE FIRST HALF IS ALREADY IN. ``workshop_transcripts`` no
-    longer treats QUEUED/PROCESSING as settled — it reads them as a CLAIM that a job exists and
-    checks the queue table, so saving the stage already recovers a stranded clip. That closes the
-    "never transcribed again" half and leaves this one: the COLUMN still said QUEUED with no error
-    on it, so ``report_annexures`` went on classifying the recording as "still being transcribed",
-    ``GET /media`` showed a designer a clip that was permanently waiting on nothing, and a clip no
-    stage references had no save to be rescued by at all. Writing the terminal state here is what
-    makes the column a fact rather than a claim, and it is where the job's own terminal state is
-    already being written — one place, one truth.
-
-    FAILED rather than any new value, because FAILED is deliberately ABSENT from
-    ``_SETTLED_TRANSCRIPT_STATUSES`` (that set's own comment says so), so the recovery path the
-    consent-refusal writer already relies on picks this clip up too.
-
-    IT WILL NOT WRITE OVER A TRANSCRIPT THAT ALREADY EXISTS. The ``transcriptText`` guard now lives
-    in :func:`_finalize_failed_clip` — see there — and it mirrors
-    :func:`_record_transcription_refused` while honouring :func:`_transcript_write`'s hard-won rule.
-    """
     job = await db.mediaprocessingjob.find_unique(where={"id": job_id})
     if not job:
         return
     now = datetime.now(UTC)
-    # This column is served with the job, and the exception reaching it is ANY exception the job
-    # raised — including one built by a library out of a URL that carried a credential. services/ai
-    # keeps its own results clean; this is the guard for everything else that can fail in here.
     error = redact_secrets(str(exc))[:2000]
     exhausted = _attempts_exhausted(job)
     retry_delay = timedelta(minutes=min(60, 2 ** max(job.attempts - 1, 0)))
@@ -1527,42 +914,10 @@ async def _handle_job_failure(job_id: str, exc: Exception) -> None:
         },
     )
     if exhausted:
-        # Only on exhaustion: while attempts remain the clip really IS queued, and saying FAILED
-        # between two retries would make ``enqueue_stage_transcriptions`` file a second job for a
-        # recording the first one is still working through.
         await _finalize_failed_clip(job, error)
 
 
 async def _finalize_failed_clip(job: Any, error: str) -> None:
-    """Write a dead transcription job's terminal state onto the CLIP. Never raises.
-
-    ONE WRITER FOR TWO DEATHS, WHICH IS THE WHOLE POINT OF IT BEING A FUNCTION (extracted
-    2026-09-03). A transcription job can now reach its end two ways: an exception this process
-    caught (:func:`_handle_job_failure`) or a worker that died holding the lock with its ladder spent
-    (:func:`recover_stale_processing_jobs`). Both have to leave ``MediaFile.transcriptStatus``
-    saying the same thing, and both have to leave it under the same predicate. Spelling the second
-    one out beside the first would have been two copies of a rule this repository has already got
-    wrong once — see :func:`_transcript_write`.
-
-    FAILED rather than any new value, because FAILED is deliberately ABSENT from
-    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES`` (that set's own comment says so), so the
-    recovery path the consent-refusal writer already relies on picks this clip up too: the next save
-    of the stage that names the recording queues it again.
-
-    IT WILL NOT WRITE OVER A TRANSCRIPT THAT ALREADY EXISTS. A clip transcribed months ago whose
-    re-run failed must not be relabelled FAILED — that is a lie about the row and hides it from
-    every screen that filters on the status. Expressed as a predicate on the UPDATE rather than as a
-    read-then-write so there is no window between the two, and so the whole thing stays one round
-    trip.
-
-    MEASUREMENT JOBS ARE SKIPPED, not merely uninteresting here: a failed image measurement has
-    nothing whatever to say about a recording's transcript, and the two job types share this
-    function.
-
-    IT SWALLOWS ITS OWN FAILURE because the job's terminal state is already committed by the time
-    this runs, and in the recovery loop there are up to twenty-four more rows behind it. Letting a
-    second write raise would abandon the rest of the sweep over a row that is already correct.
-    """
     if _value(job, "jobType") != TRANSCRIPTION:
         return
     media_id = _value(job, "mediaFileId")
@@ -1586,19 +941,6 @@ async def _finalize_failed_clip(job: Any, error: str) -> None:
         )
 
 
-# --------------------------------------------------------------------------------------
-# The translation lane (0.0.5): English and summaries run BESIDE transcription, not after it
-# --------------------------------------------------------------------------------------
-#
-# The queue process used to take one job at a time, transcriptions first (priority 50 before 80), so
-# every translation waited for the last transcription in the queue. Translation is text only (no
-# audio is fetched) and is bounded by Gemini, not by this box, so it now has its own lane in the same
-# process: a few jobs at a time, claimed with the same compare-and-set as every other job, while the
-# main loop keeps transcribing. A failure that clears by itself (Gemini busy, unreachable, or the
-# project's credit run out) parks the job and asks again later without spending an attempt, so the
-# lane resumes on its own the moment Gemini answers again.
-
-#: Insights failures written before the hold existed, revived once so they finish by themselves.
 _HOLD_MESSAGES = (
     "Gemini is busy just now; this will be tried again.",
     "Gemini could not be reached; this will be tried again.",
@@ -1609,7 +951,6 @@ _last_revive = float("-inf")
 
 
 async def _hold_insights_job(job: Any, message: str, hold_seconds: int) -> None:
-    """Back to QUEUED for ``hold_seconds``, the attempt this claim took given back."""
     await db.mediaprocessingjob.update(
         where={"id": job.id},
         data={
@@ -1624,11 +965,6 @@ async def _hold_insights_job(job: Any, message: str, hold_seconds: int) -> None:
 
 
 async def revive_held_insights(*, now: float | None = None) -> int:
-    """Requeue insights jobs that FAILED only because Gemini was busy, unreachable or unpaid.
-
-    At most every :data:`REVIVE_INTERVAL_SECONDS`. Each such job is set QUEUED with its attempts
-    reset; from then on the hold keeps it queued instead of failing it again.
-    """
     global _last_revive
     import time as _time
 
@@ -1652,7 +988,6 @@ async def process_next_insights_jobs(
     settings: Settings | None = None,
     width: int | None = None,
 ) -> dict[str, int]:
-    """One pass of the translation lane: up to ``width`` insights jobs at once."""
     settings = settings or get_settings()
     if not transcript_insights.enabled():
         return {"processed": 0, "succeeded": 0, "failed": 0}
@@ -1686,14 +1021,13 @@ async def process_next_insights_jobs(
 
 
 async def run_insights_lane(stop: Any, settings: Settings | None = None, *, idle_seconds: float = 10.0) -> None:
-    """The queue process's translation lane, until ``stop`` (an ``asyncio.Event``) is set."""
     settings = settings or get_settings()
     while not stop.is_set():
         busy = False
         try:
             result = await process_next_insights_jobs(settings=settings)
             busy = result["processed"] > 0
-        except Exception:  # one bad pass must never kill the lane
+        except Exception:
             logger.exception("Translation lane pass failed; backing off")
         if not busy:
             try:
@@ -1703,10 +1037,8 @@ async def run_insights_lane(stop: Any, settings: Settings | None = None, *, idle
 
 
 async def _process_isolation_job(job: Any, media: Any) -> None:
-    """ElevenLabs Voice Isolator on one transcribed recording (0.0.5; off unless switched on)."""
     from app.transcription import isolation
 
-    # It sends the recording to ElevenLabs, so the owner's pause holds it like a transcription.
     if transcription_paused(await load_app_settings()):
         await _hold_insights_job(job, "Transcription is paused.", 900)
         return

@@ -1,13 +1,3 @@
-"""Everything online authentication needs, loaded and checked ONCE, at boot.
-
-``Settings._require_complete_online_aadhaar_config`` has already refused a missing value by the time
-this runs; this adds what a string check cannot see — that the PFX opens with its password and holds
-an RSA key with a certificate, that the UIDAI encryption certificate for AADHAAR_ENV loads and has
-not expired, and that at least one UIDAI response-signing certificate is available. ``app/main.py``
-calls :func:`load_online_config` in its lifespan while AADHAAR_ONLINE_AUTH_ENABLED is on, so a
-deployment that cannot authenticate does not start.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -39,7 +29,6 @@ class OnlineConfig:
     otp_url: str
     auth_url: str
     kyc_url: str | None
-    #: An ``rsa.RSAPrivateKey`` from the PFX, or a ``KmsRsaSigner`` whose key lives in AWS KMS.
     signing_key: Any
     signing_certificate: x509.Certificate
     encryption_certificate: x509.Certificate
@@ -70,7 +59,6 @@ def _encryption_certificate(env: str, override: str | None) -> x509.Certificate:
     found = certs.trusted_certificates(purpose)
     if not found:
         raise OnlineConfigError(f"no pinned UIDAI encryption certificate for AADHAAR_ENV={env}")
-    # The latest-expiring one: UIDAI publishes a successor before the current one lapses.
     return max(found, key=lambda certificate: certificate.not_valid_after_utc)
 
 
@@ -85,8 +73,6 @@ def _response_certificates(env: str, override: str | None) -> tuple[x509.Certifi
 
 
 def _signing_key(settings: Any, kms: Any = None) -> tuple[Any, x509.Certificate]:
-    """The AUA signing key and its certificate: from AWS KMS when AADHAAR_SIGNING_KMS_KEY_ID is set
-    (the HSM option, Blocker B4), otherwise from the password-protected PFX."""
     key_id = (getattr(settings, "aadhaar_signing_kms_key_id", None) or "").strip()
     if key_id:
         from app.services.aadhaar.online import kms_signer
@@ -99,7 +85,7 @@ def _signing_key(settings: Any, kms: Any = None) -> tuple[Any, x509.Certificate]
             kms_signer.check(signer, certificate)
         except kms_signer.KmsSigningError as exc:
             raise OnlineConfigError(str(exc)) from exc
-        except Exception as exc:  # KMS unreachable, access denied, unknown key
+        except Exception as exc:
             raise OnlineConfigError(
                 f"AADHAAR_SIGNING_KMS_KEY_ID could not be used: {type(exc).__name__}"
             ) from exc

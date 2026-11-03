@@ -1,15 +1,3 @@
-"""/api/ministry-exports — the Ministry's monthly export packs: recipients, packs, download links.
-
-Web only (ministry and admin authoring is web-only by standing rule). Every route answers 404 while
-``MINISTRY_EXPORTS_ENABLED`` is off, then 403 with :data:`ministry_exports.REFUSAL` for anybody
-outside :data:`design_workshop_oversight.OVERSIGHT_ASSIGNER_ROLES` — the whole-estate tiers, because
-a pack is built at whole-estate scope.
-
-Generating here never sends e-mail; only the scheduled run does (``services/ministry_exports``).
-A download link is minted per click, lives ``MINISTRY_EXPORTS_LINK_SECONDS`` and is logged in
-``MinistryExportDownload``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +16,6 @@ from app.services.ministry_pack_sheets import UNSTATED, scheme_keys, scheme_labe
 
 router = APIRouter(prefix="/ministry-exports", tags=["ministry-exports"])
 
-#: How many accounts the recipient search offers.
 ELIGIBLE_LIMIT = 20
 MAX_SEARCH = 120
 
@@ -38,8 +25,6 @@ def _not_found() -> HTTPException:
 
 
 async def require_ministry_export_manager(current_user: Any = Depends(get_current_user)) -> Any:
-    """The one door. Lives here and not in ``core/deps.py``, as ``require_workshop_assigner`` does,
-    and reads the same set — if the two are ever consolidated, move them together."""
     if not get_settings().ministry_exports_enabled:
         raise _not_found()
     if packs.role_of(current_user) not in OVERSIGHT_ASSIGNER_ROLES:
@@ -65,10 +50,6 @@ def _iso(value: Any) -> str | None:
     return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
 
 
-# --------------------------------------------------------------------------------------
-# Schemes
-# --------------------------------------------------------------------------------------
-
 
 @router.get("/schemes")
 async def list_schemes(_: Any = Depends(require_ministry_export_manager)) -> dict[str, Any]:
@@ -89,10 +70,6 @@ async def list_schemes(_: Any = Depends(require_ministry_export_manager)) -> dic
         ]
     }
 
-
-# --------------------------------------------------------------------------------------
-# Recipients
-# --------------------------------------------------------------------------------------
 
 
 async def _recipient_payloads(rows: list[Any]) -> list[dict[str, Any]]:
@@ -190,10 +167,6 @@ async def delete_recipient(
     await db.ministryexportrecipient.delete_many(where={"userId": user_id})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-
-# --------------------------------------------------------------------------------------
-# Packs
-# --------------------------------------------------------------------------------------
 
 
 @router.get("/packs")

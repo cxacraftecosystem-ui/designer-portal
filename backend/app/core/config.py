@@ -1,28 +1,3 @@
-"""Every environment-supplied setting, and the order the environment is read in.
-
-WHERE A VALUE COMES FROM, HIGHEST PRECEDENCE FIRST. Written down because a provider migration
-turned this into a live hazard: whichever file happens to be reachable from the working directory
-decides which database the process talks to, and getting that wrong is not a typo, it is a
-connection to somebody else's data.
-
-  1. The process environment. systemd's ``EnvironmentFile``, a Kubernetes ConfigMap/Secret, a
-     ``DATABASE_URL=... uvicorn ...`` prefix on the command line. pydantic-settings always prefers
-     this over any file, so an explicit export is how you override for one command.
-  2. ``backend/.env``, resolved by ABSOLUTE PATH below. It used to be ``env_file=".env"``, which is
-     relative to the WORKING DIRECTORY: the same command produced different settings depending on
-     whether it was typed in ``backend/`` or at the repository root, and at the root it produced
-     none at all. ``backend/tests/conftest.py`` documents at length what that cost the test suite.
-  3. The defaults declared on the fields below.
-
-``backend/.env.production`` IS NOT IN THAT LIST AND IS READ BY NO CODE IN THIS REPOSITORY. It is an
-operator file: the deployment copies it onto the box as the unit's ``EnvironmentFile``, which is how
-its values arrive at rule 1. Nothing here loads it, so editing it changes nothing until a deploy.
-
-THIS FILE NAMES NO DATABASE PROVIDER, AND MUST NOT LEARN ONE. Everything below that used to branch
-on a vendor hostname now branches on SHAPE (is the host loopback/private?) or on an explicit
-setting. The provider is a deployment detail: one DSN, plain PostgreSQL, nothing else.
-"""
-
 from functools import lru_cache
 from ipaddress import ip_address
 from pathlib import Path
@@ -31,40 +6,16 @@ from urllib.parse import parse_qsl, urlsplit, urlunsplit
 from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-#: ``backend/`` — this file is ``backend/app/core/config.py``. Used to anchor the .env lookup on the
-#: repository rather than on whatever directory the command was typed in; see the header.
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
-# Only symmetric HMAC signing is ever legitimate for this API's tokens. The allow-list exists to
-# stop "algorithm confusion": JWT_ALGORITHM is read from the environment (the field has no alias, so
-# pydantic-settings maps it from an env var of the same name), and a value of "none" — or an RSA/EC
-# algorithm whose "public key" is our shared secret — would let an attacker mint tokens we accept.
 _ALLOWED_JWT_ALGORITHMS = frozenset({"HS256", "HS384", "HS512"})
 
-# Hostnames whose Postgres serves no TLS certificate: the docker-compose database, a local tunnel,
-# a compose service name. Demanding sslmode=require against these would break local development, so
-# the automatic TLS decision below leaves them alone.
 _LOCAL_DB_HOSTNAMES = frozenset({"localhost", "host.docker.internal", "postgres", "db"})
 
-# Any of these in the connection string means TLS behaviour was configured deliberately; we never
-# second-guess an explicit choice.
 _SSL_QUERY_KEYS = frozenset({"sslmode", "sslaccept", "sslcert", "sslidentity", "sslpassword"})
 
 
 def _is_local_db_host(host: str) -> bool:
-    """True when the database host is loopback / on a private network, i.e. a development database.
-
-    Covers both named hosts (``localhost``, a docker-compose service name) and literal addresses
-    (``127.0.0.1``, ``10.x``, ``192.168.x``, IPv6 loopback). Anything else — a managed Postgres
-    endpoint, whoever runs it — counts as remote and therefore MUST be reached over TLS.
-
-    CLASSIFIES BY SHAPE, NEVER BY PROVIDER NAME, and that is the whole point of it: a hostname
-    allow-list has to be edited every time a deployment moves, and the edit that gets forgotten is
-    the one that silently downgrades a remote link to plaintext. An unrecognised host is remote.
-
-    ``docker/backend/entrypoint.sh`` mirrors this function deliberately and cites it by name; keep
-    the two in step, and if you rename it, rename it there too.
-    """
     host = host.strip().strip("[]").lower()
     if (
         not host
@@ -75,27 +26,11 @@ def _is_local_db_host(host: str) -> bool:
     try:
         address = ip_address(host)
     except ValueError:
-        return False  # a real DNS name that isn't in the local list -> treat as remote
+        return False
     return address.is_loopback or address.is_private or address.is_link_local
 
 
 def _with_explicit_sslmode(url: str, require: bool | None) -> str:
-    """Return *url* with an explicit ``sslmode`` so traffic to a remote database is encrypted.
-
-    Why this is not redundant with "the provider already speaks TLS": libpq and Prisma's Postgres
-    connector default to ``sslmode=prefer``, which tries TLS and then **silently falls back to
-    plaintext** if the handshake fails. A downgrade attack (or a proxy that terminates TLS badly)
-    therefore ships credentials and every row of field data in the clear, with nothing in the logs.
-    ``sslmode=require`` refuses to connect at all rather than fall back, which is the property we
-    want for any DSN that leaves this machine.
-
-    The decision is automatic by default: remote hosts get ``sslmode=require``; loopback/private
-    hosts (docker-compose Postgres, which ships no certificate) are returned untouched so local
-    development and the test suite keep working. ``DATABASE_REQUIRE_SSL`` forces either answer.
-    A URL that already carries any ssl* parameter is returned verbatim — an explicit operator
-    choice always wins. Migrations are unaffected: ``prisma migrate deploy`` reads ``DATABASE_URL``
-    straight from the environment, not from this Settings object.
-    """
     if require is False:
         return url
     try:
@@ -103,160 +38,44 @@ def _with_explicit_sslmode(url: str, require: bool | None) -> str:
     except ValueError:
         return url
     if not parts.scheme.startswith("postgres"):
-        return url  # not a Postgres URL (nothing else is expected here) — leave it alone
+        return url
     existing_keys = {key.lower() for key, _ in parse_qsl(parts.query, keep_blank_values=True)}
     if existing_keys & _SSL_QUERY_KEYS:
         return url
     if require is None and _is_local_db_host(parts.hostname or ""):
         return url
-    # Append textually rather than re-encoding the whole query: the credentials/params in the source
-    # URL are already percent-encoded and urlencode() would double-encode them.
     query = f"{parts.query}&sslmode=require" if parts.query else "sslmode=require"
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
 class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
-    # DECLARES WHAT ``DATABASE_URL`` POINTS AT — that one DSN and no other. True means "a
-    # transaction-mode connection pooler", which makes the runtime client add ``pgbouncer=true`` so
-    # the query engine stops relying on session-pinned named prepared statements a transaction
-    # pooler cannot keep, and makes it bound our share of the pooler's client budget.
-    #
-    # ONE FLAG PER ENDPOINT, and this is the correction to an earlier version of this comment that
-    # said "what DATABASE_URL points at" while the code applied the answer to the read replica too.
-    # A replica is a separate endpoint and may be pooled when the primary is not, or the reverse; a
-    # deployment in that shape could not be expressed by configuration at all, which defeats the
-    # purpose of the flag. ``DATABASE_READ_REPLICA_USE_TRANSACTION_POOLER`` below is its own answer,
-    # and ``build_runtime_database_url`` now takes ``pooled`` as an argument so that every caller
-    # has to say which DSN's intent it is passing.
-    #
-    # This USED TO REWRITE THE HOST — it moved a ``.pooler.supabase.com`` DSN from port 5432 to
-    # 6543 — and that is exactly the kind of knowledge this file is not allowed to have. Every
-    # managed Postgres ships a pooler, each on its own host and port convention, so the only
-    # portable expression is: the operator supplies the pooled DSN, and this flag says whether it
-    # is one. Migrations get the DIRECT DSN instead (they need session-mode advisory locks and
-    # DDL), which is a deployment decision — see the header of core/db.py.
-    #
-    # DEFAULT TRUE BECAUSE THE TWO MISTAKES ARE NOT SYMMETRIC. True against a direct connection
-    # costs prepared-statement caching, i.e. a little speed. False against a transaction pooler
-    # costs correctness: the engine issues named prepared statements onto a connection it does not
-    # keep, and queries start failing with "prepared statement already exists" under load only.
     database_use_transaction_pooler: bool = Field(
         default=True, alias="DATABASE_USE_TRANSACTION_POOLER"
     )
-    # Max client connections the runtime engine opens, PER uvicorn worker. Kept SMALL on purpose:
-    # a connection pooler enforces a ceiling on *client* connections shared across every worker AND
-    # every overlapping process during a deploy/restart. At 40 × 2 workers (plus restart overlap and
-    # the background queue worker) we were tripping (EMAXCONN) "max client connections reached", which
-    # crash-looped startup and made uploads fail intermittently. Real query concurrency is gated by the
-    # far smaller number of SERVER connections behind the pooler anyway, so a small client pool loses
-    # nothing and leaves headroom.
-    #
-    # TEN IS A REDUCTION AGAINST A POOLER AND HAS NEVER BEEN EVALUATED AS ANYTHING ELSE. There is no
-    # shared client budget in front of a DIRECT endpoint, and Prisma's engine sizes its own pool from
-    # the CPU count when nothing says otherwise, so on a small box writing this number onto a direct
-    # DSN RAISES the pool rather than capping it. ``build_runtime_database_url`` therefore writes it
-    # only where a pooler is declared, or where this variable was explicitly supplied — setting it is
-    # how an operator states a pool size for a direct endpoint. See the header of core/db.py.
     database_connection_limit: int = Field(default=10, alias="DATABASE_CONNECTION_LIMIT")
-    # Optional Prisma pool acquire timeout (seconds). Left unset uses Prisma's own default.
     database_pool_timeout: int | None = Field(default=None, alias="DATABASE_POOL_TIMEOUT")
-    # SECONDS ALLOWED FOR ONE ATTEMPT TO ESTABLISH THE DATABASE CONNECTION, and it exists for COLD
-    # DATABASES. A managed Postgres that suspends when idle (scale-to-zero, autosuspend, a
-    # serverless tier — every provider sells it under a different word) does not answer the first
-    # connection of the morning at the speed of one that has been warm all night: it has to be woken
-    # first. prisma-client-py allows 10 seconds by default — ``prisma/_constants.py``,
-    # ``DEFAULT_CONNECT_TIMEOUT: timedelta = timedelta(seconds=10)`` — which is a number chosen for a
-    # server that is always there. When a wake takes longer, the attempt is abandoned and the app
-    # reports a database that was merely asleep as one that is down.
-    #
-    # Thirty is a chosen number, not a measured one: comfortably more than a wake, and still bounded,
-    # because the retry loop in core/db.py is the other half of the answer and it wants attempts that
-    # end. Deliberately NOT a URL parameter: it is passed to the Prisma client as its
-    # ``connect_timeout``, which is a documented argument of the library actually installed here,
-    # whereas an unrecognised query parameter in a DSN is a guess about a Rust engine's parser and
-    # the cost of guessing wrong is a database URL the engine refuses at boot.
     database_connect_timeout: int = Field(default=30, alias="DATABASE_CONNECT_TIMEOUT")
-    # Force TLS on the database link. None (default) decides automatically — sslmode=require for a
-    # remote host, untouched for a loopback/private one so docker-compose Postgres still works.
-    # See _with_explicit_sslmode for why "the provider already uses TLS" is not sufficient.
     database_require_ssl: bool | None = Field(default=None, alias="DATABASE_REQUIRE_SSL")
     jwt_secret: str = Field(alias="JWT_SECRET")
-    # Constrained to HMAC algorithms by _normalise_jwt_algorithm below (see _ALLOWED_JWT_ALGORITHMS).
     jwt_algorithm: str = "HS256"
     jwt_expires_minutes: int = Field(default=60 * 24 * 7, alias="JWT_EXPIRES_MINUTES")
-    # Lifetime of a `dataset:read` token from POST /api/datasets/token. Longer than a session token
-    # (30 days by default) BECAUSE it is narrower: it can only read the export API, so the cost of a
-    # long life is bounded in a way a session token's is not — and the job holding it is a cron entry
-    # nobody re-authenticates by hand. Revocation is by demoting or deleting the account it names,
-    # which takes effect within the identity cache's TTL; see deps.require_dataset_admin.
     dataset_token_expires_minutes: int = Field(
         default=60 * 24 * 30, alias="DATASET_TOKEN_EXPIRES_MINUTES"
     )
-    # Escape hatch for local development ONLY: lets the API start with a short/placeholder
-    # JWT_SECRET instead of refusing to boot (see app.core.security.verify_jwt_configuration).
-    # Never set this in a deployed environment — a guessable secret means anyone can mint tokens
-    # for any account, including the master admin.
     allow_weak_jwt_secret: bool = Field(default=False, alias="ALLOW_WEAK_JWT_SECRET")
 
-    # --- Authenticated-identity cache (see app.core.deps) ---------------------------------------
-    # ON by default, unlike everything in app/scale: the query it removes runs on EVERY
-    # authenticated request against a cross-region database, so a flag that has to be switched on
-    # would leave the cost in place exactly where it is being paid.
-    #
-    # The kill switch is the point of the flag. Authorisation decisions read the cached row, so if
-    # it is ever suspected of serving a stale role during an incident, AUTH_USER_CACHE_ENABLED=false
-    # restores the previous behaviour (one query per request) with a restart and no deploy.
     auth_user_cache_enabled: bool = Field(default=True, alias="AUTH_USER_CACHE_ENABLED")
-    # SECONDS, and deliberately single-digit. The win is collapsing the burst of parallel requests
-    # one page load makes, not holding an identity; correctness comes from explicit invalidation on
-    # write, and this is only the backstop for writes this process cannot see (psql, the seed
-    # script, another worker). Every second added here is a second a demoted or deleted account
-    # keeps working after such a write. See app.core.deps for the full argument.
     auth_user_cache_ttl_seconds: float = Field(default=5.0, alias="AUTH_USER_CACHE_TTL_SECONDS")
-    # Hard entry ceiling on a 1 GiB box. A cached row is the User model's scalar columns and no
-    # relations — order 1 KB — so 512 concurrent identities is well under a megabyte, and the worst
-    # case is a number chosen here rather than one decided by how many people log in.
     auth_user_cache_max_entries: int = Field(default=512, alias="AUTH_USER_CACHE_MAX_ENTRIES")
-    # Fernet key encrypting the runtime-editable provider keys in ManagedSecret (see
-    # app.services.managed_secrets). OPTIONAL: when unset, a key is derived deterministically from
-    # JWT_SECRET so the feature needs no new configuration. Set it explicitly BEFORE you ever rotate
-    # JWT_SECRET — otherwise the rotation makes every stored secret undecryptable and each one has to
-    # be re-entered in the Settings hub. Accepts a Fernet key or any high-entropy passphrase.
     secrets_encryption_key: str | None = Field(default=None, alias="SECRETS_ENCRYPTION_KEY")
-    # THE TWO-STEP VERIFICATION KEY (2026-10-17): 32 random bytes, base64. Encrypts every stored TOTP
-    # secret, independently of JWT_SECRET, so rotating JWT_SECRET no longer locks two-step users out.
-    # Unset = the transition: the legacy key derived from JWT_SECRET is used and the boot logs a
-    # WARNING. Rotation: move the old value into TWO_FACTOR_PREVIOUS_KEYS (comma-separated), set a
-    # new one, run scripts/reencrypt_two_factor_secrets.py --apply, then drop the previous key. See
-    # app/services/two_factor.py and docs/SECURITY.md. Never reuse JWT_SECRET for it.
     two_factor_encryption_key: str | None = Field(default=None, alias="TWO_FACTOR_ENCRYPTION_KEY")
     two_factor_previous_keys: str | None = Field(default=None, alias="TWO_FACTOR_PREVIOUS_KEYS")
-    # On: the boot FAILS when the key is unset and any account has two-step on. The deploy turns it
-    # on together with writing the key, so a box that loses the key refuses to serve rather than
-    # quietly falling back to a key nothing is encrypted under.
     two_factor_key_required: bool = Field(default=False, alias="TWO_FACTOR_KEY_REQUIRED")
 
-    # --- Security response headers (see app.main.SecurityHeadersMiddleware) ---------------------
-    # HSTS tells browsers to refuse plaintext HTTP to this host for max_age seconds. It is only
-    # emitted on requests that arrived over TLS, so a local http:// dev server never poisons a
-    # developer's browser.
     security_hsts_enabled: bool = Field(default=True, alias="SECURITY_HSTS_ENABLED")
-    security_hsts_max_age: int = Field(default=63_072_000, alias="SECURITY_HSTS_MAX_AGE")  # 2 years
-    # Emit HSTS even when the request looks like plain HTTP at the origin. Needed for the production
-    # shape (browser --HTTPS--> CloudFront --HTTP--> nginx --HTTP--> uvicorn), where nginx overwrites
-    # X-Forwarded-Proto with its own scheme, so the app cannot tell that the *viewer* used TLS.
+    security_hsts_max_age: int = Field(default=63_072_000, alias="SECURITY_HSTS_MAX_AGE")
     security_force_hsts: bool = Field(default=False, alias="SECURITY_FORCE_HSTS")
-    # Serve /docs, /redoc and /openapi.json. FastAPI serves all three to anyone by default, and on
-    # this deployment they were reachable unauthenticated — the schema names every route, every
-    # query parameter and every field of every model, including the ones behind admin-only roles.
-    # That is a map of the API handed to whoever asks, and it is worth nothing to the researchers
-    # this app is actually for, since none of them read an OpenAPI schema.
-    #
-    # Default False rather than True because the production .env cannot be edited from here (it
-    # lives in a GitHub secret this repo cannot read), so a default-on flag would leave the docs
-    # exposed exactly where it matters. Closed by default means the next deploy shuts them; local
-    # development opts back in with BACKEND_EXPOSE_DOCS=true, which .env.example ships commented in.
     backend_expose_docs: bool = Field(default=False, alias="BACKEND_EXPOSE_DOCS")
 
     aws_access_key_id: str = Field(alias="AWS_ACCESS_KEY_ID")
@@ -265,147 +84,41 @@ class Settings(BaseSettings):
     aws_s3_bucket: str = Field(alias="AWS_S3_BUCKET")
     aws_s3_endpoint: str | None = Field(default=None, alias="AWS_S3_ENDPOINT")
     aws_s3_public_base_url: str | None = Field(default=None, alias="AWS_S3_PUBLIC_BASE_URL")
-    # Server-side encryption algorithm requested on the uploads the API itself starts (multipart
-    # create). "AES256" is SSE-S3, the managed-key mode every AWS bucket supports; "aws:kms" needs a
-    # key policy that also grants the media IAM user. Set it EMPTY for local MinIO without a KMS
-    # backend, which rejects the header outright. Note this cannot cover presigned single PUTs —
-    # see app/services/s3.py and docs/SECURITY.md for why bucket default encryption carries those.
     aws_s3_sse_algorithm: str = Field(default="AES256", alias="AWS_S3_SSE_ALGORITHM")
 
-    # WHETHER A MEDIA READ PAYLOAD CARRIES A SIGNED, EXPIRING ``url`` INSTEAD OF THE STORED ONE.
-    #
-    # ── WHAT IS WRONG TODAY, AND WHY A FLAG RATHER THAN A FIX ───────────────────────────────────
-    #
-    # ``MediaFile.url`` is ``s3.public_url_for_key(objectKey)``: the CDN host plus the key, no
-    # signature, no expiry, no authentication. The bucket policy carries a ``PublicReadMedia``
-    # statement that makes those objects world-readable, so the string IS the file — for ever, to
-    # anybody it is ever copied to, long after the grant that produced it was revoked and after the
-    # account that held it was suspended. ``records._redact_sensitive`` decides WHO is handed the
-    # string; nothing decides how long it stays good, because nothing can.
-    #
-    # The repair is two moves that must happen in this order and cannot happen together:
-    #   1. the server stops emitting the permanent URL and emits a 15-minute signed one (this flag);
-    #   2. a human removes ``PublicReadMedia`` from the bucket policy in the console, at which point
-    #      every previously-leaked URL starts answering 403.
-    #
-    # SEQUENCING, AND IT IS THE WHOLE REASON THIS IS A FLAG. Android 0.0.7 is in the field and caches
-    # ``MediaFile.url`` in its offline store: a designer's handset holds workshop payloads for days
-    # and renders photographs from the cached string with no network at all. Expiring URLs handed to
-    # THAT build produce a workshop whose photographs silently stop drawing, on a phone that may not
-    # see a network again for a week, and no server change can reach it. 0.0.8 carries the tolerance
-    # (``MediaUrlRefresh`` — re-GET the row, retry once) and the web carries the same
-    # (``lib/mediaUrlRefresh.ts``). So:
-    #
-    #   ship the tolerant clients -> WAIT for fleet adoption -> set this true -> verify -> THEN the
-    #   bucket policy.
-    #
-    # Flipping this before adoption breaks fielded phones. Flipping the BUCKET before this breaks
-    # every client at once, including the web. Doing the bucket first and this never is the only
-    # ordering that is unambiguously wrong. docs/SECURITY.md carries the operator runbook.
-    #
-    # OFF IS EXACTLY TODAY'S BEHAVIOUR, byte for byte — ``tests/test_media_presigned_reads.py``
-    # pins that a payload with the flag off is identical to one built without this code existing.
-    # The stored ``url`` COLUMN is untouched either way: it is what the flip-back path re-serves,
-    # and it is what ``/data/media/{id}/download`` still redirects to.
     media_presigned_reads: bool = Field(default=False, alias="MEDIA_PRESIGNED_READS")
-    # How long a signed read URL stays good. 15 minutes is sized for "a page renders, a person looks
-    # at it, a person clicks download" and NOT for a long-running job — the surfaces that outlive a
-    # look (the dataset manifest, the research zip) sign their own with their own expiry and are
-    # listed in the decision table above ``records._sign_media_url``. Raise it only if the fleet
-    # measurably cannot live inside it; every second added is a second a leaked URL stays live.
     media_presigned_read_ttl_seconds: int = Field(
         default=900, alias="MEDIA_PRESIGNED_READ_TTL_SECONDS"
     )
 
-    # --- Offline speech model artifacts (app/services/asr_artifacts.py) --------------------------
-    # Directory this API reads the ASR model files out of, one subdirectory per artifact id. UNSET by
-    # default, which means /api/asr-models reports every artifact as unpublished and the byte routes
-    # answer 503: a deployment that has not been given the bytes must say so, never serve a short
-    # body. It is a filesystem path rather than an object-storage key on purpose — the digest this
-    # endpoint publishes is COMPUTED from the file on each change, so there is no stored copy of it
-    # to drift, and that is only affordable against a local read. The full argument, and the operator
-    # step that puts the bytes there, are in docs/ASR-MODEL-HOSTING.md.
     asr_model_dir: str | None = Field(default=None, alias="ASR_MODEL_DIR")
 
-    # --- E-mail (app/services/mailer.py, app/services/email_outbox.py) ----------------------------
-    # Amazon SES (the SESv2 API, through boto3, with the same AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
-    # the media bucket uses — that IAM user needs `ses:SendEmail` on the verified identity).
-    #
-    # MAIL IS ON EXACTLY WHEN MAIL_FROM_ADDRESS IS SET. Unset (the default) means nothing is ever
-    # queued, `GET /preferences/notifications` answers `available: false`, and both clients hide
-    # every e-mail control — the product looks the way it did before e-mail existed, with no
-    # sentence anywhere about its absence. The address must be an SES-verified identity (the
-    # address itself, or its whole domain) in MAIL_SES_REGION; docs/ENVIRONMENT.md lists the
-    # owner's steps.
     mail_from_address: str | None = Field(default=None, alias="MAIL_FROM_ADDRESS")
-    # The display name in the From header: "Design Prototype Workshop <no-reply@…>".
     mail_from_name: str = Field(default="Design Prototype Workshop", alias="MAIL_FROM_NAME")
-    # Where a reply goes. Unset means replies go to the From address.
     mail_reply_to: str | None = Field(default=None, alias="MAIL_REPLY_TO")
-    # Mumbai, beside the users. SES identities and the production-access grant are per region.
     mail_ses_region: str = Field(default="ap-south-1", alias="MAIL_SES_REGION")
-    # Optional SES configuration set (bounce/complaint event publishing). Unset sends without one.
     mail_ses_configuration_set: str | None = Field(
         default=None, alias="MAIL_SES_CONFIGURATION_SET"
     )
-    # How many sends one message is given before it is marked FAILED. Backoff is 1, 2, 4, 8 … min.
     mail_max_attempts: int = Field(default=5, alias="MAIL_MAX_ATTEMPTS")
-    # Messages sent per drain pass of the queue worker. SES's sandbox rate is 1/s; production 14/s.
     mail_batch_size: int = Field(default=10, alias="MAIL_BATCH_SIZE")
-    # The Monday summary for reviewers and officials (app/services/weekly_digest.py). A kill switch
-    # for the queue worker's scheduler only: false sends no new summaries; the Settings switch and
-    # the summaries already sent keep working. Day and hour are constants (Monday 08:00 IST).
     weekly_digest_enabled: bool = Field(default=True, alias="WEEKLY_DIGEST_ENABLED")
 
-    # --- Ministry export packs (app/services/ministry_exports.py, docs/MINISTRY_EXPORTS.md) --------
-    # A monthly Excel + PDF pack per scheme, built by the queue worker on the 1st (India time) for the
-    # month before, stored under MINISTRY_EXPORTS_PREFIX in the media bucket and announced by e-mail.
-    #
-    # OFF BY DEFAULT AND INVISIBLE WHILE OFF: every /api/ministry-exports route answers 404, the
-    # scheduler does nothing, and neither entry point is drawn. Switch it on only AFTER the Terraform
-    # apply that gives the API key Put/Get on `exports/*` (backend/DEPLOY_AWS.md); before it, every
-    # build fails at the upload.
     ministry_exports_enabled: bool = Field(default=False, alias="MINISTRY_EXPORTS_ENABLED")
-    # The scheduler fires at or after this India-time hour on the 1st, and catches up later in the
-    # month if the worker was down.
     ministry_exports_run_hour_ist: int = Field(default=6, alias="MINISTRY_EXPORTS_RUN_HOUR_IST")
-    # Where the files go. NOT under media/ (public-read) and NOT under backups/ (put-only for the API
-    # key, so it could never presign a download).
     ministry_exports_prefix: str = Field(default="exports/ministry/", alias="MINISTRY_EXPORTS_PREFIX")
-    # Lifetime of one presigned download link, minted per click and logged.
     ministry_exports_link_seconds: int = Field(default=300, alias="MINISTRY_EXPORTS_LINK_SECONDS")
-    # Per-pack workshop cap. Hitting it writes a truncation note into both files.
     ministry_exports_max_workshops: int = Field(default=2000, alias="MINISTRY_EXPORTS_MAX_WORKSHOPS")
 
     next_public_app_url: AnyHttpUrl | str = Field(
         default="http://localhost:3000", alias="NEXT_PUBLIC_APP_URL"
     )
     backend_cors_origins: str = Field(default="http://localhost:3000", alias="BACKEND_CORS_ORIGINS")
-    # WHICH ``X-Forwarded-For`` ENTRY IS THE CLIENT, COUNTED FROM THE RIGHT (2026-10-17). The
-    # anonymous limits (``rate_limit.client_address``, "Forgot your password?") key on it, and the
-    # left-most entry is whatever the caller typed. 1 is the entry the nearest proxy appended — nginx
-    # facing the internet. Production is CloudFront -> nginx -> uvicorn: CloudFront appends the viewer
-    # and nginx then appends the CloudFront edge, so the client is the 2nd from the right and the
-    # deploy pins FORWARDED_CLIENT_HOPS=2 (.github/workflows/deploy-backend.yml). Never 0.
-    # DEFAULT 2 SINCE 2026-10-17: the origin is locked to CloudFront (its security group admits only
-    # CloudFront's origin-facing ranges), so every request that reaches nginx came through an edge
-    # and the 2nd-from-right entry is the viewer. A box serving without CloudFront in front must set 1.
     forwarded_client_hops: int = Field(default=2, ge=1, le=5, alias="FORWARDED_CLIENT_HOPS")
-    # THE WEB APP'S PROXY SECRET (2026-10-17). The browser now reaches this API through the web app's
-    # own server (`frontend/proxy.ts`, which keeps the session in an HttpOnly cookie), so every web
-    # request arrives from a Vercel address and CloudFront records THAT as the client. The proxy sends
-    # the visitor's real address in `X-Viewer-Address` beside this secret in `X-Web-Proxy-Secret`, and
-    # ``rate_limit.trusted_viewer_address`` believes the address only when the secret matches.
-    # `X-Origin-Verify` cannot serve: CloudFront sets it on every request it forwards, from anybody.
-    # Unset (a laptop, CI): the header is never believed and nothing changes.
     web_proxy_secret: str | None = Field(default=None, alias="WEB_PROXY_SECRET")
 
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
     google_android_client_id: str | None = Field(default=None, alias="GOOGLE_ANDROID_CLIENT_ID")
-    # Microsoft and Yahoo sign-in (app/services/oidc_sign_in.py). Each provider is live only when
-    # BOTH its client ID and its secret are set: the client brings back an authorization code and
-    # this server redeems it, which needs the secret. MICROSOFT_TENANT is common, organizations,
-    # consumers or one tenant's ID, and must match the account types the app registration allows.
     microsoft_client_id: str | None = Field(default=None, alias="MICROSOFT_CLIENT_ID")
     microsoft_client_secret: str | None = Field(default=None, alias="MICROSOFT_CLIENT_SECRET")
     microsoft_tenant: str = Field(default="common", alias="MICROSOFT_TENANT")
@@ -413,249 +126,80 @@ class Settings(BaseSettings):
     yahoo_client_secret: str | None = Field(default=None, alias="YAHOO_CLIENT_SECRET")
     master_admin_email: str = Field(alias="MASTER_ADMIN_EMAIL")
     master_admin_name: str = Field(default="Ankit Kumar", alias="MASTER_ADMIN_NAME")
-    # Role given to brand-new self-registered Google accounts. Defaults to the lowest tier so an
-    # unknown account cannot read/write as a researcher until an admin elevates it. Set to
-    # RESEARCHER to restore the pre-six-tier behavior. (The ladder has eleven tiers as of
-    # 2026-09-13; this default is unaffected by that and has never been anything but the
-    # lowest rung. The authority is ``deps.ROLE_RANK``, never this comment.)
     default_signup_role: str = Field(default="CROWDSOURCE_VOLUNTEER", alias="DEFAULT_SIGNUP_ROLE")
 
-    # THE CEILING ON A QUEUE FED BY UNAUTHENTICATED REQUESTS. A refused sign-in by a proven identity
-    # (a correct password, or a Google token that verified) writes a PENDING row in AccessRoster,
-    # and nothing in this repository rate-limits the login endpoint — app/scale/rate_limit.py is
-    # dead code its own flag defaults off, and nginx carries no limit_req. Past this many waiting
-    # requests, new ones are refused with a message that says so rather than being silently dropped
-    # into a queue no administrator will ever finish reading. Rows already in the queue are
-    # unaffected, so raising the number never strands anybody. See app/services/access_roster.py.
     access_pending_max: int = Field(default=500, alias="ACCESS_PENDING_MAX")
 
-    # Speech-to-text provider chain (highest priority first): ElevenLabs Scribe when
-    # ELEVENLABS_API_KEY is set, else Deepgram Nova-3 when DEEPGRAM_API_KEY is set, else OpenAI
-    # Whisper. The OpenAI key's primary role is transcript refinement/translation; it only
-    # transcribes when neither dedicated STT provider is configured.
     elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
     elevenlabs_stt_model: str = Field(default="scribe_v2", alias="ELEVENLABS_STT_MODEL")
     deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
     deepgram_stt_model: str = Field(default="nova-3", alias="DEEPGRAM_STT_MODEL")
-    # Meta Muse Voice Transcribe, the fourth speech-to-text provider. SHIPS SWITCHED OFF
-    # (AppSetting.sttProvidersDisabled) until the owner accepts its undocumented processing
-    # location; see app/transcription/providers/muse.py.
     meta_model_api_key: str | None = Field(default=None, alias="META_MODEL_API_KEY")
     muse_stt_model: str = Field(default="muse-voice-transcribe-1.0", alias="MUSE_STT_MODEL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_transcription_model: str = Field(default="whisper-1", alias="OPENAI_TRANSCRIPTION_MODEL")
-    # Chat model used to refine a raw transcript into a clean interviewer/interviewee conversation
-    # (and optionally translate it to English). Defaults to the cost-efficient gpt-6-luna.
     openai_chat_model: str = Field(default="gpt-6-luna", alias="OPENAI_CHAT_MODEL")
-    # The deployment's Claude key: the app-level fallback for the text verbs and photo captions when
-    # a designer has not brought their own (see services/user_ai_keys). Deliberately has no model
-    # setting beside it — unlike the OpenAI and Gemini pairs above, the model for a Claude call comes
-    # from the catalogue in services/ai_providers, which is the one place that also knows which
-    # models can do which job. A second, env-supplied model id would be a way to configure a model
-    # the catalogue does not list and therefore cannot vouch for.
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     ai_text_provider: str = Field(default="GEMINI", alias="AI_TEXT_PROVIDER")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     gemini_api_keys_raw: str = Field(default="", alias="GEMINI_API_KEYS")
-    # Vision model for grid measurement. Default is a current "flash lite" model; override via env to
-    # any exact id (e.g. a newer flash-lite). The old gemini-1.5-flash id now 404s, so this matters.
     gemini_measurement_model: str = Field(
         default="gemini-3.8-flash", alias="GEMINI_MEASUREMENT_MODEL"
     )
     maptiler_api_key: str | None = Field(default=None, alias="NEXT_PUBLIC_MAPTILER_API_KEY")
-    # WHETHER THE **WEB** PROCESS ALSO DRAINS THE MEDIA QUEUE. The drain itself is a separate
-    # systemd unit (``app/worker.py``, ``fieldrepo-queue.service``); this flag is only about
-    # uvicorn running a SECOND one inside itself.
-    #
-    # THE DEFAULT WAS ``True`` UNTIL 2026-09-03, AND IT WAS FAIL-OPEN AROUND A PAID PROVIDER CALL.
-    # An unset variable meant "yes, also drain in here", so any box that started both the API and
-    # the queue unit without naming the flag ran two drains: two ffmpeg workloads and two
-    # transcription providers billed against a 1 GiB box sized for one, with
-    # ``media_queue._lock_job``'s compare-and-set doing nothing about it (it makes the two claim
-    # DIFFERENT jobs honestly — it is not a mutual exclusion between drains). Production escaped
-    # only because DEPLOY_AWS.md has the web box ship ``MEDIA_QUEUE_WORKER_ENABLED=false``
-    # explicitly, which is a deployment convention rather than a guard; the EC2 unit still ships it,
-    # so flipping this default changes nothing there.
-    #
-    # OFF MEANS DRAINING INSIDE UVICORN IS AN EXPLICIT DEV OPT-IN, which is the only place it is
-    # wanted: one process, one loop, no systemd unit to run. Set MEDIA_QUEUE_WORKER_ENABLED=true to
-    # get it back. The host-wide election in ``media_queue.acquire_queue_worker_lock`` is the
-    # second half of the same fix and now refuses the second claimant whatever this flag says —
-    # this default is what stops the question being asked by accident in the first place.
     media_queue_worker_enabled: bool = Field(default=False, alias="MEDIA_QUEUE_WORKER_ENABLED")
     media_queue_interval_seconds: float = Field(default=5.0, alias="MEDIA_QUEUE_INTERVAL_SECONDS")
     media_queue_batch_size: int = Field(default=3, alias="MEDIA_QUEUE_BATCH_SIZE")
-    # The translation lane beside transcription (0.0.5): Gemini jobs in flight at once.
     media_queue_insights_concurrency: int = Field(default=2, alias="MEDIA_QUEUE_INSIGHTS_CONCURRENCY")
     media_queue_job_max_attempts: int = Field(default=3, alias="MEDIA_QUEUE_JOB_MAX_ATTEMPTS")
 
-    # THE CEILING ON ONE UPLOADED OBJECT, ENFORCED AT THE DOOR THAT SIGNS IT.
-    #
-    # ``POST /media/presign`` and ``POST /media/multipart/create`` refuse a ``sizeBytes`` above this
-    # before any URL is signed, and ``POST /media/complete`` re-checks the object's REAL length
-    # (``s3.head_object``) because the declared number is the client's and always was — see that
-    # function's docstring, which is the only number in this system that is a fact.
-    #
-    # 1 GiB AND NOT THE 512 MiB THIS STARTED AS, decided from the corpus rather than from taste:
-    # the largest live object in this deployment is 668.44 MiB (MEASURED, docs/SCALABILITY.md §5.1),
-    # so a 512 MiB ceiling would refuse a re-upload of a file class the fleet demonstrably produces
-    # — a fielded phone's 4K workshop video — and Android's ``saveOrQueue`` does not queue a 4xx, so
-    # the refusal would lose the recording rather than retry it. 1 GiB admits everything in the
-    # archive today and is the same number ``media_queue.MAX_TRANSCRIBE_FETCH_BYTES`` uses, so the
-    # server will not accept an object it would then refuse to transcribe.
-    #
-    # IT DOES NOT GOVERN ``POST /media/transcribe``, whose body size is deliberately uncapped for
-    # the reason written above that route: it is admin-only and nothing in this repository sends
-    # anything but a twelve-byte smoke-test clip through it, so any number there would be a guess.
     media_upload_max_bytes: int = Field(default=1_073_741_824, alias="MEDIA_UPLOAD_MAX_BYTES")
 
-    # --- Optional scaling layer (app/scale) -----------------------------------------------------
-    # EVERY field below is off/unset by default, and a fresh clone that sets none of them runs the
-    # code paths it runs today. The package they configure is not imported by anything on the
-    # request path until a route opts in, so "off" costs one boolean read in a helper nobody calls.
-    # backend/app/scale/README.md documents each one: what it buys, what it costs, how to verify it.
-
-    # Master switch for the response cache. With it off, no backend object is constructed and no
-    # optional package is imported.
     scale_cache_enabled: bool = Field(default=False, alias="SCALE_CACHE_ENABLED")
-    # "memory" (default) or "redis". Only consulted once the cache is on; an unrecognised value
-    # degrades to memory with one log line rather than refusing to boot, because a typo here must
-    # not be able to take the API down.
     scale_cache_backend: str = Field(default="memory", alias="SCALE_CACHE_BACKEND")
-    # Default entry lifetime. Deliberately SHORT: correctness comes from explicit invalidation on
-    # write, and the TTL is only the backstop for changes this process cannot see (the separate
-    # queue worker writing transcripts, a psql session, a second uvicorn worker's memory cache).
-    # Raising it widens exactly that blind spot. Per-namespace overrides live in scale/keys.py.
     scale_cache_ttl_seconds: float = Field(default=30.0, alias="SCALE_CACHE_TTL_SECONDS")
     scale_cache_max_entries: int = Field(default=512, alias="SCALE_CACHE_MAX_ENTRIES")
-    # Byte ceiling for the in-process cache. 32 MiB on a 1 GiB box that already runs uvicorn and a
-    # Prisma query engine: large enough to hold every list page a working session touches, small
-    # enough that the worst case is a number chosen here rather than one decided by traffic.
     scale_cache_max_bytes: int = Field(default=33_554_432, alias="SCALE_CACHE_MAX_BYTES")
-    # A single response larger than this is never stored. One multi-megabyte export would otherwise
-    # evict hundreds of small pages that are each far likelier to be read again.
     scale_cache_max_entry_bytes: int = Field(default=1_048_576, alias="SCALE_CACHE_MAX_ENTRY_BYTES")
-    # How long a request waits on another request that is already loading the same key before
-    # running the query itself. A ceiling on the wait, not on the query: see scale/singleflight.py.
     scale_cache_singleflight_timeout_seconds: float = Field(
         default=10.0, alias="SCALE_CACHE_SINGLEFLIGHT_TIMEOUT_SECONDS"
     )
-    # Redis connection string, read ONLY when SCALE_CACHE_BACKEND=redis. May embed a password, so
-    # it is a secret; flags.snapshot() reduces it to a boolean before anything logs it.
     scale_redis_url: str | None = Field(default=None, alias="SCALE_REDIS_URL")
-    # Socket connect AND socket read deadline for every Redis call. Low on purpose: a cache that
-    # stalls a request is worse than no cache, so an unreachable Redis costs half a second once and
-    # then trips the breaker in scale/redis_backend.py.
     scale_redis_timeout_seconds: float = Field(default=0.5, alias="SCALE_REDIS_TIMEOUT_SECONDS")
 
-    # Keyset (cursor) pagination. Off means every cursor argument is ignored and routes page with
-    # the skip/take they use today.
     scale_keyset_pagination_enabled: bool = Field(
         default=False, alias="SCALE_KEYSET_PAGINATION_ENABLED"
     )
 
-    # Approximate row totals for list pages. Off means every total is an exact COUNT, as today.
     scale_approx_count_enabled: bool = Field(default=False, alias="SCALE_APPROX_COUNT_ENABLED")
-    # Below this many rows the count stays exact. Default 5000 against a largest table of ~925
-    # rows, so enabling the flag changes no number on today's data — it only arms the behaviour for
-    # when a table grows past the point where COUNT(*) is worth paying for on every page load.
     scale_approx_count_threshold: int = Field(default=5_000, alias="SCALE_APPROX_COUNT_THRESHOLD")
 
-    # Request rate limiting. Off means the middleware is never added to the stack at all.
-    #
-    # THIS FLAG NOW DOES SOMETHING. Until 2026-08-27 it did not: `app/scale/rate_limit.py` was
-    # complete, and the three fields here were read by nothing that could change a request —
-    # `flags.snapshot()` reported them and `install_rate_limit` consumed them, and nothing called
-    # `install_rate_limit`. Setting SCALE_RATE_LIMIT_ENABLED=true on a box changed no behaviour
-    # whatsoever. It is wired in now (check: `grep -n install_rate_limit app/main.py`), so this
-    # variable is the difference between a limiter and no limiter — and any older comment in this
-    # tree saying "nothing in this repository rate-limits any endpoint" describes the world before
-    # that date.
     scale_rate_limit_enabled: bool = Field(default=False, alias="SCALE_RATE_LIMIT_ENABLED")
-    # 120 requests per 60s, PER SIGNED-IN USER (per address when anonymous) — checked rather
-    # than inherited, before the flag was turned on anywhere. The three facts that make it safe
-    # rather than merely plausible:
-    #
-    #  1. It is a token bucket, so the FIRST 120 are instantaneous and only the sustained rate is
-    #     capped at 2/s. A dashboard page load or a stage-by-stage save burst never touches it.
-    #  2. Every client already reads a 429 as "the server is asking for time", not as a refusal —
-    #     checked in all three, because a limiter whose 429 is filed as a permanent failure would
-    #     DELETE fieldwork rather than delay it. Android's `WorkshopRepository.isTransient` keeps
-    #     401/408/429 retryable for the outbox; `WorkshopSync.isConnectionFailure` puts the same
-    #     three on the connection's side, so the design-workshop pass PAUSES instead of stamping a
-    #     photograph refused; `frontend/lib/offline.ts` says the same for the web outbox. The worst
-    #     case for a designer catching up on a fortnight offline is a slower pass.
-    #  3. The heaviest real burst in this product is the Android media upload, and it is
-    #     DELIBERATELY SERIAL — one file at a time, each gated on a multi-second S3 PUT. See the
-    #     "ONE AT A TIME rather than the three-abreast the record outbox uses" note in
-    #     `uploadPending`, in android/app/src/main/java/com/designprototype/workshop/data/
-    #     WorkshopSync.kt. Two origin calls per photograph is nowhere near 2/s.
-    #
-    # DO NOT RAISE IT MUCH. Production runs ONE uvicorn worker per box on purpose — both
-    # infra/k8s/base/deployment-api.yaml and the systemd unit in infra/terraform/user_data.sh say
-    # so, at length — so 2/s per identity is already a meaningful slice of everything the machine
-    # can serve. A limit of 600 would let one stuck phone take the box, which is the outage the
-    # limiter exists to prevent.
-    #
-    # It is NOT the brute-force protection. The sign-in endpoints carry their own, much tighter
-    # budget of FAILED attempts, and it lives in app/scale/rate_limit.py rather than here — see
-    # `_CREDENTIAL_FAILURES` and the module docstring for why it is a constant and not a setting.
     scale_rate_limit_requests: int = Field(default=120, alias="SCALE_RATE_LIMIT_REQUESTS")
     scale_rate_limit_window_seconds: float = Field(
         default=60.0, alias="SCALE_RATE_LIMIT_WINDOW_SECONDS"
     )
 
-    # Read-only database URL. Unset (the default) means every query uses the one connection this
-    # app has always used. Setting it starts a SECOND Prisma query-engine process — real memory on
-    # a 1 GiB box — so it is worth doing only when a genuine replica exists to point it at.
     database_read_replica_url: str | None = Field(default=None, alias="DATABASE_READ_REPLICA_URL")
-    # Whether the REPLICA DSN above is a transaction pooler. None (the default) means "the same as
-    # the primary", which is the common case and keeps this variable something nobody has to know
-    # about until they need it. Set it only when the two endpoints differ in shape.
-    #
-    # It exists because one boolean cannot describe two endpoints. A read replica is very often the
-    # one that is pooled — it takes the wide list and aggregate queries, which is exactly the load a
-    # pooler is bought for — while migrations keep the primary on the direct endpoint. With a single
-    # flag, telling the truth about the primary silently strips ``pgbouncer=true`` from a pooled
-    # replica, and the symptom is "prepared statement already exists" on read endpoints under load
-    # only: the worst kind of failure to go looking for, because it does not reproduce quietly.
     database_read_replica_use_transaction_pooler: bool | None = Field(
         default=None, alias="DATABASE_READ_REPLICA_USE_TRANSACTION_POOLER"
     )
 
-    # ── AADHAAR (docs/AADHAAR.md, docs/ENVIRONMENT.md) ─────────────────────────────────────────
-    #
-    # BOTH FEATURES ARE OFF BY DEFAULT AND INVISIBLE WHILE OFF: their routes answer 404, the
-    # verification columns are withheld from every payload, and neither client draws a single
-    # element. The owner switches them on; nothing else does.
     aadhaar_offline_verification_enabled: bool = Field(
         default=False, alias="AADHAAR_OFFLINE_VERIFICATION_ENABLED"
     )
     aadhaar_online_auth_enabled: bool = Field(default=False, alias="AADHAAR_ONLINE_AUTH_ENABLED")
-    # UIDAI asks a verifier to accept an offline e-KYC XML only if it was downloaded recently;
-    # 3 days is UIDAI's own suggestion. A Secure QR is printed on the card and has no age limit, so
-    # 0 (the default) means "accept any age and record the date".
     aadhaar_offline_xml_max_age_days: float = Field(
         default=3.0, alias="AADHAAR_OFFLINE_XML_MAX_AGE_DAYS"
     )
     aadhaar_secure_qr_max_age_days: float = Field(default=0.0, alias="AADHAAR_SECURE_QR_MAX_AGE_DAYS")
-    # CERTIFICATE ROTATION without a deploy: PEM or DER files, comma-separated, trusted IN ADDITION
-    # to the UIDAI certificates pinned in app/data/uidai/. An operator adds UIDAI's next certificate
-    # here the day UIDAI publishes it, and it moves into the pinned set with the next release.
     aadhaar_extra_trusted_certs: str = Field(default="", alias="AADHAAR_EXTRA_TRUSTED_CERTS")
 
-    # ONLINE AUTHENTICATION THROUGH AN ASA. Every value below is required once
-    # AADHAAR_ONLINE_AUTH_ENABLED is true, and the process refuses to start without them
-    # (`_require_complete_online_aadhaar_config` below, then `services.aadhaar.online.config`
-    # at boot for the files). Secrets go in the environment or the box's .env, never the repo.
     aadhaar_env: str = Field(default="preprod", alias="AADHAAR_ENV")
     aadhaar_aua_code: str | None = Field(default=None, alias="AADHAAR_AUA_CODE")
     aadhaar_sub_aua_code: str | None = Field(default=None, alias="AADHAAR_SUB_AUA_CODE")
     aadhaar_aua_license_key: str | None = Field(default=None, alias="AADHAAR_AUA_LICENSE_KEY")
     aadhaar_asa_license_key: str | None = Field(default=None, alias="AADHAAR_ASA_LICENSE_KEY")
-    # The ASA's three endpoints, up to and including the API version — e.g.
-    # https://asa.example.in/otp/2.5 . The client appends /<ac>/<uid[0]>/<uid[1]>/<asalk> as the
-    # OTP, Auth and e-KYC 2.5 specifications prescribe.
     aadhaar_asa_otp_url: str | None = Field(default=None, alias="AADHAAR_ASA_OTP_URL")
     aadhaar_asa_auth_url: str | None = Field(default=None, alias="AADHAAR_ASA_AUTH_URL")
     aadhaar_asa_kyc_url: str | None = Field(default=None, alias="AADHAAR_ASA_KYC_URL")
@@ -665,83 +209,40 @@ class Settings(BaseSettings):
     aadhaar_aua_signing_pfx_password: str | None = Field(
         default=None, alias="AADHAAR_AUA_SIGNING_PFX_PASSWORD"
     )
-    # Optional: the pinned UIDAI encryption certificate for AADHAAR_ENV is used when this is unset.
     aadhaar_uidai_encryption_cert_path: str | None = Field(
         default=None, alias="AADHAAR_UIDAI_ENCRYPTION_CERT_PATH"
     )
-    # Optional: a UIDAI response-signing certificate to trust in addition to the pinned ones —
-    # the pinned 2026 signing certificates expired in April/May 2026 and UIDAI has published no
-    # successor yet, so an operator may have to obtain it from the ASA. See docs/AADHAAR.md.
     aadhaar_uidai_signature_cert_path: str | None = Field(
         default=None, alias="AADHAAR_UIDAI_SIGNATURE_CERT_PATH"
     )
-    # Send the record's name with an OTP authentication for UIDAI to match (Pi ms="E" mv="100" —
-    # Auth 2.5 Rev-1 allows no partial match). Off sends no name, which leaves every plain OTP
-    # result for an admin to decide. e-KYC returns UIDAI's name and is matched here instead.
     aadhaar_online_name_check: bool = Field(default=True, alias="AADHAAR_ONLINE_NAME_CHECK")
-    # The OTP channel: 00 SMS and e-mail, 01 SMS only, 02 e-mail only (OTP API 2.5 <Opts ch>).
     aadhaar_otp_channel: str = Field(default="00", alias="AADHAAR_OTP_CHANNEL")
-    # e-KYC (name, year of birth, gender back from UIDAI) needs a KUA licence as well.
     aadhaar_ekyc_enabled: bool = Field(default=False, alias="AADHAAR_EKYC_ENABLED")
     aadhaar_kua_license_key: str | None = Field(default=None, alias="AADHAAR_KUA_LICENSE_KEY")
     aadhaar_asa_timeout_seconds: float = Field(default=20.0, alias="AADHAAR_ASA_TIMEOUT_SECONDS")
-    # The server secret the OTP throttle hashes Aadhaar numbers and VIDs under. Required when
-    # online auth is on; never reuse JWT_SECRET for it.
     aadhaar_throttle_salt: str | None = Field(default=None, alias="AADHAAR_THROTTLE_SALT")
     aadhaar_otp_limit_per_user: int = Field(default=5, alias="AADHAAR_OTP_LIMIT_PER_USER")
     aadhaar_otp_limit_per_uid: int = Field(default=3, alias="AADHAAR_OTP_LIMIT_PER_UID")
     aadhaar_otp_window_minutes: int = Field(default=60, alias="AADHAAR_OTP_WINDOW_MINUTES")
-    # The HMAC key the artisan register fingerprints Aadhaar numbers under
-    # (services/aadhaar_fingerprint.py). 32 random bytes, base64. THE SAME VALUE ON BOTH PORTALS, so
-    # the cross-portal link can compare fingerprints. Losing it makes every stored fingerprint
-    # unmatchable; changing it needs the numbers again. Backed up in SSM at
-    # /iit/shared/aadhaar-fingerprint-key. Unset: any write or lookup carrying an Aadhaar is refused.
     aadhaar_fingerprint_key: str | None = Field(default=None, alias="AADHAAR_FINGERPRINT_KEY")
-    # The duplicate-artisan hold at save time (services/artisan_duplicates.py): a create from a client
-    # that sends ``duplicateAcknowledged`` is answered 409 ``artisan_possible_duplicate`` while a
-    # likely duplicate (score 0.75+) was not shown to it. A kill switch for the hold only: scoring,
-    # the form's check and the admin review screen stay on when it is false. Not a secret.
     artisan_duplicate_hold: bool = Field(default=True, alias="ARTISAN_DUPLICATE_HOLD")
-    # Regulation 18(3) (services/aadhaar/log_retention.py): Aadhaar log entries older than two years
-    # are archived to AADHAAR_LOG_ARCHIVE_BUCKET by the queue worker, once a day, and deleted
-    # AADHAAR_LOG_ARCHIVE_YEARS (at least 5) later, unless the record is under a legal hold.
     aadhaar_log_retention_enabled: bool = Field(default=True, alias="AADHAAR_LOG_RETENTION_ENABLED")
-    # Default: the media bucket (AWS_S3_BUCKET). The prefix must not be one the bucket serves publicly.
     aadhaar_log_archive_bucket: str | None = Field(default=None, alias="AADHAAR_LOG_ARCHIVE_BUCKET")
     aadhaar_log_archive_prefix: str = Field(
         default="aadhaar-log-archive/", alias="AADHAAR_LOG_ARCHIVE_PREFIX"
     )
-    # SSE-KMS key for the archive objects; unset means SSE-S3 (AES-256, S3-managed key).
     aadhaar_log_archive_kms_key_id: str | None = Field(
         default=None, alias="AADHAAR_LOG_ARCHIVE_KMS_KEY_ID"
     )
     aadhaar_log_archive_years: int = Field(default=5, ge=5, alias="AADHAAR_LOG_ARCHIVE_YEARS")
-    # THE HSM OPTION FOR THE AUA SIGNATURE (Blocker B4). An AWS KMS asymmetric key (RSA_2048,
-    # SIGN_VERIFY) — keys generated and held in KMS's FIPS 140 validated HSMs, never exportable —
-    # used in place of AADHAAR_AUA_SIGNING_PFX_PATH/PASSWORD. The certificate UIDAI's ASA expects
-    # (issued by a CA for this key's public half) is AADHAAR_AUA_SIGNING_CERT_PATH. Online auth only.
     aadhaar_signing_kms_key_id: str | None = Field(default=None, alias="AADHAAR_SIGNING_KMS_KEY_ID")
     aadhaar_aua_signing_cert_path: str | None = Field(
         default=None, alias="AADHAAR_AUA_SIGNING_CERT_PATH"
     )
 
-    # ── AI-DRAFTED ANSWERS FROM A TRANSCRIPT (C28; docs/ENVIRONMENT.md) ───────────────────────────
-    # OFF BY DEFAULT. On, a researcher may ask a model to draft a section's unanswered questions from
-    # the interview's transcript; drafts are accepted or edited by a person and every accepted answer
-    # is labelled machine-suggested. Runs on the researcher's own AI key or the deployment's.
     ai_answer_drafts_enabled: bool = Field(default=False, alias="AI_ANSWER_DRAFTS_ENABLED")
 
-    # ── THE SHARED QUESTIONNAIRE (C:/dev/IIT/docs/questionnaire/UNIFY_2026-10-21.md) ─────────────
-    # OFF BY DEFAULT, AND NOTHING READS THEM YET: the shared package (app/questionnaire) and its
-    # tables ship dark here (U0); U1 mounts its routes behind QUESTIONNAIRE_V2, exactly as
-    # documentation-portal does, and the forms keep working as they are until then. Turning it on in
-    # code makes tests/test_questionnaire_feature_parity.py demand every client's marker.
     questionnaire_v2: bool = Field(default=True, alias="QUESTIONNAIRE_V2")
-    # Old builds stop CREATING sessions once every active device runs the new build (GET
-    # /api/admin/app-versions says when). Unset = old builds keep creating. Set = a create from a
-    # lower BUILD NUMBER (X-App-Version-Code; the version name is never compared) gets 503 +
-    # Retry-After and the P14 banner; queued clips are always accepted. One per platform: an Android
-    # build that sends no code is below any minimum; a web page that sends none is not.
     questionnaire_min_android_version_code_for_create: int | None = Field(
         default=None, ge=1, alias="QUESTIONNAIRE_MIN_ANDROID_VERSION_CODE_FOR_CREATE"
     )
@@ -749,52 +250,21 @@ class Settings(BaseSettings):
         default=None, ge=1, alias="QUESTIONNAIRE_MIN_WEB_VERSION_CODE_FOR_CREATE"
     )
 
-    # ── CROSS-PORTAL ARTISAN IDENTITY (C27; docs/ENVIRONMENT.md) ────────────────────────────────
-    #
-    # OFF BY DEFAULT, AND OFF UNTIL BOTH PORTALS HAVE IT. The lookup works only when the flag is on
-    # AND CROSS_PORTAL_TOKEN and AADHAAR_FINGERPRINT_KEY are set (32 characters or more) on BOTH
-    # servers, and, here, FIELD_REPOSITORY_API_URL names the documentation portal's API. Anything
-    # missing and the routes answer 404 and neither client draws a single element. The token
-    # authenticates each server to the other (a bearer on the request, an HMAC of the body on the
-    # answer). The Aadhaar code a lookup carries is the artisan's stored fingerprint, under the
-    # fingerprint key both registers already share (services/aadhaar_fingerprint.py), so the number
-    # itself never leaves either system and there is no separate Aadhaar key. Both values are the
-    # SAME on the two servers. Never commit either.
     cross_portal_identity_enabled: bool = Field(
         default=False, alias="CROSS_PORTAL_IDENTITY_ENABLED"
     )
     cross_portal_token: str | None = Field(default=None, alias="CROSS_PORTAL_TOKEN")
-    # The documentation portal's API base, up to and including ``/api`` — e.g.
-    # https://api.<docs-domain>/api . The designer portal calls it; with cross-portal search on, the
-    # Field Repository also calls back at its DESIGNER_PORTAL_API_URL (docs/SEARCH.md).
     field_repository_api_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_API_URL")
 
-    # ── ARTISAN QR CARDS (services/artisan_card.py; docs/ENVIRONMENT.md) ────────────────────────
-    #
-    # On by default, but nothing is drawn or served until ARTISAN_CARD_KEY is set (32 characters or
-    # more): without it every card route answers 404 and /artisan-cards/status says enabled:false.
-    # The key signs the QR's tag. 32 random bytes, base64, A DIFFERENT VALUE ON EACH PORTAL — the
-    # other portal never verifies this portal's cards. Kept in GitHub Actions secrets, the box .env
-    # and SSM. Rotation: bump ARTISAN_CARD_KEY_VERSION and put the old key in
-    # ARTISAN_CARD_KEY_PREVIOUS; typed codes resolve whatever the key, because lookup is by code.
     artisan_cards_enabled: bool = Field(default=True, alias="ARTISAN_CARDS_ENABLED")
     artisan_card_key: str | None = Field(default=None, alias="ARTISAN_CARD_KEY")
     artisan_card_key_version: int = Field(default=1, ge=1, le=9, alias="ARTISAN_CARD_KEY_VERSION")
     artisan_card_key_previous: str | None = Field(default=None, alias="ARTISAN_CARD_KEY_PREVIOUS")
-    # Card lookups that found nothing, per account per 10 minutes, before the next one is a 429.
     artisan_card_resolve_miss_limit: int = Field(
         default=20, ge=1, alias="ARTISAN_CARD_RESOLVE_MISS_LIMIT"
     )
-    # The letter this portal's cards carry: D here, F on the Field Repository. Never change it.
     artisan_card_issuer: str = Field(default="D", alias="ARTISAN_CARD_ISSUER")
 
-    # ── ONE SEARCH ACROSS BOTH PORTALS (docs/SEARCH.md; docs/ENVIRONMENT.md) ──────────────────────
-    # ALL OFF BY DEFAULT. ``UNIFIED_SEARCH_ENABLED`` opens ``GET /search/unified`` and lets the queue
-    # worker drain ``SearchIndexQueue``; off, the route answers 404 and every client falls back to the
-    # legacy ``GET /search``. ``SEARCH_EMBEDDINGS_ENABLED`` is the AI flag: meaning ranking calls the
-    # embedding provider on the deployment's key, so it stays off until the owner turns it on, and
-    # even then runs only where pgvector is installed. ``CROSS_PORTAL_SEARCH_ENABLED`` also needs the
-    # C27 token, AADHAAR_FINGERPRINT_KEY and FIELD_REPOSITORY_API_URL (``cross_portal.search_active``).
     unified_search_enabled: bool = Field(default=False, alias="UNIFIED_SEARCH_ENABLED")
     search_embeddings_enabled: bool = Field(default=False, alias="SEARCH_EMBEDDINGS_ENABLED")
     search_embedding_provider: str = Field(default="openai", alias="SEARCH_EMBEDDING_PROVIDER")
@@ -803,25 +273,11 @@ class Settings(BaseSettings):
     )
     cross_portal_search_enabled: bool = Field(default=False, alias="CROSS_PORTAL_SEARCH_ENABLED")
 
-    # ── CROSS-PORTAL COVERAGE COUNTS (docs/ENVIRONMENT.md) ───────────────────────────────────────
-    # OFF BY DEFAULT. On, the coverage map's "Field Repository" toggle asks the documentation portal
-    # for its AGGREGATE counts per LGD district (no names, no ids) over the same signed channel as the
-    # artisan lookup. Needs CROSS_PORTAL_TOKEN and FIELD_REPOSITORY_API_URL above; it does not need
-    # the identity flag or the Aadhaar key. The coverage map itself has no flag.
     cross_portal_coverage_enabled: bool = Field(
         default=False, alias="CROSS_PORTAL_COVERAGE_ENABLED"
     )
-    # The Field Repository's WEB address (https://<docs-domain>), for the coverage panel's "Open in
-    # Field Repository" link. Not a secret. Unset, the link is not offered.
     field_repository_web_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_WEB_URL")
 
-    # ABSOLUTE, NOT ".env". See rule 2 in this module's header: a relative env_file is resolved
-    # against the working directory, so `python -m uvicorn app.main:app` from backend/ and the same
-    # command from the repository root read DIFFERENT configuration — and from the root they read
-    # none, which for DATABASE_URL means the process refuses to boot rather than reaching the local
-    # database that is sitting right there. Anchoring on this file's own location makes the answer
-    # the same wherever the command is typed. The process environment still outranks it (rule 1),
-    # so an explicit export is still how a deployment or a one-off overrides anything here.
     model_config = SettingsConfigDict(
         env_file=str(_BACKEND_ROOT / ".env"),
         env_file_encoding="utf-8",
@@ -832,13 +288,6 @@ class Settings(BaseSettings):
     @field_validator("jwt_algorithm")
     @classmethod
     def _normalise_jwt_algorithm(cls, value: str) -> str:
-        """Pin the signing algorithm to a symmetric HMAC one, loudly rejecting anything else.
-
-        This is the configuration half of the algorithm-confusion defence; the decode half is in
-        app.core.security, which passes exactly this one algorithm to PyJWT. Failing here (at
-        startup) rather than at token-verification time means a bad JWT_ALGORITHM can never quietly
-        weaken authentication in production.
-        """
         algorithm = value.strip().upper()
         if algorithm not in _ALLOWED_JWT_ALGORITHMS:
             raise ValueError(
@@ -848,17 +297,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _harden_database_url(self) -> Settings:
-        """Make database TLS explicit as soon as settings load, so every consumer inherits it.
-
-        The rewrite lives here rather than in core/db.py because ``database_url`` is what the
-        runtime Prisma client is built from (``build_runtime_database_url(get_settings()
-        .database_url)``); hardening at the source means the pooler rewrite, any script and any
-        future consumer all get the TLS-enforcing URL without having to remember to ask for it.
-        """
         self.database_url = _with_explicit_sslmode(self.database_url, self.database_require_ssl)
-        # The read replica carries the same rows and the same credentials, so it gets the same
-        # treatment. Hardening it here rather than at its one call site means it can never be the
-        # link that quietly downgrades to plaintext because someone added a second consumer.
         if self.database_read_replica_url:
             self.database_read_replica_url = _with_explicit_sslmode(
                 self.database_read_replica_url, self.database_require_ssl
@@ -867,13 +306,6 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_complete_online_aadhaar_config(self) -> Settings:
-        """Refuse to start with online Aadhaar authentication on and any credential missing.
-
-        A half-configured AUA would fail on the first resident who tried it, after they had typed
-        their number and given consent — so the failure is moved to the deploy, where an operator
-        reads it. File contents (the PFX, the UIDAI certificate) are checked at boot by
-        ``services.aadhaar.online.config.load_online_config``.
-        """
         if not self.aadhaar_online_auth_enabled:
             return self
         required = {
@@ -885,7 +317,6 @@ class Settings(BaseSettings):
             "AADHAAR_ASA_AUTH_URL": self.aadhaar_asa_auth_url,
             "AADHAAR_THROTTLE_SALT": self.aadhaar_throttle_salt,
         }
-        # The signing key: in AWS KMS (an HSM, Blocker B4) with its certificate, or the PFX file.
         if (self.aadhaar_signing_kms_key_id or "").strip():
             required["AADHAAR_AUA_SIGNING_CERT_PATH"] = self.aadhaar_aua_signing_cert_path
         else:
@@ -907,14 +338,6 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        """Browser origins allowed to call the API, parsed defensively from BACKEND_CORS_ORIGINS.
-
-        Deployments paste this value from Vercel/Terraform/GitHub secrets, so the parser tolerates
-        the shapes that arrive in practice: comma- *or* newline-separated, wrapped in JSON-ish
-        brackets or quotes, with stray whitespace. Trailing slashes are stripped because an Origin
-        header is only ever ``scheme://host[:port]`` — a configured ``https://app.example.com/``
-        matches nothing and silently breaks the web app. Order is preserved and duplicates dropped.
-        """
         origins: list[str] = []
         seen: set[str] = set()
         for chunk in self.backend_cors_origins.replace("\n", ",").split(","):
@@ -927,20 +350,10 @@ class Settings(BaseSettings):
 
     @property
     def cors_allows_wildcard(self) -> bool:
-        """True when the origin list is (or contains) the ``*`` wildcard."""
         return "*" in self.cors_origins
 
     @property
     def cors_allow_credentials(self) -> bool:
-        """Whether the CORS layer may advertise ``Access-Control-Allow-Credentials: true``.
-
-        Credentials and a wildcard origin must never be combined. Browsers reject the literal
-        ``Access-Control-Allow-Origin: *`` with credentials, and Starlette's CORS middleware works
-        around that rejection by echoing the *caller's* origin back when the request carries
-        cookies — which would turn a lazily-configured ``*`` into "every website on the internet
-        may call this API as the logged-in user". So a wildcard silently downgrades to
-        credential-less CORS instead (main.py logs loudly when that happens).
-        """
         return not self.cors_allows_wildcard
 
     @property
@@ -949,12 +362,6 @@ class Settings(BaseSettings):
 
     @property
     def gemini_api_keys(self) -> list[str]:
-        """All configured Gemini keys, in order, de-duplicated.
-
-        Combines the single ``GEMINI_API_KEY`` (kept for backward compatibility) with any number
-        of keys in ``GEMINI_API_KEYS`` (comma- or newline-separated). Add more keys to the env var
-        at any time without touching code; the measurement worker rotates across them.
-        """
         raw_parts: list[str] = []
         if self.gemini_api_key:
             raw_parts.append(self.gemini_api_key)

@@ -1,20 +1,3 @@
-"""``GET /media/batch`` — several single reads in one request, answering exactly what they answer.
-
-The stage form of a design workshop resolves every photograph on it to a media row, and did so one
-``GET /media/{id}`` at a time: forty requests queued six-wide behind one origin. The batch route
-exists to make that one request, and the web client (``frontend/lib/mediaRows.ts``) depends on four
-promises it makes, each pinned here without a database:
-
-1. **The same encoder, once.** Rows go through ``_public`` — the function the single read uses — so a
-   row's ``url`` travels to exactly the callers the single read hands it to. Handing the whole list
-   over in one call is the point: the entitlement is computed once, not forty times.
-2. **The caller's order, de-duplicated.** A gallery draws in the order its ids are stored.
-3. **A missing row is listed, not fatal.** The single read answers it with a 404; the client turns
-   ``missing`` back into that 404 for the one field that asked.
-4. **A bound.** More than ``MEDIA_BATCH_MAX`` ids is refused with a sentence, and the route is
-   registered before ``/{media_id}`` — otherwise ``batch`` would be read as a media id.
-"""
-
 from types import SimpleNamespace
 
 import pytest
@@ -58,11 +41,9 @@ async def test_rows_go_through_the_single_reads_encoder_once_in_the_order_asked(
     answer = await media_routes.get_media_batch(ids="c,a,b,a", current_user=VIEWER)
     assert [item["id"] for item in answer["items"]] == ["c", "a", "b"]
     assert answer["missing"] == []
-    # ONE encoder call for the whole list, with the viewer — the single read's entitlement, once.
     assert len(calls) == 1
     assert [row.id for row in calls[0][0]] == ["c", "a", "b"]
     assert calls[0][1] is VIEWER
-    # The same relations the single read includes, so a row is encoded from the same shape.
     assert table.asked[0]["include"] == media_routes.INCLUDE
 
 

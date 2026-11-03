@@ -1,16 +1,3 @@
-"""Who added a roster row, in words, and when an account last signed in (2026-10-17).
-
-* The access roster and the designer roster sent only ``addedById``, so "Added by" on both clients
-  could print nothing better than an id. The list routes now load the accounts beside each page in
-  one batched read and the payloads carry ``addedByName`` (and ``decidedByName`` on the access list).
-* ``User.lastLoginAt`` is stamped on every successful sign-in, beside the once-only ``firstLoginAt``,
-  so Manage users can say when somebody last got in. It rides out on ``serialize_user`` like every
-  other column.
-
-No database: the payloads are pure, and the routes' use of the relations is a question of what they
-pass, which the source answers.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -43,7 +30,6 @@ def test_the_access_payload_names_who_added_and_who_decided():
     payload = access_roster.access_payload(row)
     assert payload["addedById"] == "u-1"
     assert payload["addedByName"] == "Meera Rao"
-    # A blank name falls back to the address rather than printing nothing.
     assert payload["decidedByName"] == "admin@example.org"
 
 
@@ -87,7 +73,6 @@ def test_both_rosters_name_people_one_way():
 
 
 async def test_a_single_row_answer_names_its_people_like_the_list(monkeypatch):
-    """A PATCH's answer replaces a list row on both clients, so it carries the names too."""
     from app.api.routes import access as access_routes
     from app.services import records as records_service
 

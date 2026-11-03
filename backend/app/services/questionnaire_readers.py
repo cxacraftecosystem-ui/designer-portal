@@ -1,22 +1,7 @@
-"""The readers' view of the shared questionnaire (UNIFY_2026-10-21.md C10).
-
-Tasks, record completeness, the stage counts (``stage_computed``, ``stage_assist``), the export tree
-and the report annexure used to read the retired global form's responses and the forms' sittings
-(``QuestionnaireFormEntry``). With ``QUESTIONNAIRE_V2`` on, the same facts live in sessions, takes
-(``questionnaire_take_v``, live sessions only) and answers (``QuestionnaireAnswer`` and its current
-revision), and each reader adds them through the helpers here. A soft-deleted session or form is
-invisible to every one of them (the live filter, owner decision 3).
-
-While the switch is off every helper answers empty WITHOUT A QUERY, so the readers behave and cost
-exactly as they did before.
-"""
-
 from __future__ import annotations
 
 from typing import Any
 
-# The portable readers live in the shared package (C10, both portals); designer-portal adds the
-# report annexure, which builds this portal's own report types.
 from app.questionnaire.readers import (  # noqa: F401 - re-exported for the readers that call them here
     _db,
     answer_counts,
@@ -29,9 +14,6 @@ from app.questionnaire.readers import (  # noqa: F401 - re-exported for the read
 
 
 async def annexure_sittings(form_ids: list[str], *, design_workshop_id: str, client: Any = None) -> dict[str, dict[str, Any]]:
-    """``{formId: {"questionCount", "sittings"}}`` for the report annexure (A12): one sitting per
-    respondent (artisan or guest) of each live session on the form filed under this design workshop,
-    answered against the form's questions in the shared tables, in the form's order."""
     ids = sorted({str(f) for f in form_ids if f})
     if not enabled() or not ids:
         return {}

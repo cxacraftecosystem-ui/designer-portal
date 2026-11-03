@@ -1,50 +1,3 @@
-"""EVERY READER RESOLVES THE OVERLAY — asserted once per reader, deliberately not once in general.
-
-Copy-on-write is only correct if every reader resolves it. A reader that is missed serves the
-canonical answer while the screen next to it serves the designer's, and nothing raises: both look
-like data. So this file is shaped by that failure mode rather than by convenience — there is one
-test per surface, each calling that surface's own entry point, even though three of them happen to
-share ``_stages_payload`` today. A generic test over the shared serialiser would pass on the day a
-route stopped using it, which is exactly the day it would start being wrong.
-
-── THE INVENTORY, AND WHY HALF OF IT NEEDS NO RESOLUTION ──────────────────────────────────────────
-
-The surfaces that read a record in this repository are: the API list and detail routes, the data
-browser (``/data/tree``, ``/data/report``), the CSV exports, the .xlsx workbook, the dataset zip and
-NDJSON/CSV stream, the report builder (.docx/.pdf), and the Android offline store. They divide in
-two, and the division is the whole finding:
-
-**THE RECORD TABLES HAVE NO OVERLAY TO RESOLVE, AND THAT IS NOT AN OMISSION.** ``Artisan``,
-``ProductDocumentation``, ``ToolDocumentation``, ``Process``, ``Craft`` and ``Workshop`` are already
-single canonical rows shared by everyone: ``records.viewable_where`` returns ``{}``, so every
-signed-in account reads the same row, and there is no per-designer duplicate of one anywhere in the
-schema. An edit mutates that row in place, records the changed fields per editor in
-``RecordRevision``, and moves per-field authorship with ``records.merge_field_provenance``. There is
-therefore no second value for a reader to miss — every one of those surfaces reads THE row — and
-building a resolution layer over them would have been a second sharing system beside a working one.
-:func:`test_no_record_reader_can_serve_a_stale_value_because_there_is_no_overlay` and
-:func:`test_reading_the_repository_is_open_for_every_role` are the guards that keep that true, and
-they are what a future change introducing a private per-designer record value would trip over.
-
-**THE STAGE ENTRIES ARE WHERE THE COPY LIVES**, because ``hydrate_entries`` copies 81 field-pairs
-off those shared records onto each workshop's rows. Those are the readers below.
-
-**THE DATA BROWSER IS NOW ON BOTH SIDES OF THAT DIVISION**, as of 2026-08-31: it still reads the
-record tables (no overlay), and it also reads ``DwStageEntry`` for the design-workshop taxonomy and
-sheets. It is classified EXEMPT and FENCED under "Reader 9" — it serves values and names no author —
-rather than being left off the inventory, which is what the division above would have implied.
-
-**AND THREE MORE ARRIVED ON 2026-09-13 AND WENT A DAY UNCLASSIFIED**, which the tripwire at the foot
-of this file caught and nothing else would have. They are Readers 12, 13 and 14, and they divide the
-way the paragraphs above divide: the officer's supervision read serves every stage's values to an
-Assistant or Regional Director who wrote none of them, so it RESOLVES and is asserted to; the
-artisan roster import and the sanction register take bookkeeping answers off a row and serve a count,
-two booleans and a list of labels, so both are EXEMPT and both are fenced at the boundary the
-exemption was granted inside.
-
-Nothing here touches a database.
-"""
-
 import tokenize
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -73,20 +26,10 @@ from app.services import (
 ASHA = SimpleNamespace(id="usr_asha", name="Asha Patel", role="DESIGNER")
 MEENA = SimpleNamespace(id="usr_meena", name="Meena Iyer", role="RESEARCHER")
 ADMIN = SimpleNamespace(id="usr_admin", name="Root", role="MASTER_ADMIN")
-#: Rank 37, added 2026-08-27. Reads a workshop it is not a member of and cannot write to it, which
-#: is exactly why its provenance has to resolve: an inspector is reading somebody ELSE's work, so
-#: "who wrote this field" is the whole of what they are looking at.
 INSPECTOR = SimpleNamespace(id="usr_ravi", name="Ravi Nair", role="INSPECTOR")
 
-#: Rank 45, added 2026-09-13 with the oversight scope. Reads EVERY stage of a workshop assigned to
-#: their office and can write none of it — the same "reading somebody else's work" the INSPECTOR row
-#: above describes, one rung up and over the whole report rather than over one stage. Its own route
-#: says the ids without names are unreadable, which is what Reader 12 pins.
 DIRECTOR = SimpleNamespace(id="usr_devi", name="Devi Menon", role="REGIONAL_DIRECTOR")
 
-#: One hydrated field (the artisan's recorder owns it) and one typed field (the designer owns it),
-#: which is the pair every reader has to carry intact. A reader that drops either half is broken in
-#: a way a single-stamp fixture would not show.
 STAMPS = {
     "name": {
         "by": MEENA.id, "byName": None, "at": "2026-03-01T09:00:00+00:00",
@@ -98,14 +41,6 @@ STAMPS = {
     },
 }
 
-#: The stages and entities used throughout, all REAL registry keys — so a rename in the registry
-#: fails these tests rather than letting them pass against a fiction.
-#:
-#: ``WORKSHOP_SETUP`` is stage 1 and declares only a singleton. ``WORKSHOP_PLAN_PARTICIPANTS_OPENING``
-#: is stage 3 and is where ``participant`` lives, which is the collection that receives the artisan
-#: hydration this whole feature is about. ``SKETCH_DEVELOPMENT`` is used as the never-saved stage
-#: because it declares no singleton at all — eight of the twenty-two do not, and that is the shape a
-#: client most easily gets wrong.
 SINGLETON_STAGE = "WORKSHOP_SETUP"
 COLLECTION_STAGE = "WORKSHOP_PLAN_PARTICIPANTS_OPENING"
 UNSAVED_STAGE = "SKETCH_DEVELOPMENT"
@@ -132,8 +67,6 @@ def _entries():
 
 
 class _Users:
-    """The single name lookup ``resolve_display_names`` makes, recorded so it can be asserted."""
-
     def __init__(self):
         self.calls: list[list[str]] = []
 
@@ -143,20 +76,7 @@ class _Users:
 
 
 
-#: THE CORRECTION REGISTER, STUBBED FOR THIS FILE ALONE (2026-09-13).
-#:
-#: Both detail reads now serialise `DwInspectionFeedback` — the pre-submission loop's register —
-#: through one shared helper that issues a real query with `include={"actor": True}`. This module is
-#: about PROVENANCE and stubs every neighbouring read for exactly that reason (`_transcripts_payload`
-#: and `workshop_summary` are stubbed two lines away): a file that asserts "the author of each field
-#: is resolved" must not also need a feedback table to exist.
-#:
-#: IT RETURNS THE PAIR THE REAL ONE RETURNS — rows and the truncation flag — so a caller that
-#: unpacks it keeps working and a caller that starts expecting a third element fails here rather
-#: than on a screen. The register itself is asserted in `test_design_workshop_review_loop.py` (its
-#: shape) and in `test_dw_inspector_scope.py` (a row, over a database).
 def _quiet_review_aids(monkeypatch):
-    """The review aids (2026-10-17) read their own tables; these readers' tests are about provenance."""
     from app.services import design_workshop_review_aids as aids
 
     async def _register(*_a, **_k):
@@ -178,21 +98,12 @@ async def _no_feedback(*_a, **_k):
     return ([], False)
 
 
-#: The decision history the single reads add since 2026-10-10, stubbed for `_no_feedback`'s reason: a
-#: file about field authorship must not need the audit log to exist.
 async def _no_decisions(*_a, **_k):
     return []
 
 
 @pytest.fixture
 def reader(monkeypatch):
-    """Everything the three stage routes touch besides the lines under test.
-
-    ``workshop_summary`` is stubbed rather than fed a manufactured record: this file is about
-    provenance, and a column added to the workshop header should not break it. The provenance lines
-    themselves are NOT stubbed anywhere — every test below runs the real ``_stages_payload``,
-    ``_provenance_maps`` and ``resolve_display_names``.
-    """
     users = _Users()
     entries = _entries()
     monkeypatch.setattr("app.core.db.db", SimpleNamespace(user=users))
@@ -221,24 +132,13 @@ def reader(monkeypatch):
 
 
 def _assert_resolved(bucket_provenance, *, where):
-    """The two halves that must survive any reader: the stamps, and the resolved display name.
-
-    Asserting the NAME and not merely the stamp is what catches the reader that serialises
-    provenance but forgets to await ``resolve_display_names`` — the failure that produces a panel
-    reading "set by (unknown)" for every hydrated field while looking completely healthy.
-    """
     assert bucket_provenance["name"]["by"] == MEENA.id, f"{where}: the record's author was lost"
     assert bucket_provenance["name"]["byName"] == MEENA.name, f"{where}: name was not resolved"
     assert bucket_provenance["phone"]["by"] == ASHA.id, f"{where}: the designer's edit was lost"
 
 
-# --------------------------------------------------------------------------------------
-# Reader 1-3: the three stage routes
-# --------------------------------------------------------------------------------------
-
 
 async def test_the_workshop_detail_route_resolves_the_overlay(reader):
-    """``GET /design-workshops/{id}`` — the read the web opens a workshop with."""
     out = await routes.get_design_workshop("dw_1", current_user=ASHA)
     stages = out["stages"]
     _assert_resolved(
@@ -250,7 +150,6 @@ async def test_the_workshop_detail_route_resolves_the_overlay(reader):
 
 
 async def test_the_stage_list_route_resolves_the_overlay(reader):
-    """``GET /design-workshops/{id}/stages`` — the read the handset syncs a whole workshop with."""
     out = await routes.list_stages("dw_1", current_user=ASHA)
     _assert_resolved(
         out["stages"][COLLECTION_STAGE]["provenance"]["collections"]["participant"]["ent_p1"],
@@ -259,12 +158,6 @@ async def test_the_stage_list_route_resolves_the_overlay(reader):
 
 
 async def test_the_single_stage_route_resolves_the_overlay(reader):
-    """``GET /design-workshops/{id}/stages/{key}`` — the read a stage form opens with.
-
-    This is the route a designer hits most, and it is the one that takes a different path through
-    ``_stages_payload`` (it indexes one stage out of the result), so its own assertion is not
-    redundant with the two above.
-    """
     out = await routes.get_stage("dw_1", COLLECTION_STAGE, current_user=ASHA)
     _assert_resolved(
         out["provenance"]["collections"]["participant"]["ent_p1"],
@@ -273,21 +166,11 @@ async def test_the_single_stage_route_resolves_the_overlay(reader):
 
 
 async def test_a_stage_nobody_has_saved_yet_still_carries_the_bucket(reader):
-    """The empty fallback has the same shape as a populated one.
-
-    A client that reads ``provenance`` unconditionally — which both of ours now do — would otherwise
-    crash on the one state every workshop passes through on its first day.
-    """
     out = await routes.get_stage("dw_1", UNSAVED_STAGE, current_user=ASHA)
     assert out["provenance"] == {"singleton": {}, "collections": {}, "custom": {}}
 
 
 async def test_every_collection_row_is_addressed_by_its_own_entry_id(reader):
-    """Two participants, two stamp maps, matched by id rather than by position.
-
-    The failure a positional map produces is one participant's edits shown against another
-    participant's name — in a table that is the proof of who attended a workshop.
-    """
     out = await routes.get_stage("dw_1", COLLECTION_STAGE, current_user=ASHA)
     by_entry = out["provenance"]["collections"]["participant"]
     assert set(by_entry) == {"ent_p1", "ent_p2"}
@@ -295,37 +178,14 @@ async def test_every_collection_row_is_addressed_by_its_own_entry_id(reader):
 
 
 async def test_the_provenance_bucket_is_beside_the_data_and_never_inside_it(reader):
-    """A reserved key inside ``data`` would be reported in ``droppedKeys`` on every single save.
-
-    That field is the one drift signal this repository has — it exists to say "this phone is running
-    a newer field registry than the server" — and firing it on every save of every workshop would
-    train whoever reads it to ignore it. It would also be echoed straight back into ``data`` by both
-    clients on the next save, so the stamps would end up stored as workshop answers.
-    """
     out = await routes.get_stage("dw_1", COLLECTION_STAGE, current_user=ASHA)
     for row in out["collections"]["participant"]:
         assert "provenance" not in row
         assert not any(k.startswith("fieldProvenance") for k in row)
 
 
-# --------------------------------------------------------------------------------------
-# Reader 4: the report builder (.docx / .pdf, server and on-device)
-# --------------------------------------------------------------------------------------
-
 
 def test_the_report_builder_resolves_the_overlay():
-    """``assemble_workshop_data`` — what every generated document is built from.
-
-    The report does not PRINT attribution today, and carrying it anyway is deliberate: this builder
-    is also the on-device report, and a field the server resolves and the phone does not is exactly
-    how the two documents drift apart. Loading it while the shape is one line is cheaper than
-    retrofitting two builders later.
-
-    The ``_custom`` row is asserted because it is excluded from both data buckets by design — its
-    answers reach the report on their own attribute — and keying provenance by entry id is what
-    keeps it covered anyway. A bucket-shaped map would have silently dropped it, making the custom
-    section the only part of the document with no answer to "who wrote this".
-    """
     entries = _entries() + [
         _row("ent_custom", SINGLETON_STAGE, "_custom", {"dyesrc": "Indigo"},
              {"dyesrc": STAMPS["phone"]})
@@ -341,14 +201,6 @@ def test_the_report_builder_resolves_the_overlay():
 
 
 def test_the_report_load_path_resolves_display_names():
-    """``_report_inputs`` awaits the name lookup, and it does so OUTSIDE the gathered waves.
-
-    Its own comment says the three waves may be gathered only because they write DIFFERENT
-    attributes of ``data``; a load that also mutated ``field_provenance`` inside a ``gather`` is the
-    one shape that is not safe there. Read from the source rather than executed because the
-    surrounding function is five queries deep in template resolution — what needs pinning is the
-    ORDER, and the order is a property of the text.
-    """
     source = Path(routes.__file__).read_text(encoding="utf-8")
     body = source.split("async def _report_inputs(", 1)[1]
     resolve_at = body.index("resolve_display_names(data.field_provenance")
@@ -356,22 +208,8 @@ def test_the_report_load_path_resolves_display_names():
     assert resolve_at < gather_at, "the name lookup must be awaited before the gathered waves"
 
 
-# --------------------------------------------------------------------------------------
-# Reader 5: the admin view
-# --------------------------------------------------------------------------------------
-
 
 async def test_an_admin_sees_both_the_stamps_and_the_canonical_values(reader, monkeypatch):
-    """``GET /design-workshops/{id}/provenance`` — "admins and master admins have access to all".
-
-    Two things are asserted together because the endpoint is only worth having if both are true: the
-    per-field authorship (which designers also see), AND the canonical comparison (which only this
-    route can produce, because once hydrated a copied value is an ordinary string in ``data``).
-
-    ``createdById`` is asserted BESIDE the per-field answer rather than instead of it. It is still a
-    true fact — somebody started this row — and showing both is what makes visible the thing the
-    feature exists for: a row created by one designer whose fields now belong to other people.
-    """
     async def _divergence(rows):
         assert [r.id for r in rows] == ["ent_setup", "ent_p1", "ent_p2"]
         return {"ent_p1": {"name": {
@@ -390,13 +228,6 @@ async def test_an_admin_sees_both_the_stamps_and_the_canonical_values(reader, mo
 
 
 async def test_a_designer_is_refused_the_cross_record_view_with_a_sentence(reader):
-    """The stage reads are unaffected; only the canonical comparison is admin-only.
-
-    That comparison crosses out of the workshop into the shared record tables and reports one
-    account's data next to another's, which is the line ``is_admin`` draws everywhere else in this
-    module. The refusal names the next move, because a designer who hits it needs to know whether to
-    ask somebody or to give up.
-    """
     with pytest.raises(HTTPException) as exc:
         await routes.workshop_provenance("dw_1", current_user=ASHA)
     assert exc.value.status_code == 403
@@ -404,20 +235,8 @@ async def test_a_designer_is_refused_the_cross_record_view_with_a_sentence(reade
     assert exc.value.detail.strip().endswith(".")
 
 
-# --------------------------------------------------------------------------------------
-# Reader 6: the Android offline store reads the same wire shape
-# --------------------------------------------------------------------------------------
-
 
 async def test_the_wire_shape_the_handset_syncs_is_the_one_it_parses(reader):
-    """The phone's stage sync reads ``GET /{id}/stages``; this pins the exact keys it decodes.
-
-    The handset is a reader in this inventory and it is the one that cannot be fixed by a redeploy —
-    a build in a cluster with no signal keeps whatever shape it shipped with. So the three key names
-    ``DwStageProvenanceDto`` decodes are asserted here, on the server, against the payload the
-    server actually emits. If either side is renamed, this fails on the server before a handset in
-    the field ever sees it.
-    """
     out = await routes.list_stages("dw_1", current_user=ASHA)
     bucket = out["stages"][COLLECTION_STAGE]["provenance"]
     assert set(bucket) == {"singleton", "collections", "custom"}
@@ -426,36 +245,6 @@ async def test_the_wire_shape_the_handset_syncs_is_the_one_it_parses(reader):
     assert stamp["source"] in {"reference", "designer"}
 
 
-# --------------------------------------------------------------------------------------
-# Reader 7: the rating ledger — the one entry on the classified list that is EXEMPT
-# --------------------------------------------------------------------------------------
-#
-# ``services/design_ratings`` reads ``DwStageEntry`` twice and resolves nothing, and the tripwire
-# below lists it for that reason. THE EXEMPTION IS NOT AN OMISSION AND IT IS ALSO NOT FREE, so it
-# gets tests of its own — not tests that it resolves the overlay, but tests of the BOUNDARY the
-# exemption was granted inside. The full argument is above ``design_ratings.load_subject``; the two
-# halves that matter here are:
-#
-#   * WHAT IT TAKES OFF A ROW IS A LABEL AND A GATE. The label is the same object the intra-workshop
-#     REF picker is already exempt for — one display string off ``label_field``, attributing nothing
-#     — and the gate (``peerRoundClosedAt``) is read to decide whether a round is open and then
-#     never served to anybody. A THIRD field off ``data`` is the change that makes all of that false,
-#     so that is what these tests fail on.
-#   * RESOLVING PROVENANCE HERE WOULD BE THE WORSE OPTION, not merely the more expensive one. The
-#     POOL round is read by designers ``load_workshop_or_404`` turns away, and this module withholds
-#     identities from them on purpose (``POOL_RATINGS_NAME_THEIR_RATER`` is False). A stamp carries
-#     ``by`` and ``byName``, so serving one here would export the researcher who recorded a value,
-#     and the designer who typed over it, to accounts with no grant on the workshop.
-#
-# Nothing here needs a database either: both loaders are run against a recorded stub, exactly as
-# ``_Users`` above stands in for the one name lookup.
-
-#: The sketch both loaders are run over. REAL stage-11 ``sketch`` keys, so a rename in the registry
-#: fails these tests instead of letting them pass against a fiction — checked mechanically by
-#: :func:`test_the_keys_this_fence_is_built_on_are_real_registry_fields`.
-#:
-#: NO ``stageKey``, deliberately: neither loader looks at one. They scope by ``entityKey``, and that
-#: scoping is itself asserted below.
 SKETCH_DATA = {
     "sketchNo": "SK-07",
     "name": "Kalamkari tote",
@@ -464,26 +253,12 @@ SKETCH_DATA = {
     dr.POOL_OPENS_WHEN_FIELD: "2026-05-04",
 }
 
-#: The values in ``SKETCH_DATA`` that are neither the label nor the gate. One of these reaching a
-#: caller is the widening this whole section exists to catch.
-#:
-#: ``sketchNo`` is NOT in here even though it is not the label today: ``_entry_label`` names it as
-#: the fallback for a sketch saved in a hurry with a number and no name, so it is a label candidate
-#: by declaration and pinning its absence would fail on a legitimate edit to that chain.
 NOT_THE_LABEL = ("Urban gifting", "Indigo cotton")
 
-#: The workshop row ``load_subject`` re-reads and ``load_subjects`` is handed. Its creator is a
-#: DIFFERENT account from the row's, because ``RatingSubject`` keeps the two apart and a fixture
-#: where they coincide cannot show that it does.
 RATED_WORKSHOP = SimpleNamespace(id="dw_1", createdById=MEENA.id, deletedAt=None)
 
 
 def _sketch_row(entry_id, *, ordinal=0):
-    """One rateable row, STAMPED — which is the whole point of the fixture.
-
-    A row with an empty ``fieldProvenance`` could not tell "this reader dropped the stamps" from
-    "there were no stamps to carry", and it is the first of those two that these tests are about.
-    """
     return SimpleNamespace(
         id=entry_id, entityKey="sketch", designWorkshopId="dw_1", ordinal=ordinal,
         data=dict(SKETCH_DATA), clientKey=None, createdById=ASHA.id, deletedAt=None,
@@ -494,13 +269,6 @@ def _sketch_row(entry_id, *, ordinal=0):
 
 
 class _Entries:
-    """The stage-entry delegate, recording every where-clause so the SCOPE can be asserted too.
-
-    Canned answers rather than a re-implementation of Prisma's filtering, for ``_Users``' reason:
-    what is under test is the call this module makes and what it does with the row it gets back,
-    and a hand-written query engine in a fixture is a second thing that can be wrong.
-    """
-
     def __init__(self, rows):
         self.rows = list(rows)
         self.unique_calls: list[dict] = []
@@ -518,7 +286,6 @@ class _Entries:
 
 @pytest.fixture
 def ratings_db(monkeypatch):
-    """``design_ratings.db``, stubbed. Returns the recorder so the calls can be read back."""
     entries = _Entries([_sketch_row("ent_sk1"), _sketch_row("ent_sk2", ordinal=1)])
 
     async def _workshop(where=None):
@@ -531,18 +298,6 @@ def ratings_db(monkeypatch):
 
 
 def _assert_only_a_label_and_a_gate(subject, *, where):
-    """The fence itself, in the shape ``_assert_resolved`` has for the readers that do resolve.
-
-    Everything at once, because the exemption needs all of it to stay true: the label is the label
-    field, the gate was read, ``RatingSubject`` has not grown an attribute, and NOTHING ELSE off the
-    row came along — no third answer, and no stamp carried half-way. A stamp arriving here
-    unresolved would be the "set by (unknown)" panel ``_assert_resolved`` describes, on a payload
-    that goes to strangers.
-
-    The attribute-set assertion is the one that catches the widening most likely to actually happen
-    — a fourth fact read off ``data`` and hung on the dataclass — and the value scan behind it is
-    for the sneakier version, where an attribute that already exists starts carrying an answer.
-    """
     assert subject.label == SKETCH_DATA["name"], f"{where}: the label is not the label field"
     assert subject.pool_open is True, f"{where}: the pool gate was not read"
     assert set(type(subject).__dataclass_fields__) == {
@@ -561,27 +316,15 @@ def _assert_only_a_label_and_a_gate(subject, *, where):
 
 
 async def test_the_rating_ledger_takes_a_label_and_a_gate_and_no_third_field(ratings_db):
-    """``design_ratings.load_subject`` — the read behind every single-subject rating route."""
     subject = await dr.load_subject("ent_sk1")
     assert subject is not None
     _assert_only_a_label_and_a_gate(subject, where="load_subject")
-    # THE ROW-LEVEL FACTS IT DOES KEEP, and they are not field provenance: ``createdById`` says who
-    # started the row, which is what the self-rating refusal and "their own record" read. Both are
-    # kept apart on purpose — see the RatingSubject docstring — and neither reaches the wire, which
-    # is what the payload test below asserts.
     assert subject.author_id == ASHA.id
     assert subject.workshop_author_id == MEENA.id
     assert ratings_db.unique_calls[0] == {"id": "ent_sk1"}
 
 
 async def test_the_ranked_list_loader_takes_a_label_and_a_gate_and_no_third_field(ratings_db):
-    """``design_ratings.load_subjects`` — the read behind the ranked list, its own entry point.
-
-    Asserted separately from ``load_subject`` for this file's stated reason: a generic test over
-    whichever helper they happen to share today would pass on the day one of them stopped sharing
-    it. It also pins the SCOPE, because "not soft-deleted" and "this entity" are the two clauses
-    that decide which rows a pool reader can reach at all.
-    """
     subjects = await dr.load_subjects("dw_1", "sketch", RATED_WORKSHOP)
     assert [s.entry_id for s in subjects] == ["ent_sk1", "ent_sk2"]
     for subject in subjects:
@@ -592,14 +335,6 @@ async def test_the_ranked_list_loader_takes_a_label_and_a_gate_and_no_third_fiel
 
 
 async def test_the_pool_directory_takes_the_gate_and_serves_no_stage_field(monkeypatch):
-    """``design_ratings.pool_directory`` — the third read of this table, added for sweep item F8.
-
-    The same fence as the two loaders above, narrower still: it takes the GATE off each row and
-    nothing else — not even the label — and what it serves is the workshop's title and dates and a
-    count per kind. Neither the gate's value (the day a piece was opened), nor any other stage value,
-    nor any stamp may reach the payload, because the directory is read by designers holding no grant
-    on the workshops it names.
-    """
     rows = [_sketch_row("ent_sk1"), _sketch_row("ent_sk2", ordinal=1)]
     closed = _sketch_row("ent_sk3", ordinal=2)
     closed.data.pop(dr.POOL_OPENS_WHEN_FIELD)
@@ -632,12 +367,6 @@ async def test_the_pool_directory_takes_the_gate_and_serves_no_stage_field(monke
 
 
 def test_no_stage_entry_field_and_no_identity_reaches_the_ranked_payload():
-    """``ranked_payload`` — the wire shape, fenced at its WIDEST.
-
-    ``show_ordinal=True`` is the disclosure the payload only makes to the workshop's own party and
-    admins, so it is the version to pin: if the biggest payload carries no stage-entry answer and
-    names nobody, no narrower one can.
-    """
     subject = dr.RatingSubject(
         entry_id="ent_sk1", entity_key="sketch", workshop_id="dw_1", pool_open=True,
         label=SKETCH_DATA["name"], ordinal=3, author_id=ASHA.id, workshop_author_id=MEENA.id,
@@ -650,18 +379,11 @@ def test_no_stage_entry_field_and_no_identity_reaches_the_ranked_payload():
     served = repr(payload)
     for value in NOT_THE_LABEL:
         assert value not in served, f"{value!r} reached a pool reader with no provenance"
-    # NOBODY IS NAMED. The row's author is a permission input, not a disclosure — and a provenance
-    # stamp would be a disclosure, to accounts holding no grant on this workshop.
     assert ASHA.id not in served and MEENA.id not in served
     assert "provenance" not in served and "byName" not in served
 
 
 def test_the_keys_this_fence_is_built_on_are_real_registry_fields():
-    """``SKETCH_DATA`` is stage 11's ``sketch``, not a plausible-looking invention.
-
-    Without this, a registry rename would leave the three tests above passing over a fixture whose
-    keys no longer exist anywhere — green, and measuring nothing.
-    """
     from app.services.stage_schema import all_entities
 
     sketch = next(entity for _stage, entity in all_entities() if entity.key == "sketch")
@@ -671,22 +393,8 @@ def test_the_keys_this_fence_is_built_on_are_real_registry_fields():
     assert dr.POOL_OPENS_WHEN_FIELD in keys, "the pool gate is not declared on a sketch"
 
 
-# --------------------------------------------------------------------------------------
-# The other half of the inventory: the record tables, which have no overlay
-# --------------------------------------------------------------------------------------
-
 
 async def test_reading_the_repository_is_open_for_every_role():
-    """``viewable_where`` is empty for everyone, which is what makes the records genuinely SHARED.
-
-    This is the guard on the finding that made most of this feature unnecessary: the sharing half
-    already exists. If a future change narrows reading per designer, the copy-on-write model
-    underneath these tests changes shape — a designer would then have rows they cannot see at all,
-    and "the canonical value" would stop being a single answer — so it must not happen quietly.
-
-    Every rank is checked, including the authentication floor, because the policy is stated as "for
-    every signed-in account" and a narrowing would most plausibly arrive at the bottom.
-    """
     from app.services.records import viewable_where
 
     for role in ("MASTER_ADMIN", "ADMIN", "PROFESSOR", "DESIGNER", "RESEARCHER",
@@ -697,22 +405,6 @@ async def test_reading_the_repository_is_open_for_every_role():
 
 
 def test_no_record_reader_can_serve_a_stale_value_because_there_is_no_overlay():
-    """**THE HONEST ANSWER FOR THE OTHER HALF OF THE INVENTORY, MADE MECHANICAL.**
-
-    The data browser, the CSV exports, the .xlsx workbook, the dataset zip and stream, and the API
-    list/detail routes all read ``Artisan``/``ProductDocumentation``/``ToolDocumentation``/
-    ``Process``/``Craft``/``Workshop`` rows directly. None of them needs a resolution step, for one
-    reason only: there is exactly one row per record and no per-designer copy of it anywhere in the
-    schema. A reader cannot serve a stale value when there is no second value.
-
-    So instead of a resolution layer nobody needs, this asserts the PREMISE — that no per-designer
-    overlay table has appeared beside those six models. The day somebody adds one, every reader in
-    the paragraph above becomes wrong at once, and this is the test that says so rather than a
-    support ticket about two screens disagreeing.
-
-    Matched on the naming shapes an overlay table would plausibly take. It is a tripwire, not a
-    proof; its value is that it fails in the same commit as the change, next to this docstring.
-    """
     schema = (Path(__file__).resolve().parents[1] / "prisma" / "schema.prisma").read_text(
         encoding="utf-8"
     )
@@ -732,44 +424,9 @@ def test_no_record_reader_can_serve_a_stale_value_because_there_is_no_overlay():
     )
 
 
-# --------------------------------------------------------------------------------------
-# Reader 8: the inspector's read-only view
-# --------------------------------------------------------------------------------------
-
 
 @pytest.fixture
 def inspection(reader, monkeypatch):
-    """The inspections route's own doubles, over the same three rows the other readers use.
-
-    It needs a fixture of its own rather than reusing ``reader``: that one patches names on
-    ``design_workshops``, and this route imported ITS copies at module load
-    (``from app.services.design_workshops import entry_rows, …``), so a patch on the source module
-    would not be seen here. The provenance lines are not stubbed — ``_stages_payload``,
-    ``_provenance_maps`` and ``resolve_display_names`` are the real ones, imported from the very
-    module the other readers exercise.
-
-    ``load_inspectable_workshop_or_404`` is the only loader replaced, and replacing it is what keeps
-    this test about provenance instead of about the scope query: whether the INSPECTOR row exists is
-    ``test_dw_inspector_scope.py``'s subject, and asserting it twice in two files is how the two
-    drift apart.
-    """
-    # THIS FIXTURE BUILDS ITS OWN STAMPS AND DOES NOT TOUCH THE MODULE-LEVEL `STAMPS`, AND THAT IS
-    # THE WHOLE OF WHY THIS TEST IS TRUSTWORTHY.
-    #
-    # `_row` stores `dict(stamps)` — a SHALLOW copy — so every row built from `_entries()` shares the
-    # one `STAMPS["name"]` dict, and `resolve_display_names` fills `byName` IN PLACE. Whichever test
-    # runs first resolves that shared dict for the rest of the session, and every later test then
-    # inherits a name its own reader never produced.
-    #
-    # TWO WEAKER FIXES WERE TRIED AND BOTH WERE WRONG, so do not "simplify" back to either. Reusing
-    # `_entries()` made this test pass while proving nothing: `wanted` came out empty,
-    # `resolve_display_names` returned before it queried, and a route that never called it at all
-    # would have looked identical. `copy.deepcopy(_entries())` did not fix it either — a deep copy
-    # faithfully reproduces whatever the global holds AT THAT MOMENT, which by then is the resolved
-    # name. Restoring `byName` after the copy fixed the module-alone run and still left this test
-    # ordering-dependent in the full suite, because it keeps reading a dict other tests mutate.
-    #
-    # Owning the data outright is the only version that cannot be perturbed by what ran before.
     reference = {
         "by": MEENA.id, "byName": None, "at": "2026-03-01T09:00:00+00:00",
         "source": ep.SOURCE_REFERENCE, "refModel": "Artisan", "refId": "art_1", "refKey": "name",
@@ -807,13 +464,6 @@ def inspection(reader, monkeypatch):
 
 
 async def test_the_inspector_read_resolves_the_overlay(inspection):
-    """``GET /design-workshop-inspections/{id}`` — the read-only twin of the designer's detail read.
-
-    This route was added by the INSPECTOR wave and went unclassified until the tripwire below caught
-    it, which it could only do once ``records.py``'s stray carriage return stopped breaking this
-    module's tokenizer. So the assertion here is the one the wave never wrote: an inspector opening
-    somebody else's workshop sees the AUTHOR of each field, not "(unknown)".
-    """
     out = await inspections.read_workshop_under_inspection("dw_1", current_user=INSPECTOR)
     _assert_resolved(
         out["stages"][COLLECTION_STAGE]["provenance"]["collections"]["participant"]["ent_p1"],
@@ -824,43 +474,12 @@ async def test_the_inspector_read_resolves_the_overlay(inspection):
 
 
 async def test_the_inspector_read_says_on_the_wire_that_it_is_read_only(inspection):
-    """``readOnly`` travels in the payload, and this is the reader that must not lose it.
-
-    The route's own comment gives the reason — both clients will eventually render this through the
-    same screen as the designer's read, and a screen that cannot tell the two apart offers a Save
-    button the API answers 404 to. It is asserted beside the provenance because they arrive from the
-    same handler and a refactor that rebuilt the payload would drop them together.
-    """
     out = await inspections.read_workshop_under_inspection("dw_1", current_user=INSPECTOR)
     assert out["readOnly"] is True
 
 
-# --------------------------------------------------------------------------------------
-# Reader 9: the data browser's design-workshop tables — EXEMPT, and fenced
-# --------------------------------------------------------------------------------------
-#
-# ``/data`` grew a design-workshop half on 2026-08-31 (``docs/DECISION-design-workshop-data-in-
-# view-data.md``), so ``api/routes/data_browser.py`` now reads ``DwStageEntry`` and the tripwire
-# below caught it. The classification is EXEMPT, on the REF picker's grounds: it serves VALUES and
-# attributes nothing to anybody. There is no author column in the tree's text files, none in the
-# workbook, and none in the JSON the web panel renders — so there is no "who wrote this" answer for
-# it to get wrong, and nothing for a stale stamp to be stale IN.
-#
-# THE EXEMPTION IS ABOUT WHAT IT SHOWS, NOT ABOUT WHAT IT READS, so it has to be fenced rather than
-# asserted once. The moment this surface prints an author beside a value it becomes the reader this
-# file exists for, and it would be an easy and well-meant addition — a research export naming who
-# recorded each answer is a reasonable thing to want. The two tests below fail on the day it is
-# added, in the same commit, next to this paragraph, which is the cheapest place to find out.
-#
-# WHAT SUCH A CHANGE WOULD OWE. ``DwStageEntry.fieldProvenance`` is SPARSE and its ``byName`` is
-# resolved by ``entry_provenance.resolve_display_names`` — a lookup, not a column — so an export
-# that read the raw stamp would print user ids for some rows, "(unknown)" for the rows written
-# before the column existed, and the REFERENCED record's author rather than the designer's for the
-# 81 copied field-pairs. Getting that right is the work this exemption is deferring, not skipping.
-
 
 def _dw_row_keys():
-    """Every column key one flattened design-workshop row can carry, over the whole registry."""
     keys = {column.key for column in dwdata.WORKSHOP_IDENTITY_COLUMNS}
     keys |= {"entry.id", "entry.ordinal"}
     for table in dwdata.tables():
@@ -869,11 +488,6 @@ def _dw_row_keys():
 
 
 def test_the_data_browser_attributes_no_stage_field_to_anybody():
-    """The fence. A flattened row carries values and identity, and no authorship of any kind.
-
-    Built over a row whose ``fieldProvenance`` is POPULATED, so this fails if the flattener ever
-    starts copying the stamp through rather than merely ignoring it today.
-    """
     stage = next(s for s in dwdata.stages() if s.entities)
     entity = stage.entities[0]
     field = entity.fields[0]
@@ -900,11 +514,6 @@ def test_the_data_browser_attributes_no_stage_field_to_anybody():
 
 
 def test_the_design_workshop_sheets_carry_no_author_column():
-    """The same fence one level up, on the workbook the researcher actually downloads.
-
-    Asserted on the HEADERS rather than on the cells, because a column added with every cell empty
-    on this fixture would slip past a value check and still be the change this fence is for.
-    """
     stage = next(s for s in dwdata.stages() if s.entities)
     entity = stage.entities[0]
     field = entity.fields[0]
@@ -934,22 +543,6 @@ def test_the_design_workshop_sheets_carry_no_author_column():
             assert ASHA.id not in joined and ASHA.name not in joined
 
 
-#: Comments and string literals are not code, and matching them made this check cry wolf.
-#:
-#: `app/services/design_workshop_grants.py` was reported as an unclassified reader of
-#: `DwStageEntry` on 2026-08-24 while containing NO read of it at all: its `_may_capture_for`
-#: docstring explains that the predicate is a WRITE rule and that the row-level read filter
-#: (``entry_rows(..., author_id=...)``) is the other half of the pair. Naming the loader in order
-#: to say "this is not the loader" was enough to be accused of calling it.
-#:
-#: The two available fixes are not equivalent. Adding the module to the classified list would have
-#: certified a reader that does not exist, and — because the list is what suppresses the failure —
-#: would have silenced this check for that file on the day it really did start reading the table,
-#: which is precisely the wave the docstring above warns about. So the DETECTOR is fixed instead.
-#:
-#: The trade, stated: a module reaching the table through a string (``getattr(db, "dwstageentry")``)
-#: is now invisible here. It always was — that spelling matches neither pattern — so nothing is lost
-#: that was previously held, and prose stops counting as a call.
 _PROSE_TOKENS = {tokenize.COMMENT, tokenize.STRING} | {
     getattr(tokenize, name)
     for name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
@@ -957,78 +550,16 @@ _PROSE_TOKENS = {tokenize.COMMENT, tokenize.STRING} | {
 }
 
 
-# --------------------------------------------------------------------------------------
-# Readers 10 and 11: the dataset archive and the search bucket - EXEMPT, and fenced
-# --------------------------------------------------------------------------------------
-#
-# Both landed on 2026-08-31, in the same wave, and the tripwire below caught BOTH - which is that
-# tripwire doing exactly its job twice in one day, and worth recording as evidence that it earns its
-# keep rather than as an inconvenience somebody silenced.
-#
-# ``api/routes/export.py`` grew the design-workshop half of the repository archive; ``api/routes/
-# search.py`` grew the sixth search bucket and, with it, a match against ``DwStageEntry.searchText``.
-# Both are EXEMPT on Reader 9's grounds - they serve VALUES and MATCHES and attribute nothing to
-# anybody - and both are FENCED here rather than merely named, because the exemption is a claim about
-# what a surface SHOWS and not about what it reads.
-#
-# THE TWO ARE EXEMPT FOR SLIGHTLY DIFFERENT REASONS, AND THE DIFFERENCE MATTERS TO A LATER READER.
-#
-#   ``export.py`` renders through ``design_workshop_data.flatten`` - the same flattener Reader 9
-#   already fences - so its ROWS cannot carry an author unless the flattener does, and the test above
-#   fails first if it ever does. What is fenced HERE is the archive's own prose: a details block, a
-#   note or a folder name could name a person without the flattener being touched at all, and both
-#   of Reader 9's tests would stay green while it happened.
-#
-#   ``search.py`` never reads ``data`` OR ``fieldProvenance``. It answers "which (workshop, stage)
-#   pairs matched" with ``group_by`` over exactly two columns and a count, and emits stage LABELS.
-#   There is no value in its answer for an author to sit beside. The fence is therefore aimed at the
-#   one change that would alter that: reading a row instead of grouping it.
-#
-# WHAT A CHANGE HERE WOULD OWE is unchanged from Reader 9 and is deliberately not restated:
-# ``fieldProvenance`` is sparse, its ``byName`` is a lookup rather than a column, and the copied
-# field-pairs carry the REFERENCED record's author rather than the designer's.
-
 
 def _module_code(relative: str) -> str:
-    """One route module's source with comments and strings blanked, lowercased.
-
-    The same treatment :func:`_reads_stage_entries` gives, through the same helper, so a fence that
-    matched inside a comment cannot fire on the very paragraph above explaining the fence.
-    """
     return _blanked_code(Path(__file__).resolve().parents[1] / relative)
 
 
 def _module_source(relative: str) -> str:
-    """One route module's RAW source, lowercased — comments and strings included.
-
-    ── WHY BOTH READINGS EXIST, AND WHY THE BLANKED ONE ALONE WAS NOT ENOUGH ──────────────────────
-
-    :func:`_blanked_code` is right for asking "does this module CALL something", which is what the
-    tripwire asks. It is WRONG for asking "does this module touch the provenance stamp", and the
-    difference was measured rather than reasoned: ``app/services/entry_provenance.py`` — the module
-    the whole stamp belongs to — contains ``fieldProvenance`` five times and NONE of them survives
-    blanking, because every one is a Prisma field NAME inside a string literal.
-
-    So a fence built on the blanked reading would catch ``entry.fieldProvenance`` (attribute access)
-    and sail straight past ``{"fieldProvenance": True}`` in a ``select`` or a ``where`` — which is
-    precisely how a route asks Prisma for the column, i.e. the likelier of the two spellings and the
-    one that actually pulls the data.
-
-    The raw reading catches both. Its cost is that a mere MENTION in a comment fires it, and that
-    cost is accepted deliberately: neither module names the stamp anywhere today (counted, both zero),
-    and somebody writing a sentence about provenance in a route that is classified EXEMPT for not
-    touching provenance is exactly the moment this file wants to be read.
-    """
     return (Path(__file__).resolve().parents[1] / relative).read_text(encoding="utf-8").lower()
 
 
 def test_the_dataset_archive_attributes_no_stage_field_to_anybody():
-    """The fence on the archive a researcher actually downloads.
-
-    The ROWS are covered by Reader 9's fence over ``dwdata.flatten``. What is asserted here is that
-    the module itself never reaches for the stamp - so a details block or a note cannot start naming
-    an author while every row stays clean and both of those tests stay green.
-    """
     source = _module_source("app/api/routes/export.py")
     assert "fieldprovenance" not in source, (
         "export.py names the provenance stamp. A dataset archive naming who recorded each answer is "
@@ -1042,14 +573,6 @@ def test_the_dataset_archive_attributes_no_stage_field_to_anybody():
 
 
 def test_the_search_bucket_reads_no_stage_ROW_and_so_can_name_nobody():
-    """The fence on the sixth search bucket.
-
-    ``group_by`` and not ``find_many`` is the whole of why this reader is exempt, and it is also a
-    scale decision the route argues for itself: reading rows to answer "which stages matched" would
-    pull ``data`` - the largest JSON column in the schema - for up to ``pageSize`` times twenty-two
-    rows, across the wire, to look at two of their columns. That it cannot attribute and that it does
-    not haul the payload are the same fact, so this asserts it once.
-    """
     code = _module_code("app/api/routes/search.py")
     assert "db.dwstageentry.group_by" in code, (
         "search.py no longer groups the stage hits. A reader that takes ROWS can see `data` and "
@@ -1060,56 +583,14 @@ def test_the_search_bucket_reads_no_stage_ROW_and_so_can_name_nobody():
         "JSON column in the schema across the wire to look at two of its columns - the route's own "
         "comment argues against exactly this."
     )
-    # The RAW source for this one — see `_module_source` for the measurement that forced it: the
-    # stamp reaches a route as a Prisma field NAME in a string, which blanking erases.
     assert "fieldprovenance" not in _module_source("app/api/routes/search.py"), (
         "search.py names the provenance stamp and is no longer exempt - see Readers 9 to 11 above."
     )
 
 
-# --------------------------------------------------------------------------------------
-# Reader 12: the officer's supervision read — NOT exempt, and it went unclassified
-# --------------------------------------------------------------------------------------
-#
-# ``GET /design-workshop-oversight/assigned/{id}`` landed on 2026-09-13 and the tripwire below
-# caught it, which is the tripwire doing its job. The classification is the opposite of EXEMPT: it
-# serves EVERY stage's values to an Assistant or Regional Director who did not write any of them,
-# and the route's own docstring says why that makes provenance the point rather than a nicety —
-# "'who wrote this field' is most of what supervision is for, and the ids without them are
-# unreadable".
-#
-# **THE NAME ON THE LIST IS NOT THE CLASSIFICATION. THIS TEST IS.** Appending the path to ``allowed``
-# to make the suite green would have left a read surface with no assertion on it anywhere —
-# ``grep -rn "read_overseen_workshop" tests/`` returned nothing — so deleting the single
-# ``await resolve_display_names(...)`` line would have made every field on the officer's screen read
-# as authored by nobody with the whole suite still passing. That is the order this file's tripwire
-# docstring states and it is worth restating: classify by writing the test, never by adding the name.
-
 
 @pytest.fixture
 def supervision(reader, monkeypatch):
-    """The oversight route's own doubles, over three rows it owns outright.
-
-    It takes ``reader`` only for the ``app.core.db.db`` patch that gives ``resolve_display_names``
-    its one recorded name lookup; the ROWS are built below rather than reused, for the reason the
-    comment there gives.
-
-    A fixture of its own for ``inspection``'s reason, and it is the same import shape: this route
-    took its copies at module load (``from app.services.design_workshops import entry_rows, …``,
-    ``from app.api.routes.design_workshops import _provenance_maps, _stages_payload``), so a patch on
-    the source module would not be seen here. ``_stages_payload``, ``_provenance_maps`` and
-    ``resolve_display_names`` are the real ones — they are the lines under test.
-
-    The two oversight reads are replaced on the SERVICE module the route reaches through, which is
-    what keeps this test about provenance instead of about the AD/RD scope query: whether an officer
-    may open this workshop at all is ``tests/test_workshop_oversight_unit.py``'s subject.
-    """
-    # IT OWNS ITS STAMPS, FOR THE REASON SPELLED OUT AT LENGTH IN `inspection` ABOVE — and this
-    # fixture is the proof that the reason is real rather than theoretical. Written first as
-    # `fresh = _entries()`, it FAILED exactly the way that comment predicts: `_assert_resolved`
-    # passed while `users.calls` was EMPTY, because `_row` shallow-copies the module-level `STAMPS`
-    # and an earlier test had already filled `byName` in place on the one shared dict. The reader
-    # under test had made no lookup at all and the test could not tell.
     reference = {
         "by": MEENA.id, "byName": None, "at": "2026-03-01T09:00:00+00:00",
         "source": ep.SOURCE_REFERENCE, "refModel": "Artisan", "refId": "art_1", "refKey": "name",
@@ -1152,19 +633,9 @@ def supervision(reader, monkeypatch):
     return SimpleNamespace(users=reader.users, entries=fresh)
 
 
-# --------------------------------------------------------------------------------------
-# Reader 17: the approving authority's read — NOT exempt (2026-10-10)
-# --------------------------------------------------------------------------------------
-#
-# ``GET /design-workshop-approvals/{id}`` serves every stage's values to a Ministry Admin deciding
-# whether to approve a report none of whose fields they wrote, so who wrote each field is part of
-# what they judge. Classified by these two tests, as the tripwire's docstring requires.
-
 
 @pytest.fixture
 def sign_off(supervision, monkeypatch):
-    """The approvals route's own doubles, over the supervision fixture's rows and name lookup."""
-
     async def _load(*_a, **_k):
         return SimpleNamespace(id="dw_1", title="Bagru 2026", deletedAt=None, status="PRE_SUBMISSION",
                                handedOnAt=None)
@@ -1193,8 +664,6 @@ def sign_off(supervision, monkeypatch):
     monkeypatch.setattr(approval_routes.oversight, "oversight_rows", _empty)
     monkeypatch.setattr(approval_routes, "inspector_rows", _empty)
     monkeypatch.setattr(approval_routes, "_inspection_feedback_payload", _no_feedback)
-    # "Approve and hand on" (2026-10-18) reads the office settings and the newest delivery; neither
-    # is a stage read, and this fixture has no database.
     monkeypatch.setattr(approval_routes.report_delivery, "delivery_view", _none)
     _quiet_review_aids(monkeypatch)
     monkeypatch.setattr(approval_routes, "entry_rows", _rows)
@@ -1220,11 +689,6 @@ async def test_the_approving_authoritys_read_says_it_is_read_only(sign_off):
 
 
 async def test_the_officer_supervision_read_resolves_the_overlay(supervision):
-    """``GET /design-workshop-oversight/assigned/{id}`` — the read an AD/RD supervises through.
-
-    The assertion the wave that added this route never wrote: an officer opening a workshop nobody
-    on their staff wrote sees the AUTHOR of each field, not "(unknown)".
-    """
     out = await oversight_routes.read_overseen_workshop("dw_1", current_user=DIRECTOR)
     _assert_resolved(
         out["stages"][COLLECTION_STAGE]["provenance"]["collections"]["participant"]["ent_p1"],
@@ -1237,49 +701,12 @@ async def test_the_officer_supervision_read_resolves_the_overlay(supervision):
 
 
 async def test_the_officer_supervision_read_says_on_the_wire_that_it_is_read_only(supervision):
-    """``readOnly`` travels in the payload, asserted beside the provenance for Reader 8's reason.
-
-    Both arrive from the same handler, and a refactor that rebuilt the payload would drop them
-    together. The route's own comment gives the argument: both clients will eventually render this
-    through the same screen as the designer's read, and a screen that cannot tell the two apart
-    offers a Save button the API answers 404 to.
-    """
     out = await oversight_routes.read_overseen_workshop("dw_1", current_user=DIRECTOR)
     assert out["readOnly"] is True
 
 
-# --------------------------------------------------------------------------------------
-# Readers 13 and 14: the artisan roster import and the sanction register — EXEMPT, and fenced
-# --------------------------------------------------------------------------------------
-#
-# Both landed on 2026-09-13 and both were caught by the tripwire below. Both are EXEMPT on Reader 7's
-# grounds and neither exemption is free, so each gets a test of the BOUNDARY it was granted inside —
-# not a test that it resolves the overlay.
-#
-#   * ``services/artisan_import`` reads the participant rows to answer two bookkeeping questions and
-#     nothing else: what ``ordinal`` to continue the roster from, and which artisans are already on
-#     it (``data["artisanRef"]``). It SERVES nothing — its output is a count — and the values it
-#     writes come from the imported workbook, not from the rows it read. A THIRD key off ``data`` is
-#     the change that makes that false, which is what the test below fails on.
-#   * ``services/sanction_orders`` reads stage 1's ``workshopSetup`` singleton to answer two
-#     questions ABOUT the register rather than about the report: is the copied sanction number and
-#     date still the one on the order (``reportCopyMatches``), and is stage 1 complete enough for
-#     work to begin (``readyForWork`` + ``missingMandatory``, both straight off the registry's own
-#     ``stage_completeness``). A bool, a bool and a list of LABELS. No stamped field value reaches
-#     the wire and nobody is named, which is the boundary fenced below.
-#
-# Resolving provenance in either would be wrong rather than merely wasteful, for Reader 7's reason:
-# a stamp carries ``by`` and ``byName``, and the sanction list is read by ministry officers who hold
-# no grant on the workshop at all.
-
 
 async def test_the_roster_import_reads_an_ordinal_and_a_reference_and_no_third_thing(monkeypatch):
-    """``artisan_import._write_roster`` — driven for real against a stubbed table.
-
-    The rows it reads are given STAMPED data and a full set of hydrated-looking answers, so a reader
-    that started copying values off them would show up in what it hands ``save_stage``. What it may
-    legitimately carry is the workbook's own two keys.
-    """
     from app.services import artisan_import
 
     existing = [
@@ -1321,13 +748,6 @@ async def test_the_roster_import_reads_an_ordinal_and_a_reference_and_no_third_t
 
 
 async def test_the_sanction_register_takes_two_booleans_and_a_list_of_labels(monkeypatch):
-    """``sanction_orders.sanction_payload`` — the wire shape, fenced at its widest.
-
-    Every officer-facing sanction surface goes through this one builder, so fencing it fences the
-    list, the detail read and the badge together. The stage-1 singleton it reads is given a stamped
-    answer (``venue``) that no caller has any business seeing here, alongside the two keys it IS
-    entitled to compare.
-    """
     from app.services import sanction_orders as so
 
     singleton = _row(
@@ -1342,17 +762,12 @@ async def test_the_sanction_register_takes_two_booleans_and_a_list_of_labels(mon
 
     monkeypatch.setattr(so, "entry_rows", _rows)
 
-    # C1 (2026-10-17): the payload also names the planned workshop the order opened, read through
-    # the annual plan's own module. No database here, so that read answers "none".
     async def _no_planned_rows(_workshop_ids):
         return {}
 
     monkeypatch.setattr(so.annual_plan, "planned_rows_for_workshops", _no_planned_rows)
 
     order = SimpleNamespace(
-        # `sanctionOrderKey` is the NORMALISED column the unique index bites on — upper-cased with
-        # every non-alphanumeric character removed — which is what lets the drift check call the
-        # report's `SO/2026/42` the same instrument as the register's `SO-2026-42`.
         id="so_1", sanctionOrderNo="SO-2026-42", sanctionOrderKey="SO202642",
         sanctionOrderDate=datetime(2026, 4, 1, tzinfo=UTC), sanctionAmount=Decimal("250000.00"),
         designerUserId=ASHA.id, designerEmail="asha@example.org", accountCreated=True,
@@ -1366,8 +781,6 @@ async def test_the_sanction_register_takes_two_booleans_and_a_list_of_labels(mon
         officer=SimpleNamespace(name=ADMIN.name),
     )
 
-    # WHAT THE STAGE ROW IS ALLOWED TO PRODUCE: a drift bool, a readiness bool, and the registry's
-    # own labels for what is still missing. Nothing else off `data`, and nobody named.
     assert payload["reportCopyMatches"] is True, "the two order keys are compared, normalised"
     assert isinstance(payload["readyForWork"], bool)
     assert all(isinstance(label, str) for label in payload["missingMandatory"])
@@ -1380,40 +793,8 @@ async def test_the_sanction_register_takes_two_booleans_and_a_list_of_labels(mon
     assert MEENA.id not in served, "a stamp's author reached a reader holding no grant on the workshop"
 
 
-# --------------------------------------------------------------------------------------
-# Reader 15: the ministry register's progress column — EXEMPT, and fenced
-# --------------------------------------------------------------------------------------
-#
-# Landed 2026-09-20 with `/ministry-dashboard`, and the tripwire below is what caught it — the
-# screen could not have, because a register that showed an author would look exactly like a
-# register that did not until somebody read the JSON.
-#
-# `services/ministry_dashboard.progress_for` reads every stage entry of up to a hundred workshops in
-# ONE query to answer one question per workshop: how much of the required work is filled in. It is
-# EXEMPT on `analytics`' grounds rather than Reader 7's — it counts rows across workshops and never
-# shows one field to one person — and the exemption is worth less than the others because the
-# audience is the widest in the product. The register is read by MINISTRY_ADMIN, by the master
-# admin and by the two directorate posts, none of whom hold a grant on any workshop; a stamp
-# reaching this payload would put "Asha Patel typed this" in front of every officer on the platform,
-# in one table, for the whole estate at once.
-#
-# WHAT A ROW IS ALLOWED TO PRODUCE: five figures, a bool and a schema version — `percent`,
-# `stagesTotal`, `stagesComplete`, `requiredTotal`, `requiredFilled`, `definitionRead` and
-# `customSchemaVersion`. No key off `data`, and nobody named. An eighth figure derived from a VALUE
-# rather than from a count is the change that makes the exemption false, and the key-set assertion
-# below is what fails on it.
-#
-# `load_definitions` is deliberately NOT stubbed. It is the second half of the path under test and
-# it reads two more tables; stubbing it would hide a reader added inside it, which is the exact
-# shape of miss this whole file exists to catch.
-
 
 async def test_the_registers_progress_column_is_counts_and_carries_no_value_and_no_author(monkeypatch):
-    """``ministry_dashboard.progress_for`` — driven for real against a stubbed table.
-
-    The rows are this file's own stamped fixtures, so a reader that started copying values or
-    authors off them shows up in the payload rather than in a review.
-    """
     from app.services import ministry_dashboard as register
 
     entries = _entries()
@@ -1468,16 +849,6 @@ async def test_the_registers_progress_column_is_counts_and_carries_no_value_and_
     )
 
 
-# --------------------------------------------------------------------------------------
-# Reader 18: the unified search index — EXEMPT, and fenced (2026-10-18)
-# --------------------------------------------------------------------------------------
-#
-# `services/search_index._design_workshop` builds one workshop's search document. It reads the
-# live entries' `stageKey` and `searchText` — the text the stage save already flattened for
-# GET /search — and nothing else off the row. The document it serves is words to match on and a
-# snippet; it names nobody and carries no author, so there is nothing to attribute. The test drives
-# it against STAMPED rows whose `data` holds values that are not in `searchText`: if the builder
-# ever starts reading `data` or the stamp, those values reach the document and this fails.
 async def test_the_search_index_serves_search_text_and_no_value_or_author_off_the_row(monkeypatch):
     from app.services import search_index
 
@@ -1517,56 +888,10 @@ async def test_the_search_index_serves_search_text_and_no_value_or_author_off_th
         )
 
 
-# --------------------------------------------------------------------------------------
-# Reader 16: taking the designer's name off a workshop — EXEMPT, and fenced
-# --------------------------------------------------------------------------------------
-#
-# Landed 2026-09-20 with the unassign fix, and the tripwire below is what caught it. The ROUTE
-# module of the same name has been classified since 2026-09-14 under Reader 12; this is the
-# SERVICE beside it, a second file with a second path into the table, and the name being already
-# on the list for the route is exactly why it was easy to miss.
-#
-# `take_the_designers_name_off_the_workshop` reads the stage-1 entry that OWNS `designerName` so it
-# can write that entry back without it. It therefore touches the whole of one row's `data` — every
-# promoted value on the workshop cover passes through `held` — which is more of the table than any
-# other exempt reader sees.
-#
-# IT IS EXEMPT ANYWAY, and on grounds none of the others use: it SERVES NOTHING. The values are
-# read and handed straight back to the same row through `save_stage`, and what the function returns
-# to its caller is a list of STAGE KEYS — the stages the officer's screen must reload. No value and
-# no author leaves it, so there is no audience to whom a stale field could be attributed.
-#
-# WHAT WOULD MAKE THE EXEMPTION FALSE: returning any part of `held` — the outgoing designer's name
-# in a confirmation sentence is the obvious one, and is a thing a reviewer would wave through. The
-# first assertion below is what fails on it. The second pins the round-trip itself, because the
-# same function is where a dropped key would silently blank a cover: `merge=False` means the entry
-# it writes REPLACES the stored one, so a key missing from `kept` is a value deleted from the
-# workshop.
-
 
 async def test_taking_the_designer_off_serves_no_value_and_no_author(monkeypatch):
-    """``design_workshop_oversight.take_the_designers_name_off_the_workshop`` — driven for real.
-
-    The stored row carries this file's own stamped fixtures beside the promoted values, so a
-    function that started copying either into its answer shows up here rather than in a review.
-    """
     saved: list[tuple] = []
 
-    # ── THE COVER AS IT IS ACTUALLY STORED ──────────────────────────────────────────────────────
-    #
-    # EVERY KEY BELOW IS A DECLARED ``workshopSetup`` FIELD (stage_definitions.py), and the ten of
-    # them are the ten the `seed_designer_prefill` incident names one by one — craftName,
-    # clusterName, state, district, startDate, endDate, schemeName, implementingAgency, sponsor and
-    # workshopCode, every one a PROMOTED column on `DesignWorkshop`. A fixture of invented keys
-    # would make the round-trip assertion below a transcript of itself; these make it the contract,
-    # because dropping any one of them is a column going NULL on the workshop cover.
-    #
-    # ⚠ `fieldProvenance` IS A SIBLING COLUMN AND NOT A KEY IN `data` — schema.prisma says so at the
-    # column itself ("NOT INSIDE `data`… a reserved key in it would be reported in `droppedKeys` on
-    # every save, destroying the one drift signal this repository has"), and
-    # `test_the_provenance_bucket_is_beside_the_data_and_never_inside_it` above asserts it. Putting
-    # the stamps inside `data` here would have pinned a shape the writer refuses, in the one file
-    # whose whole subject is provenance.
     COVER = {
         "designerName": ASHA.name,
         "craftName": "Ikat",
@@ -1615,7 +940,6 @@ async def test_taking_the_designer_off_serves_no_value_and_no_author(monkeypatch
     )
     assert "fieldProvenance" not in served and "byName" not in served
 
-    # THE ROUND TRIP, which is the other half of why this function may read the whole row.
     assert len(saved) == 1, "the unassign did not write the stage entry back"
     entries = saved[0][2].entries
     assert len(entries) == 1 and entries[0].merge is False
@@ -1634,24 +958,6 @@ async def test_taking_the_designer_off_serves_no_value_and_no_author(monkeypatch
 
 
 def test_the_oversight_service_still_reads_stage_entries_in_exactly_one_place():
-    """The Reader 16 exemption is granted to ONE function; this is what keeps it that narrow.
-
-    ``allowed`` is keyed by MODULE PATH, and that granularity is a poor fit for this particular
-    module. ``services/design_workshop_oversight.py`` is ~1500 lines whose day job is building
-    OFFICER-FACING payloads — ``named_designer_rows``, the supervision reads, the review loop — and
-    its ROUTE twin was deliberately classified NOT exempt (Reader 12) for exactly that reason. The
-    service is exempt only because the single read it performs today serves nothing.
-
-    Without this test the exemption is a blank cheque: a second read added anywhere in the module —
-    ``outgoing = rows[0].data["designerName"]`` put into a confirmation sentence for the officer who
-    pressed unassign is the obvious one, and is a change a reviewer would wave through — is a stale
-    field value served to somebody with no author beside it, and BOTH the tripwire (the module is on
-    the list) and the Reader 16 test (it drives one helper) would stay green.
-
-    So the fence is the COUNT. A second read site fails here, and the failure says what to do about
-    it: re-read the exemption, and if the new reader serves anything to anybody, resolve provenance
-    and write its own test rather than raising this number.
-    """
     code = _module_code("app/services/design_workshop_oversight.py")
     sites = code.count("entry_rows(") + code.count("db.dwstageentry.")
     assert sites == 1, (
@@ -1663,15 +969,6 @@ def test_the_oversight_service_still_reads_stage_entries_in_exactly_one_place():
 
 
 def _blanked_code(path: Path) -> str:
-    """One module's source with comment and string spans blanked out, lowercased.
-
-    Blanked rather than REMOVED, so every remaining character keeps its original offset and a
-    match cannot be manufactured by two lines being joined together.
-
-    Extracted from :func:`_reads_stage_entries` on 2026-08-31, when Readers 10 and 11 needed the
-    same treatment. A second hand-rolled blanker is how two fences come to disagree about what
-    counts as code, and this file's whole subject is readers that disagree.
-    """
     text = path.read_text(encoding="utf-8")
     line_starts, offset = [], 0
     for line in text.splitlines(keepends=True):
@@ -1694,142 +991,34 @@ def _blanked_code(path: Path) -> str:
 
 
 def _reads_stage_entries(path: Path) -> bool:
-    """Whether this module reads ``DwStageEntry`` IN CODE, both ways in."""
     code = _blanked_code(path)
     return "db.dwstageentry." in code or "entry_rows(" in code
 
 
 def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
-    """**THE TRIPWIRE FOR THE READER NOBODY REMEMBERED TO ADD TO THIS FILE.**
-
-    The whole risk in a copy-on-write model is the reader you miss: it serves one answer while the
-    screen beside it serves another, and nothing raises because both look like data. Every test above
-    covers a reader that exists TODAY, which is exactly the coverage that cannot protect against the
-    reader added next quarter.
-
-    So this asserts the SHAPE of the inventory instead of its contents: which modules are allowed to
-    read ``DwStageEntry`` at all. Each name below was visited when this feature was built and either
-    wired to ``entry_provenance`` or deliberately left alone with a reason:
-
-    ``api/routes/design_workshops``  the three stage reads and the admin view — all wired.
-    ``services/design_workshops``    the save path (writes the column) and ``assemble_workshop_data``
-                                     (wired); plus the intra-workshop REF picker, which returns
-                                     dropdown LABELS and attributes nothing to anybody.
-    ``api/routes/analytics``         cross-workshop counts and ratios. It never shows one field to
-                                     one person, so there is nothing to attribute.
-    ``services/dictation_consent``   collects media ids off the entries; reads no field value.
-    ``services/design_ratings``      the review ledger's two subject loaders. EXEMPT on the REF
-                                     picker's grounds AND on one of its own: it takes a display
-                                     label, a pool gate it never serves, and ``createdById`` — and
-                                     a stamp's ``byName`` would cross to the pool readers this
-                                     module deliberately shows no names to. Argued in full above
-                                     ``design_ratings.load_subject``; the exemption's boundary is
-                                     fenced by the four tests under "Reader 7" above, which fail if
-                                     either loader ever takes a third field off ``data``.
-
-    A module not on this list that starts reading the table is a reader nobody has classified, and
-    the failure it produces is silent. Failing here — in the same commit, next to this docstring —
-    is the cheapest place to find out. Adding a name is a one-line change and is the right fix; it
-    just has to be a deliberate one, with the reader's own test added above.
-
-    THE EXPORTS ARE THE REASON THIS LIST IS SHORT, AND ONE OF THEM STOPPED BEING TRUE ON
-    2026-08-31. This paragraph read: "the dataset zip, the CSV downloads, the .xlsx workbook and the
-    data browser read the shared RECORD tables and never touch ``DwStageEntry``. They therefore
-    cannot serve a stale stage-entry value — there is no path from them to one." That still holds
-    for the dataset zip and the CSV downloads. It no longer holds for the DATA BROWSER: ``/data``
-    gained a design-workshop taxonomy and design-workshop sheets, and it reads the table directly.
-    It is on the list above, EXEMPT and fenced — see "Reader 9". The .xlsx workbook is the same
-    module, so the same classification covers it.
-    """
-    #: BOTH WAYS IN ARE MATCHED, because they are two different mistakes. ``db.dwstageentry`` is a
-    #: module going straight to the table, and ``entry_rows(`` is one using the shared loader — which
-    #: is the RIGHT thing to do and is exactly why it is easy to add a reader through it without
-    #: noticing. A check that watched only the raw delegate would miss every reader that behaved well.
     allowed = {
         "app/api/routes/design_workshops.py",
         "app/api/routes/analytics.py",
-        # Classified 2026-08-27, when this check first ran against the INSPECTOR wave. It reads the
-        # table through `entry_rows` and DOES resolve provenance — see the two tests in "Reader 8"
-        # above, which is the order this list requires: classify by writing the test, never by
-        # adding the name.
         "app/api/routes/design_workshop_inspections.py",
         "app/services/design_workshops.py",
         "app/services/dictation_consent.py",
         "app/services/design_ratings.py",
-        # Classified 2026-08-31, when ``/data`` grew its design-workshop half. EXEMPT: it serves
-        # VALUES and attributes nothing to anybody — no author column in the tree, the workbook or
-        # the JSON. The exemption is FENCED by the two tests under "Reader 9" above, which fail if
-        # this surface ever prints an author beside a value, and the paragraph there says what such
-        # a change would owe.
         "app/api/routes/data_browser.py",
-        # Classified 2026-08-31, in the same wave, when the repository archive grew its
-        # design-workshop half and the sixth search bucket landed. BOTH EXEMPT and both FENCED
-        # by the two tests under "Readers 10 and 11" above - the archive renders through the
-        # already-fenced flattener and names nobody in its own prose, and the search bucket
-        # groups by (workshop, stage) without ever reading a row.
         "app/api/routes/export.py",
         "app/api/routes/search.py",
-        # Classified 2026-09-14, when the tripwire caught the oversight wave. The officer's
-        # supervision read is NOT exempt and DOES resolve provenance — see the two tests in
-        # "Reader 12" above, which are the classification. It went a day without them, and the
-        # consequence of adding this name without writing them would have been a surface where
-        # deleting one `resolve_display_names` line leaves the whole suite green.
         "app/api/routes/design_workshop_oversight.py",
-        # Classified 2026-09-14, in the same wave. BOTH EXEMPT and both FENCED by the two tests
-        # under "Readers 13 and 14" above — the roster import takes an ordinal and a reference and
-        # serves a count, and the sanction register takes the two order keys and the registry's own
-        # completeness score and serves two booleans and a list of labels. Neither attributes
-        # anything to anybody, and a stamp in either would export an author to officers holding no
-        # grant on the workshop.
         "app/services/artisan_import.py",
         "app/services/sanction_orders.py",
-        # Classified 2026-09-20, when the tripwire caught the unassign. The ROUTE module of this
-        # name has been on this list since 2026-09-14 (Reader 12); this is the SERVICE beside it,
-        # and the route already being classified is why a second path into the table went unseen.
-        # EXEMPT on grounds no other entry uses - it SERVES NOTHING, reading one row's `data` only
-        # to hand it straight back minus `designerName` and answering with stage keys - and FENCED
-        # by the test under "Reader 16" above, which fails both if any part of that row reaches the
-        # caller and if the round trip drops a key.
         "app/services/design_workshop_oversight.py",
-        # Classified 2026-09-20, when the tripwire caught the ministry register. EXEMPT on
-        # `analytics`' grounds — it reads a page of workshops' entries to produce a percentage per
-        # workshop and never shows one field to one person — and FENCED by the test under
-        # "Reader 15" above, which fails if anything but a count, a bool and a schema version
-        # comes out of it. The exemption matters more here than anywhere else on this list: this
-        # is the one reader whose audience is every ministry and directorate account, over the
-        # whole estate, none of them holding a grant on a single workshop in it.
         "app/services/ministry_dashboard.py",
-        # Classified 2026-10-10 with the approvals router. NOT exempt: it resolves provenance, and
-        # the two tests under "Reader 17" above are the classification.
         "app/api/routes/design_workshop_approvals.py",
-        # The review aids (2026-10-17): EXEMPT. They read stage rows for TIMESTAMPS (when a stage was
-        # last written, for a note's "Edited since"; the newest edit, for a report's fingerprint) and
-        # copy the stage payload into a round's snapshot WITHOUT its provenance. No field value is
-        # attributed to anybody; the readers that show the data resolve it, tested above.
         "app/services/design_workshop_review_aids.py",
-        # Classified 2026-10-18 (C6-C10, A14, A16, B10). EXEMPT: stage_assist offers one-tap
-        # suggestions built from the workshop's own VALUES (applied by the designer into blank
-        # boxes, so the designer's save stamps them), and stage_computed stores counts worked out
-        # from rows. Neither reads a stamp nor attributes a value to anybody.
         "app/services/stage_assist.py",
         "app/services/stage_computed.py",
-        # Classified 2026-10-17 (C9). EXEMPT: "start from an earlier workshop" serves the CALLER'S
-        # OWN text back to them and other designers' text as a read-only block named by the source
-        # workshop's header, and reads a stamp only to ask "did this caller write it" — no stamp and
-        # no author reaches the wire. FENCED by `tests/test_workshop_copy.py`, which pins what the
-        # sources answer and how a copy is stamped.
         "app/services/workshop_copy.py",
         "app/api/routes/design_workshop_copy.py",
-        # Classified 2026-10-17 (C15). EXEMPT on `data_browser`'s grounds: the ministry stage-data
-        # export flattens VALUES through `design_workshop_data.flatten` (identity numbers masked) and
-        # attributes nothing to anybody. FENCED by `tests/test_ministry_dashboard_attention_export.py`.
         "app/services/ministry_export.py",
-        # Classified 2026-10-18 with the unified search index. EXEMPT: it reads `stageKey` and
-        # `searchText` and serves match text with no author, FENCED by the test under "Reader 18".
         "app/services/search_index.py",
-        # Classified 2026-10-19 with the artisan QR cards. EXEMPT: the workshop card sheet reads the
-        # participants stage only for each entry's `artisanRef`, to print the roster's cards in
-        # roster order. No stage value is shown and nothing is attributed to anybody.
         "app/api/routes/artisan_cards.py",
     }
     root = Path(__file__).resolve().parents[1] / "app"
@@ -1843,11 +1032,6 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
         "whether it must resolve field provenance (services/entry_provenance), add a test for it "
         "beside the others in this file, and then add it here."
     )
-    # AND THE DETECTOR MUST STILL DETECT, which is the failure mode the line above cannot see.
-    # `unclassified` is a set difference, so anything that stops `_reads_stage_entries` finding
-    # readers at all — a tokenizer that blanks too much, a spelling that changed — empties `found`
-    # and makes this test pass while checking nothing. Every name on the list is a module known to
-    # read the table, so every name on the list must come back.
     undetected = sorted(allowed - found)
     assert undetected == [], (
         f"{undetected} is on the classified list and the detector no longer finds it. This check "
@@ -1857,19 +1041,11 @@ def test_no_new_reader_of_stage_entries_appeared_without_resolving_provenance():
 
 
 def test_record_level_field_provenance_is_still_the_records_own_and_was_not_duplicated_here():
-    """The record tables' provenance stays in ``records.merge_field_provenance``. One rule, one home.
-
-    ``entry_provenance`` is for ``DwStageEntry`` — rows that hold COPIES of shared records and had no
-    authorship answer at all. The record tables already had one, on all six types, with a frontend
-    component rendering it. Reimplementing it beside the original would give the same question two
-    answers that drift, which is the failure ``viewable_where``'s own banner describes when it says
-    the old ``visibility_where`` was deliberately deleted rather than redefined.
-    """
     from app.services import records
 
     assert hasattr(records, "merge_field_provenance")
     assert not hasattr(ep, "merge_field_provenance"), "the record rule must not be forked in here"
     source = Path(ep.__file__).read_text(encoding="utf-8")
-    assert "extraMetadata" not in source.split('"""', 2)[2], (
+    assert "extraMetadata" not in source, (
         "entry_provenance must not write the record tables' provenance column"
     )

@@ -1,10 +1,3 @@
-"""Cross-researcher data sharing: tiered access requests/grants, comments, and edit history.
-
-Tiers (strictly increasing): DOWNLOAD < COMMENT < EDIT — see app.services.access for the enforcement
-used across the record routes. This module owns the request/grant lifecycle plus the comment and
-revision read/write endpoints.
-"""
-
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -39,7 +32,6 @@ GRANT_INCLUDE = {
     "scopeItems": True,
 }
 
-# record type -> (delegate, owner-id field). Used to resolve a record's owner for comment/edit checks.
 RECORD_DELEGATES: dict[str, tuple[Any, str]] = {
     "artisan": (db.artisan, "createdById"),
     "craft": (db.craft, "createdById"),
@@ -81,7 +73,6 @@ def _scope_create(scope_items: list[Any] | None) -> list[dict[str, Any]]:
 
 @router.get("/tiers")
 async def list_tiers(_: Any = Depends(get_current_user)) -> list[dict[str, str]]:
-    """The tier catalogue with human definitions, so the UI can show exactly what each tier confers."""
     return [
         {"tier": tier, "description": TIER_DESCRIPTIONS[tier]}
         for tier in ("DOWNLOAD", "COMMENT", "EDIT")
@@ -90,16 +81,7 @@ async def list_tiers(_: Any = Depends(get_current_user)) -> list[dict[str, str]]
 
 @router.get("/grants")
 async def my_grants(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """Everything access-related for the current user, split by perspective:
-    - incoming: requests/grants where I am the OWNER (others want or have access to my data)
-    - outgoing: requests/grants where I am the GRANTEE (my access to others' data)
-    """
     uid = get_value(current_user, "id")
-    # The two perspectives are two different WHEREs over the same table and neither reads the
-    # other, so they go out together: this route was two sequential round trips to answer one
-    # screen, and it is now one wave. Written when a hop was a cross-region ~750ms; co-located and
-    # ~1-2ms since 2026-09-02 (``services/concurrency.py``), so the saving is milliseconds now — the
-    # count of waits is what the change was about and that is unchanged.
     incoming, outgoing = await gather_reads(
         db.dataaccessgrant.find_many(
             where={"ownerId": uid}, include=GRANT_INCLUDE, order={"updatedAt": "desc"}
@@ -124,25 +106,6 @@ async def _upsert_grant(
     requested_by: str | None,
     decided_by: str | None,
 ) -> Any:
-    """Create or replace the single (owner, grantee) grant row, reconciling its subset items.
-
-    ATOMIC, AND ONLY THE DIFFERENCE IS WRITTEN. This used to be an ``update``, then a
-    ``delete_many`` of every scope row, then one ``create`` per item — outside any transaction, on a
-    database in another AWS region. Between the delete and the last insert a colleague pressing
-    Download received a zip that silently omitted the records whose scope rows had not been
-    re-inserted yet, presented as complete; and a process that died inside the loop left the grant
-    GRANTED at the tier the owner had just set while covering NO records at all — the owner's screen
-    saying the colleague has access, the colleague's export downloading successfully and containing
-    nothing, and neither of them told why.
-
-    Two fixes, and the second is what makes the common case free. The writes are wrapped in
-    ``db.tx()`` so a reader sees the old scope or the new one and never a half-built one (the same
-    tool ``design_workshops.save_stage`` uses for the same reason). And the scope is DIFFED rather
-    than rebuilt, because ``update_grant`` and ``decide_request`` re-send the grant's existing items
-    whenever the payload omits them (``:227``, ``:249``) — so a bare tier change, a revoke or a
-    reinstate used to tear down and re-insert every row of an unchanged subset. Now it writes
-    nothing, which is also what stops ``grantedAt`` moving on rows nobody edited.
-    """
     existing = await db.dataaccessgrant.find_unique(
         where={"ownerId_granteeId": {"ownerId": owner_id, "granteeId": grantee_id}},
         include={"scopeItems": True},
@@ -163,9 +126,6 @@ async def _upsert_grant(
         from datetime import UTC, datetime
 
         data["decidedAt"] = datetime.now(UTC)
-    # An ``allData`` grant names no records, so its scope is empty whatever was sent — otherwise
-    # narrowing a subset grant to "all data" would leave the old rows behind to reappear the day
-    # somebody widened the read.
     wanted: set[tuple[str, str]] = set()
     if not all_data:
         wanted = {(item["recordType"], item["recordId"]) for item in _scope_create(scope_items)}
@@ -177,8 +137,6 @@ async def _upsert_grant(
     add = sorted(wanted - held)
 
     if existing is not None and not remove and not add:
-        # The grant row alone — a tier change, a revoke, a reinstate. No scope write at all, so no
-        # window in which the subset is short, and nothing to make atomic.
         grant = await db.dataaccessgrant.update(where={"id": existing.id}, data=data)
         return await db.dataaccessgrant.find_unique(where={"id": grant.id}, include=GRANT_INCLUDE)
 
@@ -200,20 +158,11 @@ async def _upsert_grant(
                 }
             )
         if add:
-            # One statement, not one round trip per record: a twenty-record subset was twenty
-            # sequential hops, which is the window this whole change closes. The hops were
-            # cross-region when that was measured and are co-located since 2026-09-02
-            # (~1-2ms, ``services/concurrency.py``) — but this one is inside a TRANSACTION, so the
-            # count still buys something the link cannot: twenty statements is twenty chances for
-            # the block to outlive its timeout, and one is one.
             await tx.dataaccessscopeitem.create_many(
                 data=[
                     {"grantId": grant.id, "recordType": record_type, "recordId": record_id}
                     for record_type, record_id in add
                 ],
-                # `@@unique([grantId, recordType, recordId])`: two owners saving the same Sharing
-                # screen at once must not turn "already in the scope" — the intended outcome of
-                # this call — into a 500 on a duplicate key.
                 skip_duplicates=True,
             )
     return await db.dataaccessgrant.find_unique(where={"id": grant.id}, include=GRANT_INCLUDE)
@@ -223,7 +172,6 @@ async def _upsert_grant(
 async def request_access(
     payload: DataAccessRequestIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """A researcher requests access to another researcher's data (PENDING until the owner decides)."""
     _validate_tier(payload.tier)
     uid = get_value(current_user, "id")
     if payload.ownerId == uid:
@@ -238,10 +186,6 @@ async def request_access(
         where={"ownerId_granteeId": {"ownerId": payload.ownerId, "granteeId": uid}}
     )
     if existing is not None and _status_str(existing.status) == "GRANTED":
-        # Never reset an ACTIVE grant back to PENDING: the single (owner, grantee) row means a
-        # re-request would strip the requester's WORKING access while the owner deliberates, and a
-        # deny would destroy the original tier/scope entirely. Upgrades and scope changes go
-        # through the owner, who can edit the grant in place without ever leaving GRANTED.
         granted_tier = _tier_str(existing.tier)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -261,9 +205,6 @@ async def request_access(
         requested_by=uid,
         decided_by=None,
     )
-    # The owner hears of a NEW or reopened request (2026-10-18), never of a repeat while one is
-    # already pending — so re-posting cannot flood the owner's inbox. Never raises; a no-op when
-    # mail is off.
     if existing is None or _status_str(existing.status) != "PENDING":
         await email_outbox.notify_data_access_requested(
             payload.ownerId, current_user, tier=payload.tier, note=request_note
@@ -275,7 +216,6 @@ async def request_access(
 async def grant_access(
     payload: DataAccessGrantIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """An owner proactively grants a researcher access to their data (immediately GRANTED)."""
     _validate_tier(payload.tier)
     uid = get_value(current_user, "id")
     if payload.granteeId == uid:
@@ -317,7 +257,6 @@ async def _require_owned_grant(grant_id: str, current_user: Any) -> Any:
 async def decide_request(
     grant_id: str, payload: DataAccessDecisionIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """The owner approves (GRANTED) or denies (DENIED) a pending request, optionally adjusting tier/scope."""
     if payload.status not in {"GRANTED", "DENIED"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -342,7 +281,6 @@ async def decide_request(
         requested_by=None,
         decided_by=get_value(current_user, "id"),
     )
-    # The requester hears the decision (2026-10-18). Never raises; a no-op when mail is off.
     await email_outbox.notify_access_decided(
         get_value(grant, "granteeId"),
         scope="data",
@@ -358,7 +296,6 @@ async def decide_request(
 async def update_grant(
     grant_id: str, payload: DataAccessUpdateIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """The owner edits an existing grant (change tier, scope, or revoke/reinstate)."""
     if payload.status is not None and payload.status not in {"GRANTED", "REVOKED"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -398,7 +335,6 @@ async def delete_grant(grant_id: str, current_user: Any = Depends(get_current_us
     if grant is None:
         return
     uid = get_value(current_user, "id")
-    # Either party (or an admin) may remove the relationship entirely.
     if grant.ownerId != uid and grant.granteeId != uid and not is_admin(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your grant")
     await db.dataaccessgrant.delete(where={"id": grant.id})
@@ -412,8 +348,6 @@ def _status_str(value: Any) -> str:
     return str(getattr(value, "value", value))
 
 
-# ----------------------------------------------------------------------------- comments
-
 
 @router.get("/comments")
 async def list_comments(
@@ -421,8 +355,6 @@ async def list_comments(
     recordId: str = Query(..., min_length=1),
     _: Any = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
-    """Comments on a record. Readable by any authenticated user (all records are viewable); posting
-    requires COMMENT tier (or owner/admin)."""
     rows = await db.entrycomment.find_many(
         where={"recordType": recordType.lower(), "recordId": recordId},
         include={"author": True},
@@ -453,7 +385,6 @@ async def add_comment(
         },
         include={"author": True},
     )
-    # The record's creator hears of the comment (2026-10-18), unless they wrote it. Never raises.
     await email_outbox.notify_record_comment(
         owner_id,
         current_user,
@@ -465,7 +396,6 @@ async def add_comment(
     return public_encode(created)
 
 
-#: How a comment notice names the record, by type.
 COMMENT_LABELS: dict[str, str] = {
     "artisan": "your artisan record",
     "craft": "your craft record",
@@ -483,7 +413,6 @@ COMMENT_LABELS: dict[str, str] = {
 async def update_comment(
     comment_id: str, payload: CommentUpdate, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """The author edits their own comment. Nobody else rewrites what somebody said."""
     comment = await db.entrycomment.find_unique(where={"id": comment_id})
     if comment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found")
@@ -499,15 +428,12 @@ async def update_comment(
 
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_comment(comment_id: str, current_user: Any = Depends(get_current_user)) -> None:
-    """Content admins only (``deps.CONTENT_ADMIN_ROLES``, 2026-10-20). The author edits instead."""
     assert_can_delete(current_user)
     comment = await db.entrycomment.find_unique(where={"id": comment_id})
     if comment is None:
         return
     await db.entrycomment.delete(where={"id": comment_id})
 
-
-# ----------------------------------------------------------------------------- revisions (edit history)
 
 
 @router.get("/revisions")
@@ -516,16 +442,6 @@ async def list_revisions(
     recordId: str = Query(..., min_length=1),
     current_user: Any = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
-    """The edit history of a record (original values are reconstructable from the first edit's `old`).
-    Visible to admins and the record's owner so the original and every subsequent edit can be reviewed.
-
-    ONE EXCEPTION, and it is on the columns a reader is most likely to come here for: for the
-    identity and contact columns in `access.REVISION_REDACTED_FIELDS` the blob holds only the
-    DIRECTION of the change ("(value recorded)" -> "(cleared)" and friends, flagged `redacted`), not
-    the value, so those originals are NOT reconstructable from here. The argument for that is written
-    above the set; the short version is that a retraction which copies the retracted value into an
-    append-only table is not a retraction.
-    """
     owner_id = await _resolve_record_owner(recordType, recordId)
     if not is_content_admin(current_user) and owner_id != get_value(current_user, "id"):
         raise HTTPException(

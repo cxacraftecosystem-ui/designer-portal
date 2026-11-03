@@ -1,36 +1,3 @@
-"""Who may run a design & prototype workshop, and — separately — who may START one.
-
-TWO RULES LIVE IN THIS FILE AND THEY ARE NOT THE SAME RULE. Reading them as one is the mistake
-these tests exist to make impossible.
-
-1. RUNNING one — opening it, filling its 22 stages, creating records inside it, capturing
-   photographs and dictation, generating the report — is `can_run_design_workshops`, the SET
-   {DESIGNER, ADMIN, MASTER_ADMIN}. Unchanged, and half of this file is here to keep it that way.
-
-   THE GAP THAT RULE CLOSED was found by an audit, not by a test. `frontend/lib/permissions.ts`
-   hid the design-workshop pages from everyone outside the set, but the write routes were gated
-   only by `assert_can_create_records`, which is Researcher-and-above — so a RESEARCHER or a
-   PROFESSOR could edit a workshop, write its 22 stages and generate the report submitted to a
-   ministry, while the app showed them no way in. A UI guard over an open route hides the link and
-   leaves the URL, the API and the Android client wide open.
-
-2. STARTING a new one is `can_create_design_workshops`, {ADMIN, MASTER_ADMIN} — STRICTLY NARROWER,
-   and the only gate on this surface that refuses a designer anything.
-
-   THE REQUIREMENT, VERBATIM: "designers cannot create workshops (only admins/master admins can) —
-   designers create records under existing workshops." A workshop is not a record, it is the
-   container a fortnight of records lives in and the unit the ministry indexes and funds, so
-   opening one is an administrative act performed by whoever holds the sanction order.
-
-   THE FAILURE MODE THIS RULE COULD EASILY HAVE CAUSED, and the reason
-   `test_a_designer_keeps_every_other_capability_inside_a_workshop` is written the way it is: a
-   narrowing applied one function too widely takes a designer's stage edits with it. That would
-   cost a designer their fortnight of fieldwork, which is far worse than this rule is worth. Any
-   change here that makes that test fail is wrong, whatever else it fixes.
-
-These tests are unit-level on the predicates and on the route source, so they need no database.
-"""
-
 import pytest
 from fastapi import HTTPException
 
@@ -55,54 +22,34 @@ class _User:
 REFUSED = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "PROFESSOR")
 ALLOWED = ("DESIGNER", "ADMIN", "MASTER_ADMIN")
 
-#: Who may bring a NEW workshop into existence, and who may not. DESIGNER is in the second list and
-#: that is the whole point of this change; PROFESSOR is there for the older reason (the running set
-#: is a SET, not a ladder, so a professor was never inside it either).
 MAY_CREATE = ("ADMIN", "MASTER_ADMIN")
 MAY_NOT_CREATE = ("CROWDSOURCE_VOLUNTEER", "FIELD_CONTRIBUTOR", "RESEARCHER", "DESIGNER", "PROFESSOR")
 
-
-# ── 1. Running a workshop: unchanged ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("role", ALLOWED)
 def test_the_designer_set_may_run_a_workshop(role):
     assert can_run_design_workshops(_User(role)) is True
-    _require_designer(_User(role))   # must not raise
+    _require_designer(_User(role))
 
 
 @pytest.mark.parametrize("role", REFUSED)
 def test_everyone_else_is_refused_by_the_ROUTE_and_not_only_by_the_menu(role):
-    """PROFESSOR is in this list on purpose — see `deps.can_run_design_workshops`.
-
-    It is the one capability in that module which is a SET rather than a rank threshold, so a
-    professor cannot run a design workshop even though they outrank a designer. If that is ever
-    changed, change the SET; this test follows it.
-    """
     assert can_run_design_workshops(_User(role)) is False
     with pytest.raises(HTTPException) as raised:
         _require_designer(_User(role))
     assert raised.value.status_code == 403
 
 
-# ── 2. Starting a workshop: admins and the master admin only ─────────────────────────────────────
-
 
 @pytest.mark.parametrize("role", MAY_CREATE)
 def test_an_admin_and_a_master_admin_may_start_a_workshop(role):
     assert can_create_design_workshops(_User(role)) is True
-    assert_can_create_design_workshops(_User(role))   # must not raise
+    assert_can_create_design_workshops(_User(role))
 
 
 @pytest.mark.parametrize("role", MAY_NOT_CREATE)
 def test_nobody_else_may_start_one_and_a_DESIGNER_is_the_point(role):
-    """A designer is refused at create — by the SERVER, not by a hidden button.
-
-    DESIGNER is the role this test was written for. It is inside `DESIGN_WORKSHOP_ROLES`, so every
-    other gate in `design_workshops.py` lets it through; this is the one that does not, and if it
-    ever stops refusing, the requirement has been silently reverted while every other test in this
-    file still passes.
-    """
     assert can_create_design_workshops(_User(role)) is False
     with pytest.raises(HTTPException) as raised:
         assert_can_create_design_workshops(_User(role))
@@ -110,13 +57,6 @@ def test_nobody_else_may_start_one_and_a_DESIGNER_is_the_point(role):
 
 
 def test_the_refusal_names_who_can_create_one_and_what_to_do_instead():
-    """A refusal that only says "forbidden" tells a designer in a courtyard to stop working.
-
-    The truth is far narrower than that — everything they came to do still works the moment an
-    admin has opened the workshop — so the sentence has to carry three facts: who can create one,
-    what to ask them for, and that the rest of the job is untouched. Asserted rather than trusted
-    because refusal copy is the first thing to rot when a message is reworded in a hurry.
-    """
     with pytest.raises(HTTPException) as raised:
         assert_can_create_design_workshops(_User("DESIGNER"))
     detail = raised.value.detail
@@ -124,35 +64,17 @@ def test_the_refusal_names_who_can_create_one_and_what_to_do_instead():
     lowered = detail.lower()
     assert "admin" in lowered, "the refusal must name WHO can create a workshop"
     assert "ask an admin" in lowered, "the refusal must name the next move, not just the rule"
-    # And it must not read as though the designer has lost the job itself.
     assert "22 stages" in lowered or "22 stages" in detail
     assert "report" in lowered
 
 
 def test_creating_is_strictly_narrower_than_running():
-    """The two sets are related by containment, and the containment is the design.
-
-    If they ever became equal, or crossed, somebody would be able to create a workshop they cannot
-    then open — or the create gate would have quietly been widened back to the designer set.
-    """
     assert DESIGN_WORKSHOP_CREATOR_ROLES < DESIGN_WORKSHOP_ROLES
     assert "DESIGNER" in DESIGN_WORKSHOP_ROLES
     assert "DESIGNER" not in DESIGN_WORKSHOP_CREATOR_ROLES
 
 
 def test_the_create_route_carries_the_create_gate_and_only_that_one():
-    """The gate has to be ON the route, and the OLD gates have to be OFF it.
-
-    Read from the SOURCE rather than by calling it, because calling it needs a database; what this
-    defends against is somebody restoring `_require_designer` here "for symmetry" with the rest of
-    the file, which would let a designer create a workshop again while every other assertion in
-    this file still passed.
-
-    THIS ASSERTION REPLACED ONE THAT DEMANDED THE OPPOSITE. The previous version of this test
-    required `_require_designer(current_user)` in `create_design_workshop`, which pinned the rule
-    that has now deliberately changed. It is rewritten rather than deleted so the file still says
-    what the create route must carry — and says, here, why the old assertion went.
-    """
     import inspect
 
     from app.api.routes import design_workshops as module
@@ -162,42 +84,24 @@ def test_the_create_route_carries_the_create_gate_and_only_that_one():
         "POST /design-workshops does not enforce who may START a workshop, so the browser is the "
         "only thing stopping a designer — and the API and the Android client ignore the browser"
     )
-    # `_require_designer` would be a WIDER gate reached first, and its 403 says "requires Designer
-    # access or above" — which a designer HAS. Present, it would either admit them or refuse them
-    # with a sentence that is untrue of them.
     assert "_require_designer(current_user)" not in source, (
         "the create route has had the designer gate put back on it; a designer passes that gate, "
         "so the rule that only admins may start a workshop is no longer enforced"
     )
 
 
-# ── 2b. The gate's REACH, counted rather than remembered ─────────────────────────────────────────
 
-
-#: The non-GET routes in ``design_workshops.py`` that do NOT call ``_require_designer``, keyed the
-#: way the decorator spells them. Five are argued in the module header and in the gate's own
-#: docstring; ``/{workshop_id}/exports`` is the one that is only DESCRIBED there, because it is a
-#: write sitting behind ``load_workshop_or_404(for_edit=True)`` alone and tightening it is an
-#: owner's decision rather than a test's. Either way it is pinned: adding a seventh ungated write,
-#: or gating one of these six, fails here and makes somebody say which they meant.
 UNGATED_WRITES = {
-    ("POST", ""),                          # create — assert_can_create_design_workshops, narrower
-    ("DELETE", "/{workshop_id}"),          # assert_can_delete
-    ("POST", "/{workshop_id}/restore"),    # require_admin
-    ("POST", "/{workshop_id}/report"),     # open to anyone who may READ the workshop
-    ("POST", "/dictate"),                  # retired: answers 410 to everyone
-    # load_workshop_or_404(for_edit=True, barred_to_post_holders=False) and nothing else
+    ("POST", ""),
+    ("DELETE", "/{workshop_id}"),
+    ("POST", "/{workshop_id}/restore"),
+    ("POST", "/{workshop_id}/report"),
+    ("POST", "/dictate"),
     ("POST", "/{workshop_id}/exports"),
 }
 
 
 def _router_routes():
-    """Every ``@router.<verb>("<path>")`` in the module, with the source of the handler beneath it.
-
-    Read as TEXT for the same reason ``test_the_create_route_carries_the_create_gate_and_only_that_one``
-    does: the gate is stated INSIDE each handler rather than declared as a dependency, so there is
-    nothing on the route object to inspect and calling the handlers would need a database.
-    """
     import re
     from pathlib import Path
 
@@ -218,20 +122,6 @@ def _router_routes():
 
 
 def test_the_designer_gate_still_stands_where_this_docstring_says_it_does():
-    """``_require_designer``'s docstring states its reach in numbers. This is what keeps them true.
-
-    THE DEFECT THIS REPLACES was a docstring that described the gate as covering "the two capture
-    aids" while fourteen call sites read it — an understatement large enough that somebody could
-    have lifted the gate off the stage save believing it guarded an OCR button. Rewriting it fixed
-    the sentence; only this test fixes the class of defect, because a hand-kept count in a comment
-    rots the first time anybody adds a route. ``docs/tools/check-docs.mjs`` has a rot detector for
-    exactly this shape and its regex does not reach the words "calls" or "routes", so the claim
-    slipped past it rather than satisfying it.
-
-    If this fails, the source moved and the docstring did not. Update
-    ``app/api/routes/design_workshops.py::_require_designer`` — the enumerated list, the counts in
-    its opening line and in "eighteen routes", and ``UNGATED_WRITES`` above — in the same commit.
-    """
     routes, source = _router_routes()
     writes = [(verb, path, body) for verb, path, body in routes if verb != "GET"]
 
@@ -245,7 +135,6 @@ def test_the_designer_gate_still_stands_where_this_docstring_says_it_does():
     via_verb_gate = {(v, p) for v, p, body in writes if "_verb_gate(" in body} - gated
     ungated = {(v, p) for v, p, _ in writes} - gated - via_verb_gate
 
-    # Twelve direct + five behind `_verb_gate` = the seventeen of twenty-three the docstring claims.
     assert (len(writes), len(gated), len(via_verb_gate)) == (23, 12, 5), (
         f"{len(writes)} non-GET routes, {len(gated)} gated directly and {len(via_verb_gate)} behind "
         f"_verb_gate — _require_designer's docstring says 23, 12 and 5"
@@ -256,28 +145,16 @@ def test_the_designer_gate_still_stands_where_this_docstring_says_it_does():
     )
 
 
-# ── 3. The half that must NOT have moved ─────────────────────────────────────────────────────────
-
 
 def test_a_designer_keeps_every_other_capability_inside_a_workshop():
-    """A designer may still do everything except bring a new workshop into existence.
-
-    THE WHOLE POINT OF THIS TEST. Narrowing "create" is one line; narrowing it in the wrong place
-    silently takes a designer's stage saves, their photographs or their report with it, and the
-    first person to find out is somebody two weeks into fieldwork. So the capability itself is
-    asserted, and then every write route in the module is read to confirm it still asks the SET and
-    not the admin gate.
-    """
     designer = _User("DESIGNER")
     assert can_run_design_workshops(designer) is True
-    _require_designer(designer)   # opening, editing, stages, capture, report — all this gate
+    _require_designer(designer)
 
     import inspect
 
     from app.api.routes import design_workshops as module
 
-    # Every write route that is NOT the create. Each must still carry `_require_designer` and must
-    # NOT have picked up the admin-only create gate.
     for name in ("update_design_workshop", "save_stage_data"):
         source = inspect.getsource(getattr(module, name))
         assert "_require_designer(current_user)" in source, (
@@ -290,12 +167,6 @@ def test_a_designer_keeps_every_other_capability_inside_a_workshop():
 
 
 def test_the_two_surfaces_declare_the_same_set():
-    """`frontend/lib/permissions.ts` carries the identical sets and must keep carrying them.
-
-    BOTH sets now, not one. The web enforces the create rule as well — early, so a designer finds
-    out before filling 22 stages rather than at sync — and a web copy that admitted DESIGNER would
-    hand a designer a create form the API refuses.
-    """
     import re
     from pathlib import Path
 
@@ -304,14 +175,6 @@ def test_the_two_surfaces_declare_the_same_set():
         pytest.skip("the frontend is not present in this checkout")
     text = web.read_text(encoding="utf-8")
 
-    # THE RUNNING SET, READ OFF ITS DECLARATION AND COMPARED AS A SET. This used to search the whole
-    # FILE for each role's quoted name — which every role passes, because every role is quoted
-    # somewhere in that file — and to look for PROFESSOR in the 200 characters after the first
-    # mention of the name, which is a comment as often as it is the array. So a web copy missing a
-    # directorate tier, or carrying PROFESSOR one line further down, stayed green. The array literal
-    # is what decides the web's answer, so it is what is read; ``//`` comments inside it are dropped
-    # first because they quote roles in prose (``"INSPECTOR IS DELIBERATELY ABSENT"`` reads as a
-    # member to a naive token match).
     running = re.search(r"DESIGN_WORKSHOP_ROLES\s*:[^=]*=\s*\[([^\]]*)\]", text)
     assert running, (
         "frontend/lib/permissions.ts has no `DESIGN_WORKSHOP_ROLES = [...]` declaration, so there is "
@@ -326,12 +189,6 @@ def test_the_two_surfaces_declare_the_same_set():
     assert "DESIGN_WORKSHOP_CREATOR_ROLES" in text, (
         "the web does not declare who may CREATE a workshop, so its create control is guessing"
     )
-    # THE **DECLARATION**, matched by regex rather than by splitting on the name. Splitting takes the
-    # LAST occurrence, which is the reference inside `canCreateDesignWorkshops`, whose next 200
-    # characters are the end of a function and contain no role at all — so the naive version of this
-    # assertion failed against a perfectly correct file and would have "passed" again the moment
-    # somebody reordered the module. The array literal is what has to be read, so it is what is
-    # matched.
     declaration = re.search(
         r"DESIGN_WORKSHOP_CREATOR_ROLES\s*:[^=]*=\s*\[([^\]]*)\]", text
     )

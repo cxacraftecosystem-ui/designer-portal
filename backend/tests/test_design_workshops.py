@@ -1,27 +1,3 @@
-"""The design-workshop service layer, minus the database.
-
-The parts worth pinning here are the pure ones: how a stored value becomes the string a report
-prints, how the report builder turns registry-declared fields into blocks, and how a template
-narrows what a report contains. The database half is exercised end to end against real Postgres
-in the round-trip script; what is protected here is the logic that would be wrong in the same
-way on every workshop.
-
-The formatting assertions are not cosmetic. A cost sheet is read by an officer who writes
-lakhs, a date typed as 10-02-2026 means February in the field and October to a reader, and a
-missing optional field that prints "None" reads as a data-entry error. Each of those changes
-what the number in a sanctioned report means.
-
-SINCE 2026-08-29 IT ALSO CARRIES THE HEADER-EDIT RULES, and the first line above is now only half
-true of this file. ``PATCH /design-workshops/{id}`` is what requirement 27 — "edit a design
-prototype workshop" — turns on, and half of what has to be pinned about it is still a statement
-about literals in this repository: which columns the create and the edit each own, and how one body
-key becomes one Prisma value. The other half is a row in ``DesignWorkshopViewer`` deciding an HTTP
-status, which cannot honestly be asserted against anything but real Postgres. Those tests carry
-``needs_db`` INDIVIDUALLY rather than through a module-level ``pytestmark``, so the sixty
-report-builder tests above still run on a laptop with no Docker — which is where most of this
-file's value has always been.
-"""
-
 import inspect
 import uuid
 from datetime import UTC, datetime
@@ -51,10 +27,6 @@ from app.services.report_templates import TEMPLATES, template, template_choices
 from app.services.report_theme import theme_from_accent
 from app.services.stage_schema import FieldSpec, FieldType, Tier, all_entities
 
-# --------------------------------------------------------------------------------------
-# format_value
-# --------------------------------------------------------------------------------------
-
 
 def _f(type: FieldType, **kw) -> FieldSpec:
     return FieldSpec(key="x", label="X", type=type, **kw)
@@ -70,8 +42,6 @@ def _f(type: FieldType, **kw) -> FieldSpec:
     ],
 )
 def test_money_is_grouped_the_indian_way(amount, expected):
-    """12,34,567 not 1,234,567. A Western-grouped figure is misread at a glance by the officer
-    for whom it becomes a sanctioned amount."""
     assert format_value(_f(FieldType.MONEY), amount) == expected
 
 
@@ -85,15 +55,6 @@ def test_unparseable_money_prints_verbatim_rather_than_vanishing():
 
 @pytest.mark.parametrize("stored", ["nan", "NaN", "inf", "-inf", float("nan")])
 def test_a_stored_non_finite_number_is_never_dressed_up_as_an_amount(stored):
-    """ "₹ nan." IS WHAT THIS PRINTED, in the browser preview, in the .docx a ministry receives
-    and in the on-device report.
-
-    A bare ``float()`` reads "NaN" and "Infinity" happily, so a value that reached the column
-    before ``coerce_value`` refused them formats as a perfectly ordinary currency figure. The
-    charts have always dropped those rows — ``_as_number`` is what they use — so the cost table
-    and the figure beside it disagreed, with nothing in the document to say why. Printing the
-    stored text as the unreadable thing it is makes the two agree.
-    """
     assert format_value(_f(FieldType.MONEY), stored) == str(stored)
     assert format_value(_f(FieldType.PERCENT), stored) == str(stored)
     assert format_value(_f(FieldType.DECIMAL), stored) == str(stored)
@@ -105,7 +66,6 @@ def test_dates_print_as_a_person_writes_them():
 
 
 def test_enums_print_their_label_not_their_token():
-    """A report that says "TIE_AND_DYE" is not a report anyone submits to a ministry."""
     spec = _f(FieldType.ENUM, enum="PRODUCT_CATEGORY")
     assert format_value(spec, "TABLE_LINEN") == "Table linen"
 
@@ -135,7 +95,6 @@ def test_empty_values_print_nothing_never_the_word_none():
 
 
 def test_media_never_prints_as_text():
-    """A media field's value is an id; printing it would put a cuid in the middle of a report."""
     assert format_value(_f(FieldType.IMAGE), "cmshxj9id0001") == ""
     assert format_value(_f(FieldType.IMAGE_LIST), ["a", "b"]) == ""
 
@@ -146,10 +105,6 @@ def test_geo_prints_readable_coordinates():
     )
 
 
-# --------------------------------------------------------------------------------------
-# Templates
-# --------------------------------------------------------------------------------------
-
 
 def test_every_template_is_choosable_and_distinct():
     ids = [t.id for t in TEMPLATES]
@@ -158,8 +113,6 @@ def test_every_template_is_choosable_and_distinct():
 
 
 def test_an_unknown_template_falls_back_rather_than_raising():
-    """A saved workshop can name a template a later release removed. Losing the ability to print
-    two weeks of fieldwork because its template was retired is not an acceptable outcome."""
     assert template("NO_SUCH_TEMPLATE").id == TEMPLATES[0].id
 
 
@@ -184,10 +137,6 @@ def test_the_compact_template_admits_only_basic_fields():
     assert template("COMPACT_SUMMARY").max_tier is Tier.BASIC
 
 
-# --------------------------------------------------------------------------------------
-# The builder
-# --------------------------------------------------------------------------------------
-
 
 def _meta(**kw) -> ReportMeta:
     base = {"title": "Workshop", "subtitle": "Cluster", "generated_at": "2026-08-07T00:00:00Z"}
@@ -206,10 +155,9 @@ def _resolver(media_id: str):
 
 
 def test_an_empty_workshop_still_produces_a_document():
-    """A designer who opens the report screen on day one must get a cover, not a stack trace."""
     doc, warnings = build_report(_data(), "DCH_STANDARD", _resolver, meta=_meta())
     assert any(isinstance(b, CoverBlock) for b in doc.blocks)
-    assert warnings  # every stage's required fields are unfilled, and it says so
+    assert warnings
 
 
 def test_cover_rows_come_from_the_cover_field_role():
@@ -266,12 +214,10 @@ def test_a_collection_becomes_a_table_with_its_declared_columns():
     table = tables[0]
     assert "Artisan name" in [c.header for c in table.columns]
     assert runs_text(table.rows[0][1]) == "Bhikari Meher"
-    # The Basic/Standard flags travel into the cells: a bool prints as Yes, not True.
     assert any(runs_text(cell) == "Yes" for cell in table.rows[0])
 
 
 def test_table_column_widths_always_sum_to_one_hundred():
-    """TableBlock raises otherwise, so this proves the builder's normalisation, not the model."""
     doc, _w = build_report(
         _data(
             collections={
@@ -297,8 +243,6 @@ def test_table_column_widths_always_sum_to_one_hundred():
 
 
 def test_headline_counts_are_derived_not_typed():
-    """Stage 18 asks for "no. of designs"; a hand-typed count is a second source of truth that
-    goes stale the moment one more sketch is added."""
     doc, _w = build_report(
         _data(
             collections={
@@ -319,7 +263,6 @@ def test_headline_counts_are_derived_not_typed():
 
 
 def test_a_tier_capped_template_omits_standard_fields():
-    """COMPACT_SUMMARY admits BASIC only, so a Standard-tier answer must not appear in it."""
     data = _data(
         singletons={
             "CLUSTER_CRAFT_BACKGROUND": {
@@ -340,8 +283,6 @@ def test_a_tier_capped_template_omits_standard_fields():
 
 
 def test_report_generation_and_archive_stages_never_print():
-    """They configure the report and record the archive; printing them would be the report
-    describing its own generation."""
     doc, _w = build_report(
         _data(
             singletons={
@@ -383,20 +324,10 @@ def test_warnings_name_the_stage_and_the_missing_fields():
     )
     setup_warning = next(w for w in warnings if "Stage 1" in w)
     assert "not recorded" in setup_warning.lower()
-    # And they stay OUT of the document: an officer opening the file next month should not find
-    # a note about what was missing on the day.
     assert doc.warnings == ()
 
 
 def test_the_document_carries_the_template_palette_unless_one_is_supplied():
-    """The default must not change, and the override must reach the document whole.
-
-    Both halves matter. A deployment that has never opened the colour picker has to keep
-    generating exactly the reports it generated last year, which is what the first assertion
-    protects; and the second is what makes the picker mean anything, because the theme is read by
-    the DOCX writer's styles part and by every colour the PDF draws — a theme that stopped at the
-    builder would be a colour the designer chose, saw in the preview, and did not get.
-    """
     default, _w = build_report(_data(), "DCH_STANDARD", _resolver, meta=_meta())
     assert default.theme == template("DCH_STANDARD").theme
 
@@ -404,13 +335,10 @@ def test_the_document_carries_the_template_palette_unless_one_is_supplied():
     recoloured, _w2 = build_report(_data(), "DCH_STANDARD", _resolver, meta=_meta(), theme=maroon)
     assert recoloured.theme == maroon
     assert recoloured.theme.table_header_fill == "802F42"
-    # The typography is the TEMPLATE's, not the accent's. Choosing a colour is not a request to
-    # re-typeset a document somebody else designed.
     assert recoloured.theme.body_font == template("DCH_STANDARD").theme.body_font
 
 
 def test_every_entity_the_registry_declares_is_reachable_by_some_template():
-    """A collection no template prints is data a designer types and never sees again."""
     printed: set[str] = set()
     for t in TEMPLATES:
         for section in t.sections:
@@ -425,7 +353,6 @@ def test_every_entity_the_registry_declares_is_reachable_by_some_template():
 
 
 def test_builder_is_deterministic():
-    """Two builds of the same data must be the same document, or a checksum means nothing."""
     data = _data(singletons={"WORKSHOP_SETUP": {"workshopTitle": "W", "craftName": "Ikat"}})
     a, _ = build_report(data, "DCH_STANDARD", _resolver, meta=_meta())
     b, _ = build_report(data, "DCH_STANDARD", _resolver, meta=_meta())
@@ -442,19 +369,6 @@ def test_row_labels_fall_back_through_label_field_then_text_then_ordinal():
 
 
 def test_a_heading_taken_from_free_text_is_cut_at_a_sentence_not_at_a_byte():
-    """35 of the 394 headings in one generated report were EXACTLY eighty characters and ended
-    mid-word, because the fallback was ``text[:80]`` — a raw slice with no word boundary and no
-    ellipsis:
-
-        "15.1. SK-01 is taken forward as the first prototype. It is the only drawing on the she"
-
-    These are section headings in a document submitted to a ministry, and they propagate: the
-    same string is printed, listed in the PDF contents with a dot leader and a page number after
-    it, and written into the PDF's bookmark outline.
-
-    The first sentence is preferred because a designer's first sentence is almost always the
-    summary — the paragraph after it is not a title.
-    """
     from app.services.report_builder import _heading_summary
 
     assert (
@@ -467,8 +381,6 @@ def test_a_heading_taken_from_free_text_is_cut_at_a_sentence_not_at_a_byte():
 
 
 def test_a_heading_with_no_sentence_short_enough_is_elided_on_a_word_boundary():
-    """The fallback still has to be a fallback: a cut is fine, a cut mid-word is not, and a
-    reader has to be able to tell an extract from a sentence somebody left unfinished."""
     from app.services.report_builder import _heading_summary
 
     long_run = (
@@ -479,19 +391,16 @@ def test_a_heading_with_no_sentence_short_enough_is_elided_on_a_word_boundary():
     assert len(heading) <= 80
     assert heading.endswith("…"), "an elision must be visible as one"
     assert long_run.startswith(heading[:-1].rstrip()), "and must not invent words"
-    # The cut lands between words, never inside one.
     assert long_run[len(heading[:-1].rstrip())] == " "
 
 
 def test_a_decimal_point_is_not_the_end_of_a_sentence():
-    """ "Priced at 1250.10 per metre" must not become a heading reading "Priced at 1250."."""
     from app.services.report_builder import _heading_summary
 
     assert _heading_summary("Priced at 1250.10 per metre.") == "Priced at 1250.10 per metre."
 
 
 def test_a_short_answer_is_left_exactly_as_it_is():
-    """The common case by far, and the one a truncation rule must not touch."""
     from app.services.report_builder import _heading_summary
 
     assert _heading_summary("Runner, 180 x 40 cm") == "Runner, 180 x 40 cm"
@@ -499,13 +408,8 @@ def test_a_short_answer_is_left_exactly_as_it_is():
     assert _heading_summary("   ") == ""
 
 
-# --------------------------------------------------------------------------------------
-# No presentation may silently drop a field
-# --------------------------------------------------------------------------------------
-
 
 def _all_text(doc) -> str:
-    """Every printable string in a document, whatever block it landed in."""
     from app.services.report_model import (
         BulletListBlock,
         CoverBlock,
@@ -541,9 +445,6 @@ def _all_text(doc) -> str:
 @pytest.mark.parametrize(
     ("stage_key", "entity_key", "row"),
     [
-        # A sketch is rendered as CARDS by the standard running order, a participant as a TABLE.
-        # Both must print every role: the bug this guards was TABLE_COLUMN fields vanishing from
-        # CARDS, and KEY_VALUE/BULLETS fields vanishing from a TABLE's per-row detail.
         (
             "SKETCH_DEVELOPMENT",
             "sketch",
@@ -585,15 +486,6 @@ def _all_text(doc) -> str:
     ],
 )
 def test_no_presentation_silently_drops_a_filled_field(stage_key, entity_key, row):
-    """Every value a designer filled in must appear SOMEWHERE in the report.
-
-    This is the general form of a real defect: CARDS presentation collected NARRATIVE,
-    KEY_VALUE and BULLETS roles but not TABLE_COLUMN, so a sketch's number, category and
-    expected price were captured, counted towards completeness, and then printed nowhere at
-    all. Nothing failed; the report was simply missing three fields per sketch.
-
-    A presentation is a layout of the designer's work, never a filter on it.
-    """
     from app.services.stage_schema import ReportRole, all_entities
 
     entity = next(e for _s, e in all_entities() if e.key == entity_key)
@@ -617,13 +509,8 @@ def test_no_presentation_silently_drops_a_filled_field(stage_key, entity_key, ro
         )
 
 
-# --------------------------------------------------------------------------------------
-# X-Report-Warnings: what the response can carry, and what it must never lose in silence
-# --------------------------------------------------------------------------------------
-
 
 def _header(warnings):
-    """Imported inside the helper: the route module is heavy and only these tests need it."""
     from app.api.routes.design_workshops import _warnings_header
 
     return _warnings_header(warnings)
@@ -635,17 +522,6 @@ def test_short_warning_lists_are_carried_whole():
 
 
 def test_a_long_warning_list_drops_whole_warnings_and_says_how_many():
-    """THE DEFECT: ``"; ".join(warnings)[:900]`` cut the list off mid-word and said nothing.
-
-    On DCH_STANDARD — the default template — a workshop raises about a dozen warnings, and the LOAD
-    warnings are appended last, so they were the first to be cut. Those are precisely the ones that
-    say a WHOLE ANNEXURE is missing from the file: the questionnaire annexure's "attached to this
-    workshop but nothing was recorded against it" never reached the designer, who saw a report with
-    no questionnaire annexure and no sentence anywhere explaining why.
-
-    Two properties, and the second is the one that was broken: the header stays inside its budget,
-    and everything in it is a WHOLE warning, followed by a count of the ones that did not fit.
-    """
     from app.api.routes.design_workshops import _WARNINGS_HEADER_BUDGET
 
     items = [
@@ -656,21 +532,12 @@ def test_a_long_warning_list_drops_whole_warnings_and_says_how_many():
     pieces = header.split("; ")
 
     assert len(header) <= _WARNINGS_HEADER_BUDGET
-    # ONE piece, not two. The note carries no ";" of its own — that character is this header's item
-    # separator and `frontend/lib/designWorkshops.ts` splits on it, so a semicolon inside the note
-    # would show the designer two half-sentences.
     assert pieces[-1].endswith("The report preview lists all of them.")
     assert int(pieces[-1].split()[0]) == len(items) - (len(pieces) - 1)
-    # Not one fragment: every carried piece is a warning exactly as it was written.
     assert all(piece in items for piece in pieces[:-1])
 
 
 def test_a_single_warning_wider_than_the_budget_is_marked_rather_than_passed_off_whole():
-    """A truncated sentence shown as a complete warning is worse than a visibly truncated one.
-
-    ``frontend/lib/designWorkshops.ts`` splits this header on ";" and prints each piece to the
-    designer, so a fragment ending "... 2 required " reads as a finished statement of fact.
-    """
     from app.api.routes.design_workshops import _WARNINGS_HEADER_BUDGET
 
     header = _header(["y" * 4000, "A second warning."])
@@ -680,27 +547,12 @@ def test_a_single_warning_wider_than_the_budget_is_marked_rather_than_passed_off
 
 
 def test_non_ascii_is_replaced_rather_than_raising_inside_starlette():
-    """Every ASGI header value is encoded latin-1; a craft named in Odia must not cost a 500."""
     header = _header(["Craft ସମ୍ବଲପୁରୀ has no cost sheet."])
     assert header.isascii()
     assert "has no cost sheet." in header
 
 
 def test_a_semicolon_inside_a_warning_does_not_split_it_on_the_designers_screen():
-    """PACKING WHOLE WARNINGS IS ONLY HALF OF "never a fragment". This is the other half.
-
-    ``";"`` is this header's separator and ``frontend/lib/designWorkshops.ts`` splits the value on
-    it, so a semicolon inside a warning is indistinguishable from the boundary between two.
-
-    MEASURED AGAINST THE RUNNING SERVER, not imagined: ``questionnaire_warnings`` interpolates the
-    questionnaire's TITLE, which a designer types. A form called "Loom survey; round two" sent
-    ``x-report-warning-count: 2`` with nothing truncated, and the report screen showed THREE
-    warnings, the last of them ``"round two)."`` — the sentence saying a whole annexure is missing
-    from the file, delivered as two halves, one of which means nothing alone.
-
-    The assertion is the FRONTEND's split — ``";"``, not ``"; "`` — because what is being pinned is
-    what the designer reads, not what the header contains.
-    """
     typed_by_a_designer = (
         "1 questionnaire attached to this workshop has no recorded answers and was left out "
         "of the questionnaire annexure (Loom survey; round two)."
@@ -713,22 +565,11 @@ def test_a_semicolon_inside_a_warning_does_not_split_it_on_the_designers_screen(
         f"half-sentence: {pieces}"
     )
     assert pieces[0].endswith("(Loom survey, round two).")
-    # The pause the designer wrote survives as a comma rather than being deleted outright.
     assert "round two" in pieces[0]
 
 
-# --------------------------------------------------------------------------------------
-# GET /report/preview's `meta`: the geometry the web draws its sheets on
-# --------------------------------------------------------------------------------------
-
 
 def _preview_meta_of(**meta_kwargs):
-    """Imported inside the helper, for the reason ``_header`` gives: the route module is heavy.
-
-    A ``ReportDocument`` with no blocks, because nothing here is about blocks: ``_preview_meta``
-    reads ``document.meta`` and nothing else, and building a document with content would put the
-    builder between this test and the thing it is pinning.
-    """
     from app.api.routes.design_workshops import _preview_meta
     from app.services.report_model import ReportDocument, ReportMeta, ReportTheme
 
@@ -739,19 +580,6 @@ def _preview_meta_of(**meta_kwargs):
 
 
 def test_the_preview_carries_both_halves_of_the_page_geometry():
-    """THE DEFECT: the payload carried the PAPER and not the MARGIN.
-
-    A page is not sized by its sheet alone. ``report_pdf.PdfRenderer`` computes its text column as
-    ``page_w - 2 * margin`` and ``report_docx`` writes the same number into the section properties,
-    so the margin decides where every line wraps and therefore where every page breaks. With only
-    ``pageSize`` on the wire the web preview had to assume the other half: ``previewModel
-    .pageGeometry`` fell back to 25 and ``ReportSheet`` printed "25 mm margins assumed (the preview
-    payload does not carry the margin)" above every sheet — an apology, on the one screen a
-    designer approves the document from, for a number the server was holding.
-
-    The expected margin is READ OFF the dataclass rather than typed as ``25.0``, so this test
-    cannot be the thing that disagrees with the default it is describing.
-    """
     from app.services.report_model import ReportMeta
 
     payload = _preview_meta_of()
@@ -761,15 +589,6 @@ def test_the_preview_carries_both_halves_of_the_page_geometry():
 
 
 def test_the_preview_reports_the_documents_own_margin_and_not_a_constant():
-    """The half of the fix a default-only assertion cannot see.
-
-    ``margin_mm`` is 25.0 on every document this deployment produces — no ``ReportTemplate`` field
-    sets it, ``report_meta`` reads no stage-20 answer for it, and ``render_report`` overrides only
-    the page size and the two running lines — so a hardcoded ``"marginMm": 25.0`` would pass the
-    test above for ever and be silently wrong on the first document that moves it. The margin has
-    to travel FROM the document, which is what makes the preview correct by construction rather
-    than by coincidence.
-    """
     from app.services.report_model import PageSize
 
     payload = _preview_meta_of(page_size=PageSize.LETTER, margin_mm=18.0)
@@ -778,91 +597,32 @@ def test_the_preview_reports_the_documents_own_margin_and_not_a_constant():
     assert payload["pageSize"] == "LETTER"
 
 
-# --------------------------------------------------------------------------------------
-# The workshop header: what an edit may reach, and what it may never  (requirement 27)
-# --------------------------------------------------------------------------------------
-#
-# WHY THESE ARE IN THIS MODULE AT ALL, given its docstring says "minus the database". Because half
-# of them genuinely are: which COLUMNS the two header endpoints own, and how one body key becomes
-# one Prisma value, are statements about literals in this repository and want no Postgres. The other
-# half cannot be answered without it — a 403 for a viewer-grantee and a 404 for a stranger are rows
-# in ``DesignWorkshopViewer`` deciding an HTTP status, and asserting them against a mock would be
-# asserting the mock. The database-backed ones carry ``needs_db`` individually rather than through a
-# module-level ``pytestmark``, so the sixty report-builder tests above still run on a laptop with no
-# Docker, which is where most of this file's value has always been.
-#
-# THE DEFECT THIS WHOLE SECTION EXISTS FOR. ``PATCH /design-workshops/{id}`` shipped reading its body
-# with ``getattr(payload, key) is not None``, which makes "the client did not mention this field" and
-# "the client cleared this field" the SAME request. Everything falsy was dropped, so a designer who
-# emptied the notes box and pressed Save was told the workshop had been saved — 200, the form's
-# dirty flag cleared, the screen calm — and found the old note still there on the next load, with
-# nothing anywhere to read. There is no ``""`` to send instead: ``notes`` is a nullable column and an
-# empty string is a different stored value from NULL. The route module's ``_header_patch_data``
-# carries the argument; these tests are what stop it being tidied back.
-
 
 def _routes():
-    """The route module. Imported inside the helper, like ``_header`` above: the route module is
-    heavy and only these tests need it."""
     from app.api.routes import design_workshops as routes
 
     return routes
 
 
-# --------------------------------------------------------------------------------------
-# Which columns the two header endpoints own — no database
-# --------------------------------------------------------------------------------------
-
 
 def test_the_edit_reaches_exactly_what_the_create_reaches():
-    """PATCH writes the columns POST writes, less the two stamps POST writes once. Both directions.
-
-    NEITHER DIRECTION FAILS LOUDLY IN THE PRODUCT, which is why the rule is arithmetic here rather
-    than a sentence in a docstring.
-
-    A column CREATABLE AND NOT PATCHABLE is write-once with nothing on any screen saying so. That is
-    not hypothetical: ``notes``, ``templateId`` and ``workshopId`` were exactly that for the whole
-    life of this product — collected by the create form, mirrored by no stage-1 field, and therefore
-    unfixable by anything short of deleting the workshop and running the fortnight again.
-
-    A column PATCHABLE AND NOT CREATABLE is a second writer for a column that already has one. For
-    the six promoted columns that is the failure written up in ``seed_designer_prefill``: ten
-    columns went to NULL under a 200 reading "Stage saved", and the workshop was invisible to every
-    list filter and search for the whole of a capture fortnight.
-    """
     from app.schemas.design_workshops import DesignWorkshopCreate
 
     routes = _routes()
     body_fields = set(DesignWorkshopCreate.model_fields)
     designer_keys = {"designerUserId", "designerUserIds"}
-    # ``status`` is written by the create as the literal "DRAFT" rather than from the body, so it is
-    # a column the create writes even though no create field carries it.
     create_writes = (body_fields - designer_keys) | routes._CREATE_ONLY_STAMPS | {"status"}
     patch_writes = set(routes._HEADER_TEXT_COLUMNS) | set(routes._HEADER_DATE_COLUMNS)
 
     assert patch_writes == create_writes - routes._CREATE_ONLY_STAMPS
 
-    # And the only create-body keys an edit cannot carry are the two designer ones — each of which
-    # is refused BY NAME rather than by `extra_forbidden`, because "not permitted" would send a
-    # client that wants to change the team looking for a flag instead of for PUT /{id}/viewers.
     assert body_fields - patch_writes == designer_keys
     assert set(routes._NEVER_PATCHABLE) >= designer_keys
 
 
 def test_the_shared_column_list_still_spells_the_create_loop_it_replaced():
-    """``_CREATE_OPTIONAL_COLUMNS`` is derived, and it must still be the tuple it was derived from.
-
-    The create route used to write that list out by hand. Sharing it is what stops the two endpoints
-    disagreeing about which columns the header consists of — but only if the derivation produces the
-    same six names in the same order, so the literal is asserted here once rather than trusted.
-    """
     assert _routes()._CREATE_OPTIONAL_COLUMNS == (
-        # ``workshopKind`` joined the header on 2026-08-30 with the "Type of workshop" dropdown, and
-        # this literal moving is the whole point of the assertion: the create body, the patch
-        # columns and this tuple have to gain the column together or the endpoints disagree about
-        # what a workshop header consists of.
         "workshopKind",
-        # The master-list craft (2026-10-20), written with its name by ``craft_master.craft_columns``.
         "craftId",
         "craftName",
         "clusterName",
@@ -874,8 +634,6 @@ def test_the_shared_column_list_still_spells_the_create_loop_it_replaced():
 
 
 def test_no_column_is_both_writable_and_refused():
-    """A key in both tables would be refused by the model and then written by the handler — or, far
-    worse, the other way round, depending on which table a later reader edited first."""
     routes = _routes()
     writable = set(routes._HEADER_TEXT_COLUMNS) | set(routes._HEADER_DATE_COLUMNS)
     assert writable.isdisjoint(routes._NEVER_PATCHABLE)
@@ -883,26 +641,6 @@ def test_no_column_is_both_writable_and_refused():
 
 
 def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name():
-    """A client that reads ``workshop_summary`` and posts it back must be TOLD, key by key.
-
-    That is not a strawman client, it is the obvious one: an edit form hydrates from the summary, and
-    the cheapest way to submit is to send back the object it was given. Eighteen of those thirty keys
-    are not editable, and the difference between "Extra inputs are not permitted" and a sentence
-    naming ``designerName`` and pointing at stage 1 is the difference between a developer reading
-    this module and a developer guessing.
-
-    THE TWO COUNTS IN THIS DOCSTRING MOVED ON 2026-09-13 AND WERE ALREADY INCONSISTENT WITH EACH
-    OTHER BEFORE THEY DID. It said "fourteen of those twenty-three keys" in one sentence and "which
-    of the twenty-four keys" in the next, while the dict actually returned 26 — 23 named keys plus
-    the three-key consent spread — of which 12 were writable and 14 refused. The pre-submission loop
-    adds four more (the decision cache and the submission counter), so it is now 30 keys, 12 writable
-    and 18 refused. Both sentences are rewritten rather than one, and the numbers were taken by
-    running this test rather than by counting in a comment.
-
-    THE TEST IS OVER ``workshop_summary`` ITSELF rather than over a list of key names, because the
-    trap is a column ADDED to that dict later: it would reach every client, be posted back by this
-    one, and answer ``extra_forbidden`` with no clue which of the thirty keys was the problem.
-    """
     from app.services.design_workshops import workshop_summary
 
     routes = _routes()
@@ -934,10 +672,6 @@ def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name()
         dictationConsent="NOT_RECORDED",
         dictationConsentAt=None,
         dictationConsentById=None,
-        # THE FOUR THE PRE-SUBMISSION LOOP ADDED. Without them this test fails on an
-        # ``AttributeError`` inside ``workshop_summary`` — before it reaches its own assertion, and
-        # with a traceback that reads as an unrelated breakage rather than as "the fixture is one
-        # column behind the dict".
         reviewNotes=None,
         reviewedById=None,
         reviewedAt=None,
@@ -950,17 +684,10 @@ def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name()
         "'Extra inputs are not permitted' if one sent it back. Add it to _HEADER_TEXT_COLUMNS or "
         "to _NEVER_PATCHABLE with the reason beside it."
     )
-    # The single-record read adds one more key that no column stands behind. It is refused by name
-    # for the same reason: a form that hydrated from GET /{id} sends it too.
     assert "dictationConsentByName" in routes._NEVER_PATCHABLE
-    # AND THE FOUR THIS WAVE ADDED, BY NAME. The subtraction above would also be satisfied by
-    # deleting them from ``workshop_summary``, which would make the whole loop invisible on every
-    # screen — the failure that dict's own docstring calls the trap.
     assert {"reviewNotes", "reviewedById", "reviewedAt", "submissionRound"} <= set(
         routes._NEVER_PATCHABLE
     )
-    # 38 since 2026-10-10: the approving authority's eight sign-off keys, refused by name above
-    # (`_SIGN_OFF_HAS_ITS_OWN_SCREEN`); the docstring's 30 is the count before them.
     assert {"approvedById", "approvedAt", "handedOnAt", "lastHandedInAt"} <= set(routes._NEVER_PATCHABLE)
     assert len(workshop_summary(record)) == 38, (
         "the header dict changed size; the counts in this test's docstring are the two sentences a "
@@ -969,16 +696,6 @@ def test_every_key_the_header_serialises_is_either_writable_or_refused_by_name()
 
 
 def test_a_header_patch_cannot_make_a_decision_edge():
-    """**THE FOUR EDGES A HEADER EDIT MAY NOT MAKE**, asserted over the pure graph the route calls.
-
-    A decision is taken on a route that writes its ``ReviewLog`` row in the same transaction. A
-    status change with no audit entry is a decision that appears to have made itself — and the PATCH
-    route admits every designer on the workshop and every admin in the deployment, so "appears to
-    have made itself" is not a figure of speech.
-
-    The handler's own line is ``transition_refusal(record.status, data["status"])`` with no
-    ``by_decision_route``, so what is asserted here is exactly what it asks.
-    """
     from app.schemas import design_workshop_review_loop as loop
 
     routes = _routes()
@@ -991,13 +708,6 @@ def test_a_header_patch_cannot_make_a_decision_edge():
 
 
 def test_a_header_patch_cannot_archive_an_approved_report():
-    """The two-hop laundering path, named where a reader of the PATCH route will find it.
-
-    ``APPROVED -> ARCHIVED`` and ``ARCHIVED -> PRE_SUBMISSION`` were both ordinary edges in the
-    first draft of the graph, and together they let any designer move an approved report back into
-    the loop in two header edits — spending a round, with no audit entry, and with the decision cache
-    still naming the officer who approved it.
-    """
     from app.schemas import design_workshop_review_loop as loop
 
     refusal = loop.transition_refusal("APPROVED", "ARCHIVED")
@@ -1005,50 +715,22 @@ def test_a_header_patch_cannot_archive_an_approved_report():
     assert "hand-on" in refusal and "revise" in refusal
 
 
-# --------------------------------------------------------------------------------------
-# One body key -> one Prisma value: absent, null and blank are three different requests
-# --------------------------------------------------------------------------------------
-
 
 def test_a_field_the_body_never_mentions_is_not_in_the_write_at_all():
-    """The whole of "partial". A key absent from ``model_dump(exclude_unset=True)`` must not reach
-    Prisma as anything — not as NULL, not as the stored value read back and written again."""
     assert _routes()._header_patch_data({"title": "Renamed"}) == {"title": "Renamed"}
 
 
 def test_an_explicit_null_survives_all_the_way_to_the_write():
-    """``{"notes": null}`` means CLEAR IT, and it is the request this route used to lose in silence.
-
-    Dropped, the caller is answered 200 with the old value still stored: the form clears its dirty
-    flag and the note comes back on the next load. There is no other spelling available — ``notes``
-    is a nullable column and ``""`` is a different stored value that every "has a note" test is
-    true of.
-    """
     assert _routes()._header_patch_data({"notes": None}) == {"notes": None}
 
 
 def test_a_blank_box_clears_the_column_rather_than_storing_an_empty_string():
-    """``TextInput`` sends ``""`` for an emptied box and never JSON null, so ``""`` has to clear.
-
-    It also keeps this route agreeing with the OTHER writer of the six promoted columns it shares:
-    ``_coerce_promoted`` sets a promoted column back to NULL for a blank stage value rather than
-    storing "", so a craft cleared here and a craft cleared in stage 1 have to end as the same
-    stored value — or the list's "no craft recorded" filter answers differently depending on which
-    screen did the clearing.
-    """
     data = _routes()._header_patch_data({"craftName": "", "clusterName": "   ", "notes": " x "})
     assert data == {"craftName": None, "clusterName": None, "notes": "x"}
 
 
 @pytest.mark.parametrize("blank", [None, "", "   "])
 def test_emptying_a_not_null_column_is_a_422_naming_it_and_never_a_500(blank):
-    """``{"title": null}`` reaches Prisma as ``MissingRequiredValueError`` — a bare 500, which reads
-    to a client as "the server is broken" rather than as "a workshop has to have a title".
-
-    ``"   "`` is the one that gets past pydantic: ``min_length=1`` catches ``""`` and not three
-    spaces, and a workshop titled with whitespace renders as a blank heading on every screen that
-    lists it and can afterwards be found only by its id.
-    """
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as raised:
@@ -1058,20 +740,12 @@ def test_emptying_a_not_null_column_is_a_422_naming_it_and_never_a_500(blank):
 
 
 def test_a_date_this_server_cannot_read_is_refused_rather_than_clearing_the_column():
-    """``_parse_date`` answers None for "nothing was sent" AND for "that is not a date".
-
-    On the CREATE that conflation is harmless — a malformed date is a box nobody has filled in
-    properly yet and there is no stored value to lose. On an EDIT the same answer silently NULLs a
-    column that held a real date, under a 200, on a workshop whose dates print on the report cover
-    and decide which list filters can find it.
-    """
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as raised:
         _routes()._header_patch_data({"startDate": "10-02-2026 or thereabouts"})
     assert raised.value.status_code == 422
     assert "startDate" in str(raised.value.detail)
-    # And the two spellings of "no date" still clear it, which is what makes the refusal safe.
     assert _routes()._header_patch_data({"startDate": None, "endDate": ""}) == {
         "startDate": None,
         "endDate": None,
@@ -1079,12 +753,6 @@ def test_a_date_this_server_cannot_read_is_refused_rather_than_clearing_the_colu
 
 
 def test_the_immutable_refusal_names_every_field_it_objected_to_not_the_first():
-    """A form that posted a whole summary back is sending fourteen of these at once.
-
-    Told about one, it fixes one and is refused again — the same round trip the create route's
-    eligibility rule is worded to save. A typo is still ``extra_forbidden``, deliberately: a
-    misspelling should read as a misspelling and not as a policy.
-    """
     import pydantic
 
     routes = _routes()
@@ -1103,8 +771,6 @@ def test_the_immutable_refusal_names_every_field_it_objected_to_not_the_first():
 
 
 def test_the_edit_body_inherits_the_creates_bounds_rather_than_restating_them():
-    """The subclass adds a refusal and nothing else. An unknown status or template is still the
-    422 that names the allowed values, and it is still the SAME sentence the update model wrote."""
     import pydantic
 
     routes = _routes()
@@ -1116,29 +782,8 @@ def test_the_edit_body_inherits_the_creates_bounds_rather_than_restating_them():
     assert "DCH_STANDARD" in str(bad_template.value)
 
 
-# --------------------------------------------------------------------------------------
-# The route itself, against real Postgres
-# --------------------------------------------------------------------------------------
-#
-# The fixture creates its accounts, roster row and profile on its OWN loop and DISCONNECTS before
-# starting the TestClient, exactly as ``test_design_workshop_viewers`` does and for the reason
-# stated there: the Prisma client is shared with the running app and bound to the client's loop, so
-# touching it from a test's own loop is the kind of cross-loop use that fails intermittently rather
-# than honestly. Everything after the yield goes through HTTP.
-#
-# The one workshop that needs a VIEWER ROW for an account the viewers API would refuse — a
-# PROFESSOR, who is not eligible to be granted and is the whole point of the test — is created in
-# that same phase, with the row written directly. There is no API path to that state and it is the
-# state the ordering of the two gates exists to refuse.
-
 PASSWORD = "dw-header-edit-password"
 
-#: slug -> (role, display name).
-#:
-#: ``professor`` IS THE ACCOUNT A RANK LADDER WOULD ADMIT. ``can_run_design_workshops`` is a SET and
-#: PROFESSOR sits at rank 40, ABOVE DESIGNER's 35, so every "this tier and above" spelling of the
-#: rule lets them in and the set does not. A researcher could not prove that distinction: refused by
-#: the ladder and by the set alike, they pass a test written against either.
 HEADER_ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("admin", "ADMIN", "Header Admin"),
     ("designer", "DESIGNER", "Rekha Sahu"),
@@ -1146,10 +791,6 @@ HEADER_ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("professor", "PROFESSOR", "Senior Professor"),
 )
 
-#: What the designer's profile says on the day the workshop is opened, and what it is changed to
-#: afterwards. Two different institutions, because "a designer who moves from NIFT to NID in 2027
-#: must not retroactively rewrite the 2026 report" is the sentence under test and an institution is
-#: the example ``prefill_from_profile`` uses to make it.
 PROFILE_AT_CREATE = {"displayName": "Rekha Sahu", "institution": "NIFT Bhubaneswar"}
 PROFILE_AFTER = {"displayName": "Dr Rekha Sahu", "institution": "NID Ahmedabad"}
 
@@ -1161,15 +802,12 @@ def anyio_backend():
 
 @pytest.fixture(scope="module")
 async def header_world():
-    """Four accounts, one empanelment, one designer profile, and one pre-granted workshop."""
     from fastapi.testclient import TestClient
 
     from app.core.db import db
     from app.core.security import hash_password
     from app.main import app
 
-    # Every address carries a per-run stamp: ``DesignerRoster.email`` is UNIQUE, and fixed addresses
-    # would pass on a clean database and fail on the second run of the suite.
     stamp = uuid.uuid4().hex[:8]
 
     def address(slug: str) -> str:
@@ -1187,9 +825,6 @@ async def header_world():
                     "passwordHash": hash_password(PASSWORD),
                 }
             )
-        # Empanelment, so the create route may NAME this designer: `assert_every_designer_may_be_
-        # named` reads the designer roster and the platform allow-list, and an unempanelled designer
-        # 422s the create before a row is written.
         await db.designerroster.create(
             data={
                 "email": address("designer"),
@@ -1230,25 +865,12 @@ async def header_world():
 
 
 def _auth(world: dict[str, Any], slug: str) -> dict[str, str]:
-    """A bearer token for one of the fixture's accounts.
-
-    Minted rather than obtained by signing in, because the roster gate lives on the LOGIN path and
-    what is under test here is the edit rules. A helper that signed in first would make every one of
-    these depend on the sign-in gate as well.
-    """
     from app.core.security import create_access_token
 
     return {"Authorization": f"Bearer {create_access_token(world['people'][slug].id)}"}
 
 
 def _new_workshop(world: dict[str, Any], **body: Any) -> dict[str, Any]:
-    """A fresh workshop owned by ``admin``, made through the API the way workshops are made.
-
-    A real POST rather than a Prisma insert, so the create gate and the promoted-column seeding are
-    both exercised on the way past. One per test that mutates, because sharing a single row would
-    make the module order-dependent and the failure mode of that is a suite that passes alone and
-    fails in CI.
-    """
     response = world["client"].post(
         "/api/design-workshops",
         json={"title": f"Header test {uuid.uuid4().hex[:8]}", **body},
@@ -1261,13 +883,6 @@ def _new_workshop(world: dict[str, Any], **body: Any) -> dict[str, Any]:
 @needs_db
 @pytest.mark.anyio
 def test_an_edit_writes_what_it_names_and_leaves_everything_else_alone(header_world):
-    """The requirement, in one call: change two fields of eleven and touch nothing else.
-
-    ``craftName`` is the interesting one to leave alone. It is a promoted column, so a route that
-    rebuilt the whole row from its body — the shape ``exclude_unset`` exists to avoid — would write
-    NULL over it and take the workshop out of every list filter and search on craft, exactly as the
-    stage-save path once did.
-    """
     created = _new_workshop(header_world, craftName="Ikat", clusterName="Barpali", notes="Day one.")
     response = header_world["client"].patch(
         f"/api/design-workshops/{created['id']}",
@@ -1278,12 +893,10 @@ def test_an_edit_writes_what_it_names_and_leaves_everything_else_alone(header_wo
     after = response.json()
     assert after["title"] == "Ikat, second sitting"
     assert after["notes"] == "Day two."
-    # Named by neither the body nor the response's own defaults — still there.
     assert after["craftName"] == "Ikat"
     assert after["clusterName"] == "Barpali"
     assert after["status"] == created["status"]
     assert after["createdById"] == created["createdById"]
-    # And the response is the header a client can store wholesale: the same dict the read serialises.
     reread = header_world["client"].get(
         f"/api/design-workshops/{created['id']}", headers=_auth(header_world, "admin")
     )
@@ -1294,12 +907,6 @@ def test_an_edit_writes_what_it_names_and_leaves_everything_else_alone(header_wo
 @needs_db
 @pytest.mark.anyio
 def test_an_explicit_null_clears_the_stored_value_and_a_missing_key_does_not(header_world):
-    """The two halves of the defect, asserted against Postgres in one call each.
-
-    ``{"notes": null}`` used to be dropped, so the designer was told the note was gone and it was
-    not. The second PATCH is the control: the same route, the same workshop, ``notes`` simply not
-    mentioned — and the cleared column must stay cleared rather than being restored by anything.
-    """
     created = _new_workshop(header_world, notes="Delete me.", craftName="Ikat")
     cleared = header_world["client"].patch(
         f"/api/design-workshops/{created['id']}",
@@ -1308,8 +915,6 @@ def test_an_explicit_null_clears_the_stored_value_and_a_missing_key_does_not(hea
     )
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["notes"] is None
-    # "" clears rather than storing an empty string, which is what keeps this route and the stage
-    # save agreeing about what an empty craft looks like in the column they share.
     assert cleared.json()["craftName"] is None
 
     untouched = header_world["client"].patch(
@@ -1325,12 +930,6 @@ def test_an_explicit_null_clears_the_stored_value_and_a_missing_key_does_not(hea
 @needs_db
 @pytest.mark.anyio
 def test_an_immutable_field_is_refused_by_name_and_nothing_beside_it_is_written(header_world):
-    """A 422 naming the field, and the title in the same body does NOT land.
-
-    The second half is the point. A route that dropped the refused key and wrote the rest would
-    answer 200 to a request half of which it ignored, and the designer would be told their edit
-    succeeded while the box they actually came to fix went back to its old value.
-    """
     created = _new_workshop(header_world)
     refused = header_world["client"].patch(
         f"/api/design-workshops/{created['id']}",
@@ -1346,8 +945,6 @@ def test_an_immutable_field_is_refused_by_name_and_nothing_beside_it_is_written(
     )
     assert after.json()["title"] == created["title"]
 
-    # The two create-body keys an edit deliberately cannot carry, refused with the route that CAN
-    # change the team named in the answer rather than left to `extra_forbidden`.
     team = header_world["client"].patch(
         f"/api/design-workshops/{created['id']}",
         json={"designerUserIds": [header_world["people"]["designer"].id]},
@@ -1360,24 +957,6 @@ def test_an_immutable_field_is_refused_by_name_and_nothing_beside_it_is_written(
 @needs_db
 @pytest.mark.anyio
 def test_a_viewer_grant_is_not_permission_to_edit_and_a_stranger_is_told_nothing(header_world):
-    """Three accounts, one workshop, three different answers — and the ORDER of the two gates is
-    what produces them.
-
-    ``_require_designer`` runs BEFORE ``load_workshop_or_404``. The professor holds a real
-    ``DesignWorkshopViewer`` row on this workshop, so the row test would admit them: it performs no
-    role check at all, by design, because a grant is what lets a co-designer write the 22 stages.
-    Swap the two lines and every viewer-grantee becomes an editor of the header, silently, without
-    breaking one test about reading. The professor is 403 and not 404 precisely because the role
-    gate answered first and never looked at the row.
-
-    The stranger is a DESIGNER with no grant, so they pass the role gate and are refused by the row
-    test — with 404 "Record not found" and not 403, because a 403 would confirm the id exists to
-    exactly the people the clause is turning away.
-
-    And the designer WITH a grant may edit, which is the control that stops this test passing by
-    refusing everybody. A designer's access is always a grant: they cannot create a workshop at all,
-    so ``createdById`` never matches for them.
-    """
     workshop_id = header_world["granted_workshop"]
     body = {"title": "Edited by somebody"}
 
@@ -1405,20 +984,6 @@ def test_a_viewer_grant_is_not_permission_to_edit_and_a_stranger_is_told_nothing
 @needs_db
 @pytest.mark.anyio
 def test_an_edit_does_not_rewrite_the_designer_details_from_a_since_changed_profile(header_world):
-    """**The one that would be silent.** A report is a historical document.
-
-    ``prefill_from_profile`` copies the designer's name, institution and nineteen more values into
-    stage 1 and stage 3 ONCE, when the workshop is created, and is never consulted again. If an edit
-    re-ran it, a designer who moved from NIFT to NID would have every workshop they ran under the
-    old institution re-attributed by somebody merely renaming one of them — on the cover, in the
-    certification block and in the .docx's own ``dc:creator``. Nothing would fail: completeness
-    would still read 100%, readiness would still be green, and the only detector anywhere is a human
-    who happens to remember where that workshop was actually run.
-
-    So: open a workshop naming the designer, change the profile underneath it, rename the workshop,
-    and assert the stage still says what it said on the day. The profile write is asserted too — a
-    test whose setup silently failed would pass this by proving nothing at all.
-    """
     created = _new_workshop(
         header_world, designerUserId=header_world["people"]["designer"].id, craftName="Ikat"
     )
@@ -1439,7 +1004,6 @@ def test_an_edit_does_not_rewrite_the_designer_details_from_a_since_changed_prof
     )
     assert edited.status_code == 200, edited.text
     assert edited.json()["title"] == "Renamed a month later"
-    # The promoted column, which is what the LIST and the report cover read.
     assert edited.json()["designerName"] == PROFILE_AT_CREATE["displayName"]
 
     detail = header_world["client"].get(
@@ -1451,21 +1015,8 @@ def test_an_edit_does_not_rewrite_the_designer_details_from_a_since_changed_prof
     assert stage_one["designerInstitution"] == PROFILE_AT_CREATE["institution"]
 
 
-# --------------------------------------------------------------------------------------
-# W-B1 — GET /design-workshops, offset pagination over a non-total order
-# --------------------------------------------------------------------------------------
-#
-# No database. ``list_design_workshops`` bypasses ``count_and_page`` (it needs the raw rows for
-# ``_attach_deleted_by``), so the tiebreak has to be appended by hand at the call site, and the whole
-# point of a hand-appended fix is that it is easy to lose in a later edit. What is pinned here is the
-# CONSEQUENCE, not the implementation: a client paging through a tied group must see every row exactly
-# once, whatever a database that promises nothing about tie order chooses to do between two reads of
-# the same walk.
-
 
 def _dw_row(rid: str, *, created_at: datetime | None = None) -> Any:
-    """A ``DesignWorkshop`` row carrying every key ``workshop_summary`` and ``consent_keys`` read, and
-    no more — the same shape ``test_workshop_trash_listing.py`` proves against those two functions."""
     return SimpleNamespace(
         id=rid,
         title=f"Workshop {rid}",
@@ -1494,10 +1045,6 @@ def _dw_row(rid: str, *, created_at: datetime | None = None) -> Any:
         dictationConsent="NOT_RECORDED",
         dictationConsentAt=None,
         dictationConsentById=None,
-        # THE FOUR THE PRE-SUBMISSION LOOP ADDED (2026-09-13). This double stands in for a real row
-        # in a test with no database, so every column `workshop_summary` reads has to be here —
-        # otherwise the paging walk above fails with an AttributeError from inside the serialiser
-        # and reads as a broken tiebreak rather than as a fixture one column behind.
         reviewNotes=None,
         reviewedById=None,
         reviewedAt=None,
@@ -1506,18 +1053,6 @@ def _dw_row(rid: str, *, created_at: datetime | None = None) -> Any:
 
 
 class _TiedDesignWorkshopTable:
-    """Emulates ``LIMIT/OFFSET`` over an order that may or may not be total.
-
-    ``LIMIT/OFFSET`` re-runs the sort from scratch on every call, and a database is free to break a
-    tie in the group that shares the primary sort key however it likes UNLESS the order names a
-    unique column — that freedom is the entire bug ``with_id_tiebreak`` closes. This double exploits
-    exactly that freedom: with no ``id`` clause in the requested order it reverses the tied rows on
-    every other read, which is a real (if adversarial) choice a live Postgres owes nothing to avoid.
-    With an ``id`` clause present — total order — it never reverses, because there is no tie left for
-    it to break differently. Two single-row reads through this double therefore only both come back
-    stable if the order they were given is actually total, which is the property under test.
-    """
-
     def __init__(self, rows: list[Any]) -> None:
         self.rows = rows
         self.reads = 0
@@ -1543,11 +1078,6 @@ class _TiedDesignWorkshopTable:
 
 
 async def test_a_paged_walk_does_not_repeat_or_skip_a_row_that_ties_on_the_sort_key(monkeypatch):
-    """Two workshops sharing ``createdAt`` (the column ``list_design_workshops`` orders by), walked as
-    two single-row pages. Without the tiebreak this same double reverses the tied pair between the two
-    reads, so the walk comes back ``["w1", "w1"]`` — ``w1`` sent twice and ``w2`` never sent at all,
-    the exact failure ``records.with_id_tiebreak`` documents, reproduced with no Postgres involved.
-    """
     shared = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
     fake = _TiedDesignWorkshopTable(
         [_dw_row("w1", created_at=shared), _dw_row("w2", created_at=shared)]
@@ -1562,29 +1092,17 @@ async def test_a_paged_walk_does_not_repeat_or_skip_a_row_that_ties_on_the_sort_
     assert sorted(walked) == ["w1", "w2"], (
         f"the walk saw {walked!r} — a tie must not let one row surface twice while the other never does"
     )
-    # Belt and suspenders: the order actually sent to the database is total, by name.
     assert fake.finds[0]["order"] == [{"createdAt": "desc"}, {"id": "desc"}]
 
 
 @needs_db
 @pytest.mark.anyio
 def test_an_oversized_page_size_is_refused_rather_than_clamped(header_world):
-    """``pageSize=500`` is a 422, matching ``workshops.py``'s own list route (``:229``) rather than a
-    second, invented ceiling — and NOT a 200 carrying 100 rows.
-
-    Before ``le=100`` sat on this parameter, ``normalize_pagination`` clamped it silently deep inside
-    the handler, so a client that asked for 500 rows in one page got 100 back with a ``pages`` count
-    computed from the ``pageSize`` it actually received rather than the one it sent — the request was
-    answered differently from how it was asked, and nothing on the wire admitted it. Refusing it here,
-    before the handler body runs at all, is what lets a caller's own error handling see the
-    disagreement instead of silently rendering a fifth of what it expected.
-    """
     refused = header_world["client"].get(
         "/api/design-workshops", params={"pageSize": 500}, headers=_auth(header_world, "admin")
     )
     assert refused.status_code == 422
 
-    # The ceiling refuses what is OVER it and nothing under — 100 itself still succeeds.
     at_the_ceiling = header_world["client"].get(
         "/api/design-workshops", params={"pageSize": 100}, headers=_auth(header_world, "admin")
     )

@@ -1,18 +1,3 @@
-"""Compression: what is compressed, what is deliberately not, and what must never be.
-
-WHY THIS EXISTS. The API served no compressed responses of any kind — it ignored `Accept-Encoding`,
-and the production nginx has no `gzip` directive covering JSON. Measured over ten real responses,
-2,548 KB became 412 KB: **6.2x**. The number that matters is not the ratio but the link, because
-this application is used in villages on a mobile connection: at 40 kB/s those ten responses take
-63.7 s uncompressed and 10.3 s compressed. No query tuning reaches that — the database was measured
-at 2-25 ms per request and is not the bottleneck.
-
-The risk in a middleware that touches EVERY response is that it corrupts one. So the tests below are
-mostly about restraint: the allowlist, the already-encoded body, the bodiless status codes, and the
-`Vary` header without which a shared cache serves a gzipped body to a client that never asked for
-one.
-"""
-
 import gzip
 import json
 
@@ -23,8 +8,6 @@ from fastapi.testclient import TestClient
 
 from app.main import SelectiveGZipMiddleware
 
-#: Comfortably over the 1 KiB floor, and incompressible-looking enough that a passing test cannot be
-#: an accident of a tiny body.
 _BIG = "Sambalpuri bandha, Barpali. " * 200
 
 
@@ -64,9 +47,6 @@ def client() -> TestClient:
     async def varied_route() -> JSONResponse:
         return JSONResponse({"prose": _BIG}, headers={"Vary": "Origin"})
 
-    # A PARTIAL RESPONSE WITH A COMPRESSIBLE TYPE. `text/plain` is on the allowlist, so this is the
-    # shape that would be gzipped with its byte offsets left describing bytes the client never gets.
-    # It became reachable when /api/asr-models/…/files/… started serving ranges.
     @app.get("/partial", status_code=206)
     async def partial_route() -> Response:
         body = _BIG.encode()[:2048]
@@ -77,7 +57,6 @@ def client() -> TestClient:
             headers={"Content-Range": f"bytes 0-{len(body) - 1}/{len(_BIG.encode())}"},
         )
 
-    # `raise_server_exceptions=False` is not needed; nothing here raises.
     return TestClient(app)
 
 
@@ -85,11 +64,7 @@ def test_a_json_response_is_compressed_and_survives_the_round_trip(client):
     response = client.get("/json", headers={"Accept-Encoding": "gzip"})
     assert response.status_code == 200
     assert response.headers["content-encoding"] == "gzip"
-    # httpx decodes transparently, so this asserts the bytes were VALID gzip of the right payload —
-    # a corrupted body would raise here rather than merely differ.
     assert json.loads(response.text)["prose"] == _BIG
-    # And it actually saved something; a "compressed" response larger than the original would mean
-    # the floor is doing nothing.
     assert int(response.headers["content-length"]) < len(_BIG)
 
 
@@ -100,12 +75,6 @@ def test_a_client_that_did_not_ask_for_gzip_gets_none(client):
 
 
 def test_a_docx_is_left_alone(client):
-    """The allowlist's whole purpose.
-
-    A .docx is already a ZIP container, so re-compressing it yields nothing — and it is produced by
-    the one endpoint measured as ALREADY CPU-bound (~780 ms in the report builder against ~12 ms of
-    query time). Spending more CPU there to save no bytes is the worst possible trade.
-    """
     response = client.get("/docx", headers={"Accept-Encoding": "gzip"})
     assert response.status_code == 200
     assert "content-encoding" not in response.headers
@@ -113,18 +82,14 @@ def test_a_docx_is_left_alone(client):
 
 
 def test_a_body_below_the_floor_is_left_alone(client):
-    """The gzip header alone is 18 bytes; a small JSON body comes out LARGER."""
     response = client.get("/tiny", headers={"Accept-Encoding": "gzip"})
     assert "content-encoding" not in response.headers
     assert response.json() == {"ok": True}
 
 
 def test_an_already_encoded_body_is_never_encoded_twice(client):
-    """Double-encoding produces a body no client can read, and the failure is silent until a user
-    sees mojibake. The upstream `content-encoding` is the signal, and it must be honoured."""
     response = client.get("/preencoded", headers={"Accept-Encoding": "gzip"})
     assert response.headers["content-encoding"] == "gzip"
-    # One layer of gzip, not two: httpx strips exactly one, leaving the original text.
     assert response.text == _BIG
 
 
@@ -135,18 +100,6 @@ def test_a_bodiless_response_is_untouched(client):
 
 
 def test_a_partial_response_keeps_its_byte_offsets(client):
-    """A 206 MUST NOT be compressed, and this was a real gap rather than a hypothetical one.
-
-    The passthrough condition's own comment said *"a range response must keep its byte offsets"* while
-    the condition only listed 204 and 304 — so a range response with a type on the allowlist
-    (`text/plain` is on it) would have been gzipped with its `Content-Range` header untouched, telling
-    the client that bytes 0-2047 of the file are in a body that holds the gzip of them. A resumable
-    client appends that to a `.part` file and produces a corrupt bundle it can only discover by
-    hashing the whole thing at the end.
-
-    Unreachable until this API served a range at all; `/api/asr-models/{id}/files/{name}` is the first
-    route that does, which is why the gap is closed in the same change.
-    """
     response = client.get("/partial", headers={"Accept-Encoding": "gzip"})
     assert response.status_code == 206
     assert "content-encoding" not in response.headers
@@ -163,8 +116,6 @@ def test_vary_is_added_so_a_shared_cache_cannot_cross_the_variants(client):
 
 
 def test_an_existing_vary_is_appended_to_rather_than_replaced(client):
-    """CORS sets `Vary: Origin`. Overwriting it would let a cache serve one origin's response to
-    another, which is a correctness bug far worse than the bytes this middleware saves."""
     response = client.get("/varied", headers={"Accept-Encoding": "gzip"})
     vary = response.headers["vary"].lower()
     assert "origin" in vary

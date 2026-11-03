@@ -85,15 +85,8 @@ from loadtest.scenario import (  # noqa: E402
     Step,
 )
 
-#: Matches ``seed_load_identities.WORKSHOP_ID``. Deterministic rather than discovered, so the driver
-#: needs no extra round trip per identity at start-up and so a run that finds a 404 here is telling
-#: you the seed did not happen — a clearer failure than a silently-skipped step.
 WORKSHOP_ID = "loadtest-ws-{index:05d}"
 
-
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-# Recording
-# ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -148,10 +141,6 @@ def pct(values: list[float], p: float) -> float:
     return values[min(rank, len(values)) - 1]
 
 
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-# Resource sampling — no psutil, because it is not installed and this needs no new dependency
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-
 
 class Samplers:
     """Background subprocesses that watch the server and the database while the ramp runs.
@@ -171,9 +160,9 @@ class Samplers:
         self.pid = pid
         self.database = database
         self.pg_container = pg_container
-        self.cpu: list[tuple[float, float]] = []      # (t, cpu_percent)
-        self.rss: list[tuple[float, float]] = []      # (t, bytes)
-        self.conns: list[tuple[float, int, int]] = [] # (t, total, active)
+        self.cpu: list[tuple[float, float]] = []
+        self.rss: list[tuple[float, float]] = []
+        self.conns: list[tuple[float, int, int]] = []
         self._procs: list[Any] = []
         self._tasks: list[asyncio.Task] = []
         self.notes: list[str] = []
@@ -193,10 +182,6 @@ class Samplers:
 
     async def _start_server_sampler(self) -> None:
         if self.container:
-            # `docker stats` without --no-stream streams one block per interval. `--format` keeps it
-            # to the two numbers wanted, and CPUPerc is already normalised against the container's
-            # CPU allowance, which is exactly what "is the server pinned" means when the container
-            # is capped to 2 CPUs to imitate the production box.
             proc = await self._spawn(
                 "docker", "stats", self.container, "--format", "{{.CPUPerc}}|{{.MemUsage}}"
             )
@@ -217,9 +202,6 @@ class Samplers:
         self.notes.append("no --server-container or --server-pid: CPU/RSS not sampled")
 
     async def _start_pg_sampler(self) -> None:
-        # `\watch 1` inside a psql script is what makes ONE psql session emit a row a second. The
-        # alternative — `docker exec` per sample — spawns a container exec 1,800 times in a 30-minute
-        # ramp, on the machine being measured.
         sql = (
             "SELECT count(*), count(*) FILTER (WHERE state = 'active') "
             f"FROM pg_stat_activity WHERE datname = '{self.database}';\n\\watch 1\n"
@@ -246,7 +228,6 @@ class Samplers:
             if not line:
                 return
             text = line.decode("utf-8", "replace").strip()
-            # docker stats redraws the screen with ANSI escapes; keep only lines with our separator.
             for chunk in text.replace("\x1b", "\n").split("\n"):
                 if "|" not in chunk or "%" not in chunk:
                     continue
@@ -275,10 +256,6 @@ class Samplers:
                 continue
             now = time.perf_counter()
             if last is not None and now > last[0]:
-                # Get-Process .CPU is CUMULATIVE processor seconds across all cores, so the
-                # difference over wall time is a percentage that can exceed 100 on a multi-core box.
-                # Reported as-is: "180%" means the process used 1.8 cores, which is the number that
-                # matters when the question is whether ONE uvicorn worker is CPU-bound.
                 self.cpu.append((now, (cpu_seconds - last[1]) / (now - last[0]) * 100.0))
             self.rss.append((now, rss))
             last = (now, cpu_seconds)
@@ -333,10 +310,6 @@ def _parse_bytes(text: str) -> float:
                 return 0.0
     return 0.0
 
-
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-# Phases
-# ────────────────────────────────────────────────────────────────────────────────────────────────
 
 
 async def sign_in_all(
@@ -404,9 +377,6 @@ async def issue(
     method, path, body = step.build(session)
     headers = dict(session.auth) if step.name != "sign_in" and step.name != "control" else {}
     if step.name == "schema_fetch" and session.schema_etag:
-        # Send the validator a warm client would send. Without this every schema fetch is a 149 KB
-        # body and the run overstates both bandwidth and gzip CPU for a real population, most of whom
-        # already hold the registry.
         headers["If-None-Match"] = session.schema_etag
     t0 = time.perf_counter()
     try:
@@ -456,9 +426,6 @@ async def run_level(
                 continue
             await issue(client, session, step, rec, timeout)
             if think > 0:
-                # Uniform around the nominal think time. A fixed delay makes every worker's requests
-                # land in lockstep, which produces a self-synchronising thundering herd that no real
-                # population exhibits and that flatters or ruins a result depending on the phase.
                 await asyncio.sleep(rng.uniform(think * 0.5, think * 1.5))
 
     async def burst_worker(session: Session, rng: random.Random) -> None:
@@ -538,9 +505,6 @@ async def main_async(args: argparse.Namespace) -> int:
     peak = max(levels) + args.sync_burst
 
     limits = httpx.Limits(
-        # One connection per virtual user, kept alive. Ephemeral-port exhaustion is a real Windows
-        # failure at this scale and it looks exactly like the server refusing connections, so the
-        # pool is sized to the peak and keep-alive is left on rather than churning sockets.
         max_connections=peak + 64,
         max_keepalive_connections=peak + 64,
     )
@@ -577,7 +541,6 @@ async def main_async(args: argparse.Namespace) -> int:
             pg_container=args.pg_container,
         )
         await samplers.start()
-        # One second of sampling before the first rung, so the idle baseline is in the record.
         await asyncio.sleep(1.5)
 
         rows: list[dict[str, Any]] = []
@@ -597,8 +560,6 @@ async def main_async(args: argparse.Namespace) -> int:
                 )
                 rows.append(row)
                 print_level(row)
-                # Let queues drain and the identity cache settle before the next rung, so a rung
-                # never inherits the previous rung's backlog and reports it as its own latency.
                 await asyncio.sleep(args.settle)
         finally:
             await samplers.stop()

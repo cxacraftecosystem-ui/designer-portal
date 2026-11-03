@@ -1,113 +1,3 @@
-"""The role ladder is written down once on the server and copied by hand into two other trees.
-
-This is the file that holds the copies to the original.
-
-``ROLE_RANK`` in ``app/core/deps.py`` is the server's answer to every permission question, and it is
-mirrored BY HAND into two other source trees — TypeScript in ``frontend/``, Kotlin in ``android/`` —
-and into README.md's role table, which is where most people meet the ladder for the first time.
-Nothing compiles the four against each other. A tier added to one and forgotten in the others does
-not break a build — it produces a web client that offers an action the API refuses, or a phone that
-ranks the new tier at 0 (below a crowdsource volunteer, because every one of these lookups falls back
-to zero) and hides every screen from the one group the feature was built for.
-
-THIS IS NOT HYPOTHETICAL AND IT IS NOT OLD. ``DESIGNER`` (rank 35) is the tier this entire product is
-built around, and for as long as it existed:
-
-  * the sentence "six-tier ladder" was wrong in ``deps.py``'s OWN header while the seventh tier sat
-    four lines below the sentence, and wrong the same way in ``frontend/lib/permissions.ts``, in
-    README.md's role table and in ``docs/PERMISSIONS.md`` — which records having been corrected for
-    exactly this once already. It is still wrong wherever only prose watches; the header of
-    ``frontend/lib/permissions.ts`` names those sites, and nothing mechanical counts prose;
-  * ``components/hero/AccessLadder.tsx`` — the public landing page's rendered ladder — was a six-row
-    literal with no Designer row, under a header claiming it carried "the exact labels of
-    ROLE_LABELS";
-  * ``ALL_ROLES`` in ``tests/test_permission_matrix.py`` did not contain it, so every ladder-wide test
-    in that file skipped the tier, and nothing went red when it was finally added (the gates had been
-    right all along — but "already right" and "asserted" are different states, which is the sentence
-    this whole file exists to act on).
-
-INSPECTOR LANDED ON 2026-08-27, at rank 37 in that 36-39 gap, and this file did its job — which is
-now a matter of record rather than of hope. The rollout touched twenty-three registered mirrors; the
-rows below went red one at a time as each was reached, and the ONE that could not be edited in that
-change (``MainActivity.kt``, held by another workstream) stayed red and named itself instead of
-being discovered by an audit a quarter later. That is the entire value proposition of this file, so
-it is worth stating plainly: a red row here is not a broken test, it is an unfinished rollout.
-
-The 36-39 gap is now 36 and 38-39 — see the rank comment in ``deps.py`` for why 37 was chosen out of
-the middle rather than the edge.
-
-WHAT IT DOES. It reads the other trees AS TEXT — no browser, no JVM, no npm, no database — pulls each
-ladder literal out of its source, and holds it to ``ROLE_RANK``. Reading source is a blunt
-instrument and deliberately so: the drift being defended against is not a logic bug, it is somebody
-typing six entries where seven belong, and text is where that happens. The same argument, in the same
-words, produced ``tests/test_report_parity.py``, which reads the Kotlin report writer for the same
-reason. WHEN ONE OF THESE FAILS, DO NOT EDIT THE EXPECTATION — the expectation is ``deps.py``. Find
-which mirror lagged and finish the rollout there.
-
-────────────────────────────────────────────────────────────────────────────────────────────────────
-WHICH MIRRORS DEFEND THEMSELVES, AND WHICH DO NOT
-────────────────────────────────────────────────────────────────────────────────────────────────────
-
-Worth reading before adding a check here, because several of these rows are already mechanical and
-a redundant check is a maintenance cost with no new failure behind it. Every row's own
-``enforced_by`` field records this, and ``test_the_self_enforcing_claim_is_true_of_the_source`` below
-re-derives it from the source so this list cannot become a comment that used to be true.
-
-SELF-ENFORCING (``tsc`` fails on an incomplete one; the compiler already covers COMPLETENESS):
-  * anything typed ``Record<UserRole, …>`` — ``ROLE_RANK`` and ``ROLE_LABELS`` in
-    ``frontend/lib/permissions.ts``, ``TIER_COPY`` in ``components/hero/AccessLadder.tsx``, ``OFFERED``
-    in ``e2e/dashboard-tile-parity-unit.spec.ts``. A missing key is a type error.
-
-  * BUT ONLY AGAINST ``frontend/lib/types.ts``, NEVER AGAINST THE SERVER. ``UserRole`` is itself a
-    hand-typed union, so the whole self-enforcing family is a closed loop that stays perfectly
-    consistent while being perfectly wrong. ``types.ts`` is the row in this file that matters most,
-    and it is the row nothing else in the repository checks at all.
-
-ALREADY DIFFED AGAINST ``deps.py`` BY SOMETHING ELSE (this file overlaps them on purpose — both of
-those run in the FRONTEND's gates, and a backend change is not going to run either):
-  * ``frontend/lib/permissions.ts::ROLE_RANK`` — ``docs/tools/check-docs.mjs::checkRoleParity``
-    parses both files and diffs keys and numbers in both directions.
-  * ``frontend/lib/permissions.ts::ROLE_LABELS`` and its key ORDER —
-    ``frontend/e2e/role-ladder-parity-unit.spec.ts``, which reads ``deps.py`` off disk.
-
-NOT ENFORCED BY ANYTHING BUT THIS FILE — which is every Kotlin mirror, ``types.ts``, and every
-hand-kept role tuple in a test:
-  * Kotlin has no exhaustiveness over a ``mapOf``/``listOf`` of strings, so every Android copy
-    compiles fine while short a tier: ``MainActivity.kt`` (ranks and labels), ``ui/AppNavigation.kt``
-    (``FieldPermissions.RANKS`` and ``LABELS``), ``ui/TaskAdminScreen.kt`` (a display order and
-    labels), ``ui/AccessRosterScreen.kt`` (a deliberately partial grant list), and the ``everyRole``
-    tuple in each of the unit tests that iterate the ladder.
-  * ``UserRole[]`` is an ARRAY, not a record: a short array type-checks. So every ``const ROLES:
-    UserRole[]`` tuple in the e2e specs is hand-kept despite looking typed, and that is precisely the
-    trap — ``OFFERED`` two declarations below one of them IS checked and the array is not.
-
-────────────────────────────────────────────────────────────────────────────────────────────────────
-THE TWO HALVES OF THIS FILE
-────────────────────────────────────────────────────────────────────────────────────────────────────
-
-1. ``MIRRORS`` — a registry, one row per literal, each held to ``ROLE_RANK``. Precise, and a registry
-   goes stale the moment somebody adds another copy without reading this file.
-
-2. ``test_no_unregistered_file_enumerates_the_ladder`` — the backstop for exactly that. It sweeps the
-   two CLIENT trees for files that NAME five or more tiers and fails on any that this registry has
-   never heard of. Five is a FIXED number and not ``len(ROLE_RANK)``: a threshold derived from the
-   ladder's own size grows with it, so on the day INSPECTOR landed every existing seven-of-eight
-   mirror would have dropped below the bar and the sweep would have gone quiet in the exact week it
-   was needed. It did not, because five is five.
-
-   It works. The Android row for ``DashboardTileParityTest.kt`` is in the registry because the sweep
-   found that file an hour after the mirrors were enumerated by hand — another workstream had just
-   written it, with its own ``everyRole`` tuple, and no amount of care over the registry would have
-   caught it.
-
-   The sweep stops at ``frontend/`` and ``android/``. Markdown is out of scope because prose names
-   tiers constantly and a sweep over ``docs/`` would report a mirror for every third paragraph, so
-   README.md's row is hand-registered with nothing behind it. That asymmetry is the honest one:
-   source can be swept, prose cannot.
-
-Skipped, not failed, when the client trees are absent — the backend is deployed without them.
-"""
-
 from __future__ import annotations
 
 import re
@@ -127,62 +17,25 @@ pytestmark = pytest.mark.skipif(
     reason="the frontend and Android source trees are not both present in this checkout",
 )
 
-#: Every tier the server knows. Derived, never typed — a literal here would be one more hand-kept
-#: copy of the ladder, inside the file whose whole job is to stop hand-kept copies drifting.
 TIERS = frozenset(ROLE_RANK)
 
 _ANDROID_UI = "android/app/src/main/java/com/designprototype/workshop"
 _ANDROID_TEST = "android/app/src/test/java/com/designprototype/workshop"
 
 
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-# The registry
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-
 
 @dataclass(frozen=True)
 class Mirror:
-    """One hand-kept copy of the ladder, and how to read it back out of its source.
-
-    ``kind`` decides what is asserted, and the four are genuinely different obligations rather than
-    strengths of the same one:
-
-    ``ranked``   name-to-number. Held to ``ROLE_RANK`` by dict equality, so a wrong NUMBER fails as
-                 loudly as a missing tier. This is the strongest form and the only one that can
-                 catch a renumbering.
-    ``closed``   a closed set of tier names with no numbers in it (a label table, a display order, a
-                 union type). Held to ``ROLE_RANK``'s keys by set equality, both directions.
-    ``covers``   the tiers are named across a whole FILE rather than gathered into one literal — an
-                 inline ``for (const role of [...])`` inside a test body, say. Only coverage is
-                 asserted: the file may legitimately name things that are not roles at all (
-                 ``DwWorkshopCreationTest`` deliberately passes ``"SUPERUSER"`` to prove an unknown
-                 role is refused), so the reverse direction would fail on correct code.
-    ``partial``  fewer tiers than the ladder, ON PURPOSE, with the omissions written into ``absent``.
-                 Asserted as: offered plus deliberately-absent equals the whole ladder. A new tier
-                 therefore fails until somebody DECIDES which side it belongs on, which is the entire
-                 point — the failure is a question, not a defect report.
-    """
-
     path: str
-    #: The declaration this row reads, named as the source names it. Appears verbatim in every
-    #: failure message, because "which of the four maps in MainActivity.kt" is the first thing the
-    #: person reading the failure needs to know.
     binding: str
     kind: str
-    #: Captures the literal's body in group 1. ``None`` means "the whole file" and is only valid
-    #: with ``kind="covers"``.
     pattern: str | None
-    #: Why this copy exists and what breaks when it lags. Printed on failure — a parity failure that
-    #: does not say what the drift COSTS gets fixed by deleting the assertion.
     why: str
-    #: What ALREADY fails on drift here, or ``None`` for "nothing but this file". See the header.
     enforced_by: str | None = None
-    #: ``partial`` only: the tiers this literal leaves out deliberately.
     absent: frozenset[str] = field(default_factory=frozenset)
 
 
 MIRRORS: tuple[Mirror, ...] = (
-    # ── frontend/lib ────────────────────────────────────────────────────────────────────────────
     Mirror(
         path="frontend/lib/types.ts",
         binding="UserRole",
@@ -220,16 +73,6 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
         enforced_by="frontend/e2e/role-ladder-parity-unit.spec.ts (labels, spelling and key order)",
     ),
-    # ── frontend, the two OVERSIGHT tuples ──────────────────────────────────────────────────────
-    #
-    # Both are `partial` rather than `closed`, which is the whole point: the failure a new tier
-    # produces here is a QUESTION — which side of each predicate does it belong on — and not a defect
-    # report. `absent` is where that answer gets written down.
-    #
-    # THEY ARE ALSO THE TWO PREDICATES IN THIS CLIENT WHOSE REFUSALS ARE NOT MONOTONIC IN RANK, so
-    # neither `absent` set can be derived by reading a floor off the ladder: a REGIONAL_DIRECTOR (45)
-    # is absent from the assigner set while a MINISTRY_ADMIN (48) is in it, and an ADMIN (50) is
-    # absent from the officer set while three tiers beneath it are in it.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="OVERSIGHT_ASSIGNER_ROLES",
@@ -292,13 +135,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "empty list, on the deck of a tier it is not."
         ),
     ),
-    # THE THIRD NON-MONOTONIC SET IN THAT FILE, AND THE ONLY ONE THAT GATES NO CAPABILITY AT ALL.
-    # It decides who is shown the dashboard card that gathers the ministry screens; each ROW on that
-    # card keeps the destination's own predicate, so widening this literal widens nothing but a
-    # panel. Registered anyway, and as `partial` rather than `covers`, because the shape of the set
-    # is the thing a new tier would default into wrongly -- and because a card nobody can find is the
-    # failure it was written to fix, so "absent by accident" costs as much here as "offered by
-    # accident" does on a gate.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="MINISTRY_DESK_ROLES",
@@ -330,10 +166,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "this card was written to end."
         ),
     ),
-    # THE MINISTRY'S MONTHLY EXPORT PACKS, 2026-10-18. Same members as `OVERSIGHT_ASSIGNER_ROLES`
-    # today, and registered separately for the reason the dashboard rows below give: naming
-    # supervisors and taking the whole estate out of the product are two decisions, and a new tier
-    # must be decided onto each side of each.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="MINISTRY_EXPORT_ROLES",
@@ -359,17 +191,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "takes every workshop in the country out of the product as a spreadsheet."
         ),
     ),
-    # THE GATE THAT SITS BESIDE THE CARD ABOVE, AND THE DUPLICATION IS THE POINT.
-    #
-    # `MINISTRY_DASHBOARD_ROLES` has the same four members as `MINISTRY_DESK_ROLES` and is a
-    # different thing: the desk literal is a dashboard CARD'S AUDIENCE, mirrored nowhere on the
-    # server, whose own docstring promises that widening it "widens no capability at all"; this one
-    # is the `ROUTE_GUARDS.can` for `/ministry-dashboard` and has a twin in
-    # `app/core/deps.py::MINISTRY_DASHBOARD_ROLES`. Collapsing them would make that promise false --
-    # a later widening of a card would open a page holding the whole national programme.
-    #
-    # SO IT IS REGISTERED SEPARATELY AND ON PURPOSE. A twelfth tier has to be typed into BOTH, which
-    # is the same friction the desk's row buys, applied to the half that actually opens a door.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="MINISTRY_DASHBOARD_ROLES",
@@ -400,9 +221,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "nobody having thought about it, which is what this row exists to prevent."
         ),
     ),
-    # C14 (2026-10-17): who READS the cross-workshop analytics — the server's
-    # `app/api/routes/analytics.py::ANALYTICS_READ_ROLES`. An Assistant Director is out by the owner's
-    # naming ("Ministry Admin and Regional Directors"), and so is every tier below.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="ANALYTICS_READ_ROLES",
@@ -424,10 +242,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "cost findings for the whole archive; defaulting out is a ministry post shown nothing."
         ),
     ),
-    # WHO PROVISIONS PASSWORD ACCOUNTS ON /users, 2026-10-09. The twin of
-    # `app/core/deps.py::ACCOUNT_PROVISIONER_ROLES`, and `partial` for the reason the rows above are:
-    # a new tier must be DECIDED onto one side. The pattern accepts the literal on one line or on
-    # several, because both shapes are the set idiom that file uses.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="ACCOUNT_PROVISIONER_ROLES",
@@ -455,9 +269,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "defaulting OUT is a ministry post shown a users table it cannot add anybody to."
         ),
     ),
-    # WHO APPROVES A DESIGN WORKSHOP'S REPORT, 2026-10-10. The twin of
-    # `app/core/deps.py::APPROVAL_AUTHORITY_ROLES`, and `partial` for the reason the rows above are: a
-    # new tier must be DECIDED onto one side of the approving authority.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="APPROVAL_AUTHORITY_ROLES",
@@ -485,12 +296,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "defaulting OUT is a ministry post that cannot find the reports waiting on it."
         ),
     ),
-    # WHO MAY HOLD A POST ON ONE WORKSHOP, 2026-10-09 (owner's ruling D3). Three holder sets, each the
-    # twin of a server set in `services/design_workshop_inspectors.py` / `design_workshop_oversight.py`
-    # and each `partial` for the reason the rows above are. They are DOORS on the web — the inspector
-    # surface and Workshops I monitor open to whoever may hold the post — so a tier defaulting into
-    # one of them is a menu entry for a page the API refuses, and one defaulting out is an appointed
-    # officer who cannot find the workshop they were appointed to.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="INSPECTION_HOLDER_ROLES",
@@ -572,7 +377,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "wrong-slot reason above."
         ),
     ),
-    # ── frontend, rendered ──────────────────────────────────────────────────────────────────────
     Mirror(
         path="frontend/components/hero/AccessLadder.tsx",
         binding="TIER_COPY",
@@ -585,11 +389,6 @@ MIRRORS: tuple[Mirror, ...] = (
         ),
         enforced_by="tsc, via Record<UserRole, string>",
     ),
-    # ── frontend, hand-kept tuples inside tests ─────────────────────────────────────────────────
-    #
-    # These four are the audit finding this file was commissioned for: tuples that LOOK typed,
-    # type-check while short, and quietly narrow the coverage of the suite they sit in. A test that
-    # iterates six of seven tiers reports the same green as one that iterates seven.
     Mirror(
         path="frontend/e2e/dashboard-tile-parity-unit.spec.ts",
         binding="ROLES",
@@ -708,10 +507,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "gathering the loops into one `ALL_ROLES` here would let this row be `closed` instead."
         ),
     ),
-    # ── android: the five Kotlin copies ─────────────────────────────────────────────────────────
-    #
-    # An Android fix costs a tagged release and a fleet that may be offline for a fortnight, so these
-    # are the rows where catching the omission BEFORE the tier ships is worth the most.
     Mirror(
         path=f"{_ANDROID_UI}/MainActivity.kt",
         binding="ROLE_RANK",
@@ -777,10 +572,6 @@ MIRRORS: tuple[Mirror, ...] = (
         binding="ACCESS_GRANTABLE_ROLES",
         kind="partial",
         pattern=r"private val ACCESS_GRANTABLE_ROLES = listOf\(([\s\S]*?)\n[ \t]*\)",
-        # ADMIN and MASTER_ADMIN are excluded by a decision this screen's own header explains: an
-        # admin COULD mint another admin here, but the place to do that is Manage users, where the
-        # consequences of the ladder are on screen. Pinned rather than merely subset-checked so a
-        # new tier cannot default into "not grantable" by nobody having thought about it.
         absent=frozenset({"ADMIN", "MASTER_ADMIN"}),
         why=(
             "The dropdown that lets a field researcher onto the platform at all. A tier absent from "
@@ -808,7 +599,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "it."
         ),
     ),
-    # ── android: hand-kept tuples inside tests ──────────────────────────────────────────────────
     Mirror(
         path=f"{_ANDROID_TEST}/ui/FieldPermissionsTest.kt",
         binding="everyRole",
@@ -962,7 +752,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "future `can` predicate tightened elsewhere could then take away from silently."
         ),
     ),
-    # ── the two per-tier decision files added with the directorate wave, 2026-09-13 ───────────
     Mirror(
         path="frontend/e2e/directorate-tiers-unit.spec.ts",
         binding="ALL_ROLES",
@@ -977,7 +766,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "count, on the one surface whose reason for existing is counting them."
         ),
     ),
-    # ── the walkthrough decks, 2026-09-15; SCOPED PER ROLE 2026-09-16 ────────────────────────────
     Mirror(
         path="frontend/e2e/guide-tracks-unit.spec.ts",
         binding="ALL_ROLES",
@@ -1056,9 +844,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "tuple is a tier it stops asserting anything about."
         ),
     ),
-    # THE CONTENT ADMINS (owner's ruling, 2026-10-20): who deletes records, media and every other
-    # managed content type, and edits every record whoever made it. The server's
-    # `app/core/deps.py::CONTENT_ADMIN_ROLES`; the documentation-portal carries the same set by name.
     Mirror(
         path="frontend/lib/permissions.ts",
         binding="CONTENT_ADMIN_ROLES",
@@ -1104,7 +889,6 @@ MIRRORS: tuple[Mirror, ...] = (
             "membership, never rank >= 50. Mirrors `CONTENT_ADMIN_ROLES` in app/core/deps.py."
         ),
     ),
-    # ── the repository's front door ─────────────────────────────────────────────────────────────
     Mirror(
         path="README.md",
         binding="the Tier / Rank / Powers table",
@@ -1126,45 +910,17 @@ MIRRORS: tuple[Mirror, ...] = (
 )
 
 
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-# Reading a literal back out of TypeScript or Kotlin
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-
-#: A quoted string that is ENTIRELY an upper-snake token — `"DESIGNER"`, `'MASTER_ADMIN'`. Both
-#: quotes are anchored so an English sentence containing an acronym cannot match.
 _QUOTED_TIER = re.compile(r"""["']([A-Z][A-Z0-9_]{2,})["']""")
 
-#: A bare object key in a TypeScript literal — `DESIGNER: "Designer",`. TS mirrors write the tier as
-#: an identifier; Kotlin ones always quote it.
 _BARE_KEY = re.compile(r"^\s*([A-Z][A-Z0-9_]{2,})\s*:", re.MULTILINE)
 
-#: `NAME: 35` (TypeScript) or `"NAME" to 35` (Kotlin), where the value may be an identifier rather
-#: than a literal — `AppNavigation.kt` writes `"DESIGNER" to RANK_DESIGNER`.
-#:
-#: ANCHORED TO THE START OF A LINE, for the reason [_QUOTED_TIER] states above and this pattern
-#: learned the hard way. `_body()` hands back the literal's text WITH its comments, and the Kotlin
-#: `to` infix is also an ordinary English word, so unanchored this matched the prose sentence
-#: "Adding INSPECTOR to that set would be the wrong fix" sitting inside `MainActivity.kt`'s
-#: `ROLE_RANK` and read it as the entry `INSPECTOR -> that`. `_ranked_tiers` then failed to resolve
-#: `that` as an integer constant and BOTH ranked assertions went red naming MainActivity.kt — which
-#: invites the reader to delete the comment, or the mirror row, to make a broken regex quiet.
-#: A map entry always begins its own line; a comment line begins with `//` or a KDoc `*`, and a
-#: Markdown row with `|` — none of which this pattern can start on. The value is held to the SAME
-#: line (`[ \t]` rather than `\s`) so a sentence wrapping onto the next line cannot supply it
-#: either. Verified against all four `kind="ranked"` mirrors: each still resolves to the full
-#: 10/20/30/35/37/40/50/60 ladder, and `test_the_rank_reader_does_not_read_prose_as_a_rank_entry`
-#: below pins both halves of that.
 _RANK_ENTRY = re.compile(
     r"""^[ \t]*["']?([A-Z][A-Z0-9_]{2,})["']?[ \t]*(?::|\bto\b)[ \t]*([A-Za-z0-9_]+)""",
     re.MULTILINE,
 )
 
-#: A file-level integer constant, for resolving the identifiers above: `const val RANK_DESIGNER = 35`.
 _INT_CONST = re.compile(r"\b(?:const\s+val|val|const)\s+([A-Za-z_]\w*)\s*(?::\s*\w+\s*)?=\s*(\d+)\b")
 
-#: A Markdown table row — ``| `DESIGNER` | 35 | Run design & prototype workshops … |``. README.md's
-#: role table is a rank map like any other, written in a third language, and a reader who never opens
-#: `deps.py` takes the ladder from there and nowhere else.
 _TABLE_ROW = re.compile(r"^\|\s*`?([A-Z][A-Z0-9_]{2,})`?\s*\|\s*(\d+)\s*\|", re.MULTILINE)
 
 
@@ -1179,7 +935,6 @@ def _source(mirror: Mirror) -> str:
 
 
 def _body(mirror: Mirror) -> str:
-    """The literal's own text, or the whole file for a ``covers`` row."""
     source = _source(mirror)
     if mirror.pattern is None:
         return source
@@ -1199,12 +954,8 @@ def _named_tiers(body: str) -> set[str]:
 
 
 def _ranked_tiers(mirror: Mirror, body: str) -> dict[str, int]:
-    """``{tier: rank}``, resolving an identifier value through the file's own integer constants."""
     constants = {name: int(value) for name, value in _INT_CONST.findall(_source(mirror))}
     ranks: dict[str, int] = {}
-    # Two disjoint shapes, unioned rather than chosen between: `NAME: 35` / `"NAME" to 35` for the
-    # two programming languages, and `| `NAME` | 35 |` for the Markdown table. A row cannot match
-    # both, so there is nothing for the caller to disambiguate.
     for tier, raw in [*_RANK_ENTRY.findall(body), *_TABLE_ROW.findall(body)]:
         if raw.isdigit():
             ranks[tier] = int(raw)
@@ -1220,35 +971,17 @@ def _ranked_tiers(mirror: Mirror, body: str) -> dict[str, int]:
 
 
 def _id(mirror: Mirror) -> str:
-    """The name pytest prints for a parametrised row: the file, then what in it. A `covers` row has
-    no binding to name — its tiers are scattered through the file — so it says so."""
     leaf = mirror.path.rsplit("/", 1)[-1]
     return f"{leaf}::{'whole-file' if mirror.pattern is None else mirror.binding}"
 
 
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-# The parity assertions
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-
 
 @pytest.mark.parametrize("mirror", MIRRORS, ids=[_id(m) for m in MIRRORS])
 def test_every_mirror_carries_exactly_the_tiers_the_server_has(mirror: Mirror) -> None:
-    """Every tier in ``ROLE_RANK`` is in the mirror, and the mirror invents none.
-
-    BOTH DIRECTIONS, and the second is the one a person writing this by hand would skip. A tier the
-    server has and a mirror lacks is a client that cannot see an account type. A tier a MIRROR has and
-    the server does not is worse: it is an option in a picker that produces a 403 on submit, or — on
-    the phone — a role that can be assigned and then cannot sign in.
-    """
     body = _body(mirror)
     named = _named_tiers(body) if mirror.kind != "ranked" else set(_ranked_tiers(mirror, body))
 
     if mirror.kind == "partial":
-        # Handled first and separately, because the message is the point. For a deliberately partial
-        # list the interesting failure is not "a tier is missing" — some are missing on purpose — it
-        # is "a tier is neither offered nor deliberately excluded", and that is a question for a
-        # person, not a defect report. Falling through to the generic message below would tell them
-        # to go and add the tier, which is exactly the decision they are supposed to be making.
         offered = named & TIERS
         overlap = sorted(offered & mirror.absent)
         assert not overlap, (
@@ -1276,8 +1009,6 @@ def test_every_mirror_carries_exactly_the_tiers_the_server_has(mirror: Mirror) -
     )
 
     if mirror.kind == "covers":
-        # Deliberately no reverse check; see Mirror's docstring for why the whole-file scope cannot
-        # have one.
         return
 
     invented = sorted(named - TIERS)
@@ -1295,16 +1026,6 @@ def test_every_mirror_carries_exactly_the_tiers_the_server_has(mirror: Mirror) -
     ids=[_id(m) for m in MIRRORS if m.kind == "ranked"],
 )
 def test_every_ranked_mirror_uses_the_server_s_numbers(mirror: Mirror) -> None:
-    """The NUMBERS, not just the names — the half a set comparison cannot see.
-
-    DESIGNER is 35 rather than 40 because it was inserted into the gap the original tens deliberately
-    left, so that no stored role and no existing comparison changed meaning. A mirror that "adds the
-    tier" by renumbering instead — pushing PROFESSOR to 45, say — has every name the server has and is
-    still wrong everywhere, and the first symptom is a professor who cannot open a screen they opened
-    yesterday. INSPECTOR landed in the same kind of gap at 37 on 2026-08-27, which is what this
-    assertion was written for — and it caught ``MainActivity.kt``'s ``ROLE_RANK`` on the way through,
-    where a name-only comparison would have reported the same map as merely "missing a tier".
-    """
     ranks = _ranked_tiers(mirror, _body(mirror))
     wrong = {
         tier: (rank, ROLE_RANK[tier])
@@ -1316,18 +1037,10 @@ def test_every_ranked_mirror_uses_the_server_s_numbers(mirror: Mirror) -> None:
         + "; ".join(f"{tier} (mirror {mine}, server {theirs})" for tier, (mine, theirs) in sorted(wrong.items()))
         + f".\nWhat that costs: {mirror.why}"
     )
-    # And the whole dict, so a tier present in one and absent in the other cannot slip past the
-    # comparison above (which only looks at keys the mirror already has).
     assert ranks == dict(ROLE_RANK), f"{mirror.path}: `{mirror.binding}` is not deps.py's ladder."
 
 
 def test_the_web_provisioner_set_is_the_servers() -> None:
-    """``ACCOUNT_PROVISIONER_ROLES`` on the web against the server's frozenset, directly.
-
-    The ``partial`` row above holds the web literal to its own ``absent`` list, which is a third
-    hand-kept copy; this holds the two that actually decide to each other. A disagreement is a create
-    form shown to somebody the API answers with a 403, or a ministry post with no form at all.
-    """
     from app.core.deps import ACCOUNT_PROVISIONER_ROLES
 
     (mirror,) = [m for m in MIRRORS if m.binding == "ACCOUNT_PROVISIONER_ROLES"]
@@ -1339,7 +1052,6 @@ def test_the_web_provisioner_set_is_the_servers() -> None:
 
 
 def test_the_content_admin_set_is_the_servers_on_both_clients() -> None:
-    """``CONTENT_ADMIN_ROLES`` on the web and the handset against the server's frozenset, directly."""
     from app.core.deps import CONTENT_ADMIN_ROLES
 
     for binding in ("CONTENT_ADMIN_ROLES", "FieldPermissions.CONTENT_ADMIN_ROLES"):
@@ -1352,12 +1064,6 @@ def test_the_content_admin_set_is_the_servers_on_both_clients() -> None:
 
 
 def test_the_web_approving_authority_is_the_servers() -> None:
-    """``APPROVAL_AUTHORITY_ROLES`` on the web against the server's frozenset, directly.
-
-    The same reason as the provisioner test above: the ``partial`` row holds the web literal to its own
-    ``absent`` list, and this holds the two sets that actually decide to each other. A disagreement is a
-    Reports to approve entry the API refuses, or an approving officer who cannot find the screen.
-    """
     from app.core.deps import APPROVAL_AUTHORITY_ROLES
 
     (mirror,) = [m for m in MIRRORS if m.binding == "APPROVAL_AUTHORITY_ROLES"]
@@ -1369,12 +1075,6 @@ def test_the_web_approving_authority_is_the_servers() -> None:
 
 
 def test_the_web_post_holder_sets_are_the_servers() -> None:
-    """The three post-holder sets on the web against the server's, directly (ruling D3, 2026-10-09).
-
-    The same argument as the provisioner test above: the ``partial`` rows hold each web literal to a
-    hand-kept ``absent`` list, and this holds it to the frozenset that actually decides. A
-    disagreement is a door on the web the API refuses, or an appointed officer with no door at all.
-    """
     from app.services.design_workshop_inspectors import INSPECTION_HOLDER_ROLES
     from app.services.design_workshop_oversight import (
         ASSISTANT_DIRECTOR_HOLDER_ROLES,
@@ -1382,9 +1082,6 @@ def test_the_web_post_holder_sets_are_the_servers() -> None:
         REGIONAL_DIRECTOR_HOLDER_ROLES,
     )
 
-    # THE SERVER'S SETS BY THEIR OWN NAMES, which the web declarations deliberately share — so a
-    # failure names one constant on each side. The capacity map the oversight write validates against
-    # is held to the same two, so the sets compared here are the ones the write actually asks.
     assert OVERSIGHT_CAPACITY_ROLES == {
         "ASSISTANT_DIRECTOR": ASSISTANT_DIRECTOR_HOLDER_ROLES,
         "REGIONAL_DIRECTOR": REGIONAL_DIRECTOR_HOLDER_ROLES,
@@ -1404,14 +1101,6 @@ def test_the_web_post_holder_sets_are_the_servers() -> None:
 
 
 def test_the_self_enforcing_claim_is_true_of_the_source() -> None:
-    """`enforced_by="tsc, …"` is a claim about another file, so re-derive it rather than trust it.
-
-    The header of this file tells a future reader that four mirrors are already exhaustive by
-    compilation and that a fifth check here would be redundant. That is advice worth acting on, which
-    makes it advice worth being wrong about: if somebody loosens `Record<UserRole, string>` to
-    `Partial<Record<…>>` or to a plain object, the compiler stops enforcing anything and the note here
-    still says it does. This is the one assertion that keeps a comment honest.
-    """
     for mirror in MIRRORS:
         if not (mirror.enforced_by or "").startswith("tsc"):
             continue
@@ -1428,7 +1117,6 @@ def test_the_self_enforcing_claim_is_true_of_the_source() -> None:
 
 
 def test_every_mirror_row_is_well_formed() -> None:
-    """The registry's own invariants, so a badly-written row cannot pass by asserting nothing."""
     for mirror in MIRRORS:
         assert mirror.kind in {"ranked", "closed", "covers", "partial"}, mirror
         assert (mirror.pattern is None) == (mirror.kind == "covers"), (
@@ -1448,15 +1136,6 @@ def test_every_mirror_row_is_well_formed() -> None:
 
 
 def test_the_rank_reader_does_not_read_prose_as_a_rank_entry() -> None:
-    """`_RANK_ENTRY` must not mistake an English sentence inside the literal for a map entry.
-
-    `_body()` returns the literal's text WITH its comments — a deliberate choice, since a comment
-    naming a tier belongs to the mirror — and Kotlin's `to` is an ordinary English word. Unanchored,
-    the pattern read `Adding INSPECTOR to that set would be the wrong fix` (a real comment inside
-    `MainActivity.kt`'s `ROLE_RANK`) as `INSPECTOR -> that`, and both ranked assertions failed
-    naming the Kotlin file rather than this one. Pinned here because the next author's instinct on
-    seeing that failure is to reword the Kotlin, which re-arms the trap for the sentence after it.
-    """
     prose = (
         '        // grants them. Adding INSPECTOR to that set would be the wrong fix — the\n'
         '        // read-only workshop. See DESIGNER: the gap at 36-39 was left free.\n'
@@ -1474,24 +1153,8 @@ def test_the_rank_reader_does_not_read_prose_as_a_rank_entry() -> None:
     )
 
 
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-# The backstop: nothing may enumerate the ladder without being registered above
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-
-#: How many DISTINCT tiers a file must name before it is treated as a ladder enumeration.
-#:
-#: A FIXED NUMBER, NOT ``len(ROLE_RANK)``, and this is the single most important line in the sweep.
-#: A threshold of "all of them" grows with the ladder: on 2026-08-27, when INSPECTOR was added, every
-#: mirror that still listed the seven older tiers dropped from "all" to "seven of eight" — and with a
-#: derived threshold the sweep would have gone silent in the exact week it was the only thing
-#: watching. That is no longer a prediction; it is what this constant prevented. Five is low enough
-#: that a genuinely partial enumeration is caught and high enough that a page mentioning a couple of
-#: tiers in passing is not. DO NOT derive it, and do not raise it to quiet a failure.
 LADDER_SHAPED = 5
 
-#: Files that name five or more tiers and are NOT mirrors of the ladder. Each needs a reason, and the
-#: reason has to be "this does not purport to enumerate the ladder" — never "this failure was
-#: inconvenient". Anything that DOES enumerate belongs in ``MIRRORS``, not here.
 KNOWN_NON_MIRRORS: dict[str, str] = {
     "frontend/e2e/ministry-exports-unit.spec.ts": (
         "A SAMPLE of each side of the `/ministry-exports` gate, and NOT an enumeration: three tiers "
@@ -1565,10 +1228,6 @@ KNOWN_NON_MIRRORS: dict[str, str] = {
 }
 
 _SWEEP_SUFFIXES = {".ts", ".tsx", ".kt"}
-#: Directories with no hand-written source in them. Build output is the one that matters: Gradle and
-#: Next.js both emit generated files that quote role names, and a sweep that read them would report a
-#: "mirror" nobody can fix. (The full copies of both trees under `.claude/worktrees/` are out of reach
-#: already — the sweep starts at `frontend/` and `android/` and never sees them.)
 _SWEEP_SKIP = {"node_modules", ".next", "build", "dist", ".gradle", ".idea"}
 
 
@@ -1585,17 +1244,6 @@ def _sweep_files() -> list[Path]:
 
 
 def test_no_unregistered_file_enumerates_the_ladder() -> None:
-    """A new copy of the ladder must not be able to appear unwatched.
-
-    ``MIRRORS`` is a hand-kept registry, which makes it the same kind of artefact as the tuples it
-    polices: correct on the day it was written, and silent afterwards. This is the assertion that
-    makes it self-renewing. Anything in either client tree that names five or more tiers is either a
-    row above or an entry in ``KNOWN_NON_MIRRORS`` with a reason — there is no third state.
-
-    IT WILL FIRE ON HONEST WORK, and that is the design. Adding a screen that enumerates the tiers
-    should cost one line here, chosen deliberately, rather than costing nothing and being discovered
-    by an audit two quarters later.
-    """
     registered = {m.path for m in MIRRORS} | set(KNOWN_NON_MIRRORS)
     stray: dict[str, list[str]] = {}
     for path in _sweep_files():
@@ -1619,21 +1267,10 @@ def test_no_unregistered_file_enumerates_the_ladder() -> None:
 
 
 def test_the_sweep_actually_reaches_both_client_trees() -> None:
-    """A sweep that silently walks nothing passes forever.
-
-    ``rglob`` over a path that does not exist yields nothing and raises nothing, so the assertion
-    above would go green on a checkout where the client trees had been moved or renamed — the exact
-    shape of green-that-means-nothing this repository's test discipline exists to refuse. Pinning
-    that each tree contributes files, and that the sweep really does find the registered mirrors in
-    both languages, is what stops that.
-    """
     swept = {p.relative_to(REPO).as_posix() for p in _sweep_files()}
     assert any(p.startswith("frontend/") for p in swept), "the sweep walked no frontend source"
     assert any(p.startswith("android/") for p in swept), "the sweep walked no Android source"
     for mirror in MIRRORS:
-        # Only the two client trees. A mirror registered outside them — README.md's role table — is
-        # hand-kept with no backstop behind it, which its own `why` says out loud; asserting the sweep
-        # reached it would be asserting something this test deliberately does not do.
         if not mirror.path.startswith(("frontend/", "android/")):
             continue
         assert mirror.path in swept, (

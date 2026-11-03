@@ -1,38 +1,3 @@
-"""``services/uploads.read_upload_bounded`` — A30-10, the cap that used to be checked too late.
-
-THE DEFECT, IN THREE ROUTES WITH ONE SHAPE::
-
-    content = await file.read()
-    if len(content) > SOME_MAX:
-        raise HTTPException(413, ...)
-
-``await file.read()`` with no argument reads to EOF. So the ceiling was enforced one line AFTER the
-cost it exists to avoid had been paid in full: an 800 MB body was materialised in one contiguous
-``bytes`` and only then measured and refused. The 413 was honest and useless.
-
-**THE BOX IS THE ARGUMENT.** A single-worker uvicorn on 1 GiB (MEASURED, docs/SCALABILITY.md §5.1),
-with no supervisor to respawn a worker that overcommits — ``--workers >1`` is what caused the outage
-``app/worker.py``'s docstring describes. A body larger than the free heap does not degrade one
-request; it takes every in-flight request on the box with it, including the sign-in of whoever is
-trying to find out why. The cheapest attempt is one signed-in account, one request, one large file.
-
-WHAT EACH HALF IS FOR, since the tests below are organised by it:
-
-* The ``Content-Length`` pre-check answers before a byte of the body leaves the socket, so the
-  ordinary honest mistake — a 400 MB video attached to an 8 MB field — costs nothing at all. It is
-  fast and forgeable.
-* The chunked loop is the GUARANTEE. It bounds a body whose header lies or is absent (a chunked
-  transfer sends none), and it is what makes ``max_bytes`` a real bound rather than a hint.
-
-Neither is redundant and they fail in opposite directions, which is why there is a section for each.
-
-THE FILE IS A STAND-IN, NOT AN ``UploadFile``. What is under test is which numbers the function
-compares and how much it has read by the time it refuses, and a Starlette ``UploadFile`` wrapping a
-``SpooledTemporaryFile`` would answer both questions identically while hiding the second one. The
-stub COUNTS its reads, which is the only way to assert "it refused before reading" as a fact rather
-than as a hope.
-"""
-
 import asyncio
 
 import pytest
@@ -44,12 +9,6 @@ MB = 1024 * 1024
 
 
 class _CountingFile:
-    """An ``UploadFile``-shaped source that records every read it is asked for.
-
-    ``read(size)`` is the whole protocol ``read_upload_bounded`` uses. The recorded sizes are what
-    let a test say "nothing was read" or "it stopped after two chunks" rather than inferring it.
-    """
-
     def __init__(self, payload: bytes) -> None:
         self._payload = payload
         self._offset = 0
@@ -71,8 +30,6 @@ class _CountingFile:
 
 
 class _Request:
-    """Just enough of a request for the header read: a ``headers`` mapping."""
-
     def __init__(self, content_length: object = None) -> None:
         self.headers = {} if content_length is None else {"content-length": str(content_length)}
 
@@ -81,14 +38,8 @@ def _read(file, max_bytes: int, **kwargs):
     return asyncio.run(uploads.read_upload_bounded(file, max_bytes, **kwargs))
 
 
-# --------------------------------------------------------------------------------------
-# 1. The ordinary path is unchanged
-# --------------------------------------------------------------------------------------
-
 
 def test_a_file_inside_the_limit_comes_back_whole():
-    """The control. A bound that also truncated would be a far worse defect than the one being
-    fixed — a grid photograph half-read is a measurement quietly taken from the wrong picture."""
     payload = b"x" * (3 * MB) + b"tail"
     got = _read(_CountingFile(payload), 8 * MB, request=_Request(len(payload)))
     assert got == payload
@@ -96,28 +47,16 @@ def test_a_file_inside_the_limit_comes_back_whole():
 
 
 def test_a_file_exactly_at_the_limit_is_accepted():
-    """The boundary is ``>``, not ``>=``: a caller who sends precisely the documented limit did what
-    the error message told them to and must not be refused for it."""
     payload = b"y" * (8 * MB)
     assert len(_read(_CountingFile(payload), 8 * MB)) == 8 * MB
 
 
 def test_an_empty_upload_returns_empty_rather_than_raising():
-    """"No file" is the CALLER'S problem to name — ``analyze_media_measurement`` answers 422 with a
-    sentence about photographing the object — so this must hand back the empty bytes rather than
-    inventing a refusal of its own and taking that message away."""
     assert _read(_CountingFile(b""), 8 * MB) == b""
 
 
-# --------------------------------------------------------------------------------------
-# 2. The pre-read refusal: nothing is read at all
-# --------------------------------------------------------------------------------------
-
 
 def test_a_content_length_over_the_limit_refuses_before_reading_a_byte():
-    """THE DEFECT, AT ITS CHEAPEST. This is the whole point of taking a ``request``: an 800 MB body
-    announced in the header is refused with the socket untouched, rather than after the box has
-    already spent the 8 MB it was always going to spend before noticing."""
     file = _CountingFile(b"z" * (12 * MB))
     with pytest.raises(HTTPException) as excinfo:
         _read(file, 8 * MB, request=_Request(800 * MB))
@@ -127,19 +66,12 @@ def test_a_content_length_over_the_limit_refuses_before_reading_a_byte():
 
 
 def test_the_multipart_envelope_does_not_cost_a_caller_their_upload():
-    """``Content-Length`` on a ``multipart/form-data`` request measures the WHOLE envelope — part
-    boundaries, ``Content-Disposition`` headers, the other form fields, the trailing delimiter — not
-    the file. So a file of exactly ``max_bytes`` arrives with a Content-Length a few hundred bytes
-    above it, and a strict comparison would 413 an upload sitting precisely at the documented limit.
-    That is why ``CONTENT_LENGTH_SLACK_BYTES`` exists, and this is the case it exists for."""
     payload = b"m" * (8 * MB)
-    declared = len(payload) + 512  # a realistic envelope for one file part and two small fields
+    declared = len(payload) + 512
     assert len(_read(_CountingFile(payload), 8 * MB, request=_Request(declared))) == 8 * MB
 
 
 def test_the_slack_is_not_a_loophole():
-    """The slack admits an envelope, not a second file. Anything past it is refused on the header,
-    and everything inside it still falls through to the loop — which is the real bound."""
     file = _CountingFile(b"m" * (9 * MB))
     with pytest.raises(HTTPException):
         _read(file, 8 * MB, request=_Request(8 * MB + uploads.CONTENT_LENGTH_SLACK_BYTES + 1))
@@ -148,30 +80,17 @@ def test_the_slack_is_not_a_loophole():
 
 @pytest.mark.parametrize("header", [None, "", "  ", "not-a-number", "-1", "1e9"])
 def test_an_unusable_content_length_falls_through_to_the_loop(header):
-    """A missing header (every chunked transfer sends none), a blank one, a negative one and a
-    non-numeric one all mean the same thing: this pre-check could not be made. The same shape
-    ``s3.head_object`` uses, and for the same reason — the caller then falls back to a bound it can
-    actually enforce. It must never become a 500 on a path whose real answer is one line down."""
     payload = b"q" * (2 * MB)
     got = _read(_CountingFile(payload), 8 * MB, request=_Request(header))
     assert got == payload
 
 
 def test_a_request_object_with_no_headers_at_all_is_simply_no_evidence():
-    """Defensive because this helper is called from three routes by three lanes, and a caller that
-    passes something request-shaped but header-less must get the loop, not an AttributeError."""
     assert _read(_CountingFile(b"a" * 100), 8 * MB, request=object()) == b"a" * 100
 
 
-# --------------------------------------------------------------------------------------
-# 3. The chunked read: the guarantee, with or without a header
-# --------------------------------------------------------------------------------------
-
 
 def test_a_lying_content_length_is_caught_by_the_loop():
-    """THE REASON THE LOOP IS THE GUARANTEE AND THE HEADER IS THE OPTIMISATION. ``Content-Length``
-    is written by the client; a caller who wants to send 40 MB past an 8 MB gate simply declares
-    1024. The bound has to be enforced on what actually arrives."""
     file = _CountingFile(b"w" * (40 * MB))
     with pytest.raises(HTTPException) as excinfo:
         _read(file, 8 * MB, request=_Request(1024))
@@ -179,9 +98,6 @@ def test_a_lying_content_length_is_caught_by_the_loop():
 
 
 def test_the_loop_stops_within_one_chunk_of_the_limit():
-    """The peak this function will ever hold is ``max_bytes`` plus one chunk — that IS the fix. If
-    it read to EOF and then measured, this assertion would read 40 MB and the defect would be back
-    with a passing test suite in front of it."""
     file = _CountingFile(b"w" * (40 * MB))
     with pytest.raises(HTTPException):
         _read(file, 8 * MB)
@@ -189,8 +105,6 @@ def test_the_loop_stops_within_one_chunk_of_the_limit():
 
 
 def test_no_request_is_a_supported_call_and_still_bounded():
-    """*request* is optional because not every caller has one to hand. Omitting it loses the cheap
-    early refusal and nothing that is load-bearing."""
     file = _CountingFile(b"w" * (20 * MB))
     with pytest.raises(HTTPException) as excinfo:
         _read(file, 6 * MB)
@@ -198,22 +112,14 @@ def test_no_request_is_a_supported_call_and_still_bounded():
 
 
 def test_the_read_is_chunked_rather_than_one_read_to_eof():
-    """The mechanism, asserted directly. ``read()`` with no argument — or with ``-1`` — is the exact
-    call this module exists to stop making, so a "simplification" back to it must fail here."""
     file = _CountingFile(b"c" * (3 * MB))
     _read(file, 8 * MB)
     assert file.reads
     assert all(size == uploads.CHUNK_BYTES for size in file.reads)
 
 
-# --------------------------------------------------------------------------------------
-# 4. What the caller is told
-# --------------------------------------------------------------------------------------
-
 
 def test_the_refusal_is_one_sentence_naming_the_limit_in_mb():
-    """Owner's standing instruction: one line, state-fact plus action, professional. The argument
-    for the number belongs in the comment above the constant that sets it, never on screen."""
     with pytest.raises(HTTPException) as excinfo:
         _read(_CountingFile(b"x" * (20 * MB)), 8 * MB)
     detail = excinfo.value.detail
@@ -223,16 +129,12 @@ def test_the_refusal_is_one_sentence_naming_the_limit_in_mb():
 
 
 def test_the_purpose_names_the_thing_the_route_asked_for():
-    """One helper speaks for three routes — a grid photograph, a dictation clip, a questionnaire
-    workbook — and none of them should sound like a generic file server."""
     with pytest.raises(HTTPException) as excinfo:
         _read(_CountingFile(b"x" * (20 * MB)), 8 * MB, purpose="image")
     assert "image" in excinfo.value.detail
 
 
 def test_both_refusals_read_identically():
-    """A caller must not be able to tell from the wording whether the server read their body or not,
-    and two spellings of one limit is two places for the number to go stale."""
     with pytest.raises(HTTPException) as early:
         _read(_CountingFile(b"x" * MB), 8 * MB, request=_Request(900 * MB), purpose="image")
     with pytest.raises(HTTPException) as late:
@@ -240,20 +142,6 @@ def test_both_refusals_read_identically():
     assert early.value.detail == late.value.detail
 
 
-# --------------------------------------------------------------------------------------
-# 5. The remedy — the per-site advice that moving onto this helper silently deleted
-#
-# Two routes had a second clause in their own 413 and lost it when they adopted the shared sentence:
-# the identity card ("photograph the card alone rather than the whole page") and dictation ("upload a
-# longer recording as workshop audio instead — it is transcribed in the background"). Neither is a
-# restatement of "send a smaller file": the first is the action that clears the refusal from a phone
-# camera, and the second names the ONLY route that accepts what the designer is holding — which is
-# the documented reason DICTATION_MAX_BYTES is 6 MB rather than an arbitrary number.
-# --------------------------------------------------------------------------------------
-
-#: The two sentences the routes pass, copied here so the shape they are asserted against is visible.
-#: They are LITERALS AT THE CALL SITES and not constants, deliberately — each belongs to one route
-#: and lifting them into this module's import surface would invite a third route to reach for one.
 CARD_REMEDY = "Photograph the card alone rather than the whole page."
 DICTATION_REMEDY = (
     "Upload a longer recording as workshop audio instead — it is transcribed in the background."
@@ -261,8 +149,6 @@ DICTATION_REMEDY = (
 
 
 def test_a_remedy_is_appended_as_a_second_sentence_and_does_not_replace_the_first():
-    """THE NUMBER STILL COMES FIRST. A remedy that swallowed the shared sentence would take the
-    limit off the screen, which is the one fact a caller cannot work out for themselves."""
     with pytest.raises(HTTPException) as excinfo:
         _read(
             _CountingFile(b"x" * (20 * MB)),
@@ -276,10 +162,6 @@ def test_a_remedy_is_appended_as_a_second_sentence_and_does_not_replace_the_firs
 
 
 def test_a_site_that_passes_no_remedy_is_unchanged():
-    """THE COMPATIBILITY HALF, AND IT IS NOT THEORETICAL. Both clients print ``detail`` verbatim and
-    the questionnaire workbook route passes no remedy, so the parameter being optional has to mean
-    byte-identical and not merely similar — a fielded build must not start reading a different
-    sentence because a sibling route gained one."""
     with pytest.raises(HTTPException) as without:
         _read(_CountingFile(b"x" * (20 * MB)), 8 * MB, purpose="spreadsheet")
     with pytest.raises(HTTPException) as explicit_none:
@@ -289,9 +171,6 @@ def test_a_site_that_passes_no_remedy_is_unchanged():
 
 
 def test_the_remedy_reaches_the_header_refusal_too():
-    """The cheap refusal and the mid-read one must still be indistinguishable. A remedy that only
-    the loop carried would mean a designer who declared a Content-Length got less help than one who
-    did not — the same asymmetry ``test_both_refusals_read_identically`` rules out for the number."""
     with pytest.raises(HTTPException) as early:
         _read(
             _CountingFile(b"x" * MB),
@@ -313,10 +192,6 @@ def test_the_remedy_reaches_the_header_refusal_too():
 
 @pytest.mark.parametrize("remedy", [CARD_REMEDY, DICTATION_REMEDY])
 def test_a_remedy_stays_one_short_line(remedy: str):
-    """Owner's standing instruction, applied to the clause that was reinstated rather than only to
-    the one that was already there: one line, state-fact plus action, professional. This is read on
-    a phone in a courtyard, so a remedy that grew into a paragraph is a regression even though every
-    word of it would be true."""
     assert remedy.endswith(".")
     assert remedy.count(".") == 1
     assert "\n" not in remedy
@@ -324,20 +199,6 @@ def test_a_remedy_stays_one_short_line(remedy: str):
         _read(_CountingFile(b"x" * (20 * MB)), 6 * MB, purpose="dictated clip", remedy=remedy)
     assert len(excinfo.value.detail) < 200
 
-
-# --------------------------------------------------------------------------------------
-# 6. The workbook door — `read_workbook_upload`
-# --------------------------------------------------------------------------------------
-#
-# ``questionnaire_forms._read_upload``'s own docstring predicted this helper: "this is the second
-# door with this shape and there will be a third: the bound belongs beside the other upload rules in
-# `services/uploads`, where one fix reaches every route". The annual-plan directory is the third
-# door, and the helper was lifted on 2026-09-13.
-#
-# THE TWO EXISTING DOORS ARE NOT YET RE-POINTED AT IT. Both live in route modules owned by other
-# changes in flight, and re-pointing them is a one-line edit in each. The last test in this section
-# pins the questionnaire door's two sentences BYTE FOR BYTE so that whoever does the rewire finds
-# out immediately if the lift changed a word of what an uploader is told.
 
 
 def _read_workbook(file, max_bytes: int, **kwargs):
@@ -349,19 +210,12 @@ EMPTY = "The upload was empty. Attach the filled-in annual plan pro-forma."
 
 
 class _NamedFile(_CountingFile):
-    """A counting file that also carries a multipart ``filename``, which the extension gate reads."""
-
     def __init__(self, payload: bytes, filename: str | None) -> None:
         super().__init__(payload)
         self.filename = filename
 
 
 def test_the_workbook_door_refuses_a_wrong_extension_before_reading_a_byte():
-    """THE CHEAPEST OF THE THREE REFUSALS ANSWERS FIRST, and ``reads == 0`` is the proof.
-
-    The extension is a string on the multipart part. A .docx attached by mistake must cost nothing at
-    all — not a copy into the heap, and not an openpyxl stack trace.
-    """
     file = _NamedFile(b"x" * MB, "quarterly-report.docx")
     with pytest.raises(HTTPException) as excinfo:
         _read_workbook(file, 4 * MB, purpose="annual plan workbook",
@@ -372,12 +226,6 @@ def test_the_workbook_door_refuses_a_wrong_extension_before_reading_a_byte():
 
 
 def test_the_workbook_door_passes_its_callers_sentence_through_verbatim():
-    """"That is not a workbook" is one FACT at two doors with two different NEXT ACTIONS.
-
-    One helper with a generic sentence would have made both doors vaguer than either was on its own;
-    one helper per door would be the copy this function exists to end. So the sentence is the
-    caller's, and nothing in the helper may decorate it.
-    """
     with pytest.raises(HTTPException) as excinfo:
         _read_workbook(_NamedFile(b"x", "notes.txt"), 4 * MB, purpose="annual plan workbook",
                        wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY)
@@ -392,8 +240,6 @@ def test_the_workbook_door_passes_its_callers_sentence_through_verbatim():
 
 @pytest.mark.parametrize("name", ["plan.xlsx", "PLAN.XLSX", "macro.xlsm", "template.xltx"])
 def test_the_workbook_door_accepts_every_extension_openpyxl_can_open(name: str):
-    """Three extensions, case-insensitively. A ministry office that saved as .xlsm because their
-    template carries a macro must not be turned away by a filter that only knows one spelling."""
     payload = b"PK\x03\x04" + b"z" * 100
     got = _read_workbook(_NamedFile(payload, name), 4 * MB, purpose="annual plan workbook",
                          wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY)
@@ -401,13 +247,6 @@ def test_the_workbook_door_accepts_every_extension_openpyxl_can_open(name: str):
 
 
 def test_a_part_with_no_filename_reaches_the_parser():
-    """THE EXTENSION GATE IS NOT TOTAL AND NEVER WAS, and this pins it rather than fixing it.
-
-    Several HTTP clients send a multipart part with no filename for a perfectly ordinary file. Such
-    a part skips the extension gate entirely and falls through to the parser's MAGIC-BYTE check,
-    which is the real type check. "Tightening" this to refuse a nameless part would turn a working
-    upload into a 415 for a file that was fine.
-    """
     payload = b"PK\x03\x04" + b"y" * 32
     assert _read_workbook(_NamedFile(payload, None), 4 * MB, purpose="annual plan workbook",
                           wrong_type_detail=WRONG_TYPE, empty_detail=EMPTY) == payload
@@ -416,8 +255,6 @@ def test_a_part_with_no_filename_reaches_the_parser():
 
 
 def test_the_workbook_door_still_bounds_the_body():
-    """The size bound is the SAME one, not a second copy — ``read_upload_bounded`` is called, and the
-    413 is its own, remedy and all."""
     with pytest.raises(HTTPException) as excinfo:
         _read_workbook(_NamedFile(b"x" * (6 * MB), "plan.xlsx"), 4 * MB,
                        purpose="annual plan workbook", wrong_type_detail=WRONG_TYPE,
@@ -427,13 +264,6 @@ def test_the_workbook_door_still_bounds_the_body():
 
 
 def test_the_questionnaire_doors_two_sentences_did_not_change():
-    """BYTE-IDENTICAL, HARD-CODED HERE, so the pending rewire cannot quietly reword them.
-
-    ``questionnaire_forms._read_upload`` is not yet re-pointed at ``read_workbook_upload`` — its
-    route module was owned by another change in flight. When somebody does the rewire, these two
-    strings are what they must pass as ``wrong_type_detail`` and ``empty_detail``, and this test is
-    what tells them if they did not.
-    """
     import inspect
 
     from app.api.routes import questionnaire_forms
@@ -444,6 +274,4 @@ def test_the_questionnaire_doors_two_sentences_did_not_change():
         "File > Save As and choose 'Excel Workbook (.xlsx)'." in squeezed
     )
     assert "The upload was empty. Attach the filled-in pro-forma." in squeezed
-    # And the suffix tuple that door filters on now has ONE home, so the rewire is a deletion rather
-    # than a second list to keep in step.
     assert uploads.WORKBOOK_SUFFIXES == (".xlsx", ".xlsm", ".xltx")

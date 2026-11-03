@@ -1,30 +1,3 @@
-"""Regulation 18(3): Aadhaar log entries are live for 2 years, archived for 5 more, then deleted.
-
-WHAT COUNTS AS AN AADHAAR LOG ENTRY. Every verification attempt is a ``RecordRevision`` whose
-``changes`` holds one key, ``aadhaarVerification`` (``records.audit_attempt``), on a "user" or an
-"artisan" record. Those rows are the authentication log this portal keeps; they carry the method,
-the outcome, a refusal code and at most the last four digits, never the number.
-
-WHAT THE JOB DOES, once a day from the queue worker (``app/worker.py``):
-
-1. ARCHIVE. Entries older than :data:`LIVE_YEARS` are written, a calendar month at a time, as one
-   gzipped JSON-lines object to ``AADHAAR_LOG_ARCHIVE_BUCKET`` (default the media bucket, which is
-   versioned and replicated off-site, not a separate backup bucket), under ``aadhaar-log-archive/``;
-   SSE-KMS when ``AADHAAR_LOG_ARCHIVE_KMS_KEY_ID`` is set, SSE-S3 otherwise. The object is read back (size and SHA-256) BEFORE anything is
-   deleted; only then are the archived entries removed from the live table, in the same
-   transaction that records the archive in ``AadhaarLogArchive``. A failed upload deletes nothing.
-2. DELETE. An archive whose newest entry is older than LIVE_YEARS + ``AADHAAR_LOG_ARCHIVE_YEARS``
-   (default 5) is deleted from the bucket and its ledger row stripped of record ids.
-3. LEGAL HOLD. A record with an open ``AadhaarLegalHold`` (a court order or a pending dispute,
-   placed with ``scripts/aadhaar_legal_hold.py``) has its entries neither archived nor deleted, and
-   an archive holding any of its entries is kept past its date until the hold is released.
-
-The job is idempotent: an entry is deleted from the live table only by the transaction that
-records the archive that holds it, and an archive is deleted only once. A crash between the upload
-and that transaction leaves an orphan object and the entries still live; the next run archives
-them again under a new key, and the orphan is listed in the run's report for an operator.
-"""
-
 from __future__ import annotations
 
 import gzip
@@ -42,20 +15,15 @@ from app.core.db import db
 
 logger = logging.getLogger("app.aadhaar.retention")
 
-#: Regulation 18(3)(a): authentication logs are kept "online" for two years.
 LIVE_YEARS = 2
-#: Regulation 18(3)(b): then archived for five years (longer only where another law requires it).
 DEFAULT_ARCHIVE_YEARS = 5
-#: The ``RecordRevision.changes`` key every Aadhaar attempt is written under.
 ENTRY_KEY = "aadhaarVerification"
 RECORD_TYPES = ("user", "artisan")
 DEFAULT_PREFIX = "aadhaar-log-archive/"
-#: Entries read per pass, so one run never holds an unbounded table in memory.
 BATCH = 2000
 
 
 def years_before(moment: datetime, years: int) -> datetime:
-    """``moment`` minus whole calendar years; 29 February becomes 28 February."""
     try:
         return moment.replace(year=moment.year - years)
     except ValueError:
@@ -68,15 +36,12 @@ def years_after(moment: datetime, years: int) -> datetime:
 
 class ArchiveStore(Protocol):
     def put(self, key: str, body: bytes, sha256: str) -> None:
-        """Write ``body`` encrypted at rest and confirm it reads back with this size and digest."""
+        pass
 
     def delete(self, key: str) -> None: ...
 
 
 class S3ArchiveStore:
-    """The archive bucket (the media bucket by default). The API's key holds Put/Get/Delete on the
-    prefix and nothing else there (docs/AADHAAR.md §3, "The grant")."""
-
     def __init__(self, settings: Any) -> None:
         self.settings = settings
         self.bucket = getattr(settings, "aadhaar_log_archive_bucket", None) or settings.aws_s3_bucket
@@ -162,7 +127,6 @@ def _entry(row: Any) -> dict[str, Any]:
 def _bundle(entries: list[dict[str, Any]]) -> bytes:
     text = "".join(json.dumps(entry, sort_keys=True, ensure_ascii=False) + "\n" for entry in entries)
     buffer = io.BytesIO()
-    # mtime=0: the same entries always gzip to the same bytes, so a digest identifies the content.
     with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as handle:
         handle.write(text.encode("utf-8"))
     return buffer.getvalue()
@@ -285,7 +249,6 @@ _next_run: datetime | None = None
 
 
 async def maybe_run(settings: Any, *, now: datetime | None = None) -> RetentionReport | None:
-    """At most once a day per process. The worker calls this every loop; it is cheap when not due."""
     global _next_run
     if not getattr(settings, "aadhaar_log_retention_enabled", True):
         return None

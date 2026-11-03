@@ -12,20 +12,8 @@ from app.core.config import get_settings
 from app.core.db import db
 from app.core.security import CREDENTIAL_CLAIM, decode_access_token
 
-# The platform allow-list, consulted on USE of a dataset credential and not only on its issue — see
-# the revocation paragraph in the SCOPED TOKENS banner below. Imported here rather than inside the
-# function because there is no cycle to avoid: `services/access_roster` reaches for `core.config`,
-# `core.db` and `services/designers`, and none of those reaches back for this module. The same holds
-# for `services/credential_links`, whose password fingerprint binds every bearer token to the
-# password it was opened with (see `_user_from_bearer`): it reaches for `core.config` and `core.db`
-# and nothing else.
 from app.services import access_roster, credential_links
 
-# The two strings that join the two halves of the usage stitch, and the one synchronous function
-# that fills the second — see ``get_current_user``. Imported rather than retyped, on
-# ``feedback.FEEDBACK_FIELDS``' rule: a contract that lives in two files is a contract that will one
-# day disagree with itself. No cycle to avoid: ``services/usage`` reaches for ``core.db`` and
-# ``services/concurrency`` and neither of those reaches back for this module.
 from app.services.usage import USAGE_CONSENT_KEY, USAGE_USER_ID_KEY, resolve_consent
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -42,232 +30,15 @@ def role_value(user: Any) -> str:
     return str(getattr(role, "value", role))
 
 
-# The ELEVEN-tier role ladder, strictly ordered. Higher rank inherits every power of the ranks below
-# it; grantable capability booleans can additionally lift a specific power for a lower tier.
-#
-# ELEVEN, AND THIS COMMENT SAID SIX FOR AS LONG AS DESIGNER HAD EXISTED, then seven until INSPECTOR,
-# then eight until the three directorate tiers landed on 2026-09-13. The tiers are right there below,
-# each with its own explanation of its number. Miscounting here is not a typo with no consequence:
-# this is the file every permission question in the repository is answered from, and the same
-# off-by-one had already propagated into README.md's role table (six rows, no DESIGNER row, in a
-# product whose primary user is a designer) and into docs/PERMISSIONS.md, which records having been
-# corrected for exactly this twice already. Nothing mechanical counts prose —
-# ``tests/test_role_ladder_parity.py`` counts the MAPS.
-#
-# THE INCLUSIVE SENTENCE AT THE TOP IS NOW LOAD-BEARING IN A WAY IT WAS NOT BEFORE 2026-09-13. Every
-# tier added until then went in BELOW the professor floor, so an insert bought review authority and
-# nothing else. A tier above 40 clears every Professor floor in this file at once — crafts,
-# workshops, the questionnaire builder, dataset download, the user table — AND both halves of the
-# review pair, which is the authority to REWRITE another person's record. That is the owner's
-# decision, taken deliberately; it is recorded per tier below and pinned in
-# ``tests/test_directorate_tiers.py`` so it cannot be re-acquired by accident.
 ROLE_RANK: dict[str, int] = {
     "CROWDSOURCE_VOLUNTEER": 10,
     "FIELD_CONTRIBUTOR": 20,
     "RESEARCHER": 30,
-    # 35, in the gap the original tens deliberately left. A designer runs a workshop and signs the
-    # report; a researcher documents what they find. Inserting the tier here rather than renumbering
-    # keeps every stored role and every comparison in this file meaning what it meant before.
     "DESIGNER": 35,
-    # 37 — inspects and reviews a designer's work without running workshops. Added 2026-08-27.
-    #
-    # WHY 37 AND NOT 36 OR 39. The tier had to land strictly between DESIGNER (35) and PROFESSOR
-    # (40), and 36-39 were all free. 37 is the MIDDLE of that free band, which leaves a gap on BOTH
-    # sides: a future tier can be inserted between designer and inspector (36) or between inspector
-    # and professor (38-39) without renumbering anything. That is the same argument that put DESIGNER
-    # at 35 rather than at 36 — a rank is a stored comparison, and renumbering one silently changes
-    # the meaning of every other comparison in this file at once.
-    #
-    # WHY THE TOKEN IS `INSPECTOR` WHEN THE LABEL SAYS "Inspector / Reviewer". "Review" ALREADY names
-    # a different, RELATIONAL concept here: ``can_review_record`` is held from FIELD_CONTRIBUTOR
-    # upwards and means "may act on anyone ranked strictly below me". A tier named REVIEWER would
-    # make one word mean two things in one codebase — and the sentence "only a reviewer may review
-    # this" would become unreadable. The label carries both words so nobody has to learn our
-    # vocabulary to find themselves in a picker; the stored token stays unambiguous.
-    #
-    # WHAT THE RANK BUYS, STATED HERE BECAUSE IT IS THE WHOLE POINT OF THE TIER AND BECAUSE IT IS
-    # ALSO THE TRAP. 37 > 35 means ``can_review_record`` admits an inspector over every DESIGNER's
-    # repository records — approve, reject, send back for revision. THAT IS WANTED AND IT IS WHY THE
-    # RANK IS ABOVE 35 RATHER THAN BELOW IT. It is written down rather than left to be discovered
-    # because a rank insert grants review authority SILENTLY, and an audit of this ladder warned that
-    # a new tier would pick it up with no test going red. ``tests/test_inspector_tier.py`` pins both
-    # halves: an inspector MAY review a designer's record, and MAY NOT rewrite it —
-    # ``can_edit_others_record`` narrows the same comparison to PROFESSOR and above, and 37 < 40.
-    #
-    # WHAT THE RANK DELIBERATELY DOES NOT BUY. Every design-workshop gate in this product is SET
-    # MEMBERSHIP and not a rank floor (see ``DESIGN_WORKSHOP_ROLES`` below and its docstring), so an
-    # inspector gets NO workshop authority from this number — exactly PROFESSOR's position, and
-    # exactly as intended: an inspector does not run workshops and does not sign a report. Workshop
-    # visibility for an inspector is a scope question, answered by the read-only workshop-scoped
-    # grant beside ``WorkshopAssignment`` / ``DataAccessGrant`` / ``DesignWorkshopViewer`` /
-    # ``DwAccessRequest``, NOT by this dict. Do not "fix" that by adding INSPECTOR to the set.
     "INSPECTOR": 37,
     "PROFESSOR": 40,
-    # 42 — the first of three DIRECTORATE tiers, all above PROFESSOR. Added 2026-09-13.
-    #
-    # WHY 42 AND NOT 41 OR 44. The free band between PROFESSOR (40) and ADMIN (50) is 41-49: nine
-    # slots for three tiers. 42/45/48 is the unique arrangement that leaves a gap on BOTH sides of
-    # every one of them — 41 below this tier, 43-44 above it — and keeps every adjacent pair at least
-    # two apart. Were only ONE tier being inserted here it would be 45, the exact midpoint, for the
-    # reason INSPECTOR is 37 rather than 36; three tiers cannot all be midpoints, so this is the
-    # closest expression of the same principle. Nothing was renumbered, so every stored role and
-    # every comparison in this file goes on meaning exactly what it meant before.
-    #
-    # WHAT THE RANK BUYS, AND IT IS STRICTLY MORE THAN THE INSPECTOR INSERT BOUGHT. 42 > 40 clears
-    # BOTH halves of the review pair rather than one. ``can_review_record`` is `strictly below me`,
-    # so this tier may approve, reject and send back every PROFESSOR, INSPECTOR, DESIGNER,
-    # RESEARCHER, FIELD_CONTRIBUTOR and CROWDSOURCE_VOLUNTEER record — and ``can_edit_others_record``
-    # is ``has_rank(user, PROFESSOR) and can_review_record(...)``, which 42 satisfies on both sides,
-    # so it may REWRITE them too. INSPECTOR at 37 cleared the review half only, because 37 < 40; this
-    # tier clears the edit half as well. That is the owner's decision and not an accident of
-    # arithmetic, which is why it is written here rather than left to be discovered.
-    #
-    # AND IT PICKS UP EVERY PROFESSOR FLOOR IN THIS FILE AT ONCE, none of which names a tier:
-    # ``can_manage_crafts`` (the taxonomy everyone else records against), ``can_manage_workshops``,
-    # ``can_manage_questionnaire``, ``can_download_dataset``, and ``require_professor``, which is the
-    # user table with promotion and demotion. ``records.apply_status_policy_update`` composes the
-    # Professor floor with ``can_review_record``, so this tier may also set a record's status.
-    #
-    # AND FIVE MORE PROFESSOR FLOORS THAT LIVE OUTSIDE THIS FILE, WHICH IS THE HALF NOBODY GREPS FOR.
-    # Each is a bare ``has_rank(user, PROFESSOR)`` in a service or a route, so all three tiers
-    # cleared it on 2026-09-13 with no line of code naming any of them and no test going red:
-    # ``api/routes/artisans.py::_may_read_full_aadhaar`` (an artisan's UNMASKED Aadhaar number, which
-    # that function's own docstring calls regulated personal data), ``services/records.py``'s
-    # ``public_encode`` (identity numbers de-masked on every encoded record, and every uploader's
-    # media URLs resolved to ``ALL_MEDIA_URLS``), ``services/records.py::media_url_owners`` (the same
-    # answer again on the transcript, annexure and export paths), ``owned_or_granted_where`` (an
-    # empty DOWNLOAD filter — reading the repository was already open to every signed-in account
-    # through ``viewable_where``, so what this floor decides is what LEAVES), and
-    # ``apply_status_policy_create`` (this tier's own fieldwork lands APPROVED rather than PENDING).
-    # ``tests/test_directorate_tiers.py`` pins all of them as DECISIONS rather than side effects. If
-    # the institution does not want a directorate account reading regulated PII, the answer is a NEW
-    # named predicate in ``artisans.py`` and never a rank change here, which would take the same
-    # capability away from every professor and admin at the same time.
-    #
-    # WHAT IT DELIBERATELY DOES NOT BUY. ``is_admin`` is SET MEMBERSHIP on MASTER_ADMIN and ADMIN and
-    # not a rank floor, so 42 is not an admin and cannot become one by moving: no record deletes, no
-    # account DELETION, no task assignment, no inspector appointment, no usage aggregates, no
-    # design-workshop export, no /admin route tree and no managed API keys.
-    #
-    # EVERY DESIGN-WORKSHOP GATE IS SET MEMBERSHIP TOO, so what this tier may do inside a workshop
-    # is whatever a named set says, never what 42 says. It READS every workshop's stage data through
-    # ``DESIGN_WORKSHOP_DATA_VIEW_ROLES`` (2026-09-13), and since the owner's ruling of 2026-09-14 it
-    # RUNS one: it is in ``DESIGN_WORKSHOP_ROLES``, so it saves stages in a workshop it holds. (This
-    # paragraph said "neither runs a workshop nor starts one" until 2026-10-09, three weeks after
-    # the set moved; the set wins.) It still does not START one — ``DESIGN_WORKSHOP_CREATOR_ROLES``
-    # is ADMIN and MASTER_ADMIN alone — and ``load_workshop_or_404(..., for_edit=True)`` is no
-    # longer a door with no role check behind it: it honours a viewer row only for a role in the
-    # set, and since 2026-10-09 it refuses every write (403) by whoever holds that workshop's
-    # inspection or one of its two director posts (``design_workshop_posts.refuse_a_holders_write``),
-    # as does every door that changes that workshop's designer team.
-    #
-    # AND ONE NAMED EXCEPTION, WHICH THIS COMMENT DENIED UNTIL 2026-09-14 AND WHICH THE CODE HAS
-    # ALLOWED SINCE THE SANCTION REGISTER LANDED. The three clauses struck from the sentence above —
-    # "account creation", "workshop-access grants", "viewer appointment" — are exactly what
-    # ``POST /api/sanction-orders`` does, and its gate is ``services/sanction_orders.
-    # can_record_sanction_orders``, a RANK FLOOR at this tier. Recording a ministry sanction order
-    # mints the named designer's ``User`` row, writes their ``AccessRoster`` admission, writes their
-    # ``DesignWorkshopViewer`` row and hands the officer a 72-hour first-password link for it. That
-    # is the owner's decision and the whole point of the feature (a sanctioned designer starts the
-    # same morning, without an officer having to find an admin first); leaving this comment saying
-    # the opposite made the ladder's own documentation false about the one tier it was describing.
-    #
-    # THE EXCEPTION IS BOUNDED AND THE BOUND IS WHERE TO LOOK BEFORE WIDENING ANY OF THIS. It creates
-    # an account for SOMEBODY ELSE only — ``_refuse_if_the_officer_named_themselves`` 422s an order
-    # whose designer address canonicalises to the recording officer's own mailbox, because the
-    # officer would otherwise be naming themselves, through a puppet account, the designer of the
-    # work they authorised. Since this tier joined ``DESIGN_WORKSHOP_ROLES`` the officer needs no
-    # puppet to write stages, so the direct route is closed from the other end:
-    # ``design_workshops._refuse_if_the_officer_is_authoring_what_they_sanctioned`` refuses the
-    # recording officer every write in the workshop their own sanction order opened. The account is
-    # always marked ``SanctionOrder.accountCreated``, and the register row names the officer. None
-    # of the OTHER struck-through capabilities follow: this tier still cannot create an account at
-    # ``POST /api/users`` (``ACCOUNT_PROVISIONER_ROLES`` starts at MINISTRY_ADMIN), still cannot
-    # decide the access queue, still cannot appoint an inspector or an officer
-    # (``OVERSIGHT_ASSIGNER_ROLES`` starts there too), and still cannot open the viewers panel on
-    # any workshop.
     "ASSISTANT_DIRECTOR": 42,
-    # 45 — the middle directorate tier, and the exact midpoint of the free 41-49 band.
-    #
-    # WHY 45. It is the number a SINGLE insert between PROFESSOR and ADMIN would have taken on
-    # INSPECTOR's own argument, and it keeps 43-44 free below it and 46-47 free above it. The three
-    # tiers were written in one wave, so the spacing was chosen for the wave rather than one tier at
-    # a time.
-    #
-    # THE THREE RANKS MUST STAY DISTINCT, AND THAT IS NOT A STYLE PREFERENCE.
-    # ``tasks.assignable_or_refuse`` refuses when ``role_rank(assignee) >= role_rank(assigner)``, so
-    # two tiers sharing a number would be mutually unable to act on each other; and the web's
-    # ``ROLES_BY_RANK`` sorts on the values, so a tie makes every role picker's order undefined
-    # between processes. If the product ever wants PEERS — regional directors of different regions —
-    # the ladder cannot express that and must not be bent into it: the precedent is a scope TABLE —
-    # the per-workshop inspection and viewer rows an admin writes — and not a tier.
-    #
-    # THE TWO MODEL NAMES ARE DELIBERATELY NOT SPELLED IN THIS COMMENT.
-    # ``tests/test_dw_inspector_scope_gate.py::test_no_other_module_names_the_inspection_predicates``
-    # sweeps every file under ``app/`` outside a three-file allow-list for the literal string of the
-    # inspection Prisma delegate, case-insensitively, and a COMMENT trips it exactly as a query would.
-    # That is the test working: its argument is that the inspection scope must be reachable from one
-    # place only, and it cannot tell a mention from a use. ``services/design_workshop_inspectors.py``
-    # is where those tables are named and argued about.
-    #
-    # WHAT THE RANK BUYS. Everything ASSISTANT_DIRECTOR has, plus ASSISTANT_DIRECTOR itself: 45 > 42,
-    # so both halves of the review pair reach one tier further down. A regional director reviews and
-    # may rewrite an assistant director's records; an assistant director may do neither to a regional
-    # director's; and neither may touch a peer's, because the comparison is strict.
-    #
-    # WHAT IT DELIBERATELY DOES NOT BUY. Identical to the tier below — see there. A title that reads
-    # as more senior than `admin` in English while ranking below it in this dict is exactly the shape
-    # somebody will try to tidy. The ladder answers `how much may this account do to the repository`,
-    # and creating accounts, deleting records and appointing inspectors are administrative acts this
-    # institution assigns by a named set per act — never by grade, and so never to this tier by
-    # moving it. See the MINISTRY_ADMIN block for which sets reach the tier above.
     "REGIONAL_DIRECTOR": 45,
-    # 48 — the senior directorate tier, and the last of the three. NOT AN ADMIN, despite the name.
-    #
-    # WHY 48. It leaves 46-47 free below it and 49 free above it, so a tier can still be inserted on
-    # either side of it without renumbering. The number is the easy half.
-    #
-    # THE HARD HALF IS THE NAME, AND IT IS THE ONE THING TO READ TWICE. This token contains the word
-    # ADMIN and ``is_admin`` is SET MEMBERSHIP on MASTER_ADMIN and ADMIN — so a ministry admin is not
-    # an admin anywhere in this codebase and no arithmetic will make it one. Widening ``is_admin`` to
-    # a rank floor at 48 would hand this tier record deletion, account creation and deletion, task
-    # assignment, workshop-access grants, viewer and inspector appointment, the usage aggregates,
-    # design-workshop export, the whole /admin route tree and the managed-API-key neighbourhood in
-    # ONE edit — which is precisely the objection ``can_read_usage``'s docstring makes about widening
-    # ``is_admin`` to answer a single question. If the institution wants any of those for this tier,
-    # each is a separate named predicate and a separate written decision. The same sentence is
-    # written in the tier's migration header, on README.md's row and in docs/PERMISSIONS.md, because
-    # it is the one place in this product where a token's English reading and its meaning in the code
-    # point in opposite directions.
-    #
-    # SEVERAL SUCH DECISIONS HAVE BEEN TAKEN, AND EACH TOOK EXACTLY THAT SHAPE. This paragraph first
-    # said ONE was, while the oversight set below already named the tier. Each is a set beside
-    # ``is_admin`` and none is a widening of it:
-    #
-    #   * ``design_workshop_oversight.OVERSIGHT_ASSIGNER_ROLES`` — it names a workshop's designers,
-    #     its Assistant and Regional Directors and its inspectors, and uploads its artisan list;
-    #   * :data:`ACCOUNT_PROVISIONER_ROLES` (2026-10-09) — it PROVISIONS password accounts: creates
-    #     them, sets temporary passwords, requires a change, issues set-password links, corrects names
-    #     and addresses, on accounts strictly below it;
-    #   * ``design_workshop_posts.SERVING_ADMIN_ROLES`` (2026-10-09) — it may be APPOINTED, by
-    #     somebody else, to a post on one workshop, and reads that workshop without writing it.
-    #
-    # The annual plan and opening a workshop are rank floors at this tier, declared beside their own
-    # routes for the same reason. Account DELETION, capability grants, overturning an admin's barring
-    # of an address, the allow-list queue and the rest of the list above stayed with ``is_admin``.
-    #
-    # WHAT THE RANK BUYS. Everything REGIONAL_DIRECTOR has, plus REGIONAL_DIRECTOR itself, by the
-    # same strictly-below comparison. It is the widest review and edit authority on the ladder short
-    # of ADMIN, and it stops there: ADMIN (50) and MASTER_ADMIN (60) outrank it, so it reviews
-    # neither and rewrites neither, and ``account_provisioning.assert_role`` (re-exported as
-    # ``users.assert_role``) refuses it the minting of both.
-    #
-    # WHAT IT DELIBERATELY DOES NOT BUY, BEYOND THE ABOVE. No ``DesignerRoster`` row is required of
-    # it and none can suspend it — ``auth.assert_roster_admits`` gates accounts whose role is DESIGNER
-    # and no others — so the institution's record of this person's standing is the platform allow-list
-    # alone. That is PROFESSOR's and ADMIN's position too. It is written down because `a ministry
-    # admin ought to be on a roster` is a plausible product request and would be a NEW gate rather
-    # than a discovery about this one.
     "MINISTRY_ADMIN": 48,
     "ADMIN": 50,
     "MASTER_ADMIN": 60,
@@ -278,21 +49,8 @@ ROLE_LABELS: dict[str, str] = {
     "FIELD_CONTRIBUTOR": "Field Contributor",
     "RESEARCHER": "Researcher",
     "DESIGNER": "Designer",
-    # BOTH WORDS, ON PURPOSE — see the rank comment above. Users looking for themselves in a picker
-    # search for "reviewer"; the codebase reserves that word for the relational sense. This label is
-    # copied BYTE FOR BYTE into frontend/lib/permissions.ts and three Kotlin tables, and
-    # tests/test_role_ladder_parity.py holds all five to this one.
     "INSPECTOR": "Inspector / Reviewer",
     "PROFESSOR": "Professor",
-    # THE THREE DIRECTORATE LABELS, added 2026-09-13. Plain title case, no slash and no second word,
-    # unlike INSPECTOR above: these are job titles an officer already holds on paper, so the label a
-    # picker shows is the title itself and there is no vocabulary collision to disambiguate. Copied
-    # BYTE FOR BYTE into frontend/lib/permissions.ts and three Kotlin tables, and
-    # tests/test_role_ladder_parity.py holds all five copies to this one.
-    #
-    # `Ministry Admin` IS A LABEL AND NOT A CAPABILITY. It is the owner's wording and it stays; the
-    # sentence a reader needs is in the rank comment above, and README's row and
-    # docs/PERMISSIONS.md's matrix both say it where a non-engineer will meet it.
     "ASSISTANT_DIRECTOR": "Assistant Director",
     "REGIONAL_DIRECTOR": "Regional Director",
     "MINISTRY_ADMIN": "Ministry Admin",
@@ -302,7 +60,6 @@ ROLE_LABELS: dict[str, str] = {
 
 
 def role_rank(user_or_role: Any) -> int:
-    """Rank of a user object or a bare role string; unknown roles rank lowest."""
     role = user_or_role if isinstance(user_or_role, str) else role_value(user_or_role)
     return ROLE_RANK.get(str(role), 0)
 
@@ -319,135 +76,42 @@ def is_master_admin(user: Any) -> bool:
     return role_value(user) == "MASTER_ADMIN"
 
 
-#: The CONTENT admins (owner's ruling, 2026-10-20): they add, edit and delete every record type, every
-#: media file and every other managed content type, wherever it is managed. Every other role adds and
-#: edits within its existing privileges and never deletes.
-#:
-#: A SET AND NOT A FLOOR, and deliberately NOT ``is_admin``. MINISTRY_ADMIN manages content; it does
-#: not manage accounts, rosters, settings or secrets, so ``is_admin`` keeps its two members and every
-#: account and governance rule keeps reading it. The documentation-portal spells this constant and
-#: :func:`is_content_admin` identically in ``app/core/roles.py``; ``frontend/lib/permissions.ts`` and
-#: the handset's ``FieldPermissions.isContentAdmin`` carry the same three members, and
-#: ``tests/test_role_ladder_parity.py`` holds them together.
 CONTENT_ADMIN_ROLES = frozenset({"ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN"})
 
 
 def is_content_admin(user: Any) -> bool:
-    """May this account delete records and media, and edit every record whoever made it?"""
     return role_value(user) in CONTENT_ADMIN_ROLES
 
 
-#: The one refusal every delete gives a role outside :data:`CONTENT_ADMIN_ROLES`.
 CONTENT_DELETE_REFUSAL = "Only an admin can delete this."
 
 
 def is_break_glass_master(user: Any) -> bool:
-    """Is this account the ONE identity the platform allow-list must never be able to bar?
-
-    THE BREAK-GLASS, SPELLED ONCE. ``access_roster`` decides who may sign in, and it is a table
-    administrators edit; the argument that made it safe to widen that gate from designers to
-    everybody is that there is always one account the gate itself exempts, so a bad UPDATE — or an
-    admin barring the master admin on their way out — cannot leave the institution with nobody able
-    to reach the roster screen and let people back in. See ``auth.assert_access_admits``.
-
-    TWO CLAUSES, AND THE SECOND IS NOT REDUNDANT. The role is the normal answer; the configured
-    ``MASTER_ADMIN_EMAIL`` is the answer on a fresh deployment where the row that carries the role
-    has not been seeded yet, or where somebody has demoted it. A break-glass that only works while
-    the database already says the right thing is not a break-glass.
-
-    Both sides of the address comparison must be non-empty — see
-    :func:`is_configured_master_admin`, which is that clause on its own.
-
-    Lives here rather than in ``auth.py`` because it is now asked at more than one door: the sign-in
-    path and ``POST /api/datasets/token``, which mints a thirty-day machine credential and must
-    exempt exactly the same account for exactly the same reason. Copied instead of shared, the two
-    would drift, and the half that drifted would either lock the break-glass out or open it wider.
-    """
     if is_master_admin(user):
         return True
     return is_configured_master_admin(user)
 
 
 def is_configured_master_admin(user: Any) -> bool:
-    """Is this the account at the configured ``MASTER_ADMIN_EMAIL``, whatever its role says?
-
-    The address clause of :func:`is_break_glass_master`, named on its own because one rule asks it
-    alone: the forced password change exempts THIS account and no other master admin (see
-    :func:`password_change_pending`).
-
-    Both sides of the comparison must be non-empty. An unset ``MASTER_ADMIN_EMAIL`` and a user row
-    with no address would otherwise compare equal and exempt an account nobody chose — the one
-    direction this predicate must never fail in.
-    """
     address = str(get_value(user, "email") or "").strip().lower()
     configured = (get_settings().master_admin_email or "").strip().lower()
     return bool(address) and address == configured
 
 
 def can_manage_questionnaire(user: Any) -> bool:
-    """Edit the questionnaire structure: Professor and above, or an explicit grant."""
     return has_rank(user, "PROFESSOR") or bool(get_value(user, "canManageQuestionnaire"))
 
 
 def can_manage_crafts(user: Any) -> bool:
-    """Create or update a craft: Professor and above, RANK ALONE.
-
-    The ``canManageCrafts`` column is deliberately no longer read. It was a per-user grant a master
-    admin could hand to a researcher or below, which is the one clause that let the taxonomy itself
-    be written by someone the permission matrix places under it — and a grant that widens a rank
-    floor is invisible in the role column, so nobody auditing the user table could see who held it.
-    The column stays in the schema (dropping it is neither safe nor reversible, and no live account
-    below Professor holds it), simply unread; restoring the old behaviour is putting the clause back.
-    """
     return has_rank(user, "PROFESSOR")
 
 
-#: Who may run a design & prototype workshop. Named explicitly rather than derived from the rank
-#: ladder, and that is the whole point — see :func:`can_run_design_workshops`.
-#:
-#: INSPECTOR (rank 37) IS DELIBERATELY NOT IN HERE, and neither is PROFESSOR (40). This set is "the
-#: people who sign the report", and an inspector inspects a report rather than signing one. Because
-#: this is a SET and not a rank floor, adding the tier to :data:`ROLE_RANK` gave it nothing here —
-#: which is the correct outcome and not an oversight to be tidied up later. What an inspector needs
-#: instead is READ scope on a specific workshop, which is a grant and not a role.
 DESIGN_WORKSHOP_ROLES = frozenset(
     {
         "DESIGNER",
-        # ── THE THREE DIRECTORATE TIERS, ADDED 2026-09-14 ON THE OWNER'S RULING ──────────────────
-        # They already READ every workshop (``DESIGN_WORKSHOP_DATA_VIEW_ROLES``); what they gained is
-        # the WRITE — stage saves, custom sections, capture aids, AI layers, the consent record.
-        #
-        # The concrete gap this closes: a MINISTRY_ADMIN could promote an annual-plan row into a
-        # design workshop and then not save a stage in the workshop they had just created. That is a
-        # workflow that dead-ends one step after it starts, and it was found by a test rather than by
-        # anybody using it.
-        #
-        # ⚠ STILL A SET AND NOT A FLOOR, WHICH IS THE WHOLE POINT AND IS EASY TO LOSE HERE. These
-        # three sit ABOVE professor, and PROFESSOR (40) is deliberately still out — being senior to a
-        # designer is not the same thing as being one. Written as a floor at ASSISTANT_DIRECTOR this
-        # would admit a professor and every tier that ever lands between them; written as a set it
-        # admits exactly the people somebody decided on.
         "MINISTRY_ADMIN",
         "REGIONAL_DIRECTOR",
         "ASSISTANT_DIRECTOR",
-        # ── AND INSPECTOR IS DELIBERATELY NOT HERE ──────────────────────────────────────────────
-        # It was asked for in the same breath as the three above and is excluded on purpose, because
-        # this set is the WRITE set: an inspector in it would author the stages it later reviews, and
-        # the review loop stops meaning anything the moment the reviewer can write what it reviews.
-        # An inspector reaches a workshop through its own workshop-scoped grant instead.
-        # ``tests/test_inspector_tier.py::test_an_inspector_has_no_design_workshop_authority`` pins
-        # this, and its docstring is the longer form of the argument.
-        #
-        # THE RULE NOW HOLDS PER WORKSHOP AS WELL AS PER SET (owner's ruling, 2026-10-09). The three
-        # administering tiers in this set — MINISTRY_ADMIN, ADMIN, MASTER_ADMIN — may be APPOINTED a
-        # workshop's inspector, Assistant Director or Regional Director, so "the reviewer never writes
-        # what it reviews" can no longer be kept by keeping two role sets apart. It is kept on the
-        # workshop: ``design_workshop_posts.refuse_a_holders_write`` answers 403 to any write of its
-        # CONTENT or its DESIGNER TEAM by somebody holding one of those posts there — through
-        # ``load_workshop_or_404(for_edit=True)`` (its admin arm included), the oversight screen's
-        # artisan list and designer doors, the viewers PUT, the access queue, the join cards, and a
-        # record form taking a record out of the workshop.
-        # What such a holder keeps is reading it, appointing OTHER people, restoring it and its report.
         "ADMIN",
         "MASTER_ADMIN",
     }
@@ -455,95 +119,16 @@ DESIGN_WORKSHOP_ROLES = frozenset(
 
 
 def can_run_design_workshops(user: Any) -> bool:
-    """RUN a design & prototype workshop: the WRITES inside one — every stage save, the custom
-    sections, the capture aids, the AI layers, the consent record.
-
-    IT DOES NOT DECIDE WHO MAY OPEN A WORKSHOP, AND IT DOES NOT GATE THE REPORT, although this
-    docstring said both for as long as it has existed. Both are ``load_workshop_or_404``: opening
-    admits the creator, an admin, or the holder of a ``DesignWorkshopViewer`` grant, and generating
-    a report is open to anyone who can read the workshop, because a report is a view of data the
-    caller can already see. ``api/routes/design_workshops.py``'s module header carries the same
-    correction and the counted list of what this predicate really stands in front of.
-
-    NOT "create one". Starting a NEW workshop is :func:`can_create_design_workshops`, which is a
-    strictly narrower set — see there for why the two were split. Everything else a designer has
-    ever been able to do is still this predicate and is deliberately unchanged.
-
-    THE ONE CAPABILITY IN THIS FILE THAT IS NOT A RANK THRESHOLD, and it is deliberate. Every
-    other predicate here reads "this tier and above", because the ladder is inclusive: a professor
-    can do everything a researcher can. This one is a SET — :data:`DESIGN_WORKSHOP_ROLES`: the
-    designer, the three directorate tiers since 2026-09-14, the admin and the master admin — which
-    means a PROFESSOR cannot run one even though they outrank a designer. (It named only Designer,
-    Admin and Master Admin until 2026-10-09; the set is the authority, not this sentence.)
-
-    A ROLE IN THE SET IS NECESSARY AND, ON ONE WORKSHOP, NOT SUFFICIENT. Whoever holds a workshop's
-    inspection or one of its two director posts reads it and may not write it (2026-10-09) — see
-    ``design_workshop_posts.refuse_a_holders_write``, which the write loader asks.
-
-    That is the intended rule rather than an oversight. A design workshop is a fortnight of a
-    named designer's work that ends in a document submitted to a ministry under their name, and
-    being senior to a designer is not the same thing as being one. Admins are in the set because
-    somebody has to be able to correct and administer the records, not because they outrank
-    anybody.
-
-    ``frontend/lib/permissions.ts`` carries the identical set and MUST keep carrying it: the UI
-    offering what the API refuses is the failure mode this file's own rank table is commented
-    about, and a non-monotonic rule is far easier to let drift than a threshold.
-    """
     return role_value(user) in DESIGN_WORKSHOP_ROLES
 
 
-#: Who may bring a NEW design & prototype workshop into existence. A STRICT SUBSET of
-#: :data:`DESIGN_WORKSHOP_ROLES` — see :func:`can_create_design_workshops`.
-#:
-#: MINISTRY_ADMIN JOINED ON 2026-10-20 (owner's ruling: content admins add every record type), so the
-#: set is now :data:`CONTENT_ADMIN_ROLES`' three members, written out because the two decisions are
-#: different ones that happen to agree today.
 DESIGN_WORKSHOP_CREATOR_ROLES = frozenset({"ADMIN", "MASTER_ADMIN", "MINISTRY_ADMIN"})
 
 
 def can_create_design_workshops(user: Any) -> bool:
-    """Start a NEW design & prototype workshop.
-
-    ── WHY THIS IS NOT ``can_run_design_workshops`` ─────────────────────────────────────────────
-    A DESIGNER may do everything inside a workshop and may no longer open one. Stated as the
-    requirement was: "designers cannot create workshops (only admins/master admins can) —
-    designers create records under existing workshops."
-
-    The reason is that a design workshop is not a record, it is a CONTAINER for a fortnight of
-    them, and it is the unit the ministry indexes, funds and audits. A sanction order authorises a
-    workshop in a named cluster; the admin who holds that order is the person who knows a workshop
-    exists, and creating one is therefore an administrative act, not a capture act. Left open to
-    designers it produced duplicates of the same real workshop under three spellings of its title,
-    each holding part of one fortnight's fieldwork, and nothing in the product could merge them.
-
-    ── WHAT A DESIGNER STILL HAS, WHICH IS ALL OF IT BUT THIS ──────────────────────────────────
-    Open a workshop they created or were granted; fill all 22 stages; create artisans, products,
-    processes, tools and interviews inside it; capture photographs and dictation; generate and
-    submit the report. Every one of those is gated by ``can_run_design_workshops`` or by
-    ``load_workshop_or_404`` and NONE of them is narrowed by this function. Anybody tightening this
-    file should check ``tests/test_design_workshop_gate.py``, which asserts that explicitly: a
-    permission change that quietly cost a designer their stage edits would be far worse than this
-    rule is worth.
-
-    SET MEMBERSHIP in :data:`DESIGN_WORKSHOP_CREATOR_ROLES` rather than a rank floor, so a
-    PROFESSOR — outside the designer set entirely — is refused here for the same reason they are
-    refused everywhere else in the design-workshop surface.
-
-    ``frontend/lib/permissions.ts::canCreateDesignWorkshops`` and its
-    ``DESIGN_WORKSHOP_CREATOR_ROLES`` carry the identical set and must keep carrying it.
-    """
     return role_value(user) in DESIGN_WORKSHOP_CREATOR_ROLES
 
 
-#: The refusal a designer reads when they try to start a workshop, in ONE place because it is said
-#: on three surfaces — this module's 403, the web list page, and the offline draft store's refusal —
-#: and a refusal that names a different next move depending on where you met it is not a rule, it is
-#: three rumours. ``frontend/lib/permissions.ts::DESIGN_WORKSHOP_CREATE_REFUSAL`` is its twin.
-#:
-#: IT NAMES THE NEXT MOVE, which is not decoration. Somebody reading this is standing in a courtyard
-#: with participants in front of them; "forbidden" tells them to stop working, and the truth is that
-#: everything they came to do still works as soon as an admin has opened the workshop.
 DESIGN_WORKSHOP_CREATE_REFUSAL = (
     "Only admins, the master admin and the Ministry Admin can start a new design & prototype "
     "workshop. Ask an admin to "
@@ -554,12 +139,6 @@ DESIGN_WORKSHOP_CREATE_REFUSAL = (
 
 
 def assert_can_create_design_workshops(user: Any) -> None:
-    """Refuse anyone outside :data:`DESIGN_WORKSHOP_CREATOR_ROLES`, naming what they can do instead.
-
-    A function rather than only a ``Depends`` because the create route already takes
-    ``current_user`` for other reasons and because putting the sentence in one place is the point —
-    see :data:`DESIGN_WORKSHOP_CREATE_REFUSAL`.
-    """
     if not can_create_design_workshops(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -567,39 +146,9 @@ def assert_can_create_design_workshops(user: Any) -> None:
         )
 
 
-#: Who may READ design-workshop stage data through the research surface (View Data, and the
-#: design-workshop bucket of Search). Professor, Admin, Master Admin — and NOTHING ELSE.
-#:
-#: **THIS IS A NEW CAPABILITY BESIDE :data:`DESIGN_WORKSHOP_ROLES`, NOT A WIDENING OF IT.** That set
-#: is "the people who sign the report" and it excludes PROFESSOR on purpose (see
-#: :func:`can_run_design_workshops`: seniority is not the same thing as being a designer). This one
-#: is the opposite shape — it INCLUDES professor and excludes designer — because it is a different
-#: act. Reading a stage answer through a research browser is not writing inside somebody's
-#: workshop, and a professor who gains this gains READ of research data and gains nothing at all
-#: inside any workshop: no stage save, no custom section, no capture aid, no consent record.
-#: A DESIGNER is not here either, and that is not an oversight: a designer reaches their OWN
-#: workshops through ``load_workshop_or_404``, which is a per-record grant, whereas this predicate
-#: opens EVERY workshop in the repository to a research reader. The two doors are different sizes.
-#:
-#: Owner ruling, 2026-08-30: "professor can view data for design workshops as well, admins and
-#: master admins can download and view it too." Implemented as stated; see
-#: ``docs/DECISION-design-workshop-data-in-view-data.md`` for the argument.
 DESIGN_WORKSHOP_DATA_VIEW_ROLES = frozenset(
     {
         "PROFESSOR",
-        # THE THREE DIRECTORATE TIERS JOIN, AND THE SET DID NOT SIMPLY BECOME A FLOOR. It is still a
-        # set, and the reason is unchanged: the tier sitting just BELOW professor is INSPECTOR (37),
-        # who inspects one workshop under a grant and must never acquire every workshop in the
-        # repository because a rank moved. A floor at PROFESSOR would hand it to nobody new today and
-        # to whoever lands at 38 tomorrow. What changed is that three tiers now sit ABOVE professor,
-        # and a tier above the floor that reads LESS than the floor makes this file's own opening
-        # sentence false. Added by a person who meant to, which is what a set is for.
-        #
-        # THE VIEW/EXPORT SPLIT IS THE POINT AND IT SURVIVES THIS EDIT.
-        # ``DESIGN_WORKSHOP_DATA_EXPORT_ROLES`` below is UNCHANGED, so a directorate tier reads
-        # design-workshop stage data on screen and cannot take it out of the product — exactly a
-        # professor's position, which is the shape the owner ruled for on 2026-08-30 and the ruling
-        # of 2026-09-13 widened by three tiers rather than redrew.
         "ASSISTANT_DIRECTOR",
         "REGIONAL_DIRECTOR",
         "MINISTRY_ADMIN",
@@ -608,115 +157,21 @@ DESIGN_WORKSHOP_DATA_VIEW_ROLES = frozenset(
     }
 )
 
-#: Who may take design-workshop stage data OUT — the .xlsx workbook, a CSV, the whole-repo archive.
-#: Admin and Master Admin, and a professor is deliberately NOT in it.
 DESIGN_WORKSHOP_DATA_EXPORT_ROLES = frozenset({"ADMIN", "MASTER_ADMIN"})
 
 
 def can_view_design_workshop_data(user: Any) -> bool:
-    """READ design-workshop stage data on screen: Professor, Admin, Master Admin.
-
-    ── WHY IT IS NOT ``can_download_dataset``, WHICH IS THE GATE ON THE SCREEN IT APPEARS ON ──────
-    ``/data`` is mounted behind :func:`require_dataset_downloader`, which is "Professor and above,
-    OR the grantable ``canDownloadDataset`` flag". That flag is the whole difference: it is handed
-    to a RESEARCHER who needs the seven legacy tables for a piece of work, and it carries no
-    seniority with it. Design-workshop stage data is a fortnight of a named designer's fieldwork,
-    including consent state and dictation, so it is gated on RANK ALONE and the grant does not
-    reach it. A researcher holding ``canDownloadDataset`` therefore browses View Data exactly as
-    they do today and simply never sees a design-workshop folder, sheet or search bucket.
-
-    ── A RANK FLOOR, WRITTEN AS A SET, AND THE SET IS THE HONEST SHAPE ───────────────────────────
-    ``PROFESSOR``, ``ADMIN`` and ``MASTER_ADMIN`` happen to be the top three rungs today, so
-    ``has_rank(user, "PROFESSOR")`` would give the same answer. It is a SET because the RULE is a
-    set: the owner named three roles, not a threshold, and the one tier sitting just below professor
-    is ``INSPECTOR`` (rank 37) — somebody who inspects ONE workshop under a grant and must not
-    acquire every workshop in the repository the day a rank is renumbered. A floor would hand it to
-    them silently; a set has to be edited by a person who meant to.
-
-    ── WHY THERE IS NO ``require_design_workshop_data_viewer`` DEPENDENCY BESIDE THIS ────────────
-    Every other capability in this module has a ``Depends`` twin because it gates a whole ROUTE.
-    This one does not gate a route: ``/data`` stays mounted behind :func:`require_dataset_downloader`
-    and every account that reaches it today still reaches it. What this decides is how much of the
-    answer that screen contains — which taxonomy roots are listed, which sheets are built, which
-    search bucket is read — so it is consulted once per request through ``data_browser.Scope`` and
-    ``api/routes/search.py``, where the listers, the manifest walk and the report all see the same
-    value and none of them can forget to ask. A ``Depends`` written here and mounted nowhere would be
-    a second, unexercised statement of the rule; a ``Depends`` mounted on ``/data`` would refuse a
-    granted researcher the seven legacy tables they have always had.
-
-    ``frontend/lib/permissions.ts::canViewDesignWorkshopData`` carries the identical set and MUST
-    keep carrying it — that file's own rule is that the UI never invents a permission and never
-    offers what the API refuses.
-    """
     return role_value(user) in DESIGN_WORKSHOP_DATA_VIEW_ROLES
 
 
 def can_export_design_workshop_data(user: Any) -> bool:
-    """TAKE design-workshop stage data out of the product: Admin and Master Admin only.
-
-    ── THE SPLIT IS THE POINT ────────────────────────────────────────────────────────────────────
-    A professor passes :func:`can_view_design_workshop_data` and fails this one, so there is a real
-    population that reads a table on screen and may not export the same rows. That is narrower than
-    ``/data``'s existing single ``require_dataset_downloader`` gate, which governs viewing and
-    downloading together for the seven legacy tables, and it is deliberate: a screen is a reading, a
-    file is a copy that leaves the building. Stage data carries artisan dictation, consent decisions
-    and unpublished prototype work, and the institution's answer to "who may carry that out on a
-    USB stick" is not the same as its answer to "who may read it".
-
-    ── SAY IT ON SCREEN, NEVER 403 A BUTTON ──────────────────────────────────────────────────────
-    Because a professor can SEE rows they cannot export, every surface that offers an export beside
-    those rows must say so where it applies. Handing them a download button that answers 403 would
-    teach them the product is broken rather than that the rule exists. The View Data page says it
-    beside the download button; the workbook a professor downloads drops the design-workshop sheets
-    and carries ONE in their place naming what was withheld and how many rows it held — because a
-    file outlives the page it came from, and a workbook that silently lacks a section reads as a
-    repository with no design workshops in it. The whole workbook is never refused: that would take
-    away the seven legacy tables they have always been able to download, to protect data that is not
-    in them.
-
-    ``is_admin`` rather than a rank floor, so this reads as the same set the rest of this module
-    means by "an admin". It has no ``Depends`` twin either, for the reason given at
-    :func:`can_view_design_workshop_data`: the download routes are already mounted and this narrows
-    what they hand over rather than whether they answer.
-    ``frontend/lib/permissions.ts::canExportDesignWorkshopData`` is its twin.
-    """
     return is_admin(user)
 
 
-#: Who may open the ministry dashboard — the register of every workshop on the platform, its
-#: designers' progress, and the downloads taken off it.
-#:
-#: A SET WITH A HOLE AT ADMIN (50) AND MASTER_ADMIN (60) ABOVE IT, so no rank floor produces it. The
-#: tightest floor admitting ASSISTANT_DIRECTOR (42) also admits ADMIN; a floor at MINISTRY_ADMIN (48)
-#: loses the two tiers who actually supervise the workshops the page is about.
-#:
-#: WHY AN ADMIN IS OUT, WHICH IS THE ONLY SURPRISING MEMBERSHIP. Not capability — an admin reads more
-#: of this repository than any ministry post does. It is that an admin already has this screen under
-#: another name: ``/api/analytics/design-workshops`` (``require_admin``) is the whole-estate
-#: comparison, reachable from a settings hub the three directorate tiers cannot open at all. A second
-#: whole-estate door for the tier that already has one buys nothing and is one more thing to keep
-#: gated in step. MASTER_ADMIN is in because it is the account that must be able to see exactly what a
-#: ministry officer sees without holding a ministry post.
-#:
-#: ⚠ THIS IS THE GATE AND IT HAS A TWIN. ``frontend/lib/permissions.ts::MINISTRY_DASHBOARD_ROLES``
-#: carries the identical list. It is deliberately NOT the same literal as that file's
-#: ``MINISTRY_DESK_ROLES``, which has the same four members and is a dashboard CARD'S AUDIENCE whose
-#: own docstring promises that widening it "widens no capability at all" — a promise that stops being
-#: true the moment a card audience is used as a route gate. Two literals, two jobs.
-#:
-#: ``backend/tests/test_role_ladder_parity.py`` registers both as ``partial`` mirrors, so a twelfth
-#: tier cannot default into or out of this audience by nobody having thought about it.
 MINISTRY_DASHBOARD_ROLES = frozenset(
     {"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", "MINISTRY_ADMIN", "MASTER_ADMIN"}
 )
 
-#: What an account that is not of the ministry is told at ``/api/ministry-dashboard``.
-#:
-#: ONE SENTENCE, SHARED BYTE-FOR-BYTE WITH THE CLIENT'S ``ROUTE_GUARDS`` MESSAGE, which is the house
-#: pattern (``ANNUAL_PLAN_REFUSAL``, ``SANCTION_REFUSAL``, ``OVERSIGHT_SURFACE_REFUSAL``). It names
-#: who the page is for AND where everybody else reads the same estate, because a refusal that names
-#: no alternative teaches the reader the product is broken rather than that a rule exists — this
-#: repository's standing rule for every gate it draws.
 MINISTRY_DASHBOARD_REFUSAL = (
     "For Assistant Directors, Regional Directors, Ministry Admins and the master admin. "
     "Admins: use Cross-workshop analytics. Designers: use Design workshops."
@@ -724,103 +179,26 @@ MINISTRY_DASHBOARD_REFUSAL = (
 
 
 def can_see_ministry_dashboard(user: Any) -> bool:
-    """May this account open the ministry dashboard? See :data:`MINISTRY_DASHBOARD_ROLES`.
-
-    THIS DECIDES WHETHER THE PAGE OPENS AND NOT WHAT IS ON IT. Which workshops a caller sees is
-    ``app.services.ministry_dashboard.scope_clause``, which hands MINISTRY_ADMIN and MASTER_ADMIN the
-    whole estate and narrows ASSISTANT_DIRECTOR and REGIONAL_DIRECTOR to the workshops they were
-    named on — the same ``oversight_by_clause`` that already scopes ``/officers/monitored``. Keeping
-    the two apart is what stops a widening of the door quietly widening the view.
-    """
     return role_value(user) in MINISTRY_DASHBOARD_ROLES
 
 
 def can_manage_designer_roster(user: Any) -> bool:
-    """Add, suspend and restore designers on the roster that gates their sign-in: Admin and above.
-
-    Read as well as write. The roster is a list of named individuals and their institutional
-    standing, so it is not something a peer should be able to browse.
-    """
     return is_admin(user)
 
 
 def can_manage_access_roster(user: Any) -> bool:
-    """Decide who may sign in to this application at all: Admin and above.
-
-    THE SAME TIER AS THE DESIGNER ROSTER, and for a stronger version of the same reason. This list
-    is every address that may reach the product, so the people who can edit it can lock everybody
-    else out — including each other. It is not a professor's job and it is emphatically not a
-    designer's.
-
-    Read is gated with write, again like the designer roster: the pending queue is a list of people
-    who tried to get in, which is a list of somebody's colleagues, applicants and former staff.
-    """
     return is_admin(user)
 
 
-#: Who may PROVISION a password account: create one, require a new password at its first or next
-#: sign-in, give it a temporary password, issue it a set-password link, and correct its name or
-#: address. Owner's decision, 2026-10-09.
-#:
-#: A SET BESIDE ``is_admin`` AND NOT A WIDENING OF IT, which is the whole shape of the decision. The
-#: MINISTRY_ADMIN rank comment above says that if the institution wants any admin power for that tier,
-#: "each is a separate named predicate and a separate written decision" — this is that predicate for
-#: one power, and the powers ``is_admin`` still guards are untouched by it. A ministry admin who
-#: provisions accounts still may NOT delete one, grant a capability flag, or overturn an admin's
-#: barring of an address (a REJECTED or SUSPENDED allow-list row, or a suspended designer
-#: empanelment); ``services/account_provisioning.py`` refuses each of those to a provisioner who is not
-#: ``is_admin``, and says which.
-#:
-#: WHOM a provisioner may touch is ``account_provisioning.assert_can_manage_target`` (strictly lower
-#: tiers; master admins are peers who cannot manage each other) and at WHICH TIER it may create an
-#: account is ``account_provisioning.assert_role`` (its own tier and below; MASTER_ADMIN only for a
-#: master admin). This set answers only whether the account may provision at all.
-#:
-#: NOT ``has_rank(user, "MINISTRY_ADMIN")``, although the two agree today: a tier later inserted at 49
-#: or above 50 would be admitted by a floor without anybody having decided it.
-#: ``frontend/lib/permissions.ts::ACCOUNT_PROVISIONER_ROLES`` is the twin, and
-#: ``tests/test_role_ladder_parity.py`` holds it to this one. Web only: the handset has no
-#: provisioning screen, by the standing rule that ministry and admin work is web-only.
 ACCOUNT_PROVISIONER_ROLES = frozenset({"MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"})
 
 
 def can_provision_accounts(user: Any) -> bool:
-    """May this account create password accounts and look after their passwords? See
-    :data:`ACCOUNT_PROVISIONER_ROLES`. Reads the set, so the set cannot become documentation that a
-    predicate ignores — ``tests/test_directorate_tiers.py`` asserts the two agree."""
     return role_value(user) in ACCOUNT_PROVISIONER_ROLES
 
 
-#: THE APPROVING AUTHORITY: who approves a design workshop's report, sends it back without approving
-#: it or withdraws an approval, and hands an approved report on to the office (2026-10-10). The owner's
-#: requirement calls them "the sanctioning authority" — "this iterative review loop continues until
-#: the sanctioning authority is satisfied and clicks 'approve'" — and until this set existed nothing
-#: in this file named one, which is the deferral docs/OPEN_FINDINGS.md recorded and closed that day.
-#:
-#: MINISTRY_ADMIN AND MASTER_ADMIN, ESTATE-WIDE, BY ROLE — the product's own evidence, set out in
-#: ``services/design_workshop_approvals``' header and docs/PERMISSIONS.md §2:
-#:
-#: * NOT THE ASSISTANT OR REGIONAL DIRECTOR POSTS. The owner's ruling of 2026-10-09 made both posts
-#:   view-and-monitor, and docs/PERMISSIONS.md §4.8 says no approval route is to be built for either;
-#:   a post holder is neither given nor refused the approval by the post (rule 7c in
-#:   ``services/design_workshop_posts``) — the role decides.
-#: * THE MINISTRY'S ADMINISTERING TIER. MINISTRY_ADMIN reads the whole estate, staffs every workshop
-#:   and appoints its inspectors; the ministry desk lays a workshop out as planned, sanctioned, staffed,
-#:   filled in and read back, and the signature at the end of that sequence is the ministry's. The
-#:   office a report goes to is the Development Commissioner (Handicrafts)'s.
-#: * NOT ADMIN, for the reason :data:`MINISTRY_DASHBOARD_ROLES` gives for leaving it out: ADMIN is
-#:   platform administration, not the ministry. The master admin is in, as the break-glass.
-#:
-#: A SET BESIDE ``is_admin`` AND NOT A WIDENING OF IT — the shape every new power in this file takes.
-#: On ONE workshop the role is necessary and not sufficient: whoever authored the workshop or
-#: inspects it may not decide on it (rule 7 in ``services/design_workshop_posts``).
-#: ``frontend/lib/permissions.ts::APPROVAL_AUTHORITY_ROLES`` is the twin, and
-#: ``tests/test_role_ladder_parity.py`` holds it to this one. Web only: the handset has no approval
-#: screen, by the standing rule that ministry work is web-only.
 APPROVAL_AUTHORITY_ROLES = frozenset({"MINISTRY_ADMIN", "MASTER_ADMIN"})
 
-#: What every other account is told on the approvals surface (403). Byte-identical to the web's
-#: ``ROUTE_GUARDS`` message for ``/design-workshop-approvals``, the house pattern for a gate's sentence.
 APPROVAL_AUTHORITY_REFUSAL = (
     "Reports to approve belongs to the Ministry Admin and the master admin: they approve a design "
     "workshop's report, send it back or withdraw an approval, and hand it on to the office. Assistant "
@@ -830,133 +208,22 @@ APPROVAL_AUTHORITY_REFUSAL = (
 
 
 def can_approve_design_workshops(user: Any) -> bool:
-    """Is this account the approving authority? See :data:`APPROVAL_AUTHORITY_ROLES`. SET MEMBERSHIP,
-    so a tier inserted later between 48 and 60 is admitted by nobody's accident."""
     return role_value(user) in APPROVAL_AUTHORITY_ROLES if user is not None else False
 
 
 def can_read_usage(user: Any) -> bool:
-    """Read the platform-usage aggregates — which screens are reached, and where they are slow:
-    Admin and above.
-
-    ITS OWN PREDICATE THOUGH IT IS ``is_admin`` TODAY, and the duplication is the point. This is the
-    line somebody will move: the moment a consent flow exists, "may a professor running the
-    evaluation read the aggregates" becomes a real question with a defensible yes. ``is_admin`` is
-    consulted from dozens of places about dozens of unrelated powers, so widening it to answer that
-    question would grant everything else it guards at the same time. One name, one power, one line to
-    change — the same reason ``can_download_dataset`` and ``can_create_records`` exist rather than
-    their rank tests being written out at each call site.
-
-    WHY ADMIN AND NOT RESEARCHER, WHICH IS THE FLOOR THE RESEARCH USE CASE WOULD LIKE. Two precedents
-    in this file already answer it. ``can_manage_designer_roster`` gates a READ at Admin purely
-    because the roster reveals colleagues' institutional standing and which of them never took up
-    their empanelment; a usage table is strictly more revealing than that, because it is a record of
-    what people did rather than of what an administrator wrote down about them. And
-    ``/analytics/design-workshops`` — a comparison of CRAFT OUTCOMES, which observes no person at
-    all — is already ``require_admin``. A feature that observes colleagues cannot be gated more
-    loosely than one that observes cloth.
-
-    THE WITHHOLDING FLOOR IS NOT A SUBSTITUTE FOR THIS GATE, and reading it as one is the mistake
-    this paragraph exists to stop. ``usage.MIN_IDENTIFIED_USERS_FOR_ROUTE`` refuses a figure computed
-    from fewer than five identified accounts, which stops one person being picked out of a number —
-    it does not make the remaining numbers public, and the window is chosen by whoever is asking.
-    Defence in depth, not two spellings of the same rule.
-
-    NO GRANT FLAG, unlike ``can_download_dataset``. The three grantable booleans on ``User`` are
-    ``canReview``, ``canDownloadDataset`` and ``canViewProvenance``, and none of them means this;
-    reusing one would make a single checkbox on an admin screen silently confer a second, unrelated
-    power, which is the "one word meaning two things" objection the ladder comment above makes about
-    tier names. If a grant is wanted it is a new column and a deliberate migration.
-    """
     return is_admin(user)
 
 
 def can_read_person_usage(user: Any) -> bool:
-    """Read ONE NAMED COLLEAGUE'S request-by-request trail: **the master admin, and nobody else.**
-
-    ── WHY THIS IS A SECOND PREDICATE AND NOT A WIDENED :func:`can_read_usage` ──────────────────
-
-    ``can_read_usage`` gates AGGREGATES: how often a screen was reached, how slow it was, how often
-    it broke. This gates a LOG — what one named person opened, in what order, at what hour. Those are
-    different powers over different data, and the module docstring in ``api/routes/usage.py`` already
-    refuses to let the second arrive as a parameter on the first: *"If that is ever wanted it is a
-    new route with its own dependency and its own written argument, NOT a query parameter added to
-    the three above. A parameter is how a boundary gets crossed by somebody who never read the
-    paragraph explaining it."* This is that dependency, and this docstring is that argument.
-
-    ── WHY MASTER ADMIN AND NOT ADMIN, WHICH IS WHERE THE AGGREGATES SIT ────────────────────────
-
-    :func:`can_read_usage` sets Admin as the floor for the aggregates on an argument that decides
-    this one too, one rung further up. It reasons from :func:`can_manage_designer_roster` — a READ
-    gated at Admin purely because the roster reveals colleagues' institutional standing — that "a
-    usage table is strictly more revealing than that, because it is a record of what people did
-    rather than of what an administrator wrote down about them", and from
-    ``/analytics/design-workshops``, an admin-only comparison of CRAFT OUTCOMES, that "a feature that
-    observes colleagues cannot be gated more loosely than one that observes cloth."
-
-    A named person's minute-by-minute trail is strictly more revealing again than the aggregate that
-    argument was made about — the aggregate cannot say who, and this says nothing else. So it cannot
-    sit at the same rank, and the ladder already has the precedent for the rung above: the master
-    admin is the one account that reviews everyone's work (:func:`can_review_record`), and the one
-    the platform allow-list can never bar (:func:`is_break_glass_master`). One account, in one
-    institution, answerable for the read.
-
-    NO GRANT FLAG, for :func:`can_read_usage`'s reason applied harder. The three grantable booleans
-    on ``User`` are ``canReview``, ``canDownloadDataset`` and ``canViewProvenance``; none of them
-    means this, and a checkbox on an admin screen that silently conferred the power to read a
-    colleague's browsing history would be the worst instance in this codebase of the "one word
-    meaning two things" failure the role ladder above warns about.
-
-    **AND THE RANK IS NOT THE WHOLE GATE.** :func:`require_person_usage_reader` is the rank; the
-    route additionally refuses unless the SUBJECT'S OWN CONSENT IS GRANTED, and refuses with a
-    sentence rather than an empty list. Rank says who may ask; the subject's answer says whether
-    there is anything they may be told. Neither is sufficient alone, and the second is the one that
-    cannot be granted by anybody in this file.
-    """
     return is_master_admin(user)
 
 
 def can_manage_workshops(user: Any) -> bool:
-    """UPDATE a workshop: Professor and above, RANK ALONE — see ``can_manage_crafts`` for why the
-    ``canManageWorkshops`` grant is no longer consulted.
-
-    IT SAID "CREATE OR UPDATE" UNTIL 2026-09-16 AND THAT HALF MOVED. Opening a workshop is now
-    ``workshops.require_workshop_opener`` — a rank floor at MINISTRY_ADMIN (48), so exactly
-    ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`` — because R6 of the dropdown ruling is that designers
-    participate in workshops and the ministry and admin tiers open them. CORRECTING one stayed here,
-    deliberately looser: a professor fixing the date or the place of a workshop somebody else opened
-    is ordinary repository work and always has been.
-
-    So this predicate is now the EDIT gate and nothing else. ``frontend/lib/permissions.ts``'s
-    ``canManageWorkshops`` and the handset's ``FieldPermissions.canManageWorkshops`` mirror it and
-    say the same; the create predicate on those two clients is ``hasRank(user, "MINISTRY_ADMIN")``
-    and ``UserDto.canOpenAWorkshop()``.
-    """
     return has_rank(user, "PROFESSOR")
 
 
 def can_review_record(reviewer: Any, creator_role: Any) -> bool:
-    """The peer-review hierarchy: the master admin reviews EVERYONE's work; everyone else may only
-    review records whose creator ranks STRICTLY below them (admin reviews everyone beneath,
-    professor reviews inspectors and below, INSPECTOR REVIEWS DESIGNERS AND BELOW, researcher
-    reviews field contributors and volunteers, field contributor reviews volunteers). A record with
-    no creator role on file is treated as a researcher's work.
-
-    THE INSPECTOR CLAUSE IS A DECISION, NOT AN INHERITANCE, and it is spelled out because the
-    mechanism that produces it is invisible. "Strictly below me" is a rank comparison, so INSERTING
-    a tier above DESIGNER hands it authority over every designer's records with no line of code
-    naming either tier and no test going red. An audit of this ladder flagged exactly that shape
-    before INSPECTOR was added.
-
-    Here the answer is YES ON PURPOSE: inspecting and reviewing a designer's work is what the tier
-    exists for, which is precisely why its rank is 37 and not, say, 34. What an inspector does NOT
-    get is the right to REWRITE that record — ``can_edit_others_record`` narrows this same comparison
-    to Professor and above, and 37 < 40. Review it, send it back, do not silently correct it.
-
-    ``tests/test_inspector_tier.py`` pins both halves and the direction (a professor reviews an
-    inspector; an inspector does not review a peer). Anyone moving INSPECTOR's rank, or adding
-    another tier near it, is changing who may reject a designer's fortnight of fieldwork.
-    """
     if is_master_admin(reviewer):
         return True
     role = getattr(creator_role, "value", creator_role)
@@ -966,22 +233,10 @@ def can_review_record(reviewer: Any, creator_role: Any) -> bool:
 
 
 def can_edit_others_record(user: Any, creator_role: Any) -> bool:
-    """May *user* edit a record created by *creator_role* as fully as its own author can?
-
-    "A professor may edit the data of anyone ranked below them." The comparison for "below" is
-    ``can_review_record``'s and nothing else's: a second hand-rolled rank test that disagreed with
-    the review ladder by one tier is exactly the shape a privilege bug hides in. It is then narrowed
-    to Professor and above, because the review ladder deliberately reaches further down than editing
-    is meant to — a field contributor reviews a volunteer's work, but does not get to rewrite it.
-    (``services/records.apply_status_policy_update`` composes the same two halves for status
-    changes, which is where this pairing comes from.)
-    """
     return has_rank(user, "PROFESSOR") and can_review_record(user, creator_role)
 
 
 async def may_edit_lower_ranked_record(user: Any, creator_id: str | None) -> bool:
-    """``can_edit_others_record`` with the creator's role looked up. Costs one query, and only for a
-    Professor+ who is neither the record's author nor an admin — everyone else is refused before it."""
     if not creator_id or not has_rank(user, "PROFESSOR"):
         return False
     creator = await db.user.find_unique(where={"id": creator_id})
@@ -989,147 +244,33 @@ async def may_edit_lower_ranked_record(user: Any, creator_id: str | None) -> boo
 
 
 def can_access_review(user: Any) -> bool:
-    """May open the review queue: Field Contributor and above (everyone who has someone beneath
-    them on the ladder), or an explicit review grant. Which specific records they may act on is
-    decided per record by can_review_record."""
     return has_rank(user, "FIELD_CONTRIBUTOR") or bool(get_value(user, "canReview"))
 
 
 def can_review(user: Any) -> bool:
-    """Back-compat alias for can_access_review — page-level review access, not per-record."""
     return can_access_review(user)
 
 
 def can_download_dataset(user: Any) -> bool:
-    """May download the entire dataset: Professor and above, or an explicit grant."""
     return has_rank(user, "PROFESSOR") or bool(get_value(user, "canDownloadDataset"))
 
 
 def can_create_records(user: Any) -> bool:
-    """May create core records (artisans, products, tools, processes, interviews): Researcher and
-    above.
-
-    The two tiers below — Field Contributor and Crowdsource Volunteer — POPULATE records rather than
-    open them: attaching media to an existing artisan, answering questions in an existing interview,
-    and commenting. Those three paths are the reason the tiers exist and none of them passes through
-    here; they are gated by ``get_current_user`` on /media, /questionnaire's response arms, and
-    /data-access/comments respectively."""
     return has_rank(user, "RESEARCHER")
 
 
-# --- The authenticated-identity cache -------------------------------------------------------------
-#
-# WHY IT EXISTS — RE-TAKEN 2026-09-03, BECAUSE THE NUMBER IT WAS BUILT ON IS GONE.
-#
-# THE ORIGINAL ARGUMENT, VERBATIM, SO THE CHANGE IS LEGIBLE: ``get_current_user`` runs on every
-# authenticated request, and its one ``find_unique`` is one of only three sequential database waves
-# left on a list endpoint like ``GET /artisans``. The database is cross-region: that round trip costs
-# 200-400ms before any of the request's real work begins, and one dashboard page load pays it once
-# per request it fires in parallel. Removing it is roughly a third of the remaining latency of every
-# authenticated endpoint.
-#
-# **THAT ROUND TRIP NO LONGER EXISTS.** The database was moved alongside the API box on 2026-09-02
-# and a ``find_unique`` on an indexed primary key now costs on the order of 1-2ms. So the sentence
-# above justifies a revocation window with a saving that is roughly two hundred times smaller than
-# the one it was weighed against, and a cache kept on a stale measurement is a cache nobody has
-# actually decided to keep.
-#
-# IT IS KEPT, AND FOR A DIFFERENT REASON: BURST DEDUPE, NOT LATENCY. What ``_load_user`` does that a
-# bare query cannot is SINGLE-FLIGHT (see the note at the foot of this banner). One dashboard paint
-# fires a dozen requests in parallel on one token; without this they are a dozen simultaneous
-# ``find_unique`` calls for one row, on a single-worker box in front of a connection pooler this
-# deployment has already exhausted twice. Cheap queries in a thundering herd are still a herd. That
-# property is about CONCURRENCY and is unaffected by the round trip getting shorter — which is
-# exactly why it survives the number that did not.
-#
-# **WHAT THE TTL COSTS IS NOT SETTLED BY THAT, AND THIS IS THE HONEST VERSION.** The five seconds
-# below is a window on REVOCATION, and the checks it can delay now include the strongest one this
-# API has: ``_user_from_bearer`` reads ``sessionsValidFrom`` OFF THE ROW ``resolve_user`` RETURNS,
-# so a cached row carries the pre-revocation value and a revoked session survives for the remainder
-# of the TTL. It is tempting to write "the two writers that matter both stamp ``sessionsValidFrom``,
-# which is checked on every request, so the cache no longer extends anything" — and that is FALSE as
-# stated, because the check reads the cache rather than going around it.
-#
-# What is true is narrower and worth having exactly right:
-#
-#   * EVERY revocation writer calls ``invalidate_cached_user`` in the same process that wrote —
-#     ``routes/auth.set_password`` on a link redemption, ``routes/access``'s two barring doors since
-#     2026-09-03, and ``routes/users.update_user`` when a provisioner sets somebody's password or
-#     raises their ``mustChangePassword`` since 2026-10-09 — and so does every write of a new
-#     password, which since that date retires the sessions opened with the old one
-#     (``routes/auth.change_password`` included; see the credential check in ``_user_from_bearer``).
-#     In-process, there is no window at all.
-#   * The deployment runs ONE uvicorn worker on ONE replica (``infra/k8s/base/deployment-api.yaml``
-#     says ``replicas: 1`` and argues for ``--workers 1`` beside it), so today there is no second
-#     process holding a stale copy of a row this one revoked.
-#   * The five seconds therefore bites on writes NO process made through the app: a ``psql`` session,
-#     ``scripts/seed_admin.py`` in its own process, a future second replica. For those the window is
-#     real and it now covers session revocation as well as role and existence.
-#
-# So the TTL is a live decision rather than a settled one, and it is recorded here as such: the case
-# for cutting it is stronger than it was (the latency it was traded against is gone), and the case
-# for keeping it is that nothing today can actually observe the staleness. Cutting it belongs with
-# whoever owns ``AUTH_USER_CACHE_TTL_SECONDS``'s documentation, not with a silent constant change in
-# this file. ``AUTH_USER_CACHE_ENABLED=false`` already removes the whole thing without a deploy, and
-# now costs 1-2ms a request to do so rather than 200-400.
-#
-# WHY THE ROW IS FETCHED AT ALL, WHICH IS THE SAME REASON THE CACHE IS DANGEROUS. The access token
-# already carries the user id in ``sub``, and ``create_access_token`` even puts ``email`` and
-# ``role`` in it — so a "cache" that simply trusted the token would be free. That is exactly the
-# shortcut this must not take. Tokens live for seven days (JWT_EXPIRES_MINUTES) and carry no
-# ``jti``, so a role claim minted before a demotion stays valid for a week and a deleted account
-# keeps a working token until it expires. The database read IS the revocation check — for the RANK,
-# for EXISTENCE, and (since ``sessionsValidFrom`` gained its second writer on 2026-09-03) for
-# whether the session itself has been ended, which is read off this same row at the foot of
-# ``_user_from_bearer``. Caching it shortens every one of those windows; trusting the token would
-# remove them.
-#
-# SO THE WINDOW IS KEPT SHORT AT BOTH ENDS:
-#   1. EXPLICIT INVALIDATION. Every write that changes a user's authority or identity calls
-#      ``invalidate_cached_user`` — users.py (update/delete), services/account_provisioning.py
-#      (create), auth.py (the Google sign-in upsert, which can set MASTER_ADMIN, and
-#      ``set_password``'s session revocation), access.py (the role lift, and the two barring doors'
-#      session revocation), scripts/seed_admin.py.
-#      In-process, a demotion, a deletion or a suspension takes effect on the very next request,
-#      with no window at all.
-#   2. A FIVE-SECOND TTL, which is only the backstop for writes this process cannot see: a psql
-#      session, the seed script running as its own process, a second uvicorn worker's memory. Five
-#      seconds is chosen to span the burst of parallel requests one page load makes (and the
-#      follow-on requests a user makes while reading it) and nothing more; the value is a few
-#      seconds rather than a few minutes because every second of it is a second a demoted account
-#      keeps a privilege after such a write. AUTH_USER_CACHE_TTL_SECONDS tunes it and
-#      AUTH_USER_CACHE_ENABLED=false removes it entirely without a deploy.
-#
-# A MISS IS NEVER CACHED. "No such user" stays a fresh query every time, so a deleted account 401s
-# on every request rather than for a TTL and then not.
-#
-# SINGLE-FLIGHT, LOCALLY. N requests arriving together on a cold entry run ONE query; the rest await
-# it. app/scale/singleflight.py does this well, but that whole package is flag-gated and off by
-# default, and importing it here would put an always-on authentication path behind a dormant
-# feature (and drag app.scale.flags onto the import graph of every request). Twenty lines that need
-# no flag are the cheaper dependency.
-
 _USER_CACHE_INFLIGHT_WAIT_SECONDS = 5.0
 
-# id -> (monotonic expiry, user row). Ordered so eviction is LRU: the oldest touched identity goes
-# first when the cap is reached.
 _user_cache: OrderedDict[str, tuple[float, Any]] = OrderedDict()
-# id -> (event loop, future). The loop is stored because a future can only be awaited on the loop
-# that created it, and the test suite runs each case in its own ``asyncio.run``.
 _user_cache_inflight: dict[str, tuple[Any, asyncio.Future[Any]]] = {}
-# Bumped by every invalidation. A query that was already in flight when someone revoked a role would
-# otherwise be free to write the pre-revocation row back into the cache and undo the invalidation;
-# comparing this before and after the query closes that race by declining to store the result.
 _user_cache_epoch = 0
 
 
 class _LeaderGone(Exception):
-    """The request that was loading this identity went away before it produced a row."""
+    pass
 
 
 def invalidate_cached_user(user_id: str | None) -> None:
-    """Forget *user_id*, so the next request re-reads the row. Call after ANY write that changes a
-    user's role, grants, email or existence — see the call-site list above."""
     global _user_cache_epoch
     _user_cache_epoch += 1
     if user_id:
@@ -1137,7 +278,6 @@ def invalidate_cached_user(user_id: str | None) -> None:
 
 
 def clear_user_cache() -> None:
-    """Forget every identity. For tests, and for a caller that has changed users in bulk."""
     global _user_cache_epoch
     _user_cache_epoch += 1
     _user_cache.clear()
@@ -1164,22 +304,17 @@ def _store_cached_user(user_id: str, user: Any, ttl: float) -> None:
 
 
 async def _load_user(user_id: str, ttl: float) -> Any:
-    """One ``find_unique`` per identity per cold window, however many requests are waiting on it."""
     loop = asyncio.get_running_loop()
     pending = _user_cache_inflight.get(user_id)
     if pending is not None and pending[0] is loop:
         try:
-            # shield: a follower that times out, or whose client hangs up, must not cancel the query
-            # the leader is running on everyone's behalf.
             return await asyncio.wait_for(
                 asyncio.shield(pending[1]), _USER_CACHE_INFLIGHT_WAIT_SECONDS
             )
         except (_LeaderGone, TimeoutError):
-            pass  # load it ourselves — exactly what we would have done with no dedupe at all
+            pass
 
     future: asyncio.Future[Any] = loop.create_future()
-    # Retrieve the outcome on completion so a leader whose followers all went away leaves no
-    # "exception was never retrieved" behind. The leader still raises for itself.
     future.add_done_callback(lambda done: done.cancelled() or done.exception())
     _user_cache_inflight[user_id] = (loop, future)
     epoch_at_start = _user_cache_epoch
@@ -1204,7 +339,6 @@ async def _load_user(user_id: str, ttl: float) -> Any:
 
 
 async def resolve_user(user_id: str) -> Any:
-    """The user row for *user_id*, from the identity cache when it is warm and enabled."""
     settings = get_settings()
     if not settings.auth_user_cache_enabled:
         return await db.user.find_unique(where={"id": user_id})
@@ -1214,112 +348,14 @@ async def resolve_user(user_id: str) -> Any:
     return await _load_user(user_id, settings.auth_user_cache_ttl_seconds)
 
 
-# =================================================================================================
-# SCOPED TOKENS
-#
-# Every token this API has ever issued is a SESSION token: it carries no ``scope`` claim and stands
-# for its account in full, which is right for a browser and wrong for a script. ``POST
-# /api/datasets/token`` mints the other kind — a long-lived credential a nightly export job can hold
-# — and a credential that lives on a build server must be able to do strictly less than the admin
-# who created it, or handing it out is the same as handing out the admin's password.
-#
-# The narrowing is enforced HERE, at the one function every authenticated route in the app depends
-# on, rather than by the dataset routes being careful. That direction is the whole point: a scoped
-# token is refused by default and admitted only where a dependency names its scope, so a route added
-# next year is closed to it without its author having to know scoped tokens exist. Written the other
-# way round — trusting each route to check — the read-only promise would have lasted exactly until
-# the first route that forgot, and "read-only" would have meant "may DELETE /crafts/{id}".
-#
-# Tokens are not revocable within their lifetime (there is no token store). What IS revocable is the
-# ACCOUNT, and by two separate acts, because two separate tables can end somebody's access:
-#
-# * its RANK — ``resolve_user`` re-reads the User row on every request behind a 5-second cache, so
-#   demoting or deleting the service admin kills every token it ever minted, within 5 seconds; and
-# * its PLATFORM ACCESS — ``require_dataset_admin`` re-reads ``AccessRoster`` per request, so
-#   suspending or rejecting the account on the access screen stops the token at its next use.
-#
-# THE SECOND ONE IS NEW AND IT WAS THE GAP. Suspension writes the roster status and never
-# ``User.role``, so before it existed the mint gate in ``routes/datasets`` refused a suspended admin
-# a NEW token while the thirty-day one they already held kept working to its expiry — an
-# administrator pressing Suspend on a departing colleague believed bulk data access was cut, and it
-# was not. A gate on issue alone revokes nothing for the life of the credential already out there.
-#
-# TWO MORE THINGS STOP A DATASET TOKEN SINCE 2026-10-09, AND NEITHER IS A HOLD: THE TOKEN IS
-# RETIRED FOR GOOD, AND THE OPERATOR MINTS A NEW ONE.
-#
-# * A CHANGED PASSWORD. Every token minted from that date carries the fingerprint of the password its
-#   account held at the mint (``security.CREDENTIAL_CLAIM``; see ``_user_from_bearer``), so ANY
-#   password change refuses it from then on — a forced change, a voluntary one, a provisioner's
-#   temporary password, a link redemption, ``scripts/seed_admin.py``.
-# * A RAISED ``mustChangePassword``. ``PATCH /api/users/{id}`` stamps ``sessionsValidFrom`` when it
-#   raises the flag (or sets a password), so a token minted before that is refused — and STAYS
-#   refused after the owner has chosen a password, because the watermark never moves back. Meanwhile
-#   ``POST /api/datasets/token`` refuses to mint for the flagged account (403).
-#
-# What the cron job's log shows for both is a plain 401 "This session is no longer valid. Sign in
-# again." with NO ``X-Password-Change-Required`` header; the remedy is a new token, minted with the
-# password the account holds now. What ``require_dataset_admin``'s own forced-change check still
-# HOLDS — 401 with the header, released once the password is chosen — is only a token minted while
-# the flag was already up, which the mint has refused since 2026-10-09: a token from before that
-# date, which also carries no fingerprint and is therefore the one kind a password change does not
-# retire. The configured master admin is exempt from that hold and from the mint's refusal; nobody is
-# exempt from the two revocations.
-#
-# WHAT IS STILL NOT REVOKED HERE, STATED SO NOBODY HAS TO INFER IT: an ordinary SESSION token. It is
-# checked by ``get_current_user``, which asks for rank and not for platform access, so this
-# dependency's per-request allow-list read is not what stops a suspended account using the
-# interactive application. The allow-list read is paid HERE and not there deliberately: this
-# dependency guards the one credential that hands over the whole repository to a machine and is asked
-# a handful of times a day, where ``get_current_user`` is on the hot path of every request in the API.
-#
-# **THAT PARAGRAPH USED TO END "...SO A SUSPENDED ACCOUNT KEEPS THE INTERACTIVE APPLICATION UNTIL ITS
-# SESSION TOKEN EXPIRES (SEVEN DAYS)", AND SINCE 2026-09-03 IT NO LONGER DOES.** That sentence was a
-# gap written down rather than closed, and it was the whole of it: an administrator pressing Suspend
-# on ``/admin/access`` cut the next sign-in and left the browser and the phone the person was already
-# signed in on working for the rest of ``jwt_expires_minutes``. It is closed at the WRITE end rather
-# than by adding an allow-list read to the hot path — ``routes/access.suspend_access_entry`` and the
-# REJECT arm of ``routes/access.decide_access_request`` now stamp ``User.sessionsValidFrom``, which
-# the comparison at the foot of ``_user_from_bearer`` already checked on every authenticated request
-# for the price of one ``is None``. So a barred session dies at its next request, and this dependency
-# still does not read ``AccessRoster`` for session tokens, which is the trade this paragraph was
-# always defending.
-#
-# TWO THINGS THAT STAMP DOES NOT COVER, BOTH NAMED AT ``routes/access.end_live_sessions``: a row
-# suspended BEFORE 2026-09-03 was never stamped at all (a second click on an already-SUSPENDED row
-# is a documented no-op and does not repair it), and a bar whose Gmail sweep was cut
-# (``access_roster.GMAIL_ACCOUNT_SWEEP_LIMIT``) ends nothing — it logs at ERROR and names the
-# repair rather than failing quietly. Both are ``scripts/backfill_sessions_valid_from.py`` work,
-# not behaviour to infer from this banner.
-#
-# **THE THIRD THING THIS PARAGRAPH USED TO NAME IS CLOSED (2026-09-03):** an account whose
-# ``User.email`` is a Gmail alias of the canonicalised roster address IS now found and IS stamped.
-# ``end_live_sessions`` looks accounts up through ``access_roster.accounts_on_the_mailbox``, which
-# canonicalises both sides rather than widening the ``WHERE``, so every spelling of one mailbox is
-# barred and no part of anybody else's is.
-# =================================================================================================
-
-#: Scope claim carried by a dataset token: the bulk read-only export API and nothing else.
 DATASET_READ_SCOPE = "dataset:read"
 
-#: The claim scoped tokens are marked with. Absent on every session token, which is what makes the
-#: default-deny below backwards compatible: existing tokens are unscoped and stay unrestricted.
 TOKEN_SCOPE_CLAIM = "scope"
 
-#: The refusal for a session that has been ended — by the watermark or by a password change. One
-#: sentence for both, for the reason the watermark's own comment gives: the NEXT sign-in is what can
-#: say why, and every population that reaches this is served by "sign in again".
 SESSION_ENDED_DETAIL = "This session is no longer valid. Sign in again."
 
 
 def password_credential(user: Any) -> str:
-    """What a token minted for *user* carries as ``security.CREDENTIAL_CLAIM``.
-
-    The fingerprint of the account's CURRENT ``passwordHash`` — ``credential_links``' own, the digest
-    a password link is bound by, so "the password changed" has one definition — or of a fixed
-    sentinel for an account with no password. Read off the row the caller already holds; every door
-    that mints a bearer token passes it (``auth.login``, ``auth.change_password``,
-    ``datasets.mint_dataset_token``).
-    """
     return credential_links.credential_fingerprint(get_value(user, "passwordHash"))
 
 
@@ -1328,11 +364,6 @@ async def _user_from_bearer(
     *,
     allowed_scopes: frozenset[str],
 ) -> Any:
-    """The account behind a bearer token, refusing any scope not in ``allowed_scopes``.
-
-    ``allowed_scopes`` is deliberately a required keyword with no default: adding a scope must be a
-    decision taken at each dependency, not something a caller can inherit by omission.
-    """
     if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign in to continue.")
     try:
@@ -1340,9 +371,6 @@ async def _user_from_bearer(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
-    # 403, not 401: the credential is genuine and unexpired: it is simply not admitted HERE. A 401
-    # would send an API client off to re-authenticate, which would mint another token of the same
-    # scope and fail identically — a retry loop instead of an error message.
     scope = payload.get(TOKEN_SCOPE_CLAIM)
     if scope is not None and str(scope) not in allowed_scopes:
         raise HTTPException(
@@ -1365,95 +393,15 @@ async def _user_from_bearer(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="This account no longer exists. Sign in again."
         )
 
-    # ── SESSION REVOCATION, AND WHY IT IS ONE COMPARISON AND NOT A SESSION TABLE ─────────────
-    #
-    # Bearer tokens here are stateless JWTs with no `jti` and no row behind them, so "sign every
-    # device out" had nowhere to be written. `User.sessionsValidFrom` is that place: a token
-    # minted STRICTLY BEFORE it is refused. THREE ACTS WRITE IT — the second arrived on 2026-09-03
-    # and the third on 2026-10-09:
-    #
-    #   * Setting a password through an admin's reset link (routes/auth.set_password), because the
-    #     usual reason somebody is resetting is that a session they no longer control is live
-    #     somewhere, and leaving it live would make the reset theatre.
-    #   * BARRING THE ADDRESS on the platform allow-list — `routes/access.suspend_access_entry` and
-    #     the REJECT arm of `routes/access.decide_access_request` (and the empanelment doors in
-    #     `routes/designers`, through `routes/access.end_live_sessions`). Suspension writes the roster
-    #     status, which is read on the SIGN-IN path, so before this it stopped the next sign-in and
-    #     left the session the person was already in running for the rest of the token's seven days.
-    #   * A PROVISIONER SETTING SOMEBODY ELSE'S PASSWORD, OR RAISING THEIR `mustChangePassword`, at
-    #     `PATCH /api/users/{id}` (routes/users.update_user). "At the next sign-in" has to mean the
-    #     next one: an open browser tab would otherwise see the flag only at its next `/me`, and the
-    #     handset only at a cold start. `scripts/seed_admin.py` stamps it too when it resets an
-    #     existing master admin's password.
-    #
-    # EVERY WRITER TAKES ITS TIMESTAMP AFTER THE HASH IS COMPUTED, immediately before the write
-    # (2026-10-09). bcrypt takes a noticeable fraction of a second, and a stamp taken before it fell in
-    # an earlier wall second than a sign-in still racing the write with the old password, whose `iat`
-    # then post-dated the revocation. For a password write that race is now closed by the credential
-    # check below as well; for the flag alone, the stamp's position is all there is.
-    #
-    # NULL SKIPS THE CHECK ENTIRELY, which is every account that has never had anything revoked.
-    # So this costs the hot path one `is None` and no query: the row has already been loaded to
-    # authenticate the request.
-    #
-    # IT READS OFF THE ROW `resolve_user` HANDED BACK, WHICH MAY BE A CACHED ONE. Every writer calls
-    # `invalidate_cached_user`, so in this process the revocation lands on the very next request;
-    # for a write this process did not make, the identity cache's TTL is the window. See the banner
-    # above `_user_cache`, which re-took that decision on the same day and says what is still open.
-    #
-    # `iat` IS ALWAYS PRESENT — `create_access_token` writes it unconditionally and refuses to let
-    # a caller override it — but a token minted by an older build might not carry one, and the
-    # safe direction for a MISSING timestamp is to refuse: a token we cannot date cannot be shown
-    # to post-date a revocation. A 401 sends the client to sign in again, which mints a dated one.
     revoked_before = getattr(user, "sessionsValidFrom", None)
     if revoked_before is not None:
         issued_at = payload.get("iat")
         cutoff = revoked_before.timestamp()
         if not isinstance(issued_at, int | float) or issued_at < cutoff:
-            # CAUSE-NEUTRAL SINCE 2026-09-03, AND IT HAD TO BECOME SO. This sentence used to read
-            # "This session ended when the account password was changed" — true while a password
-            # redemption was the only writer, and a lie to the second population that reaches it: an
-            # account an administrator has just barred. Telling a suspended person their password
-            # changed sends them to reset a password that was never wrong, which is the precise
-            # failure `auth.DESIGNER_SUSPENDED_DETAIL` exists to argue against. The honest answer is
-            # short and identical for both, because the NEXT sign-in is what can say which — it
-            # answers with the suspension's own words, or lets them in. No client matched on the old
-            # prose (checked across frontend/ and android/ before changing it).
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail=SESSION_ENDED_DETAIL
             )
 
-    # ── THE PASSWORD A SESSION WAS OPENED WITH, AND WHY IT IS A SECOND CHECK (2026-10-09) ──────────
-    #
-    # The watermark answers "has somebody ended this account's sessions since this token was minted".
-    # It cannot answer "was this token minted with the password the account holds NOW", and two
-    # findings lived in that gap. A temporary password typed by a provisioner and sent over a chat
-    # opened sessions — the provisioner's, anybody's who read the chat — which the owner's forced
-    # change then RELEASED rather than ended: the hold was per account, and the change cleared it. And
-    # a sign-in that read the old hash just before a reset committed minted its token in a later wall
-    # second than the watermark, so its `iat` post-dated the revocation and it lived for a week.
-    #
-    # So every token minted from 2026-10-09 carries `security.CREDENTIAL_CLAIM`: the fingerprint of the
-    # hash the account held at the mint (:func:`password_credential`). A token whose claim no longer
-    # matches the row is refused with the watermark's sentence and no other header. ANY password
-    # change therefore retires every older session of that account — the forced change, a voluntary
-    # one, a provisioner's temporary password, a link redemption, `scripts/seed_admin.py` — and a
-    # sign-in that raced a reset dies on its first use. `POST /auth/change-password` hands back a
-    # fresh token minted after its write — in its `X-Session-Token` header, the body staying
-    # `{"ok": true}` for the handsets in the field — so the session that made the change carries on.
-    #
-    # A TOKEN WITHOUT THE CLAIM IS ACCEPTED EXACTLY AS BEFORE. Every token minted before that date lacks
-    # it, and refusing them would have signed everybody out at the deploy; they are the one kind a
-    # password change does not retire, and they expire on their own (seven days for a session,
-    # `dataset_token_expires_minutes` for a dataset token). A claim that is PRESENT but is not a string
-    # this code could have written is refused — only this code can sign a token that carries one.
-    #
-    # One SHA-256 over a sixty-byte hash off the row already loaded: no query. The row may be the
-    # identity cache's, which is the watermark's window again — and here it cuts both ways for a write
-    # this process did not make (`scripts/seed_admin.py`, psql): an old session can outlive the write by
-    # up to `AUTH_USER_CACHE_TTL_SECONDS`, and a session opened with the NEW password inside that window
-    # is refused until the cached row expires. Every in-process writer invalidates, so neither happens
-    # for a password changed through the API.
     if CREDENTIAL_CLAIM in payload:
         presented = payload[CREDENTIAL_CLAIM]
         if not (
@@ -1467,78 +415,10 @@ async def _user_from_bearer(
     return user
 
 
-# =================================================================================================
-# THE FORCED PASSWORD CHANGE, ENFORCED HERE (owner's decision, 2026-10-09)
-#
-# ``User.mustChangePassword`` means "the password this account holds was typed by somebody else".
-# Until this block it was REPORTED and never REFUSED: it rode out on ``/me`` and the two clients drew
-# the change-password screen, so anybody holding the temporary password and a bearer token could use
-# the whole API from curl for the token's seven days without ever replacing it. Now every
-# authenticated route outside :data:`PASSWORD_CHANGE_ALLOWED_ROUTES` refuses a flagged account.
-#
-# WHY THE SIGN-IN STILL SUCCEEDS. The only route that can change a password needs a bearer token, so
-# refusing the sign-in would leave the account permanently unable to comply — the argument
-# ``auth.login`` makes for the usage-consent gate, and the reason that gate is a client screen. The
-# refusal therefore lives HERE, on the protected routes, as the belt that argument anticipated.
-#
-# 401 AND NEVER 403, with :data:`PASSWORD_CHANGE_REQUIRED_HEADER` to tell it apart from an ended
-# session. Both clients keep queued offline work on a 401 and treat a 403 as a PERMANENT refusal that
-# parks or deletes it, so a 403 here would destroy a designer's unsent fortnight the moment an admin
-# raised the flag. The header is how a client knows to keep the token, re-read ``/me`` and draw the
-# gate instead of signing the person out; it is in ``expose_headers`` in app/main.py, or a browser
-# could not read it.
-#
-# THE BREAK-GLASS IS EXEMPT — THE CONFIGURED ONE, AND NO OTHER MASTER ADMIN. The owner's decision
-# names the account at ``MASTER_ADMIN_EMAIL`` (:func:`is_configured_master_admin`), not the role. That
-# account is the deployment's recovery path, and ``scripts/seed_admin.py`` leaves it holding a flagged
-# ``.env`` password that operator tooling signs in with, so it must not be stopped by one boolean.
-# A SECOND master admin is not exempt, and that is deliberately narrower than
-# :func:`is_break_glass_master`, which also exempts the ROLE from the allow-list: a deputy made with
-# a password another master admin typed holds exactly the shared secret this gate exists to retire,
-# on the most powerful account there is. Holding them cannot lock anybody out — change-password is on
-# the list below, so the holder can always clear the flag — whereas the allow-list, which CAN lock
-# an account out for good, keeps exempting every master admin.
-#
-# AND AN ACCOUNT WITH NO PASSWORD IS NOT HELD BY THE FLAG. There is nothing for it to replace, and
-# ``POST /auth/change-password`` answers such an account with a 400, so enforcing the flag there
-# would strand it behind a gate it can never pass. ``PATCH /users/{id}`` refuses to raise the flag on
-# such an account (422) for the same reason; only a hand-written row can reach this state, and it
-# reports rather than refuses.
-#
-# APPLIED AT BOTH CALLERS OF ``_user_from_bearer`` AND NOWHERE ELSE, because there is nowhere else.
-# Every other ``require_*`` in this file and in the route modules depends on
-# :func:`get_current_user`; :func:`require_dataset_admin` is the one dependency that reads a bearer
-# token without it, so it calls the same check. Nothing in this API accepts a token in a query
-# string or offers an optional identity — the unauthenticated routes (sign-in, set-password, the
-# consent notice, the census, the APK redirect, health) never resolve an account at all, so they have
-# nothing to refuse. A new dependency that calls ``_user_from_bearer`` directly must call
-# :func:`refuse_while_password_change_pending` too, or it is a door the flag does not close.
-# =================================================================================================
-
-#: The header a pending-password-change refusal carries. Its value is always "1".
 PASSWORD_CHANGE_REQUIRED_HEADER = "X-Password-Change-Required"
 
-#: The sentence that goes with it, the same for every route. Neutral on purpose: the flag is raised by
-#: an administrator typing a password AND by one asking an existing account to choose a new one, so
-#: "an administrator set your password" would be false for the second.
 PASSWORD_CHANGE_REQUIRED_DETAIL = "Choose a new password to continue."
 
-#: ``(METHOD, path)`` a flagged account may still reach — what the change-password screen needs to
-#: draw itself and to finish, and nothing else.
-#:
-#: * ``GET /api/me``, ``GET /api/auth/me`` — the two mounts of one handler. The clients learn about
-#:   the flag from here, so refusing them would leave a client unable to tell why it was refused.
-#: * ``POST /api/auth/change-password`` — the way out. It still asks for the current password.
-#: * ``POST /api/auth/logout`` — signing out must always work (it is unauthenticated anyway).
-#: * ``GET`` and ``POST /api/usage/consent`` — the consent screen can be due at the same sign-in, and
-#:   both clients draw it before anything else.
-#: * ``GET /api/app/release/latest`` — the handset's forced-update check, so an APK too old to know
-#:   about this gate can still be told to update.
-#:
-#: PATHS AS THE CLIENT SENDS THEM, with the ``/api`` prefix, and compared exactly: a route is matched
-#: by its whole path before any dependency runs, so a request that reaches a handler under one of
-#: these paths reached THAT handler. ``tests/test_password_change_enforcement.py`` enumerates the
-#: set and asserts every entry is a route this application publishes.
 PASSWORD_CHANGE_ALLOWED_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         ("GET", "/api/me"),
@@ -1553,12 +433,6 @@ PASSWORD_CHANGE_ALLOWED_ROUTES: frozenset[tuple[str, str]] = frozenset(
 
 
 def password_change_pending(user: Any) -> bool:
-    """Is this account held by its ``mustChangePassword`` flag right now?
-
-    The three exemptions in the banner above, in the order that keeps the hot path cheap: an
-    unflagged account (almost every request) costs one attribute read and nothing else. The last is
-    :func:`is_configured_master_admin` and NOT :func:`is_break_glass_master` — the banner says why.
-    """
     if not get_value(user, "mustChangePassword"):
         return False
     if not get_value(user, "passwordHash"):
@@ -1567,12 +441,6 @@ def password_change_pending(user: Any) -> bool:
 
 
 def _route_path(connection: HTTPConnection) -> str:
-    """The request path with any ASGI ``root_path`` taken off, as Starlette's router matches it.
-
-    Empty everywhere this application runs today; read anyway, because a deployment mounted under a
-    prefix would otherwise see every allow-listed path miss and lock flagged accounts out of the
-    change-password screen itself.
-    """
     path = str(connection.scope.get("path") or "")
     root = str(connection.scope.get("root_path") or "")
     if root and path.startswith(root) and path[len(root) : len(root) + 1] in ("/", ""):
@@ -1581,11 +449,6 @@ def _route_path(connection: HTTPConnection) -> str:
 
 
 def refuse_while_password_change_pending(user: Any, connection: HTTPConnection) -> None:
-    """401 + :data:`PASSWORD_CHANGE_REQUIRED_HEADER` for a flagged account outside the allow-list.
-
-    No query and no await: the row was loaded to authenticate the request and the path is on the
-    scope. See the banner above for the status code, the header and the exemptions.
-    """
     if not password_change_pending(user):
         return
     method = str(connection.scope.get("method") or "").upper()
@@ -1602,84 +465,10 @@ async def get_current_user(
     connection: HTTPConnection,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> Any:
-    """The signed-in account. Session tokens only — see the scoped-token banner above.
-
-    ── THE IDENTITY HALF OF THE USAGE STITCH ──────────────────────────────────────────────────
-    The other half is ``UsageEventMiddleware`` in ``app/main.py``, and neither half can do the job
-    alone: a pure-ASGI middleware never decodes a bearer token, so it knows the route, the status and
-    the duration but not who called; this dependency knows exactly one of those things and none of the
-    others, because it runs before the handler has produced anything. They are joined through
-    ``scope["state"]`` — Starlette's ``.state`` is a thin wrapper that writes straight into that
-    dict BY REFERENCE, so a value set here is visible to the middleware after the router returns, on
-    the 200 path and on the 403-from-a-dependency path alike.
-
-    **``HTTPConnection`` AND NOT ``Request``, AND THE HONEST VERSION OF WHY.** FastAPI fills a
-    ``Request`` parameter only when the connection IS one — ``dependencies/utils.solve_dependencies``
-    guards it with ``isinstance(request, Request)`` and a WebSocket takes the ``elif`` — so a
-    ``Request`` here would mean this function is called with the parameter simply missing on any
-    WebSocket route, i.e. ``TypeError: get_current_user() missing 1 required positional argument:
-    'connection'`` at handshake time, on a route whose author did nothing wrong. This is the
-    dependency every ``require_*`` in this file funnels through, so its signature constrains every
-    route that will ever exist here, and there is no WebSocket route today — which is exactly how the
-    narrower annotation would have sat undetected until the first one was added.
-
-    **IT IS NOT ENOUGH ON ITS OWN, AND SAYING SO IS THE POINT.** ``bearer_scheme`` below it is
-    FastAPI's ``HTTPBearer``, whose own ``__call__(self, request: Request)`` hits the identical guard
-    — measured, 2026-08-30: a WebSocket route depending on this function fails with
-    ``TypeError: HTTPBearer.__call__() missing 1 required positional argument: 'request'``. So a
-    WebSocket route STILL cannot use this dependency; what the annotation here buys is that the
-    remaining blocker is one upstream class rather than two problems, and that this file is not one
-    of them. Whoever adds the first WebSocket route will have to read the token off
-    ``connection.headers`` themselves, or wrap ``HTTPBearer``. ``HTTPConnection`` is the base of both
-    ``Request`` and ``WebSocket``, carries the same ``.state`` (it is defined there, not on
-    ``Request``), and costs nothing on the HTTP path.
-
-    **ONE CHECK, THEN TWO WRITES, AND THAT IS ALL IT MAY EVER DO.** This function runs on every
-    authenticated request in the product. The check is :func:`refuse_while_password_change_pending`
-    (2026-10-09) — attribute reads off the row already loaded and a set lookup, which can refuse but
-    can never query. It runs BEFORE the stitch, so a refused request is recorded the way every other
-    refused credential is: with no account attached. The two writes are dict assignments: no query, no
-    await, no branch, and nothing that can raise. ``usage.resolve_consent`` is a ``getattr`` off the
-    row that has ALREADY been loaded to authenticate the request plus an enum lookup — it was written
-    with that signature a migration before the column existed, precisely so that wiring it up here
-    cost no round trip. Anything the usage feature needs beyond these two — a rank, a client label, a
-    history read — belongs where it can be paid for once rather than on this path. The key names are
-    imported rather than typed, because a stitch is a pair of string literals that must agree and
-    this repository has already been bitten by one contract living in two files.
-
-    **IT ATTRIBUTES NOTHING BY ITSELF.** Whether the id written here reaches the database is decided
-    in ``usage.collection_plan``, from the consent written beside it. This is the wiring, not the
-    policy: an account that has agreed is recorded with its name, an account that has refused is not
-    recorded at all, and an account nobody has asked — every unauthenticated request, and the few
-    requests between a session being minted and the consent screen being answered — is recorded
-    without one.
-
-    **WHAT THIS DOES NOT COVER, named so it is not rediscovered as a bug.**
-    ``require_dataset_admin`` below calls ``_user_from_bearer`` directly rather than depending on this
-    function, so the bulk dataset API's requests carry no id into the stitch. That is a deliberate
-    trade: covering it means threading a connection through the shared helper and both of its
-    callers, which is a bigger edit to the hottest path in the API for a non-interactive machine
-    client that answers no question about how designers navigate. Unauthenticated requests — the
-    health probes, the public router, a bad token — have no identity to write at all, which is the
-    honest NULL the schema documents rather than a gap.
-    """
     user = await _user_from_bearer(credentials, allowed_scopes=frozenset())
     refuse_while_password_change_pending(user, connection)
-    # ``connection.state.usage_user_id = ...`` by another spelling. Starlette's ``State.__setattr__``
-    # writes into ``scope["state"]`` by reference, so the two forms are the same assignment; going
-    # through ``setattr`` is what lets the key be the imported constant instead of a literal retyped
-    # here, where a typo would be invisible — the middleware would simply find nothing and file every
-    # request as anonymous, and no test that did not already know both spellings could tell.
     setattr(connection.state, USAGE_USER_ID_KEY, get_value(user, "id"))
-    # THE SECOND HALF OF THE STITCH, AND IT IS THE HALF THAT DECIDES WHETHER THE FIRST ONE MATTERS.
-    # The middleware reads this key and hands it to ``usage.record_event``, which asks
-    # ``collection_plan`` what may be kept; with nothing here every request resolves to "nobody was
-    # asked" and every recorded row is anonymous — which is what happened, correctly, for as long as
-    # there was no column to read. Enum in, enum out: ``main.UsageEventMiddleware`` drops anything
-    # that is not a ``UsageConsent`` rather than coercing it, so a wrong type here fails towards
-    # "nobody was asked" rather than towards a claimed consent.
     setattr(connection.state, USAGE_CONSENT_KEY, resolve_consent(user))
-    # Which build this account is on (FR audit H22): the middleware records it after the response.
     from app.services.app_versions import note_user
 
     note_user(connection, getattr(user, "id", None))
@@ -1690,50 +479,6 @@ async def require_dataset_admin(
     connection: HTTPConnection,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> Any:
-    """Admin credentials for the bulk dataset API, from a session OR a `dataset:read` token.
-
-    ADMIN RANK IS CHECKED AGAINST THE LIVE USER ROW, never against the token's ``role`` claim: a
-    dataset token may outlive the admin's tenure, and a role baked into a JWT is a promotion that
-    cannot be taken back. ``resolve_user`` has already re-read the row by the time this runs.
-
-    Deliberately stricter than ``require_dataset_downloader`` (Professor and above, or an explicit
-    grant), which gates the in-app export surfaces. This API hands over the repository in bulk to a
-    non-interactive caller, so it is admin-only exactly as asked.
-
-    **THE PLATFORM ALLOW-LIST IS RE-READ ON EVERY USE, NOT ONLY WHERE THE TOKEN IS MINTED**, and
-    that is what makes suspension mean anything here. ``routes/datasets.mint_dataset_token`` runs
-    the sign-in gate, so a suspended admin cannot take a NEW credential — but the one they were
-    given yesterday is good for thirty days (``dataset_token_expires_minutes``) and no store exists
-    to tear it up. An administrator who presses Suspend on a departing colleague is entitled to
-    believe bulk data access is cut; a gate that stops at the issuing door leaves it running.
-
-    READ AS A CUT LIST, exactly as ``services/access_roster.barred_emails`` is: REJECTED and
-    SUSPENDED are refused, and everything else — including PENDING and an address with no row at
-    all — is let through. The stronger "require an ACTIVE row" is deliberately NOT used at this
-    door. It belongs at the gate, where a refusal can enqueue the person for an administrator and
-    where the empanelment clause can heal a missing row; here there is no person to enqueue and no
-    healing to do, so failing closed would only strand a live credential on a state the sign-in
-    path would have admitted. The barring states are the two no sign-in heals, and they are the
-    only two an administrator ever chose.
-
-    A PURE READ, and that is a security property rather than an economy. The full gate WRITES —
-    ``access_roster.record_refused_attempt`` bumps an attempt count and can 503 when the approval
-    queue is full — and a cron job polling this API every minute must not be able to inflate an
-    administrator's queue, nor to start failing because other people's join requests filled it.
-
-    The master admin is exempt through the same ``is_break_glass_master`` both other doors use: the
-    break-glass has to open at every door or it is not one.
-
-    **A PENDING PASSWORD CHANGE IS REFUSED HERE TOO** (2026-10-09), because this is the one dependency
-    that reads a bearer token without going through :func:`get_current_user`, and a door the flag does
-    not close is a door. Most dataset tokens never reach the check once a flag is up: raising it
-    stamps ``sessionsValidFrom`` and a new password changes the fingerprint, and
-    :func:`_user_from_bearer` retires the token outright for either — a plain 401 with no header, for
-    good (the SCOPED TOKENS banner says what the operator sees and does). What this check HOLDS, with
-    the header and until the password is chosen, is a token minted while the flag was already up,
-    which only a build from before that date could mint. The session gate's exemption applies — the
-    configured master admin only, not the allow-list's wider one.
-    """
     user = await _user_from_bearer(credentials, allowed_scopes=frozenset({DATASET_READ_SCOPE}))
     refuse_while_password_change_pending(user, connection)
     if not is_admin(user):
@@ -1744,10 +489,6 @@ async def require_dataset_admin(
     if not is_break_glass_master(user):
         row = await access_roster.access_row(getattr(user, "email", None))
         if access_roster.status_of(row) in access_roster.BARRED:
-            # Named plainly, because the caller has already proved it holds this account: the
-            # operator reading a cron job's log needs to know the credential was not corrupted and
-            # has not expired but was revoked, and which screen restores it. There is no attempt
-            # row behind this refusal to send them to, so the sentence is all they get.
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -1764,19 +505,12 @@ async def require_admin(current_user: Any = Depends(get_current_user)) -> Any:
     return current_user
 
 
-#: The refusal :func:`require_account_provisioner` answers with. Names the tier that CAN, because a
-#: professor or a directorate officer who reaches the create form's endpoint needs to know whom to ask.
 ACCOUNT_PROVISIONER_REQUIRED_DETAIL = (
     "Creating accounts and resetting passwords requires Ministry Admin access or above."
 )
 
 
 async def require_account_provisioner(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates ``POST /api/users`` and both password-link routes — see :data:`ACCOUNT_PROVISIONER_ROLES`.
-
-    It decides only whether the caller provisions accounts at all. Every route behind it still asks
-    the target and the tier questions itself, through ``services/account_provisioning.py``.
-    """
     if not can_provision_accounts(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=ACCOUNT_PROVISIONER_REQUIRED_DETAIL
@@ -1785,11 +519,6 @@ async def require_account_provisioner(current_user: Any = Depends(get_current_us
 
 
 async def require_approving_authority(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates ``/api/design-workshop-approvals`` — see :data:`APPROVAL_AUTHORITY_ROLES`.
-
-    Decided from the role alone, before any read. Whether this account may decide on ONE workshop is
-    asked of that workshop's rows inside the route (rule 7 of ``services/design_workshop_posts``).
-    """
     if not can_approve_design_workshops(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=APPROVAL_AUTHORITY_REFUSAL)
     return current_user
@@ -1829,14 +558,6 @@ async def require_dataset_downloader(current_user: Any = Depends(get_current_use
 
 
 async def require_usage_reader(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates the cross-account arms of ``/api/usage`` — see :func:`can_read_usage` for the argument.
-
-    NOT ON ``/usage/me``. A person reading their own trail needs no permission from anybody, and
-    routing that read through this gate would mean a designer had to ask an administrator to see what
-    the system recorded about them. That inversion is worth naming: this dependency exists to stop
-    people reading about EACH OTHER, and applying it to the self-read would turn a transparency
-    surface into a second thing they cannot see.
-    """
     if not can_read_usage(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1848,19 +569,6 @@ async def require_usage_reader(current_user: Any = Depends(get_current_user)) ->
 
 
 async def require_person_usage_reader(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates ``GET /api/usage/accounts/{user_id}/trail`` — see :func:`can_read_person_usage`.
-
-    ITS OWN DEPENDENCY, NEXT TO ``require_usage_reader`` AND NOT INSTEAD OF IT. The two look alike
-    and guard different things: that one admits every Admin to figures about screens, this one admits
-    one account to a log about a person. Collapsing them — or "simplifying" this to a call to that —
-    would hand every administrator in the institution a colleague's browsing history in a diff whose
-    only visible change was the removal of a function.
-
-    THE REFUSAL NAMES THE TWO PLACES THIS DATA LEGITIMATELY LIVES, because a bare "403" teaches an
-    administrator nothing and the next thing they do is ask an engineer to make an exception. The
-    aggregates answer nearly every question anybody actually has, and the person themselves can
-    always read their own trail.
-    """
     if not can_read_person_usage(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1873,9 +581,6 @@ async def require_person_usage_reader(current_user: Any = Depends(get_current_us
 
 
 def assert_can_create_records(user: Any) -> None:
-    """The body-callable half of ``require_record_creator``, for the one route that cannot decide
-    from its signature: POST /questionnaire/interviews opens a NEW interview or folds into an
-    EXISTING one depending on the artisan set, and only the first of those is a create."""
     if not can_create_records(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1901,7 +606,6 @@ async def require_questionnaire_manager(current_user: Any = Depends(get_current_
 
 
 async def require_craft_manager(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates POST and PATCH /crafts. DELETE is stricter still — ``assert_can_delete``, admin only."""
     if not can_manage_crafts(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1914,24 +618,6 @@ async def require_craft_manager(current_user: Any = Depends(get_current_user)) -
 
 
 async def require_designer_roster_manager(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates every arm of ``/designers/roster``, READ included.
-
-    Read as well as write, unlike most of the ``require_*`` pairs here, because the roster is a
-    list of named individuals, their institutions and an admin's private note about the programme
-    each was empanelled under. A designer able to GET it would be reading their colleagues'
-    standing — and, from ``firstSeenAt``, which of them has never opened the app at all.
-
-    THAT LAST CLAUSE USED TO SAY "STOPPED USING", WHICH THE COLUMN CANNOT TELL ANYONE.
-    ``mark_roster_seen`` writes ``firstSeenAt`` under a ``WHERE firstSeenAt IS NULL`` clause
-    (``app/services/designers.py``), so it is stamped once, on the first successful sign-in, and
-    never again — it is a *joined* date, not a *last seen* one. A NULL means the invitation was
-    never taken up; a date six months old means nothing whatever about whether the person signed in
-    this morning. The distinction is worth keeping straight in the one docstring that justifies
-    gating a READ: the justification survives it unchanged, because "who among my colleagues never
-    accepted their empanelment" is exactly as much somebody else's business as the wrong reading
-    was, but a reader who believes this column carries recency will one day build an inactivity
-    report on it and quietly libel every designer who has been using the app daily since March.
-    """
     if not can_manage_designer_roster(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1941,12 +627,6 @@ async def require_designer_roster_manager(current_user: Any = Depends(get_curren
 
 
 async def require_access_manager(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates every arm of ``/access/roster``, READ included — see :func:`can_manage_access_roster`.
-
-    THE ENDPOINTS BEHIND THIS ARE THE ONLY IN-PRODUCT REMEDY FOR A LOCKED-OUT INSTITUTION. If this
-    predicate is ever tightened to master-admin-only, the break-glass stops being a break-glass and
-    becomes a single point of failure: one account, one forgotten password, nobody gets in again.
-    """
     if not can_manage_access_roster(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1956,7 +636,6 @@ async def require_access_manager(current_user: Any = Depends(get_current_user)) 
 
 
 async def require_workshop_manager(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates POST and PATCH /workshops. DELETE is admin-only (``assert_can_delete``)."""
     if not can_manage_workshops(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1999,25 +678,6 @@ def assert_can_contribute_fields(
     if is_content_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
         return
 
-    # A populated field is locked to non-privileged editors whether they try to CHANGE it or CLEAR it.
-    # (The earlier version skipped an incoming empty value, which let anyone blank out a populated field.)
-    #
-    # WHAT "CLEAR" CAN AND CANNOT MEAN HERE, because the sentence above was read as covering more
-    # than it does. ``guard_record_edit`` hands this function the CLEANED payload — its docstring
-    # says so — and ``records.clean_data`` has already dropped every ``None`` except the global
-    # ``CLEARABLE_KEYS`` and the per-model names the route declared in ``clearable=``. So the two
-    # halves are enforced in two different places, and both have to hold for the sentence to be true:
-    #
-    #   * ``""`` and other empty values always reach this loop, on every field, and are refused here.
-    #   * ``None`` reaches this loop only on a name the route declared clearable — where it IS
-    #     refused. On any other name the null never gets this far, and nothing is written either, so
-    #     the field is still not blanked; it is simply not this function that stopped it.
-    #
-    # The failure mode to watch for is therefore not a leak but a MISMATCH: a route that adds a name
-    # to its ``clearable=`` tuple is also handing this guard a case it did not previously see, and a
-    # route that removes one takes that case away. Neither can open a hole in this rule — a name that
-    # is not clearable cannot be cleared at all — but a reader tracing "who may blank this column"
-    # has to look at the route's tuple as well as at this list.
     locked_fields = [
         field
         for field, next_value in data.items()
@@ -2058,37 +718,17 @@ def assert_admin_or_owner(record: Any, user: Any, owner_field: str = "createdByI
 
 
 def assert_can_delete(user: Any) -> None:
-    """Every delete of a record, media file or other managed content: content admins only."""
     if not is_content_admin(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=CONTENT_DELETE_REFUSAL)
 
 
 async def require_content_admin(current_user: Any = Depends(get_current_user)) -> Any:
-    """``Depends`` form of the content-admin gate, for routes that manage content outright."""
     if not is_content_admin(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
 
 
 async def require_designer(current_user: Any = Depends(get_current_user)) -> Any:
-    """Gates the designer's own profile, and mirrors what runs a design workshop.
-
-    A designer profile is the name, institution and biography that a workshop report is SUBMITTED
-    UNDER. It is only meaningful to somebody who can run a workshop, so the two share one
-    predicate rather than drifting apart: an account that cannot run a workshop has no report to
-    sign and no reason to be filling in the signature.
-
-    Added because the web client needed to hide the page and could not honestly do so. The route
-    was ``get_current_user`` — open to every signed-in account — and a UI guard over an open
-    endpoint is a lock on a door with no wall: it hides the link and leaves the URL. Either both
-    are gated or neither is, and the profile is the half that should have been gated all along.
-
-    THE REFUSAL NAMES EVERY ROLE IN :data:`DESIGN_WORKSHOP_ROLES`, in the words the web's
-    ``/designers/profile`` guard uses. It named designers, admins and the master admin until
-    2026-10-09, three weeks after the directorate posts joined the set — so an Assistant Director
-    who could open the page was told by the API that it was not theirs, and a professor refused it
-    could not tell the set from a rank.
-    """
     if not can_run_design_workshops(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

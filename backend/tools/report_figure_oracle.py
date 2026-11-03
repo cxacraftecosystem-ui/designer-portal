@@ -1,35 +1,3 @@
-"""Dump what ``report_raster`` / ``report_chart`` / ``report_map`` actually draw, for the Kotlin port.
-
-``android/.../report/ReportRaster.kt``, ``ReportChart.kt`` and ``ReportMap.kt`` are the same drawing
-code written twice, in two languages, because the phone must produce a .docx and a .pdf with no
-network and no image library. Nothing in either compiler stops the two drifting, and the drift this
-guards against is not a crash: it is a coastline half a pixel out, a bar rounded the other way, or a
-pie slice that starts at a different angle — two documents for one workshop that both open, both look
-plausible, and disagree.
-
-``backend/tests/test_report_parity.py`` reads the Kotlin as TEXT and catches a constant edited on one
-side only. That is a blunt instrument and cannot see arithmetic. This is the sharp one: it runs the
-Python over a fixed set of inputs, writes down exactly what came out, and the harness in
-``tools/kotlin_figure_harness/`` recomputes the same inputs on the JVM and compares. Run
-``tamper_oracle.py`` beside that harness afterwards: it re-dumps with three constants deliberately
-nudged, and a harness that still reports PARITY OK against THAT dump is checking nothing.
-
-WHAT IS COMPARED, AND WHY IT IS NOT THE PNG BYTES. This backend's CPython links zlib-ng
-(``zlib.ZLIB_RUNTIME_VERSION == "1.3.1.zlib-ng"``) while the JVM links stock zlib. Both are valid
-Deflate, both decode to the same pixels, and they produce different IDAT bytes for identical input —
-as do two CPython builds compiled against different zlibs. A test pinning the file bytes would be
-pinning this machine's build of Python and would go red where nothing about the report had changed.
-So what is dumped is the DECODED PICTURE: the IHDR fields, the RGB grid recovered by running the PNG
-back through ``zlib.decompress`` and stripping the per-row filter byte, and the colour histogram. That
-is what a reader can actually see, and it must agree to the last bit.
-
-Run it as::
-
-    cd backend && python tools/report_figure_oracle.py <output-directory>
-
-Nothing imports this at runtime; it is a development tool and lives outside ``app/``.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -50,29 +18,12 @@ from app.services.report_model import (
     ReportTheme,
 )
 
-# --------------------------------------------------------------------------------------
-# Cross-language primitives
-# --------------------------------------------------------------------------------------
-
 
 def dbits(value: float) -> str:
-    """A double as its 16 hex digits of IEEE-754.
-
-    NOT ``repr``. Python prints ``1e+20`` where Kotlin prints ``1.0E20``, and a harness comparing
-    those two strings fails on formatting rather than on arithmetic — the exact false alarm that gets
-    a parity test deleted. The bit pattern has one spelling on both surfaces and distinguishes values
-    that print identically but differ in the last place, which is the whole point of the exercise.
-    """
     return struct.pack(">d", float(value)).hex()
 
 
 def fnv1a(data: bytes) -> str:
-    """FNV-1a 64, written out rather than imported.
-
-    ``hash()`` is salted per process, ``crc32`` is 32 bits and the harness needs the SAME function on
-    the JVM. Fifteen lines of arithmetic that both languages can express identically beats any library
-    either of them has.
-    """
     digest = 0xCBF29CE484222325
     for byte in data:
         digest ^= byte
@@ -81,12 +32,6 @@ def fnv1a(data: bytes) -> str:
 
 
 def coordinate_digest(lines: list[list[tuple[float, float]]]) -> str:
-    """A digest over every coordinate of a decoded boundary asset, by bit pattern.
-
-    This is what proves the Kotlin decoder recovered the same numbers rather than merely the same
-    number OF numbers. A varint decoder that dropped the sign bit produces the right count of points
-    and a map of a country nobody recognises.
-    """
     buffer = bytearray()
     for line in lines:
         buffer += struct.pack(">i", len(line))
@@ -96,13 +41,6 @@ def coordinate_digest(lines: list[list[tuple[float, float]]]) -> str:
 
 
 def decode_png(data: bytes) -> tuple[int, int, int, int, bytes]:
-    """``(width, height, bit_depth, colour_type, rgb_rows)`` from one of our own PNGs.
-
-    Deliberately strict and deliberately tiny: it understands the ONE shape ``encode_png`` emits — 8
-    bit, colour type 2, no interlace, filter 0 on every row. Anything else raises, which is itself
-    part of what is being checked. A port that started emitting a palette would still produce a
-    perfectly good picture and would silently not be the picture Word can embed.
-    """
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("not a PNG")
     offset = 8
@@ -137,12 +75,6 @@ def decode_png(data: bytes) -> tuple[int, int, int, int, bytes]:
 
 
 def histogram(rgb_rows: bytes) -> list[tuple[str, int]]:
-    """Every distinct colour and how many pixels carry it, most common first.
-
-    Dumped ALONGSIDE the pixels rather than instead of them. The pixel digest says "these two images
-    differ"; the histogram says how — a palette that matches while the pixels do not is geometry, and
-    one that does not match is a colour, and knowing which halves the search when this fails.
-    """
     counts: dict[bytes, int] = {}
     for index in range(0, len(rgb_rows), 3):
         pixel = rgb_rows[index:index + 3]
@@ -151,16 +83,6 @@ def histogram(rgb_rows: bytes) -> list[tuple[str, int]]:
     return [(pixel.hex(), count) for pixel, count in ordered]
 
 
-# --------------------------------------------------------------------------------------
-# The cases
-# --------------------------------------------------------------------------------------
-
-#: Four themes, and none of them is decorative. ``default`` is what most reports carry; ``alt`` is a
-#: second template's palette, which catches any colour accidentally hard-coded instead of read from
-#: the theme; ``broken`` carries values that are not six hex digits, which is the only way to exercise
-#: every ``rgb_of`` fallback — and a fallback that differs between the two surfaces is a figure that
-#: is a different colour on the phone whenever a template is misconfigured, which is precisely when
-#: nobody is looking closely.
 THEMES: dict[str, ReportTheme] = {
     "default": ReportTheme(),
     "alt": ReportTheme(
@@ -171,63 +93,43 @@ THEMES: dict[str, ReportTheme] = {
 
 
 def draw_primitives(canvas: report_raster.Raster) -> None:
-    """Exercise every primitive on the canvas, in one deterministic scene.
-
-    Mirrored line for line by ``primitivesScene`` in the Kotlin harness. It is written as one scene
-    rather than as one case per primitive on purpose: the primitives compose, and the failures worth
-    catching are in the composition — a span whose fractional end pixel blends against a colour a
-    previous fill left there, a glyph rectangle landing on a half-covered polygon edge, a flood fill
-    meeting an anti-aliased stroke it must not cross.
-    """
     ink = (17, 34, 51)
     warm = (200, 90, 40)
     pale = report_raster.mix((255, 255, 255), ink, 0.12)
 
-    # Fractional spans at every sub-pixel offset, which is where a truncation that should be a
-    # rounding shows up as a one-pixel column of the wrong colour.
     for step in range(12):
         canvas.span(2 + step, 3.0 + step * 0.37, 60.0 - step * 0.41, ink, 0.25 + step * 0.06)
 
-    # A rectangle whose top and bottom both land mid-pixel, twice, at two alphas.
     canvas.rect(4.6, 18.3, 40.7, 12.4, warm)
     canvas.rect(50.2, 18.9, 30.1, 11.05, warm, 0.55)
 
-    # A concave polygon and a ring inside it, filled EVEN-ODD in one pass so the hole is a hole.
     outer = [(10.0, 40.0), (95.0, 36.5), (120.0, 78.25), (60.5, 96.0), (8.0, 70.75)]
     hole = [(35.0, 55.0), (70.0, 53.0), (68.0, 74.0), (33.0, 72.0)]
     canvas.fill_polygons([outer, hole], pale)
 
-    # Self-intersecting, which even-odd handles and non-zero would not: the two must not swap.
     canvas.fill_polygons(
         [[(130.0, 40.0), (185.0, 90.0), (130.0, 90.0), (185.0, 40.0)]], (60, 120, 90), 0.8
     )
 
-    # An open polyline through a sharp bend, thick enough to need the join squares.
     canvas.stroke_polyline(
         [(12.5, 108.0), (60.0, 102.25), (61.0, 140.5), (150.75, 118.0), (196.0, 150.0)],
         ink, 3.6,
     )
-    # And a hairline one, below the width at which joins are drawn at all.
     canvas.stroke_polyline([(12.0, 160.0), (90.0, 156.5), (140.0, 168.0)], warm, 0.5)
 
-    # Discs at fractional centres and sub-pixel radii.
     canvas.disc(30.5, 185.0, 14.0, (40, 80, 160))
     canvas.disc(30.5, 185.0, 5.75, (255, 255, 255))
     canvas.disc(66.25, 186.5, 0.8, ink)
 
-    # Full ring, part rings crossing three o'clock in both directions, and a pie slice.
     canvas.ring(120.0, 190.0, 26.0, 15.5, (150, 40, 60))
     canvas.ring(120.0, 190.0, 26.0, 15.5, (30, 90, 140), start=-0.9, sweep=1.7)
     canvas.ring(120.0, 190.0, 26.0, 15.5, (240, 190, 60), start=2.9, sweep=0.9)
     canvas.ring(178.0, 190.0, 22.0, 0.0, (90, 60, 150), start=-1.5707963267948966, sweep=2.4)
 
-    # Text at three scales, including characters that substitute and characters that drop.
     canvas.draw_text(4, 218, "Wg 0123 ,.;:", ink, 1)
     canvas.draw_text_centred(100, 228, "‘Kharaɡpur’ – ₹4,200", ink, 2)
     canvas.draw_text_right(196, 246, "ଓଡିଆ x2 …", warm, 1)
 
-    # A flood fill that must stay inside the box the stroke drew, and one that must be refused by its
-    # budget and therefore write nothing at all.
     canvas.rect(150.0, 210.0, 44.0, 34.0, (255, 255, 255))
     canvas.stroke_polyline(
         [(150.0, 210.0), (194.0, 210.0), (194.0, 244.0), (150.0, 244.0), (150.0, 210.0)], ink, 2.0
@@ -312,22 +214,15 @@ MAP_CASES: list[tuple[str, MapBlock, str, int]] = [
             MapPoint("Barpali", 21.1833, 83.5833, MapPointKind.ARTISAN, 6),
             MapPoint("Bhubaneswar", 20.2961, 85.8245, MapPointKind.MARKET, 2),
             MapPoint("Somewhere", 28.6139, 77.2090, MapPointKind.OTHER, 1),
-            # Off the map entirely: dropped, never clamped onto the coast.
             MapPoint("Nowhere", 0.0, 0.0, MapPointKind.ARTISAN, 3),
         ),
     ), "default", 420),
     ("map_highlight", MapBlock(
         points=(MapPoint("Jaipur", 26.9124, 75.7873, MapPointKind.VENUE, 1),),
-        # A canonical name, an alias the server resolves, and one that is not a state at all — so the
-        # "Not tinted" note is exercised as well as the fill.
         highlight=frozenset({"Rajasthan", "Orissa", "Atlantis"}),
     ), "alt", 420),
 ]
 
-
-# --------------------------------------------------------------------------------------
-# Scalars — the arithmetic that never reaches a pixel but decides where every pixel goes
-# --------------------------------------------------------------------------------------
 
 _MM_SAMPLES = [0.0, 1.0, 12.7, 30.48, 30.4800001, 105.6, 160.0, 199.9, 304.8, 400.0, 1000.0]
 
@@ -360,7 +255,6 @@ _COORD_SAMPLES = [
 
 
 def scalar_lines() -> list[str]:
-    """Every scalar the harness checks, as ``key<TAB>value`` with doubles written as bit patterns."""
     out: list[str] = []
 
     out.append(f"render_dpi\t{dbits(report_raster.RENDER_DPI)}")
@@ -419,25 +313,12 @@ def scalar_lines() -> list[str]:
     return out
 
 
-# --------------------------------------------------------------------------------------
-# Emission
-# --------------------------------------------------------------------------------------
-
 
 def write_lf(path: Path, text: str) -> None:
-    """Write UTF-8 with LINE FEEDS ONLY, whatever platform this is running on.
-
-    ``Path.write_text`` opens in text mode, and on Windows text mode turns every ``\\n`` into
-    ``\\r\\n``. The JVM's ``readText`` translates nothing back, so the harness would compare a palette
-    that differed from its own in nothing but the line endings and report twenty mismatches that have
-    nothing to do with the port — which is precisely how a parity test earns a reputation for crying
-    wolf and gets deleted. This dump is a wire format between two processes, not a document.
-    """
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
 def write_case(directory: Path, name: str, png: bytes, index: list[str]) -> None:
-    """Decode ``png``, write its pixels beside it, and add one index line."""
     width, height, depth, colour, rows = decode_png(png)
     (directory / f"{name}.rgb").write_bytes(rows)
     write_lf(
@@ -461,8 +342,6 @@ def main(destination: Path) -> int:
         write_case(destination, name, png, index)
 
     if not report_map.assets_available():
-        # Loud, not silent. A map oracle that quietly emitted nothing would let the harness pass with
-        # the entire map port unchecked, which is the half of this work that has real geometry in it.
         print("FATAL: the boundary assets are not on this machine; the map cases cannot be dumped.")
         return 2
 

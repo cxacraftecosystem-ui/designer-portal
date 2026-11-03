@@ -46,41 +46,16 @@ from prisma import Json
 
 router = APIRouter(prefix="/review", tags=["review"])
 
-# Appended to the ReviewLog notes when an approval clears a late-submission flag, so the audit trail
-# says WHY this approval mattered: the record was submitted after its workshop had ended.
 LATE_SUBMISSION_LOG_NOTE = "Late workshop submission — approved by an admin."
 
-# ReviewLog's verb for the six record types is ``status``, typed as the ``RecordStatus`` ENUM
-# (DRAFT | PENDING | APPROVED | REJECTED | NEEDS_REVISION). Adding an EDITED value would need a schema
-# change plus a migration, and a reviewer edit is not a status in any case — it deliberately leaves the
-# record's status alone. So the edit log row carries the record's UNCHANGED status and says what
-# happened in ``notes``, prefixed with this marker so a UI (or a human) can pick edits out of the
-# per-record log without parsing prose.
-#
-# (Since 2026-10-09 the table HAS an ``action`` column, with ``fromStatus``, ``toStatus`` and
-# ``round`` beside it — written by the DESIGN-WORKSHOP decisions only, from
-# ``schemas/design_workshop_review_loop``, whose CHECK-constrained vocabulary has no EDITED in it.
-# Every row this module writes leaves all four NULL, and this marker is still how an edit is told
-# apart here.)
 EDIT_LOG_PREFIX = "EDITED"
 
 
-#: record_type -> (Prisma delegate ATTRIBUTE NAME, ReviewLog record type, creator relation).
-#
-# THE DELEGATE IS NAMED AND NOT BOUND, AS OF 2026-09-03, and the indirection buys exactly one thing:
-# ``db.tx()`` hands back a DIFFERENT client, so a review write that has to happen inside a
-# transaction needs the same delegate resolved against THAT client. Holding ``db.artisan`` in the
-# table would make every consumer of it write outside whatever transaction it appears to be in —
-# silently, which is the only way this mistake ever fails. Both accessors below read this one table,
-# so the seven record types stay a single list rather than a list and a shadow copy of it.
 _REVIEW_TYPES: dict[str, tuple[str, str, str]] = {
     "artisan": ("artisan", "ARTISAN", "createdBy"),
     "workshop": ("workshop", "WORKSHOP", "createdBy"),
     "product": ("productdocumentation", "PRODUCT", "createdBy"),
     "tool": ("tooldocumentation", "TOOL", "createdBy"),
-    # Processes and interviews carry a status and can be pinned PENDING by the late-submission
-    # gate, so they must be reviewable — without these a late process or interview was
-    # unapprovable by anyone and sat in PENDING forever.
     "process": ("process", "PROCESS", "createdBy"),
     "questionnaire": ("questionnaireinterview", "QUESTIONNAIRE", "createdBy"),
     "media": ("mediafile", "MEDIA", "uploadedBy"),
@@ -97,27 +72,15 @@ def _review_type_or_404(record_type: str) -> tuple[str, str, str]:
 
 
 def delegate_for(record_type: str) -> tuple[Any, str, str]:
-    """Delegate, ReviewLog record type, and the name of the relation pointing at the creator.
-
-    Resolved against the module client, which is what every READ on this router wants. For a write
-    that must land inside a transaction, use :func:`delegate_on` with that transaction's client.
-    """
     attribute, log_type, creator_relation = _review_type_or_404(record_type)
     return getattr(db, attribute), log_type, creator_relation
 
 
 def delegate_on(client: Any, record_type: str) -> Any:
-    """The delegate :func:`delegate_for` returns, bound to ``client`` rather than to ``db``.
-
-    Exists so a status change and the ReviewLog row that explains it can be issued through ONE
-    transaction client — see ``set_review_status``, which is where the pair used to come apart.
-    """
     attribute, _log_type, _creator_relation = _review_type_or_404(record_type)
     return getattr(client, attribute)
 
 
-# Record types surfaced in the review queue, with the field used as a human label. Media is
-# excluded so the queue stays focused on the substantive records researchers submit for approval.
 _PENDING_SOURCES: list[tuple[str, Any, tuple[str, ...]]] = [
     ("artisan", db.artisan, ("name",)),
     ("workshop", db.workshop, ("title",)),
@@ -128,21 +91,9 @@ _PENDING_SOURCES: list[tuple[str, Any, tuple[str, ...]]] = [
 ]
 
 
-# Per-record-type row cap on the queue. It is a cap on REVIEWABLE rows (see
-# _reviewable_creator_roles), not on pending rows in general.
-#
-# THE CAP IS READ AS ``PENDING_TAKE + 1`` AND THE EXTRA ROW IS THROWN AWAY. Reading exactly this
-# many and reporting ``truncated = len(rows) == PENDING_TAKE`` claims a shortfall on the queue that
-# happens to hold precisely 200 pending artisans, and a reviewer told the list was cut when it is
-# whole has no way to find that out. One row over is the difference between detecting the cut and
-# guessing at it — the same trick, for the same reason, as ``_STUB_CAP`` in ``map_points`` and
-# ``ELIGIBLE_VIEWER_LIMIT`` in ``design_workshop_viewers``, whose ``truncated`` this deliberately
-# matches in name so both clients already know the word.
 PENDING_TAKE = 200
 
 
-#: The peer-review ladder as a query, now in ``services/review_queue.py`` so the Monday summary counts
-#: exactly what this queue lists. Same function, same name here; see its docstring.
 _reviewable_creator_roles = reviewable_creator_roles
 
 
@@ -164,18 +115,10 @@ def _creator_summary(creator: Any) -> dict[str, Any] | None:
     }
 
 
-# The largest page a client may ask the PAGED queue for. Same number as the unpaged cap, so asking
-# for a page can never read more rows per record type than the old answer already did.
 PENDING_PAGE_MAX = 200
 
 
 def _decode_before(before: str | None) -> tuple[datetime, str] | None:
-    """``nextBefore`` back into the ``(createdAt, id)`` it was built from, or a 422.
-
-    The cursor is opaque to the clients (they pass back what they were handed) and is the last
-    row's ``createdAt`` and ``id`` joined by ``|``. ``id`` breaks ties: two records created in the
-    same instant would otherwise both sit on the page boundary and one of them would be skipped.
-    """
     if not before:
         return None
     stamp, sep, record_id = before.rpartition("|")
@@ -208,13 +151,6 @@ def _queue_item(record_type: str, row: Any, label_fields: tuple[str, ...]) -> di
 
 
 async def _pending_page(where: dict[str, Any], page_size: int, before: str | None) -> dict[str, Any]:
-    """One page of the queue across all six record types, newest first, older than ``before``.
-
-    Each source is read ``page_size + 1`` rows past the cursor; the merged list is sorted and cut at
-    ``page_size``. That is exact: the newest ``page_size`` rows of the union are necessarily among
-    the newest ``page_size`` of each source. ``truncated`` is then a fact — either a row was left on
-    the merge floor or a source returned the extra row — never an inference from the arithmetic.
-    """
     cursor = _decode_before(before)
     page_where: dict[str, Any] = where
     if cursor is not None:
@@ -263,44 +199,8 @@ async def list_pending_reviews(
     pageSize: int | None = Query(None, ge=1, le=PENDING_PAGE_MAX),
     before: str | None = Query(None, max_length=200),
 ) -> dict[str, Any]:
-    """Records still awaiting review (status == PENDING), newest first, across record types.
-
-    Filtered by the peer-review hierarchy IN THE QUERY: only records whose creator ranks strictly
-    below the viewer show up (the master admin sees everything), so the per-type cap holds the
-    newest rows this reviewer can act on rather than the newest rows overall. Each item carries
-    ``needsAdminApproval``: true means it was submitted outside its workshop's dates, so only an
-    admin can approve it.
-
-    **PAGED WHEN ASKED.** With ``pageSize`` the answer is one newest-first page across all six
-    types plus ``nextBefore``, the cursor for the next older page (null on the last one), and
-    ``total`` counts every reviewable pending row. Without it, the capped answer described below.
-
-    **THE ANSWER SAYS WHETHER IT WAS CUT, AND ``total`` IS A REAL TOTAL.** This used to return
-    ``{"items": items, "total": len(items)}`` — the length of the already-capped list under the
-    name of a count — with nothing anywhere saying the queue had been truncated. A reviewer with
-    340 pending artisans and a reviewer with exactly 200 got byte-identical responses, and because
-    the per-source order is ``createdAt desc`` the rows hidden behind the cap are the OLDEST: the
-    most overdue work was the work that disappeared. The only way to discover the backlog was that
-    the number refused to go down as the queue was worked.
-
-    So: ``shown`` is the length of the list, ``total`` is what the same WHERE actually matches,
-    ``cap`` is the per-record-type ceiling and ``truncated`` says the ceiling bit. There is no
-    "narrow your search" advice here and there must not be — this route takes no search parameter,
-    so a reviewer cannot narrow anything, and the closed viewer-picker finding (docs/OPEN_FINDINGS.md,
-    2026-08-13) is on record for what telling somebody to narrow an unnarrowable list costs. The
-    honest instruction is that the oldest pending records are behind the cap and will surface as
-    the queue drains; that sentence belongs to the client, which is why the wire carries the facts
-    and not the prose. Note also that ``truncated`` here can never accompany an EMPTY ``items`` —
-    the cut is by count alone, so a truncated answer holds ``cap`` rows by construction — which is
-    the state that made that earlier finding hard.
-    """
     roles = _reviewable_creator_roles(reviewer)
     if roles is not None and not roles:
-        # Review access with nobody beneath them on the ladder — a granted ``canReview`` on the
-        # bottom tier. There is no record they may act on; six queries to prove it are wasted.
-        # Spelled with every key the full answer carries, because a client that reads ``truncated``
-        # or ``shown`` off one shape and finds it missing on the other is a client that has to
-        # defend against this branch existing at all.
         empty: dict[str, Any] = {"items": [], "shown": 0, "total": 0, "cap": pageSize or PENDING_TAKE,
                                  "truncated": False}
         if pageSize is not None:
@@ -311,28 +211,11 @@ async def list_pending_reviews(
         where["createdBy"] = {"is": {"role": {"in": roles}}}
 
     if pageSize is not None:
-        # THE PAGED QUEUE (2026-10-16, UX audit DW-06 / DA-09). Both clients ask for a page and walk
-        # older with "Load older", so no pending record is ever out of reach. Additive: a caller
-        # that sends no ``pageSize`` gets the capped answer below, byte for byte.
         return await _pending_page(where, pageSize, before)
 
     items: list[dict[str, Any]] = []
     total = 0
 
-    # THE SIX READS GO OUT IN ONE WAVE. They do not depend on one another — the same WHERE against
-    # six different tables — and the database is in another AWS region, so what this page costs is
-    # how many round trips wait on each other and almost nothing else. Sequentially, the six reads
-    # behind the one auth read measured 4,958 ms to produce a 22-BYTE answer against an EMPTY queue
-    # (docs/SCALABILITY.md §1.1); gathered, they are a single wave behind auth. ``gather_reads``
-    # bounds the fan-out by the Prisma pool, so one reviewer opening this page cannot drain it, and
-    # it returns results POSITIONALLY — which is why the loop below still walks ``_PENDING_SOURCES``
-    # in order and the response is byte-for-byte what the sequential version produced.
-    #
-    # WHAT IT COSTS THE 1 GiB BOX: the six row sets are alive at the same time now instead of one at
-    # a time, so the peak is the whole capped set — at most 6 × (PENDING_TAKE + 1) = 1,206 rows with
-    # their ``createdBy`` — where it used to be 201. That ceiling is set by the cap and not by the
-    # backlog, it is single-digit MB, and the ``items`` list built from those rows was always held
-    # whole anyway. NOT MEASURED; bounded by arithmetic on ``PENDING_TAKE``.
     row_sets = await gather_reads(
         *(
             delegate.find_many(
@@ -345,13 +228,6 @@ async def list_pending_reviews(
         )
     )
 
-    # A SECOND WAVE, AND ONLY FOR THE RECORD TYPES THAT ACTUALLY OVERFLOWED. Where the cap did not
-    # bite, the rows read ARE the whole matching set and their length is the exact count, so a queue
-    # under the cap costs the six reads it has always cost and this wave issues NO coroutines and
-    # therefore no round trip at all. Counting all six unconditionally would read more evenly but
-    # would double the query load of this page to buy five numbers already in hand. Do not
-    # "simplify" this into an unconditional count, and do not fold it into the wave above either —
-    # which of the six need counting is not known until their rows come back.
     overflowed = [index for index, rows in enumerate(row_sets) if len(rows) > PENDING_TAKE]
     counted = dict(
         zip(
@@ -375,11 +251,6 @@ async def list_pending_reviews(
     items.sort(key=lambda item: item.get("createdAt") or "", reverse=True)
     return {
         "items": items,
-        # ``shown`` is the length of THIS list; ``total`` is how many rows the same WHERE matches
-        # across the six record types. They differ exactly when ``truncated`` is true, and a client
-        # that shows one where it means the other reports 200 of 340 as "340" or as "200 of 200".
-        # ``total`` was previously ``len(items)`` under this same key, so a client already reading
-        # it now gets the number the name always promised rather than a different number.
         "shown": len(items),
         "total": total,
         "cap": PENDING_TAKE,
@@ -404,10 +275,6 @@ async def set_review_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only review records created by people with a role below your own",
         )
-    # A record submitted after its workshop ended carries needsAdminApproval in its extraMetadata.
-    # ONLY an admin or master admin may approve it — the normal review ladder would otherwise let a
-    # professor sign off on a researcher's late entry, which is exactly the decision reserved for
-    # admins. Rejecting or sending it back for revision stays open to any qualified reviewer.
     late = record_needs_admin_approval(record)
     if late and new_status == "APPROVED" and not is_admin(reviewer):
         raise HTTPException(
@@ -420,8 +287,6 @@ async def set_review_status(
     data = review_update(new_status, payload.notes, reviewer.id)
     log_notes = payload.notes
     if new_status == "APPROVED" and late:
-        # Approval IS that admin decision, so clear the flag (preserving the rest of the metadata)
-        # so it keeps reflecting reality instead of flagging an already-approved record forever.
         extra = get_value(record, "extraMetadata")
         submission = extra.get("workshopSubmission")
         data["extraMetadata"] = Json(
@@ -429,19 +294,6 @@ async def set_review_status(
         )
         notes = (payload.notes or "").strip()
         log_notes = f"{notes}\n\n{LATE_SUBMISSION_LOG_NOTE}" if notes else LATE_SUBMISSION_LOG_NOTE
-    # THE DECISION AND THE LOG OF IT ARE ONE WRITE (2026-09-03). This is the audit-ledger defect the
-    # six PATCH routes carry, INVERTED: there the RecordRevision committed before the row, here the
-    # row committed before the ReviewLog. A failure in the gap — P2024 on a cross-region pool, a
-    # dropped socket — left a record APPROVED or REJECTED with nothing anywhere saying who decided
-    # it, when, or on what note. That is strictly worse than the forward version: the review ladder's
-    # whole purpose is accountability for the decision, ``GET /review/{type}/{id}/log`` is what an
-    # admin reads to reconstruct one, and a status change with no log entry is a decision that
-    # appears to have made itself. The delegate is re-resolved against ``tx`` because ``db.tx()``
-    # hands back a DIFFERENT client and the ``delegate`` above is bound to the module singleton —
-    # writing through it here would leave the update outside the transaction it is written inside.
-    # A SHARED-QUESTIONNAIRE SESSION (UNIFY B27): 0 participants, no content, or a take waiting for a
-    # decision refuses the approval with its reason (409); approving clears the "changes since"
-    # marker and approves the answer revisions with the session, in the same transaction.
     from app.questionnaire import review as v2_review, shims_dr
 
     v2_session = record_type.lower() == "questionnaire" and shims_dr.enabled() and bool(get_value(record, "clientKey"))
@@ -485,20 +337,11 @@ async def reject_record(
 
 
 class MediaReviewEdit(APIModel):
-    """The media fields a reviewer may correct. MediaFile has no ``*Update`` schema of its own — the
-    media routes patch it through purpose-built endpoints (relink, transcript refine) — so the
-    reviewable surface is spelled out here: the human-written caption and the machine transcript a
-    reviewer is often the first person qualified to fix."""
-
     caption: str | None = None
     transcriptText: str | None = None
     transcriptSummary: str | None = None
 
 
-# The payload for each record type is validated against the SAME pydantic model its own PATCH route
-# uses, so a reviewer edit cannot bypass a rule the normal edit path enforces (Aadhaar/Pehchan
-# normalisation, length limits, decimal parsing) and cannot invent a column that does not exist —
-# ``APIModel`` is ``extra="forbid"``, so an unknown key is a 422 rather than a 500 from Prisma.
 _EDIT_SCHEMAS: dict[str, type[APIModel]] = {
     "artisan": ArtisanUpdate,
     "workshop": WorkshopUpdate,
@@ -509,24 +352,6 @@ _EDIT_SCHEMAS: dict[str, type[APIModel]] = {
     "media": MediaReviewEdit,
 }
 
-# Keys that are valid on the normal PATCH route but must never travel through a review edit:
-#
-# - ``status`` — an edit must not be a back-door approval. Status moves through approve/reject/revise
-#   (or this endpoint's own ``approve`` flag), where the late-submission gate is applied.
-# - ``extraMetadata`` — holds the SERVER-OWNED workshop-submission stamp; letting a reviewer post it
-#   would let them clear ``needsAdminApproval`` and then approve their way past the admin gate.
-# - ``workshopId`` — moving a record between workshops is a workshop submission with its own
-#   assignment + window checks (``enforce_workshop_submission``); it belongs on the record's own PATCH.
-# - ``designWorkshopId`` — filing a record under a design & prototype workshop, or taking it out of
-#   one, is a filing with its own gate (``record_design_workshop.assert_payload_workshop``: the
-#   destination's loader, and the refusal of the inspector and the two directors of either end), so
-#   it belongs on the record's own PATCH for ``workshopId``'s reason. Until 2026-10-09 it was not on
-#   this list, and because ``_EDIT_SCHEMAS`` are the records' own ``*Update`` models a review edit
-#   could re-file any record under any workshop with no filing gate at all.
-# - the relation lists and ``location`` — those are separate writes (join rows, a Location row), not
-#   column updates, and a review edit is for correcting field values.
-# - ``formContract`` — a statement about the artisan FORM a save came from, not a column; a review
-#   edit corrects fields and is not that form (``services/artisan_form_contract``).
 _NOT_REVIEW_EDITABLE = frozenset(
     {
         "status",
@@ -546,13 +371,6 @@ _NOT_REVIEW_EDITABLE = frozenset(
 
 
 class ReviewEdit(APIModel):
-    """``fields`` is validated against the record type's own update schema (see ``_EDIT_SCHEMAS``).
-
-    ``approve=true`` runs the ordinary approval immediately after the edit — the common "fix the typo
-    and sign it off" case — as a SECOND, separately logged action, so the audit trail still shows the
-    edit and the approval as two distinct decisions and the approval still passes the admin gate.
-    """
-
     fields: dict[str, Any] = Field(default_factory=dict)
     note: str | None = None
     approve: bool = False
@@ -565,48 +383,6 @@ async def edit_reviewed_record(
     payload: ReviewEdit,
     reviewer: Any = Depends(require_reviewer),
 ) -> dict[str, Any]:
-    """Fix a record's field values in place from the review queue, instead of bouncing it back.
-
-    Sending a record back for revision costs a round trip through its creator for what is often a
-    misspelt village or a craft name in the wrong column — work the reviewer can simply do. This is
-    that shortcut, and it is the one review action that WRITES the record, so it is gated on the
-    editing authority rather than the reviewing one:
-
-    * ``can_edit_others_record``: the peer-review ladder narrowed to Professor and above. Reviewing
-      reaches further down the ladder than editing deliberately — a field contributor reviews a
-      volunteer's submission and a researcher reviews a field contributor's, and neither of them
-      gets to rewrite it. Everyone below the floor still has approve / reject / revise;
-    * the admin-only gate for a record flagged ``needsAdminApproval`` (submitted after its workshop
-      ended) — the whole edit is admin-only there, not just the optional approval, because acting on a
-      late submission at all is the decision reserved for admins.
-
-    That predicate is also what makes the record's own PATCH route and this one agree about who may
-    overwrite a populated field. There, an editor who is neither the author nor an admin is put
-    through ``assert_can_contribute_fields``, which locks every field that already has a value —
-    UNLESS ``may_edit_lower_ranked_record`` says they outrank its author, which is
-    ``can_edit_others_record``. So the callers this route now admits are exactly the callers the
-    PATCH route waves past that lock; no second field-level check is needed here, and before the
-    gate was narrowed there was no honest way to say that.
-
-    The change is attributable twice over: a ``RecordRevision`` captures the exact old -> new values
-    (the same edit history ``services/access.py`` writes for a granted cross-researcher edit —
-    including its one exception, the identity and contact columns in
-    ``access.REVISION_REDACTED_FIELDS``, where the row records the direction of the change but not
-    the value) and a ``ReviewLog`` row records that this reviewer edited the record and why.
-
-    The status is NOT touched unless ``approve`` is set — an edit is not an approval.
-
-    **NOT BY WHOEVER INSPECTS OR SUPERVISES THE WORKSHOP THE RECORD BELONGS TO (2026-10-09).** A
-    record filed under a design & prototype workshop is that workshop's content, and so is a file it
-    holds, caption and transcript included; its inspector and its Assistant and Regional Directors
-    read it and do not write it (``design_workshop_posts``, rule 5). The record forms and the media
-    routes already refuse them, and this is the same write reached from the review queue — so it
-    asks the same two gates, about the STORED row, before anything is written:
-    ``record_design_workshop.assert_may_write_a_record_filed_under`` for a record, and
-    ``design_workshop_posts.refuse_a_holders_media_write`` for a file. Approve, reject and send back
-    stay open to them: those are moderation, not authorship. And ``designWorkshopId`` itself is not
-    review-editable at all — see ``_NOT_REVIEW_EDITABLE``.
-    """
     key = record_type.lower()
     delegate, log_type, creator_relation = delegate_for(record_type)
     schema = _EDIT_SCHEMAS.get(key)
@@ -659,9 +435,6 @@ async def edit_reviewed_record(
                 "admin can edit or approve a late submission."
             ),
         )
-    # THE WORKSHOP'S CONTENT IS NOT ITS HOLDERS' TO WRITE, from this door either: see the docstring.
-    # After the two authority checks, which cost no query, and before the transaction. A role that
-    # can hold no post is answered from memory by both gates; a record filed nowhere asks nothing.
     if key == "media":
         await design_workshop_posts.refuse_a_holders_media_write(record, reviewer)
     else:
@@ -669,10 +442,6 @@ async def edit_reviewed_record(
             get_value(record, DESIGN_WORKSHOP_KEY), reviewer
         )
 
-    # Same shape as every PATCH route: clean (which also title-cases the name-like fields) and
-    # stringify decimals before anything compares the payload against the stored row. An identity
-    # number that came back as its own mask is dropped here for the same reason PATCH /artisans
-    # drops it — a reviewer's form is fed by the same masked responses.
     data = drop_masked_identity_numbers(
         decimal_to_string(clean_data(parsed.model_dump(exclude_unset=True)))
     )
@@ -681,8 +450,6 @@ async def edit_reviewed_record(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Change at least one field before saving.",
         )
-    # The artisan's Aadhaar is stored as a fingerprint and its last four (services/
-    # aadhaar_fingerprint.py), here exactly as on PATCH /artisans.
     if key == "artisan":
         try:
             aadhaar_fingerprint.seal(data, previous=record)
@@ -693,7 +460,6 @@ async def edit_reviewed_record(
             ) from exc
     changed = sorted(
         {
-            # The log names the field the reviewer edited, never the stored halves of it.
             aadhaar_fingerprint.NUMBER_FIELD
             if field in (aadhaar_fingerprint.FINGERPRINT_FIELD, aadhaar_fingerprint.LAST4_FIELD)
             else field
@@ -702,20 +468,8 @@ async def edit_reviewed_record(
         }
     )
 
-    # THREE WRITES, ONE TRANSACTION (2026-09-03). A reviewer's edit produces a RecordRevision, the
-    # row itself, and a ReviewLog entry, and until this block they were three separate commits in a
-    # row — so this route carried BOTH halves of the ledger defect at once. A failure after the first
-    # left a revision for an edit that never landed; a failure after the second left an edited record
-    # with no reviewer's log entry naming who changed it. The reviewer sees one error either way and
-    # retries, which appends a SECOND revision for the same edit. All three now land together or none
-    # of them do, and ``client=tx`` is what makes the first one join: ``db.tx()`` hands back a
-    # DIFFERENT client, so ``record_revision`` writing through the module singleton would commit
-    # outside the block it sits inside.
     async with db.tx() as tx:
-        # Audit BEFORE provenance is merged in, so the revision holds real content changes only.
         await record_revision(record, reviewer, data, key, client=tx)
-        # Provenance rebuilds extraMetadata from this payload, which would drop the workshop-submission
-        # stamp; carry it forward first, exactly as the record's own PATCH route does.
         stamp_workshop_submission(data, record=record)
         merge_field_provenance(data, reviewer, previous=record)
         jsonify_metadata(data)
@@ -731,8 +485,6 @@ async def edit_reviewed_record(
             data={
                 "recordType": log_type,
                 "recordId": record_id,
-                # The record's own, unchanged status — see EDIT_LOG_PREFIX for why the verb lives in
-                # notes.
                 "status": str(enum_or_raw(get_value(record, "status"))),
                 "notes": f"{summary}\n\n{note}" if note else summary,
                 "reviewerId": reviewer.id,
@@ -740,8 +492,6 @@ async def edit_reviewed_record(
         )
 
     if payload.approve:
-        # Re-reads the freshly edited row and re-applies the late-submission gate, so approving here
-        # is identical to calling /approve straight afterwards — including its own ReviewLog entry.
         return await set_review_status(
             record_type, record_id, "APPROVED", ReviewAction(notes=payload.note), reviewer
         )
@@ -755,9 +505,6 @@ async def send_record_for_revision(
     payload: ReviewAction,
     reviewer: Any = Depends(require_reviewer),
 ) -> dict[str, Any]:
-    """Send the record back to its creator with mandatory comments (status NEEDS_REVISION).
-
-    When the creator next edits the record it returns to PENDING for a fresh review pass."""
     if not payload.notes or not payload.notes.strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -1,11 +1,3 @@
-"""/api/ministry-exports, OVER A DATABASE.
-
-404 while the switch is off; the whole-estate tiers in and everyone else refused with the sentence the
-web guard shows; an ineligible recipient refused; a future month refused; a replayed Idempotency-Key
-answered with the same body; and a download link refused before READY, gone after the lifecycle rule,
-logged when minted, and as short-lived as the setting says.
-"""
-
 from __future__ import annotations
 
 import uuid
@@ -103,7 +95,7 @@ def test_recipients_can_be_added_changed_and_removed(world: dict[str, Any]) -> N
     )
     assert put.status_code == 200, put.text
     body = put.json()
-    assert body["schemes"] == ["SKILL_UPGRADATION", "OTHER"]  # registry order
+    assert body["schemes"] == ["SKILL_UPGRADATION", "OTHER"]
     assert body["eligible"] is True and body["role"] == "MINISTRY_ADMIN"
     listed = client.get("/api/ministry-exports/recipients", headers=bearer(people["ADMIN"])).json()[
         "recipients"
@@ -183,7 +175,6 @@ def test_generating_refuses_a_future_or_malformed_month_and_replays_by_key(
     [item] = first.json()["items"]
     assert item["status"] == "QUEUED" and item["revision"] == 1 and item["trigger"] == "ON_DEMAND"
 
-    # Without the key, a QUEUED pack comes back unchanged rather than bumped.
     again = client.post("/api/ministry-exports/packs", json=body, headers=headers).json()["items"][
         0
     ]

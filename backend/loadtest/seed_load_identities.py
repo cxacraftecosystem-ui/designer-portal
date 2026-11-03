@@ -65,15 +65,12 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 from loadtest.scenario import EMAIL_PATTERN, LOAD_PASSWORD  # noqa: E402
 
-#: Every row this script writes carries one of these id prefixes, which is what makes ``--purge`` a
-#: statement anybody can read and check rather than a date-range guess.
 USER_ID = "loadtest-user-{index:05d}"
 WORKSHOP_ID = "loadtest-ws-{index:05d}"
 ACCESS_ID = "loadtest-acc-{index:05d}"
 ROSTER_ID = "loadtest-ros-{index:05d}"
 ID_PREFIX = "loadtest-"
 
-#: The compose service that holds the database (docker-compose.yml).
 CONTAINER = "design-workshop-postgres"
 
 
@@ -112,9 +109,6 @@ def _psql(sql: str, *, database: str) -> str:
          "-v", "ON_ERROR_STOP=1", "-At", "-f", "-"],
         input=sql.encode("utf-8"),
         capture_output=True,
-        # The return code is inspected below and turned into a SystemExit with psql's own stderr,
-        # which says WHICH statement failed. `check=True` would raise a CalledProcessError whose
-        # message is the argv and nothing else.
         check=False,
     )
     if proc.returncode != 0:
@@ -144,9 +138,6 @@ def build_seed_sql(count: int, password_hash: str) -> str:
     """
     parts = [
         "BEGIN;",
-        # A DESIGNER, not an admin: it is the role that actually runs workshops, and it is the only
-        # role that has to pass BOTH gates in `auth.login` (the platform allow-list AND the
-        # empanelment check), so seeding it exercises the more expensive of the two sign-in paths.
         f"""
 INSERT INTO "User" (id, email, name, "passwordHash", role, "authProvider", "createdAt", "updatedAt")
 SELECT
@@ -173,14 +164,6 @@ SELECT
 FROM generate_series(0, {count - 1}) AS i
 ON CONFLICT (email) DO UPDATE SET "isActive" = TRUE, "firstSeenAt" = COALESCE("DesignerRoster"."firstSeenAt", NOW());
 """,
-        # ONE WORKSHOP PER IDENTITY, CREATED BY THAT IDENTITY. Two reasons, and neither is tidiness.
-        # (1) `services/design_workshops.load_workshop_or_404` admits the creator on a cheap column
-        #     comparison and everybody else through an extra `has_viewer_grant` query — so pointing a
-        #     thousand identities at shared workshops would silently add a database round trip to
-        #     every read and write in the mix and attribute it to the endpoint.
-        # (2) A thousand writers hammering one row is row-lock contention, which is a real
-        #     phenomenon but NOT the one being measured here, and it would swamp everything else.
-        #     Real designers each work on their own record; so does this population.
         f"""
 INSERT INTO "DesignWorkshop" (id, title, "templateId", status, "craftName", state,
                               "createdById", "createdAt", "updatedAt")
@@ -191,7 +174,6 @@ FROM generate_series(0, {count - 1}) AS i
 ON CONFLICT (id) DO NOTHING;
 """,
         "COMMIT;",
-        # Printed so the caller sees what actually landed rather than trusting the exit code.
         f"""SELECT (SELECT count(*) FROM "User" WHERE id LIKE '{ID_PREFIX}%')
        || ' users, '
        || (SELECT count(*) FROM "DesignWorkshop" WHERE id LIKE '{ID_PREFIX}%')
@@ -247,7 +229,6 @@ def main() -> int:
         print("No DATABASE_URL resolved. Run from backend/ so app.core.config can read backend/.env.", file=sys.stderr)
         return 2
     if not _local_dsn(dsn):
-        # Deliberately does not print the DSN: it carries a password.
         print("REFUSED: DATABASE_URL is not loopback. This script seeds known-password accounts.", file=sys.stderr)
         return 2
 
@@ -259,8 +240,6 @@ def main() -> int:
         print(_psql(sql, database=args.database).strip())
         return 0
 
-    # Imported here rather than at module scope: see the module docstring on why this file
-    # must be able to run (--purge, --dry-run) without paying for app.core.config at all.
     from app.core.security import hash_password
 
     password_hash = hash_password(LOAD_PASSWORD)

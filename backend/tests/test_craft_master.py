@@ -1,9 +1,3 @@
-"""The master craft list (2026-10-20): the file, the service's pure parts, and the two portals' parity.
-
-No database. The database halves are ``test_craft_master_migration.py``, ``test_craft_catalogue_api.py``
-and ``test_map_crafts.py``. This file is the same in both portals.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +14,6 @@ BACKEND = pathlib.Path(__file__).resolve().parents[1]
 ROOT = BACKEND.parent
 IS_DESIGNER_PORTAL = (BACKEND / "app" / "services" / "stage_schema.py").is_file()
 
-#: Byte-identical in both portals (line endings normalised, as git stores them).
 SHARED_FILES = (
     "backend/app/data/craft_master_list.json",
     "backend/app/data/craft_master_aliases.json",
@@ -38,11 +31,6 @@ SHARED_FILES = (
     "docs/CRAFTS.md",
 )
 
-#: THE SHARED FILES, PINNED. CI checks out one repository, so the sibling comparison below skips
-#: there; these digests are what CI can check. Both repositories carry this same table, so a shared
-#: file changed in one repository only fails here until the change is made in both and the digest
-#: is updated in both. sha256 of the file with CRLF read as LF. This file pins everything but itself;
-#: the sibling comparison covers it on any machine with both checkouts.
 SHARED_DIGESTS: dict[str, str] = {
     "backend/app/data/craft_master_list.json": "3ab7073e644bfcd96e580dc53e4ad00633ef70a81de3475a0fd552c7a80019a2",
     "backend/app/data/craft_master_aliases.json": "dc0c3ed2132ebd67d70fa688fd6152895585ae3d907ee51e2b88221adc630ba1",
@@ -186,10 +174,6 @@ def test_the_exact_and_alias_matchers_work_on_rows():
     assert [c.id for c in cm.exact_matches("Bagru Hand Block printing", rows)] == ["2"]
     assert cm.exact_matches("Ajrakh", rows) == []
 
-
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# The two repositories
-# ──────────────────────────────────────────────────────────────────────────────────────────────
 
 
 def _sibling() -> pathlib.Path | None:

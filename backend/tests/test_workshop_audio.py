@@ -1,19 +1,3 @@
-"""Workshop audio end to end: the queue wiring, the transcript coming back, and the two aids.
-
-These need Postgres — the behaviour under test is a row appearing in ``MediaProcessingJob`` and a
-column changing on ``MediaFile``, neither of which can be asserted in Python — so the module skips
-itself when ``DATABASE_URL`` does not point at a local database, exactly as ``test_stage_sync``
-does.
-
-    docker compose up -d postgres minio
-    cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
-
-Nothing here reaches a provider. The transcription queue is asserted at the point where the job is
-CREATED, and the two synchronous endpoints are asserted on the paths that answer before any
-provider is contacted: a feature that is switched off, a clip that is too big to accept, and the
-id-less dictation address that no longer accepts a recording at all.
-"""
-
 import os
 import uuid
 
@@ -50,12 +34,6 @@ def anyio_backend():
 
 @pytest.fixture(scope="module")
 async def env():
-    """A signed-in designer, and two audio media rows: one untranscribed, one already done.
-
-    The rows are created here rather than inside a test because the Prisma client is shared with
-    the running app and is bound to the TestClient's event loop; touching it from a test's own loop
-    is the kind of cross-loop use that fails intermittently rather than honestly.
-    """
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -99,18 +77,6 @@ async def env():
             "transcriptStatus": "COMPLETED",
             "transcriptText": TRANSCRIPT,
         })
-        # A clip STRANDED by a job that died before the provider answered. ``transcriptStatus`` was
-        # written QUEUED by the enqueue (``media_queue`` :305) and never written again, because the
-        # only writer past that point is ``_apply_transcription_result`` and the job never reached
-        # it: ``download_to_temp`` raised on an object key that no longer resolves, and
-        # ``_handle_job_failure`` updates the JOB row and nothing else. At exhausted attempts the
-        # job is FAILED and the column still says a transcript is on its way.
-        #
-        # BUILT HERE RATHER THAN BY DRAINING THE QUEUE, and that is not laziness: reproducing it
-        # through the worker needs three failed attempts spread across the retry ladder's 1-then-2
-        # minute ``runAfter`` backoff, and a TRANSCRIPTION job is only drained inside the off-peak
-        # window or on an idle server. The pairing itself is not contrived — it is exactly what
-        # ``_handle_job_failure`` leaves behind on every pre-answer exhaustion.
         stranded = await db.mediafile.create(data={
             "originalFilename": "warp-setting-interview.m4a",
             "mediaType": "AUDIO",
@@ -154,8 +120,6 @@ def client(env):
 
 @pytest.fixture
 def unanswered(client):
-    """A workshop nobody has recorded an answer for. ``dictationConsent`` is NOT_RECORDED, which is
-    consent assumed by default (owner decision, 19 Oct 2026)."""
     response = client.post("/api/design-workshops", json={"title": "Audio test workshop"})
     assert response.status_code == 201, response.text
     return response.json()["id"]
@@ -163,12 +127,6 @@ def unanswered(client):
 
 @pytest.fixture
 def workshop(client, unanswered):
-    """A workshop whose artisan switched consent OFF: the answer on record is REFUSED.
-
-    REFUSED DELIBERATELY, so that the tests which need a grant have to record one and every test
-    below proves a refusal stops its send. Consent is assumed by default, so an unanswered workshop
-    would send, and a build with the gate removed would pass every queue test.
-    """
     response = client.post(
         f"/api/design-workshops/{unanswered}/dictation-consent", json={"decision": "REFUSED"}
     )
@@ -177,7 +135,6 @@ def workshop(client, unanswered):
 
 
 def _grant(client, workshop_id):
-    """Record the artisan's agreement for this workshop, as the designer sitting with them would."""
     response = client.post(
         f"/api/design-workshops/{workshop_id}/dictation-consent", json={"decision": "GRANTED"}
     )
@@ -186,7 +143,6 @@ def _grant(client, workshop_id):
 
 
 def _withdraw(client, workshop_id):
-    """The artisan changes their mind. REFUSED is how a consent is taken back — there is no un-record."""
     response = client.post(
         f"/api/design-workshops/{workshop_id}/dictation-consent", json={"decision": "REFUSED"}
     )
@@ -196,7 +152,6 @@ def _withdraw(client, workshop_id):
 
 @pytest.fixture
 def granted(client, workshop):
-    """A workshop whose artisan has agreed to their recordings being written down elsewhere."""
     return _grant(client, workshop)
 
 
@@ -207,23 +162,8 @@ def _save_audio(client, workshop_id, media_id):
     )
 
 
-# --------------------------------------------------------------------------------------
-# 1. An AUDIO field on a stage is transcribed like any other recording
-# --------------------------------------------------------------------------------------
-
 
 async def test_audio_attached_to_a_stage_is_queued_for_transcription(env, granted):
-    """The gap this closes: the clip uploaded, the id landed on the stage, and nothing happened.
-
-    The assertion is deliberately about the QUEUE rather than about a transcript — a workshop clip
-    must enter the same job table as an interview recording, so that everything downstream (the
-    off-peak window, the provider ranking, the rate-limit backoff, the admin "Transcribe now")
-    applies to it without a line of new code.
-
-    ``granted`` AND NOT ``workshop``: this test used to run against a workshop nobody had asked, and
-    passing was the evidence that consent governed the dictation and not the recording. The mechanics
-    it is really about — one job, in the shared table — are unchanged once the artisan has agreed.
-    """
     client = env["client"]
     response = _save_audio(client, granted, env["fresh"])
     assert response.status_code == 200, response.text
@@ -247,39 +187,17 @@ async def test_a_stage_clip_whose_box_was_left_unticked_is_not_queued(env, grant
 
 
 async def test_saving_the_same_stage_again_does_not_queue_a_second_job(env, granted):
-    """A designer correcting a typo, or a phone replaying its sync queue, must not pay for the
-    same audio twice — nor let two jobs race to write one transcript column."""
     client = env["client"]
     assert _save_audio(client, granted, env["fresh"]).json()["transcriptionsQueued"] in (0, 1)
     assert _save_audio(client, granted, env["fresh"]).json()["transcriptionsQueued"] == 0
 
 
 async def test_an_existing_transcript_is_never_re_transcribed(env, granted):
-    """Re-running transcription over a clip a researcher has already corrected by hand would
-    overwrite their correction with the provider's guess."""
     client = env["client"]
     assert _save_audio(client, granted, env["done"]).json()["transcriptionsQueued"] == 0
 
 
 async def test_a_clip_whose_job_died_before_the_provider_answered_is_re_queued(env, granted):
-    """THE STRAND, AND THE ONLY RECOVERY A DESIGNER CAN REACH.
-
-    ``MediaFile.transcriptStatus`` is written QUEUED at enqueue time and is written again only by
-    ``_apply_transcription_result``, which runs only once a provider has ANSWERED. Every exception
-    before that — an object key that no longer resolves, object storage unreachable overnight, the
-    provider call itself — goes to ``_handle_job_failure``, which touches the JOB and not the clip.
-    So an exhausted job leaves FAILED beside a column that still reads QUEUED.
-
-    ``QUEUED`` used to sit in ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES``, so that clip was
-    skipped by every later save for ever; ``/media/complete`` would not rescue it either
-    (``_finish_pending_media`` re-enqueues only when ``processingJobs`` is EMPTY, and a FAILED job is
-    still a job); and ``report_annexures.annexure_warnings`` classified it as "still being
-    transcribed", so the one message the designer got told them to keep waiting. The only way out was
-    an admin finding the job in the queue panel and pressing Retry.
-
-    The fix reads QUEUED/PROCESSING as a CLAIM about the queue rather than as a fact, and checks the
-    queue — which this function was already reading anyway. Saving the stage is now the recovery.
-    """
     client = env["client"]
     before = client.get(f"/api/media/{env['stranded']}").json()
     assert before["transcriptStatus"] == "QUEUED", "the premise: the column says one is on its way"
@@ -297,13 +215,6 @@ async def test_a_clip_whose_job_died_before_the_provider_answered_is_re_queued(e
 
 
 async def test_a_queued_clip_that_really_does_have_a_live_job_is_still_left_alone(env, granted):
-    """THE OTHER HALF, AND IT IS WHY THE FIX IS A QUEUE READ AND NOT A SHORTER STATUS LIST.
-
-    Deleting QUEUED from the settled set would pass the test above and re-queue every clip the worker
-    has not got to yet — a second job racing the first to write one transcript column, and a second
-    provider bill for the same audio. Here the upload itself queued the clip, so the column's QUEUED
-    is backed by a real job and the save must queue nothing.
-    """
     client = env["client"]
     media = _upload_audio(
         client, env["user"], tag=DW_TAG, tag_id=granted, requests=["TRANSCRIPTION"]
@@ -313,13 +224,8 @@ async def test_a_queued_clip_that_really_does_have_a_live_job_is_still_left_alon
     assert _save_audio(client, granted, media["id"]).json()["transcriptionsQueued"] == 0
 
 
-# --------------------------------------------------------------------------------------
-# 2. …and the transcript comes back onto the stage
-# --------------------------------------------------------------------------------------
-
 
 async def test_the_transcript_comes_back_onto_the_stage(env, workshop):
-    """Keyed by media id, because a collection can hold five recordings in one stage."""
     client = env["client"]
     _save_audio(client, workshop, env["done"])
 
@@ -331,7 +237,6 @@ async def test_the_transcript_comes_back_onto_the_stage(env, workshop):
 
 
 async def test_the_transcripts_listing_shows_what_the_report_would_include(env, workshop):
-    """What the ``includeTranscripts`` toggle shows before it is committed to."""
     client = env["client"]
     _save_audio(client, workshop, env["done"])
 
@@ -348,15 +253,8 @@ async def test_a_workshop_with_no_audio_lists_nothing(client, workshop):
     }
 
 
-# --------------------------------------------------------------------------------------
-# 3. Identity-card OCR: switched off is a clean 503, not an empty answer
-# --------------------------------------------------------------------------------------
-
 
 async def test_the_ocr_route_503s_cleanly_with_no_provider(client):
-    """A 200 with no candidates is indistinguishable from "the card was unreadable", and would
-    have a designer re-photographing a card in better light forever. The body has to name the
-    setting an operator can act on."""
     response = client.post(
         "/api/design-workshops/ocr/identity",
         files={"file": ("card.jpg", b"\xff\xd8\xff\xe0not-a-real-jpeg", "image/jpeg")},
@@ -383,19 +281,9 @@ async def test_a_pdf_is_not_an_identity_card_photograph(client):
     assert response.status_code == 415, response.text
 
 
-# --------------------------------------------------------------------------------------
-# 4. Dictation: the fallback, with a cap
-# --------------------------------------------------------------------------------------
-
 
 @pytest.fixture
 def consented(client, workshop):
-    """A workshop whose artisan has agreed to their recordings being sent for transcription.
-
-    Required now that the only route which transcribes anything is the gated one: without the consent
-    these two would be refused with a 409 before the size and the empty checks were ever reached, and
-    both tests would pass for the wrong reason.
-    """
     response = client.post(
         f"/api/design-workshops/{workshop}/dictation-consent", json={"decision": "GRANTED"}
     )
@@ -404,10 +292,6 @@ def consented(client, workshop):
 
 
 async def test_the_dictation_size_cap_is_enforced(client, consented):
-    """The cap is what stops a synchronous endpoint from becoming a back door into the
-    transcription queue — a long interview posted here would hold a worker for the whole provider
-    round trip, with no retry and no rate-limit backoff. The message says where to put it
-    instead."""
     from app.api.routes.design_workshops import DICTATION_MAX_BYTES
 
     oversized = b"0" * (DICTATION_MAX_BYTES + 1)
@@ -428,13 +312,6 @@ async def test_an_empty_dictation_is_refused(client, consented):
 
 
 async def test_the_id_less_dictation_url_is_retired_against_a_real_server(client):
-    """The same 410 the DB-free suite asserts, on the mounted application rather than on the router.
-
-    Worth the duplication for one reason: this module drives ``app.main.app``, so it is the only place
-    that would notice a middleware, a prefix or a route added elsewhere putting something back in front
-    of this address. A retired door that a later change quietly re-opens is the shape of defect this
-    lane exists to close.
-    """
     response = client.post(
         "/api/design-workshops/dictate",
         files={"file": ("dictation.webm", b"\x00" * 32, "audio/webm")},
@@ -446,53 +323,21 @@ async def test_the_id_less_dictation_url_is_retired_against_a_real_server(client
 
 
 async def test_the_capability_probe_answers_on_the_mounted_application(client):
-    """``GET /design-workshops/dictate`` must be answered by its own route and not by
-    ``GET /{workshop_id}`` looking up a workshop called "dictate" — which answered 404, which the
-    browser reads as "this deployment has no dictation" and renders no microphone for."""
     response = client.get("/api/design-workshops/dictate")
     assert response.status_code == 200, response.text
     assert response.json()["dictatePath"] == "/design-workshops/{workshop_id}/dictate"
 
 
 async def test_the_identity_card_probe_answers_200_rather_than_405(client):
-    """``GET /design-workshops/ocr/identity`` is the browser's capability probe. Before its literal GET
-    existed the router answered it 405 — read correctly by the probe as "the route is there", and
-    printed by every browser as a red console error on the artisan form and the designer profile."""
     response = client.get("/api/design-workshops/ocr/identity")
     assert response.status_code == 200, response.text
     assert response.json()["ocrIdentity"] is True
 
 
-# --------------------------------------------------------------------------------------
-# 6. THE CONSENT GATE ON STORED RECORDINGS
-#
-# The half of Tier 3 consent that did not exist. ``DesignWorkshop.dictationConsent`` gated
-# ``POST /{id}/dictate`` — thirty seconds of a designer speaking into a field — and did not gate the
-# eleven-minute interview with the artisan, which reaches the same ElevenLabs/Deepgram/OpenAI chain
-# through ``media_queue.enqueue_media_processing_jobs``.
-#
-# WHY THESE TESTS ARE HERE AND NOT IN THE DB-FREE FILE. The pure half is asserted there. What is
-# asserted here is the WIRING, against a real Postgres and the real mounted application, because the
-# defect was never a wrong rule — it was a correct rule with nothing calling it. A unit test of the
-# gate would have passed on the broken build. These fail on it.
-#
-# Every media row is created through ``POST /media/complete`` rather than through ``db``, for the
-# reason the ``env`` fixture records about cross-loop use of a shared Prisma client — and because the
-# upload route is itself one of the two doors under test.
-# --------------------------------------------------------------------------------------
-
 DW_TAG = "designWorkshop"
 
 
 def _upload_audio(client, user_id, *, tag=None, tag_id=None, requests=None):
-    """One AUDIO media row, created the way a client creates one. Returns the response body.
-
-    ``tag``/``tag_id`` are ``linkedRecordType``/``linkedRecordId``: both shipped clients file every
-    design-workshop attachment under ``designWorkshop`` with the workshop id, which is the link the
-    consent gate reads. ``requests`` is ``processingRequests`` — None means the key is omitted, which
-    is the auto-enqueue branch, and a list means the caller asked explicitly, which is what BOTH
-    clients actually send for every audio upload.
-    """
     stamp = uuid.uuid4().hex
     body = {
         "originalFilename": f"probe-{stamp[:8]}.webm",
@@ -517,12 +362,8 @@ def _jobs(media):
     return [j for j in (media.get("processingJobs") or []) if j["jobType"] == "TRANSCRIPTION"]
 
 
-# ---- the upload door -----------------------------------------------------------------
-
 
 async def test_a_workshop_with_no_answer_has_its_recording_queued_by_default(env, unanswered):
-    """Consent is assumed by default (owner decision, 19 Oct 2026): no answer on record is not a
-    refusal, so the recording is queued at upload exactly as a granted workshop's is."""
     media = _upload_audio(
         env["client"], env["user"], tag=DW_TAG, tag_id=unanswered, requests=["TRANSCRIPTION"]
     )
@@ -531,19 +372,6 @@ async def test_a_workshop_with_no_answer_has_its_recording_queued_by_default(env
 
 
 async def test_a_refused_workshops_recording_is_stored_but_not_queued(env, workshop):
-    """THE DEFECT, ASSERTED AT THE DOOR THE FLEET ACTUALLY DRIVES THROUGH.
-
-    Note ``requests=["TRANSCRIPTION"]``: the reported defect was the auto-enqueue for a body with no
-    ``processingRequests``, and a gate placed only on that branch would have closed a door nobody
-    uses. Both clients ask EXPLICITLY on every audio upload — the handset's
-    ``uploadDesignWorkshopMedia`` sends ``listOf("TRANSCRIPTION")`` and the web's
-    ``resolveProcessing`` adds it whenever ``transcribeAudio``, which defaults to true. So this is the
-    live path, and it is the one under test.
-
-    THE UPLOAD STILL SUCCEEDS, 201, and that is deliberate: the file is stored and attached and is
-    exactly what the designer captured. Failing it would tell a phone at the end of a fortnight's sync
-    that its recording was lost, which is false and which would make the app retry for ever.
-    """
     media = _upload_audio(
         env["client"], env["user"], tag=DW_TAG, tag_id=workshop, requests=["TRANSCRIPTION"]
     )
@@ -560,8 +388,6 @@ async def test_a_body_that_asks_for_nothing_queues_nothing(env, workshop):
 
 
 async def test_a_consented_workshops_recording_is_queued_at_upload_time(env, granted):
-    """The capability still works, which is half of what a privacy fix has to prove. Same route,
-    same body, one recorded answer different."""
     media = _upload_audio(
         env["client"], env["user"], tag=DW_TAG, tag_id=granted, requests=["TRANSCRIPTION"]
     )
@@ -571,22 +397,12 @@ async def test_a_consented_workshops_recording_is_queued_at_upload_time(env, gra
 
 
 async def test_a_recording_that_is_not_workshop_material_is_still_transcribed(env):
-    """RULE 4, AND THE ONE A FAIL-CLOSED CHANGE BREAKS IF IT IS WRITTEN CARELESSLY.
-
-    An audio upload carrying no design-workshop tag is an interview clip, a voice note on a product,
-    a file from the miscellaneous-media page. It has been transcribed automatically since long before
-    this consent existed, no answer about a design workshop says anything about it, and refusing it
-    would stop the repository's oldest working pipeline in the name of a permission nobody was asked
-    for. If this test ever fails, the gate has become a switch that turns transcription off.
-    """
     media = _upload_audio(env["client"], env["user"], requests=["TRANSCRIPTION"])
     assert len(_jobs(media)) == 1
     assert media["transcriptStatus"] == "QUEUED"
 
 
 async def test_a_tag_naming_a_workshop_that_does_not_exist_holds_no_refusal(env):
-    """A typo or a stale offline id names no workshop and no refusal is on record for it, so under
-    consent assumed by default it is queued (a failed READ, unlike this, still refuses)."""
     media = _upload_audio(
         env["client"],
         env["user"],
@@ -598,17 +414,8 @@ async def test_a_tag_naming_a_workshop_that_does_not_exist_holds_no_refusal(env)
     assert media["transcriptStatus"] == "QUEUED"
 
 
-# ---- the stage-save door -------------------------------------------------------------
-
 
 async def test_the_stage_save_refuses_and_says_why_on_the_screen_being_looked_at(env, workshop):
-    """THE SHARPEST FORM OF THE DEFECT: this same call reported ``transcriptionsQueued: 1`` on a
-    workshop that ``POST /{id}/dictate`` was refusing with a 409 in the same minute.
-
-    ``transcriptionConsentRefusal`` exists because ``transcriptionsQueued: 0`` is ambiguous — it is
-    also what a re-save reports — and silence here means the designer waits for a night that never
-    comes and reports the feature as broken. It is not broken; the artisan refused.
-    """
     client = env["client"]
     media = _upload_audio(client, env["user"], requests=[])
     response = _save_audio(client, workshop, media["id"])
@@ -617,8 +424,6 @@ async def test_the_stage_save_refuses_and_says_why_on_the_screen_being_looked_at
     assert body["transcriptionsQueued"] == 0
     assert "that is the answer on record" in body["transcriptionConsentRefusal"]
 
-    # And the same workshop refuses a dictation, with the same reason — which is the pair that used
-    # to disagree. One door was gated; this asserts they now answer alike.
     refusal = client.post(
         f"/api/design-workshops/{workshop}/dictate",
         files={"file": ("dictation.webm", b"\x00" * 64, "audio/webm")},
@@ -627,10 +432,6 @@ async def test_the_stage_save_refuses_and_says_why_on_the_screen_being_looked_at
 
 
 async def test_a_stage_clip_with_no_tag_is_still_gated_by_the_path_it_arrived_on(env, workshop):
-    """The case a tag alone would miss, and it is not hypothetical: a designer can paste any media id
-    into a stage field, and a clip uploaded through the generic picker carries no workshop tag.
-    ``save_stage`` holds the workshop id in its path, so it hands it down — see
-    ``enqueue_stage_transcriptions(design_workshop_id=...)``."""
     client = env["client"]
     media = _upload_audio(client, env["user"], requests=[])
     assert media["linkedRecordType"] is None, "the premise: nothing on the row names the workshop"
@@ -638,12 +439,6 @@ async def test_a_stage_clip_with_no_tag_is_still_gated_by_the_path_it_arrived_on
 
 
 async def test_recording_the_answer_later_lets_it_through_on_the_next_save(env, workshop):
-    """THE RECOVERY PATH, AND IT IS WHY THE REFUSAL WRITES ``FAILED`` RATHER THAN A TERMINAL STATUS.
-
-    An artisan says no on Tuesday and agrees on Thursday. FAILED is the one status
-    ``workshop_transcripts._SETTLED_TRANSCRIPT_STATUSES`` deliberately leaves eligible, so the next
-    save of the stage picks the recording up with nothing to clean by hand.
-    """
     client = env["client"]
     media = _upload_audio(
         client, env["user"], tag=DW_TAG, tag_id=workshop, requests=["TRANSCRIPTION"]
@@ -656,18 +451,8 @@ async def test_recording_the_answer_later_lets_it_through_on_the_next_save(env, 
     assert after["transcriptStatus"] == "QUEUED"
 
 
-# ---- withdrawal ----------------------------------------------------------------------
-
 
 async def test_withdrawing_consent_stops_a_transcription_already_queued(env, granted):
-    """A CONSENT THAT CANNOT RECALL WHAT IT AUTHORISED IS A PREFERENCE, NOT A PERMISSION.
-
-    ``dictation_consent``'s own docstring argues for the decision log with exactly this artisan: they
-    agree on the 3rd, nine dictations go to a provider over the following week, and they change their
-    mind on the 9th. A job queued under the grant sits in ``MediaProcessingJob`` waiting for the
-    off-peak window — so without this the withdrawal would stop nothing that was already queued, and
-    the recordings would leave AFTER the artisan said stop.
-    """
     client = env["client"]
     media = _upload_audio(
         client, env["user"], tag=DW_TAG, tag_id=granted, requests=["TRANSCRIPTION"]
@@ -687,18 +472,8 @@ async def test_withdrawing_consent_stops_a_transcription_already_queued(env, gra
     assert "that is the answer on record" in (after["transcriptError"] or "")
 
 
-# ---- the doors that bypass the queue -------------------------------------------------
-
 
 async def test_the_admin_transcribe_now_button_is_refused_for_a_refused_workshop(env, workshop):
-    """``transcribe_media_now`` reaches ``transcribe_audio_bytes`` WITHOUT passing through
-    ``_process_job``, which is the exact shape of the two doors this feature has already had to close.
-
-    And an admin is not an exception. The observation that "the consent gate has never been a refusal
-    an admin could meet" is an argument about PERMISSION — an admin can record a GRANTED decision
-    themselves — and not an argument for sending. Recording the grant is attributed and logged;
-    sending anyway is the same outcome with nobody's name on it.
-    """
     media = _upload_audio(
         env["client"], env["user"], tag=DW_TAG, tag_id=workshop, requests=["TRANSCRIPTION"]
     )
@@ -708,9 +483,6 @@ async def test_the_admin_transcribe_now_button_is_refused_for_a_refused_workshop
 
 
 async def test_refining_a_transcript_is_refused_too_and_names_openai(env, workshop):
-    """The fourth door, and the one an audit that only looked for audio would miss: what leaves here
-    is TEXT, and it goes to a different company. ``_verb_gate`` settled the argument for the five AI
-    verbs — a transcript is the artisan's words with the audio compressed out of them."""
     media = _upload_audio(
         env["client"], env["user"], tag=DW_TAG, tag_id=workshop, requests=["TRANSCRIPTION"]
     )
@@ -722,17 +494,6 @@ async def test_refining_a_transcript_is_refused_too_and_names_openai(env, worksh
 
 
 async def test_withdrawal_reaches_a_recording_that_no_stage_references_yet(env, granted):
-    """THE CASE THE STAGE WALK ALONE MISSED, AND IT IS THE ORDINARY ORDER OF EVENTS.
-
-    A phone uploads the file and only THEN writes its id into the stage, so between those two requests
-    the recording is queued and no ``DwStageEntry`` mentions it. A withdrawal in that window found
-    nothing to cancel, and the clip sat reading QUEUED on the transcripts screen — while the drain
-    check would in fact have refused it, so nothing was ever going to be sent. What was broken was the
-    visibility, which is the whole reason cancellation exists as well as the drain check.
-
-    Found by a live request against the running API and not by any test, which is why this one exists:
-    ``workshop_audio_media_ids`` now reads the ``designWorkshop`` link tag as well as the stage walk.
-    """
     client = env["client"]
     media = _upload_audio(
         client, env["user"], tag=DW_TAG, tag_id=granted, requests=["TRANSCRIPTION"]
@@ -748,25 +509,8 @@ async def test_withdrawal_reaches_a_recording_that_no_stage_references_yet(env, 
     assert after["transcriptStatus"] != "QUEUED"
 
 
-# ---- the workshop a clip belongs to is not only the tag it arrived with ---------------
-
 
 async def test_a_clip_a_stage_names_is_refused_even_when_it_carries_no_tag(env, workshop):
-    """THE HOLE MEASURED ON THE RUNNING API, AND THE ORDINARY ORDER OF EVENTS PUT IT THERE.
-
-    ``POST /media/complete`` for an AUDIO clip with no ``designWorkshop`` tag is
-    NOT_WORKSHOP_MATERIAL and is queued — correctly, because at that instant nothing anywhere names a
-    workshop. The clip is written into a stage field only afterwards: the phone uploads the file and
-    THEN saves the stage. From that moment the stage says whose recording it is, and every gate that
-    read only the tag went on answering "not workshop material".
-
-    Reproduced against the live API before the fix, on a workshop whose ``dictationConsent`` is
-    REFUSED: the queue drain handed the bytes to ElevenLabs, Deepgram and OpenAI in turn, ``POST
-    /media/{id}/transcribe-now`` answered 200 and did the same, and ``POST
-    /media/{id}/refine-transcript`` posted the artisan's transcript to OpenAI at DESIGNER rank. The
-    two synchronous doors are asserted here because they answer BEFORE any provider is contacted,
-    which is this module's own rule; ``resolve_from_stages`` is the same argument on all three.
-    """
     client = env["client"]
     media = _upload_audio(client, env["user"], requests=[])
     assert media.get("linkedRecordType") in (None, ""), "the premise: no tag of its own"
@@ -785,10 +529,6 @@ async def test_a_clip_a_stage_names_is_refused_even_when_it_carries_no_tag(env, 
 
 
 async def test_a_clip_no_stage_names_and_no_tag_is_still_transcribable(env):
-    """THE OTHER HALF, AND THE ONE A CARELESS FAIL-CLOSED CHANGE BREAKS. 462 of the 528 AUDIO rows on
-    this deployment carry no tag and 279 of them are transcribed — questionnaire interviews, whose
-    artisans were asked a different question by a different consent process. A reverse lookup that
-    found nothing has to mean "nothing in this module governs it", never "refuse"."""
     media = _upload_audio(env["client"], env["user"], requests=["TRANSCRIPTION"])
     assert media["transcriptStatus"] == "QUEUED"
     assert [j["jobType"] for j in _jobs(media)] == ["TRANSCRIPTION"]
@@ -796,14 +536,6 @@ async def test_a_clip_no_stage_names_and_no_tag_is_still_transcribable(env):
 
 
 async def test_a_consented_workshops_stage_cannot_send_another_workshops_recording(env, granted):
-    """WHOSE CONSENT IS IT. Measured on the running API before the fix: ``PUT
-    /design-workshops/{A}/stages/{k}`` reported ``transcriptionsQueued: 1`` for a recording tagged to
-    workshop **B**, A GRANTED and B REFUSED, because the caller-supplied id won over the row's own tag.
-
-    A designer running two workshops in one cluster owns the media of both, so pasting the wrong id
-    into the wrong stage is an ordinary slip — and the consent that governs a voice is the consent of
-    the person whose voice it is. Every workshop that names the file has to permit the send.
-    """
     client = env["client"]
     other = client.post("/api/design-workshops", json={"title": "Other artisan"}).json()["id"]
     _withdraw(client, other)
@@ -820,36 +552,13 @@ async def test_a_consented_workshops_stage_cannot_send_another_workshops_recordi
 
 
 async def test_recording_a_grant_does_not_cancel_the_workshops_own_transcriptions(env, granted):
-    """THE HALF OF A PRIVACY GATE THAT NO TEST WATCHED: that it still lets the permitted work happen.
-
-    ``cancel_pending_transcriptions`` is unconditional about what it writes — every QUEUED/PROCESSING
-    transcription of this workshop becomes FAILED and every clip is stamped with
-    ``gate_refusal(REFUSED, MEDIA)``, *"This workshop's recordings may not be sent to the transcription
-    service — that is the answer on record"*. It is therefore correct **only** behind the REFUSED guard
-    in ``record_dictation_consent``. Called on a GRANTED decision it destroys the queue the grant was
-    recorded in order to fill, and puts a sentence saying the artisan refused onto the recordings of an
-    artisan who just agreed.
-
-    IT WAS REACHED. The guard was dropped in this tree while the recordings' half of the gate was being
-    built, and the whole suite stayed green: every other consent test records its answer BEFORE the clip
-    is uploaded, so the cancellation runs against an empty queue and finds nothing to destroy. The order
-    that breaks is the ordinary one — grant, record the artisan for an hour, then confirm the answer
-    again or have a colleague record it — which no test performed.
-
-    ASSERTED ON THE SENTENCES AND NOT ON THE STATUS, deliberately. ``app.main``'s lifespan starts a
-    media-queue worker, so a job queued inside this module can be drained mid-test and legitimately
-    reach FAILED with an object-storage error; pinning ``transcriptStatus == "QUEUED"`` would make this
-    test a race. Neither refusal sentence is producible for a GRANTED workshop by any path — the drain
-    gate re-reads the same consent — so their absence is the exact assertion, and it holds whenever the
-    worker happens to run.
-    """
     client = env["client"]
     media = _upload_audio(
         client, env["user"], tag=DW_TAG, tag_id=granted, requests=["TRANSCRIPTION"]
     )
     assert media["transcriptStatus"] == "QUEUED", "the premise: queued under the grant"
 
-    _grant(client, granted)  # the artisan confirms again, or a colleague records the same answer
+    _grant(client, granted)
 
     after = client.get(f"/api/media/{media['id']}").json()
     assert "that is the answer on record" not in (after["transcriptError"] or ""), (

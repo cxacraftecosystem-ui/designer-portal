@@ -1,11 +1,3 @@
-"""THE MINISTRY PACKS' WORK QUEUE, OVER A DATABASE.
-
-Claiming is a compare-and-set, so of two claimers one gets the row; a build abandoned by a dead
-worker comes back; the last attempt fails for good; regenerating bumps the revision and writes new
-keys beside the old; a scheme with no workshops is EMPTY with no files; and a storage failure is
-retried without ever leaving a READY row that points at nothing.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -114,7 +106,7 @@ def test_failed_after_max_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
     assert second.status == packs.FAILED and second.attempts == 2
     assert "renderer fell over" not in (
         second.error or ""
-    )  # a short reason, never the exception text
+    )
 
 
 def _xlsx_sheets(body: bytes) -> list[str]:

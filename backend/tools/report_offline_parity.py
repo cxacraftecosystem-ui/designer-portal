@@ -1,30 +1,3 @@
-"""Build the shared fixture workshop's report with the SERVER's code, for the browser's port to match.
-
-The web can now build a workshop's report with no connection (``frontend/lib/offlineReport``): the
-same traversal as ``report_builder.ReportBuilder``, written again in TypeScript because a browser
-cannot run this module. Two copies of one traversal drift, and the drift this guards against is not
-a crash — it is a heading numbered differently, a table column rounded the other way or a warning
-worded apart, in two files a ministry could receive for one workshop.
-
-So this tool runs the server's own path over ``shared/report-parity/workshop.json`` — every case
-in that file, through ``report_meta``, ``resolve_accent``, ``apply_report_settings`` and
-``build_report`` exactly as ``_build_only`` (the preview) and ``render_report`` (the file) call them
-— and writes what came out to ``shared/report-parity/expected.json``.
-``frontend/e2e/offline-report-parity-unit.spec.ts`` builds the same cases in TypeScript and
-compares block for block. ``tests/test_report_offline_parity.py`` re-runs this tool and fails if the
-committed file is stale, so a change to the server's builder cannot land without the browser's
-copy being made to agree in the same change.
-
-It also writes ``shared/report-gazetteer.json``: the closed state and district lists, the place
-atlas and the state seats the map section places an address with (``report_builder._geocode``),
-exported rather than re-typed so the browser geocodes against the same tables.
-
-    cd backend && python tools/report_offline_parity.py           # check, exit 1 if stale
-    cd backend && python tools/report_offline_parity.py --write   # regenerate both files
-
-Nothing imports this at runtime; it is a development tool and lives outside ``app/``.
-"""
-
 from __future__ import annotations
 
 import json
@@ -37,11 +10,6 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# The settings object refuses to build without these, and nothing this tool runs reads any of them:
-# it builds documents in memory and never opens a connection. Placeholders, set only when absent —
-# and NEVER under pytest, where `tests/conftest.py` owns the environment and twenty-eight modules
-# decide whether a database exists by reading `DATABASE_URL`; a placeholder there would send them
-# looking for one.
 _PLACEHOLDERS = {
     "DATABASE_URL": "postgresql://unused:unused@unused.invalid:5432/unused",
     "JWT_SECRET": "x" * 64,
@@ -98,7 +66,6 @@ GAZETTEER = REPO / "frontend" / "lib" / "offlineReport" / "gazetteer.json"
 
 
 def _definition(payload: dict[str, Any] | None) -> CustomDefinition:
-    """The custom-section definition from its API shape (``custom_sections.definition_payload``)."""
     if not payload:
         return CustomDefinition()
     sections = []
@@ -151,7 +118,6 @@ def _questionnaires(items: list[dict[str, Any]]) -> list[QuestionnaireItem]:
 
 
 def _data(fixture: dict[str, Any], settings: dict[str, Any]) -> WorkshopData:
-    """``assemble_workshop_data`` over the fixture's stages: one singleton per stage, rows by entity."""
     singletons: dict[str, dict[str, Any]] = {}
     collections: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for stage_key, stage in fixture["stages"].items():
@@ -177,7 +143,6 @@ def _data(fixture: dict[str, Any], settings: dict[str, Any]) -> WorkshopData:
 
 
 def build_case(fixture: dict[str, Any], case: dict[str, Any]) -> dict[str, Any]:
-    """One case, built the way ``_build_only`` (PREVIEW) or ``render_report`` (FILE) builds it."""
     sources = fixture["sources"]
     options = dict(case.get("options") or {})
     data = _data(fixture, case.get("settings") or {})
@@ -189,7 +154,6 @@ def build_case(fixture: dict[str, Any], case: dict[str, Any]) -> dict[str, Any]:
     base = get_template(template_id)
     specials = {s.special for s in base.sections}
 
-    # The loads, in `_report_inputs`' order, each warning as that load warns.
     load_warnings: list[str] = []
     if SpecialSection.ANNEXURE_QUESTIONNAIRES in specials:
         attach_questionnaires(data, _questionnaires(sources["questionnaires"]))
@@ -245,7 +209,6 @@ def build_case(fixture: dict[str, Any], case: dict[str, Any]) -> dict[str, Any]:
 
 
 def _plain(value: Any) -> Any:
-    """``asdict`` output made JSON: enums to their values, tuples to lists, sets sorted."""
     if isinstance(value, dict):
         return {k: _plain(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -254,20 +217,18 @@ def _plain(value: Any) -> Any:
         return sorted(_plain(v) for v in value)
     if hasattr(value, "value") and not isinstance(value, (str, int, float, bool)):
         return value.value
-    if isinstance(value, str) and type(value) is not str:  # a str Enum
+    if isinstance(value, str) and type(value) is not str:
         return str(value.value)  # type: ignore[attr-defined]
     return value
 
 
 def _block(block: Any) -> dict[str, Any]:
-    """``_block_payload`` in the route: the type name, then the dataclass's fields."""
     payload: dict[str, Any] = {"type": type(block).__name__.replace("Block", "").upper()}
     payload.update(_plain(asdict(block)))
     return payload
 
 
 def gazetteer() -> dict[str, Any]:
-    """The tables ``report_builder._geocode`` reads, exported for the browser's port of it."""
     return {
         "_comment": (
             "Generated by backend/tools/report_offline_parity.py from services/address.py, "
@@ -301,7 +262,6 @@ def gazetteer() -> dict[str, Any]:
 
 
 def _atlas_anchors() -> dict[str, list[float]]:
-    """``DistrictAnchors.seed_from_atlas`` alone — what the map has before any record is learned."""
     anchors = geography.DistrictAnchors()
     anchors.seed_from_atlas()
     out: dict[str, list[float]] = {}

@@ -1,10 +1,3 @@
-"""The asking side of cross-portal search: who may ask, what is asked, and what happens when the
-other portal is slow, missing or untrusted (routes/search, services/unified_search,
-services/cross_portal_client; docs/SEARCH.md).
-
-No database and no network: the local ranking, the peer call and ``requests`` are fakes.
-"""
-
 from __future__ import annotations
 
 import json
@@ -172,7 +165,6 @@ async def test_remote_items_merge_after_local_on_a_tie(world):
     assert remote["local"] is False and remote["portal"] == "fieldRepository"
     assert remote["href"] == "/remote/artisans/fr9" and remote["openUrl"].startswith("https://")
     assert local["score"] == remote["score"]
-    # Only the projection crosses; unknown types are dropped.
     assert "phone" not in remote and "linkedArtisanIds" not in remote
     assert [g["type"] for g in result["groups"]] == ["artisans"]
     sent = world.peer_calls[0]

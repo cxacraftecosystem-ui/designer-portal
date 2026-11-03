@@ -1,29 +1,3 @@
-"""The designer portal's half of C27: find an artisan in the documentation portal, link, refresh.
-
-The flow a designer sees:
-
-1. On the artisan form they type the Aadhaar number (or the Pehchan card number), tick that the
-   artisan agreed to share their details between the portals, and press Find. ``POST
-   /cross-portal/artisans/lookup`` sends the documentation portal the Pehchan number or the Aadhaar
-   number's fingerprint (``services/aadhaar_fingerprint``, the key both portals share) — never the
-   number — and returns what it shares, mapped onto this portal's form.
-2. They check the filled form and save it as usual (``POST /artisans``, unchanged for every client).
-3. The client then calls ``POST /cross-portal/artisans/{id}/link``. The server does NOT take the
-   client's word for which record matched: it looks the artisan up again from what is now STORED on
-   this artisan (the Aadhaar fingerprint and the Pehchan number), asks the documentation portal to
-   record the link, and writes its own link row only once that portal has not refused it (a refusal
-   means the artisan withdrew consent).
-4. Later, ``POST .../link/refresh`` copies the identity fields from the documentation portal, which is
-   their source of truth, through the same helpers as the ordinary artisan edit: the edit guard and
-   audit ledger, the Pehchan pair rule, the identity-number clash guard and the resubmission rule.
-
-Every lookup, link, refresh and unlink is written to ``CrossPortalAccessLog`` (who, what, which
-record, or no match) — never the number or the code. Lookups are limited per account per hour.
-
-Every route answers 404 while the feature is not active here (``services/cross_portal.active`` with
-the documentation portal's URL), so nothing changes for anybody until both servers are configured.
-"""
-
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -79,8 +53,6 @@ REFRESH_PEHCHAN = (
     "Ask them to add it there, then refresh."
 )
 
-#: Lookups one account may make in an hour. A designer records a few artisans a day; this is a
-#: ceiling on someone walking the Pehchan number space, not on ordinary work.
 LOOKUPS_PER_HOUR = 60
 
 ACTION_LOOKUP = "LOOKUP"
@@ -106,7 +78,6 @@ async def _log(
     remote_artisan_id: str | None = None,
     matched_by: str | None = None,
 ) -> None:
-    """One access-log row. Never the Aadhaar number, its code, or the Pehchan number."""
     await db.crossportalaccesslog.create(
         data={
             "userId": get_value(user, "id"),
@@ -133,7 +104,6 @@ class LookupIn(BaseModel):
 
     aadhaarNumber: str | None = Field(default=None, max_length=20)
     pehchanCardNumber: str | None = Field(default=None, max_length=40)
-    #: The designer's statement that the artisan agreed. Required to be true.
     consent: bool = False
 
 
@@ -141,10 +111,7 @@ class LinkIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     consent: bool = False
-    #: What the lookup on the form returned. When given, the server's own lookup must agree.
     expectedRemoteArtisanId: str | None = Field(default=None, max_length=64)
-    #: A Field Repository card scanned or typed on the form (``services/artisan_card``). When given,
-    #: the link is made from the card instead of the stored numbers, and ``matchedBy`` is CARD.
     cardInput: str | None = Field(default=None, max_length=64)
 
 
@@ -160,7 +127,6 @@ def _peer_query(aadhaar_code: str | None, pehchan: str | None) -> dict[str, Any]
 async def _lookup(
     settings: Any, aadhaar_code: str | None, pehchan: str | None, user: Any
 ) -> dict[str, Any] | None:
-    """Ask the documentation portal. ``aadhaar_code`` is the HMAC code, never the number."""
     body = _peer_query(aadhaar_code, pehchan)
     if not body:
         return None
@@ -179,7 +145,6 @@ async def _lookup(
 
 
 async def _local_craft(craft: Any) -> dict[str, Any] | None:
-    """The remote craft mapped onto this portal's: by shared code first (C26), then by name."""
     if not isinstance(craft, dict) or not craft.get("name"):
         return None
     local = None
@@ -208,9 +173,6 @@ async def _prefill(match: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _assert_may_edit(artisan: Any, user: Any) -> None:
-    """The artisan's privileged editors only: admin, its author, a professor+ above the author, or
-    an EDIT grantee — the same answer ``access.guard_record_edit`` reaches — and never a holder of a
-    post on the workshop it is filed under."""
     await assert_may_write_a_record_filed_under(getattr(artisan, "designWorkshopId", None), user)
     owner_id = get_value(artisan, "createdById")
     if is_content_admin(user) or (owner_id is not None and get_value(user, "id") == owner_id):
@@ -241,7 +203,6 @@ def _link_payload(link: Any | None) -> dict[str, Any]:
 
 
 async def _own_card_code(artisan_id: str, user: Any) -> str | None:
-    """This artisan's live card code here, issued now if it has none; None while cards are off."""
     if not artisan_card.active(get_settings()):
         return None
     try:
@@ -254,7 +215,6 @@ async def _own_card_code(artisan_id: str, user: Any) -> str | None:
 
 
 def _card_code_of(payload: Any) -> str | None:
-    """The Field Repository's card code in a link or refresh answer: top level, or in ``match``."""
     if not isinstance(payload, dict):
         return None
     value = payload.get("cardCode")
@@ -264,11 +224,6 @@ def _card_code_of(payload: Any) -> str | None:
 
 
 async def store_remote_card_code(artisan_id: str, code: str | None) -> None:
-    """Remember the Field Repository's card code on this artisan's link.
-
-    The column is unique, and two artisans here may be linked to one artisan there, so any other
-    link holding the code gives it up first: the latest link answers for that card.
-    """
     if not code:
         return
     await db.crossportalartisanlink.update_many(
@@ -283,8 +238,6 @@ async def store_remote_card_code(artisan_id: str, code: str | None) -> None:
 async def _tell_peer_about_link(
     settings: Any, artisan_id: str, remote_id: str, matched_by: str, user: Any
 ) -> tuple[int | None, Any]:
-    """Ask the documentation portal to record the link: ``(status, answer)``, or ``(None, None)``
-    if it can't be reached. Carries this artisan's card code when cards are on here."""
     body: dict[str, Any] = {"remoteArtisanId": artisan_id, "matchedBy": matched_by}
     own = await _own_card_code(artisan_id, user)
     if own:
@@ -303,8 +256,6 @@ async def _tell_peer_about_link(
 
 
 async def push_card_code(artisan_id: str, code: str, user: Any) -> bool:
-    """Tell the documentation portal this artisan's new card code (after a reissue, and on every
-    refresh). True when it recorded it. Never raises: a missed push is re-sent by the next refresh."""
     settings = get_settings()
     if not cross_portal.active(settings, needs_url=True):
         return False
@@ -325,11 +276,6 @@ async def push_card_code(artisan_id: str, code: str, user: Any) -> bool:
 
 
 async def peer_card_match(parsed: Any, user: Any) -> dict[str, Any] | None:
-    """Ask the documentation portal which shared artisan a card of theirs belongs to.
-
-    ``match`` (the lookup answer plus ``cardCode``) or None: the same None whatever the reason
-    (unknown, revoked, not shared). 503 with nothing written when it can't be reached.
-    """
     settings = _settings_or_404()
     try:
         code, payload = await peer_call(
@@ -350,7 +296,6 @@ async def peer_card_match(parsed: Any, user: Any) -> dict[str, Any] | None:
 
 
 async def card_prefill(match: dict[str, Any], user: Any) -> dict[str, Any]:
-    """A card's match as the lookup prefill, counted and logged as a lookup (matched by CARD)."""
     await _assert_under_lookup_limit(user)
     await _log(
         user,
@@ -367,12 +312,9 @@ async def card_prefill(match: dict[str, Any], user: Any) -> dict[str, Any]:
 
 @router.get("/status")
 async def cross_portal_status(_: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """Whether the clients should draw the Field Repository lookup at all, and what it shares."""
     return {
         "enabled": cross_portal.active(get_settings(), needs_url=True),
-        # The consent tick's list, from the one list the lookup answer is built from.
         "sharedFields": cross_portal.consent_fields_phrase(),
-        # The coverage map's "Field Repository" toggle: aggregate counts only, behind its own flag.
         "coverageEnabled": coverage_peer_active(get_settings()),
     }
 
@@ -448,10 +390,6 @@ async def link_artisan_record(
     user: Any,
     card_input: str | None = None,
 ) -> dict[str, Any]:
-    """The link itself, shared by the route above and the duplicate finder's Link action
-    (``routes/artisan_duplicates.link_pair``). Looks the artisan up again from what it stores, asks
-    the documentation portal first, then writes the local row. ``card_input`` is a Field Repository
-    card scanned or typed on the form: the link is then made from the card. Raises the route's errors."""
     current_user = user
     if not consent:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CONSENT_NEEDED)
@@ -459,7 +397,6 @@ async def link_artisan_record(
     await _assert_may_edit(artisan, current_user)
     from_card = bool(card_input and card_input.strip())
     if from_card:
-        # FROM A CARD: the card is asked about again here, never taken on the client's word.
         try:
             parsed = artisan_card.parse(card_input)
         except artisan_card.CardParseError:
@@ -470,8 +407,6 @@ async def link_artisan_record(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=CARD_OWN)
         match = await peer_card_match(parsed, current_user)
     else:
-        # The saved artisan's code is its stored aadhaarFingerprint (the legacy number's code before
-        # the backfill): the number itself is not kept, so there is nothing to recompute it from.
         stored_code = cross_portal.stored_aadhaar_code(artisan, cross_portal.aadhaar_key(settings))
         match = await _lookup(settings, stored_code, artisan.pehchanCardNumber, current_user)
     if match is None:
@@ -487,8 +422,6 @@ async def link_artisan_record(
         matched_by = cross_portal.MATCHED_BY_CARD
     else:
         matched_by = match.get("matchedBy") if match.get("matchedBy") in cross_portal.MATCHED_BY else cross_portal.MATCHED_BY_AADHAAR
-    # THE PEER FIRST. A 409 there means consent was withdrawn between the lookup and now, and a
-    # link row written before asking would show "Linked" for an artisan who said no.
     code, answer = await _tell_peer_about_link(
         settings, artisan_id, remote_id, matched_by, current_user
     )
@@ -504,7 +437,6 @@ async def link_artisan_record(
         "matchedBy": matched_by,
         "consentRecordedById": get_value(current_user, "id"),
         "consentRecordedAt": now,
-        # Unreachable: the link stands here and the next refresh re-sends it (``refresh_artisan``).
         "remoteAcknowledgedAt": now if code == 200 else None,
     }
     link = await db.crossportalartisanlink.upsert(
@@ -535,7 +467,6 @@ def _as_column(key: str, value: Any) -> Any:
 
 
 async def _withdrawn(artisan_id: str, link: Any, user: Any) -> HTTPException:
-    """The documentation portal refused the link: drop ours too, log it, and say so plainly."""
     await db.crossportalartisanlink.delete_many(where={"artisanId": artisan_id})
     await _log(
         user, ACTION_REFRESH, "REFUSED", artisan_id=artisan_id, remote_artisan_id=link.remoteArtisanId
@@ -547,7 +478,6 @@ async def _withdrawn(artisan_id: str, link: Any, user: Any) -> HTTPException:
 async def refresh_artisan(
     artisan_id: str, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """Copy the identity fields from the documentation portal, through the ordinary edit's helpers."""
     settings = _settings_or_404()
     artisan = await require_record(db.artisan, artisan_id)
     link = await db.crossportalartisanlink.find_unique(where={"artisanId": artisan_id})
@@ -555,7 +485,6 @@ async def refresh_artisan(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This artisan isn't linked.")
     await _assert_may_edit(artisan, current_user)
     if link.remoteAcknowledgedAt is None:
-        # A link the other side never recorded cannot be refreshed there; send it again first.
         code, answer = await _tell_peer_about_link(
             settings, artisan_id, link.remoteArtisanId, link.matchedBy, current_user
         )
@@ -590,9 +519,6 @@ async def refresh_artisan(
             remote_artisan_id=link.remoteArtisanId,
         )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=NO_LONGER_SHARED)
-    # THE FIELD REPOSITORY MERGED (OR UN-MERGED) ITS RECORD. It answers with the id the link now
-    # lives on there; follow it, so a merge or undo on that side reaches this one without the
-    # documentation portal ever calling this server.
     current_remote = match.get("artisanId")
     if isinstance(current_remote, str) and current_remote and current_remote != link.remoteArtisanId:
         previous_remote = link.remoteArtisanId
@@ -621,9 +547,6 @@ async def refresh_artisan(
             data[key] = value
     changed = sorted(k for k in data if k in cross_portal.IDENTITY_FIELDS)
     if data:
-        # THE ORDINARY EDIT'S HELPERS, in update_artisan's order: the pair rule and the clash guard
-        # refuse before the ledger row commits (one transaction), and a creator's refresh of a
-        # record sent back for revision resubmits it, exactly as their own save would.
         async with db.tx() as tx:
             assert_pehchan_pair(artisan, data, detail=REFRESH_PEHCHAN)
             await guard_record_edit(artisan, current_user, data, "artisan", client=tx)
@@ -641,7 +564,6 @@ async def refresh_artisan(
     link = await db.crossportalartisanlink.update(
         where={"artisanId": artisan_id}, data={"lastRefreshedAt": datetime.now(UTC)}
     )
-    # Our card code again, on every refresh: a push after a reissue that didn't get through lands here.
     own = await _own_card_code(artisan_id, current_user)
     if own:
         await push_card_code(artisan_id, own, current_user)

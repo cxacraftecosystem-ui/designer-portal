@@ -54,9 +54,6 @@ from app.services.workshop_access import (
 
 router = APIRouter(prefix="/products", tags=["products"])
 
-# What a product carries on the wire. Reads load these in one parallel wave (see
-# services/records.py for why); writes still pass the derived ``INCLUDE`` to Prisma, so the two can
-# never describe different products.
 RELATIONS = (
     Relation("artisan", "artisan", "artisanId"),
     Relation("craft", "craft", "craftId"),
@@ -67,27 +64,6 @@ RELATIONS = (
 )
 INCLUDE = include_of(RELATIONS)
 
-# PRODUCTDOCUMENTATION'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null``
-# through for on this model, so emptying a box on the product form actually empties the column
-# instead of answering 200 and keeping the old value.
-#
-# PER-MODEL AND NOT GLOBAL, for the reason ``clean_data``'s ``clearable`` docstring gives: the global
-# set cannot know which table a payload is bound for. Derived from ``model ProductDocumentation`` in
-# prisma/schema.prisma, intersected with what ``ProductUpdate`` actually accepts — do not copy this
-# tuple to Tool or Artisan, whose nullable columns are a different list.
-#
-# Only valid because ``update_product`` dumps with ``exclude_unset=True``; see the note at that call.
-#
-# DELIBERATELY ABSENT: ``craftName``/``place``/``artisanName``/``productName`` (NOT NULL), the two
-# enums ``productType``/``marketDemand`` and ``status``/``recordedAt``/``recordedTimezone`` (NOT NULL
-# with defaults), ``artisanId``/``craftId``/``workshopId``/``locationId`` (already global), and the
-# measurement trio ``measurementImageId``/``measurementAnalysis``/``measurementAnalysisStatus``,
-# which ``services/media_queue`` owns — ``records.PROVENANCE_SKIP_FIELDS`` already classes all three
-# as system-managed, and no client form sends them. ``extraMetadata`` is left out because naming it
-# would be inert: ``merge_field_provenance`` rebuilds and reassigns that column further down this
-# route, so a null could never reach Prisma anyway. ``measurementMethods`` is out for a stronger
-# reason than either: it is not a column at all, so there is no null for it to write — see the note
-# under this tuple.
 _CLEARABLE_COLUMNS = (
     "localName",
     "timeTakenToCompleteProduct",
@@ -102,99 +78,6 @@ _CLEARABLE_COLUMNS = (
     "productFunctionUse",
     "remarks",
 )
-
-# ── ``measurementMethods`` RIDES THIS BODY AND IS NOT A COLUMN ───────────────────────────────────
-#
-# The one key on ``ProductCreate`` / ``ProductUpdate`` that names no column on ``ProductDocumentation``. It is a per-dimension hint
-# about HOW ``lengthInches`` / ``breadthInches`` / ``heightInches`` came to be known — typed off a
-# tape, computed from marks on a photograph, or estimated by a vision model — and
-# ``merge_field_provenance`` POPS it a few lines into each write path below and merges it into the
-# ``{by, byName, at}`` stamp beside each dimension. ``services/measurement_provenance`` holds the
-# argument; ``schemas/records.validate_measurement_methods`` holds what a client may send.
-#
-# THE PRECONDITION THAT IS EASY TO BREAK FROM HERE, which is why this note is in the route and not
-# only in the service. ``clean_data`` drops only ``None``, so the marker survives every step between
-# the parse and that pop. Anything inserted in between that REBUILDS ``data`` from a column list
-# instead of mutating it in place would drop the marker silently — the dimension would then store an
-# explicit UNRECORDED and the designer who pressed Accept on a machine reading would never be told.
-# And anything that moved the pop EARLIER, in front of ``guard_record_edit``, would hand
-# ``merge_field_provenance`` a payload with nothing left to merge.
-#
-# It is in ``access.REVISION_SKIP_FIELDS`` and in ``records.PROVENANCE_SKIP_FIELDS``, so it is
-# neither audited as an edit somebody made nor attributed as a field somebody filled in. True as of
-# 2026-08-27; re-check with ``grep -n "MARKER_BODY_KEY" backend/app/services/access.py
-# backend/app/services/records.py``.
-
-# WHY EVERY ENCODE BELOW NAMES THE CALLER. ``public_encode(obj)`` with no viewer is not "the default";
-# it is the CHEAPEST SAFE answer — mask every identity number and withhold every media URL — and it is
-# the answer a route reaches by not thinking about the question. This module used to take it on all
-# four of its responses, and the cost was not theoretical: ``RELATIONS`` declares ``media`` two lines
-# up, so every product came back with its photographs listed and their ``url``/``publicUrl``/
-# ``objectKey`` popped off. ``products/page.tsx`` builds its tile from ``media.url``, so the list
-# proved a photograph existed and then rendered a placeholder with nothing to open — for a
-# MASTER_ADMIN and for the designer who had uploaded it seconds earlier, because the viewer-less
-# branch is taken before any rank test. Naming the caller also lifts the Aadhaar/Pehchan mask for the
-# ranks entitled to it, which is the same policy artisans.py, media.py and search.py already apply on
-# their own reads.
-
-# WHY THIS MODULE STAYS ON THE UPLOADER HALF. The three encodes below ask ``media_url_owners`` for the
-# uploader set alone and leave ``public_encode``'s ``media_workshops`` at its empty default. That is a
-# DECISION, recorded here once and pointed at from each call, not an omission — the banner in
-# ``records.py`` exists because a transcript leak was achieved by exactly this shape of silence.
-#
-# ``records.media_url_scope`` answers "whose media bytes may travel" in two halves, because a
-# design-workshop attachment is entitled to by TAG — ``linkedRecordType="designWorkshop"`` plus the
-# workshop id (``dictation_consent.MEDIA_TAG``) — rather than by who uploaded it. The tag half exists
-# for surfaces that can actually be handed such a file. This one cannot, and here is the argument.
-#
-# A PRODUCT'S MEDIA IS REACHED BY FOREIGN KEY, AND THAT FOREIGN KEY IS WRITTEN FROM THE TAG.
-# ``RELATIONS`` above pulls ``media`` through ``MediaFile.productId``, and the only writer of that
-# column in this repository is ``records.media_relation_data``, which DERIVES it from the link type:
-# ``{"productId": …}`` for the tag ``product``, and nothing at all for ``designWorkshop`` — that tag
-# has no column on MediaFile, which is the whole reason the workshop half has to be a tag test in the
-# first place. Its two callers (``POST /media/complete`` and ``POST /media/{id}/relink`` — true as
-# of 2026-08-27; check ``grep -rn media_relation_data backend/app``) write the tag and the key from
-# the SAME pair, and ``MediaCompleteRequest`` carries no ``productId`` of its own for a client to
-# send past them (``APIModel`` forbids extra keys). So a row in a product's ``media`` list is tagged
-# ``product``; passing ``media_workshops`` here would ship a set that nothing on this payload could
-# ever be tested against, at the price of a second round trip on the widest read in the module.
-# Compare ``search.py``, which reads the ``MediaFile`` table itself and therefore does need it.
-#
-# THE NEAR-MISS THAT IS NOT ONE, AND THE FALSE VERSION OF IT THAT STOOD HERE UNTIL 2026-08-27.
-# An earlier draft of this paragraph offered a worked example: a file first attached to a product and
-# later RECOVERED onto a design workshop, keeping its ``productId`` and gaining the lower-cased tag
-# ``designworkshop``, invisible to a workshop arm that compares camelCase. No route in this
-# repository can write that row. The wrong version is recorded here rather than quietly deleted,
-# because a comment that invents a hazard is worse than no comment at all: it is written as a
-# concrete scenario, which is the form a future editor acts on, and while they are defending the
-# fiction they are not looking at the real thing. The premise came from the banner over
-# ``media.ORPHAN_TAG_TYPES``, which says the relink route lower-cases whatever it is given before
-# storing it — true of the types that route ACCEPTS, and over-general for this one.
-#
-# EVERY WRITER OF ``MediaFile.linkedRecordType``, one at a time (true as of 2026-08-27; check
-# ``grep -rn mediafile.create backend/app`` and the same for ``mediafile.update``):
-#
-#   * ``POST /media/{id}/relink`` refuses the tag outright. It lower-cases the requested type and
-#     looks it up in ``media._relink_delegate``, which has no ``designworkshop`` entry — a design
-#     workshop has no typed FK to re-point — so the route raises 400 "Unsupported record type for
-#     re-linking" before it writes anything. A relink genuinely does NOT clear the previous foreign
-#     key, which is what made the invented row sound plausible; it never reaches the write.
-#   * ``POST /media/complete`` stores the tag VERBATIM (lower-cased only to look the parent delegate
-#     up) and takes the foreign key from ``media_relation_data``, which has no entry for either
-#     spelling. So a workshop-tagged row — camelCase from both clients, lower-case if some caller
-#     ever sends one that way — carries no ``productId``, and never enters a product's ``media``
-#     list to be redacted in the first place.
-#   * There is no PATCH or PUT on media at all; the remaining writes touch transcript columns only.
-#
-# The two spellings cannot part company HERE, then, because nothing here carries the tag in either of
-# them. Where they could is ``records.py``, and both gates read it from one constant:
-# ``_redact_sensitive`` and ``_design_workshop_media_branches`` compare against the same camelCase
-# ``MEDIA_TAG``. Agreement is the property this change exists to restore, and the fix the day one of
-# them starts folding case is to settle the spelling in ``records.py``, not to widen this route.
-#
-# The day a product genuinely can carry a design-workshop-tagged file, move all three calls to
-# ``media_url_scope`` and pass ``media_workshops`` at every one of them — not at whichever single one
-# a bug report happened to name.
 
 
 @router.get("")
@@ -212,21 +95,13 @@ async def list_products(
     statusFilter: str | None = None,
     dateFrom: datetime | None = None,
     dateTo: datetime | None = None,
-    # WHOSE RECORDS. Reading is open to every signed-in account, so "the records I filed" is no
-    # longer a side effect of the visibility filter and has to be asked for. Without this the
-    # My Activity page had to fetch page 1 of the WHOLE repository and sift it client-side, which
-    # silently under-reported the moment the repository outgrew one page.
     createdBy: str | None = None,
-    # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete. See ``list_artisans``.
     completeness: str | None = None,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ) -> dict[str, Any]:
     page, page_size, skip = normalize_pagination(page, pageSize)
     where: dict[str, Any] = {}
-    # OR-bearing conditions are collected here and combined under a single top-level "AND" so that,
-    # e.g., a free-text search OR and the artisan-name OR never overwrite one another. The row-visibility
-    # filter joins the same AND, so it too is safe from being clobbered by any OR.
     and_filters: list[dict[str, Any]] = []
     vis = await viewable_where(current_user)
     if vis:
@@ -240,9 +115,6 @@ async def list_products(
                     {"craftName": contains(search)},
                     {"artisanName": contains(search)},
                     {"place": contains(search)},
-                    # The three narrative columns take rich text from this release on; the identifier-ish
-                    # columns above them do not. ``prose_contains`` explains why the two need different
-                    # filters and what breaks if they are levelled back to one.
                     prose_contains("rawMaterialsUsed", search),
                     prose_contains("mainToolsUsed", search),
                     prose_contains("remarks", search),
@@ -253,13 +125,6 @@ async def list_products(
         where["craftId"] = craftId
     if artisanId:
         if artisanName and artisanName.strip():
-            # Match products linked to this artisan by FK, PLUS *every* product that carries this
-            # artisan's typed name (case-insensitive) regardless of its FK. This is deliberately
-            # inclusive so the process form's product dropdown never hides a product that genuinely
-            # belongs to the artisan — covering products saved with a typed name and no FK link, and
-            # products FK-linked to a duplicate artisan record that shares the same name. The only
-            # cost is that two genuinely distinct artisans with an identical name would share a list,
-            # which is rare and far preferable to silently dropping a real product.
             and_filters.append(
                 {
                     "OR": [
@@ -271,9 +136,6 @@ async def list_products(
         else:
             where["artisanId"] = artisanId
     if designWorkshopId:
-        # The design & prototype workshop filter — a plain equality on the column. See
-        # `api/routes/artisans.list_artisans` for why it is not an OR and why the reserved word
-        # "none" is not accepted on a singular filter.
         where["designWorkshopId"] = designWorkshopId
     if workshopId:
         where["workshopId"] = workshopId
@@ -293,29 +155,6 @@ async def list_products(
     if and_filters:
         where["AND"] = and_filters
     add_date_range(where, "createdAt", dateFrom, dateTo)
-    # ONE grant lookup for the whole page — ``media_url_owners`` costs a single query, and only below
-    # professor, which is exactly the rank whose colleagues' photographs would otherwise be listed and
-    # withheld. The cheap ``viewer``-derived default would hand back only the caller's OWN uploads,
-    # which on a shared workshop's product list is most of a page of dead tiles.
-    #
-    # IT RIDES THE PAGE'S OWN WAVE RATHER THAN FOLLOWING IT. It depends only on the VIEWER, not on
-    # which rows came back, so awaiting it after ``count_and_page`` returned added a whole round trip
-    # to this route for every account below professor — invisible in the measured table, which was
-    # taken as an admin, where the lookup short-circuits without querying. (Written against the
-    # cross-region database at ~750ms a hop; co-located and ~1-2ms since 2026-09-02,
-    # ``services/concurrency.py``. A read that waits on a read it does not depend on is still one
-    # wait too many, and it is now milliseconds rather than most of a second.)
-    #
-    # Width: the count, the page and this make 3, and the relation hydration inside
-    # ``count_and_page`` is a second wave of at most ``len(RELATIONS)``, so nothing here approaches
-    # ``pool_width()`` — which reads ``DATABASE_CONNECTION_LIMIT``, 10 by default and 5 on the
-    # deployment. THREE STILL FITS AT FIVE; the parenthesised "(10)" that used to end this sentence
-    # was the default rather than the number in force, which is the sort of margin a reader checks
-    # once and then trusts.
-    #
-    # THE UPLOADER HALF ALONE, DELIBERATELY: no design-workshop-tagged row can reach a product's
-    # ``media`` list, so ``media_workshops`` stays empty here by decision, not by nobody asking. The
-    # argument is under "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above.
     (total, items), media_urls = await gather_reads(
         count_and_page(
             db.productdocumentation,
@@ -340,58 +179,15 @@ async def create_product(
     payload: ProductCreate,
     current_user: Any = Depends(require_record_creator),
 ) -> dict[str, Any]:
-    # ── THE IDEMPOTENT REPLAY, ABOVE EVERY GATE AND EVERY WRITE IN THIS ROUTE (2026-09-03) ──────
-    #
-    # A queued create whose answer was lost is sent again by the next drain pass, and until this
-    # branch existed that produced a second product for one save. ``client_key_replay`` carries the
-    # argument; what belongs HERE is why it is the first statement in the function:
-    #
-    #   * ABOVE THE GATES. ``enforce_workshop_submission`` and ``assert_payload_workshop`` decide
-    #     whether this caller may create the row. On a replay the row already exists, so re-asking can
-    #     only turn a create that SUCCEEDED into a 403 — for a designer whose workshop grant lapsed
-    #     while their phone was out of coverage, which is precisely the population this whole
-    #     mechanism serves.
-    #   * ABOVE ``attach_location``. That helper WRITES: it mints a ``Location`` row from the payload.
-    #     One per replay, referenced by nothing, is a leak that only ever grows.
-    #
-    # The answer goes back through this same ``status_code=201`` handler and the same encoder, so the
-    # caller cannot tell a replay from a first landing. That is deliberate — see the banner above
-    # ``client_key_replay`` — and it is why there is no ``replayed`` flag in this response.
-    #
-    # ``media_urls`` IS LEFT TO THE VIEWER-DERIVED DEFAULT, and on this branch that is a decision
-    # rather than an inherited line. Unlike a first landing, a replayed row CAN carry media: the
-    # outbox uploads its photographs after the create lands, so a pass that died between the two
-    # comes back to a product with files on it. The default resolves to the caller's own uploads,
-    # which is exactly what those files are — the same outbox entry, on the same account, whose
-    # ownership ``client_key_replay`` has just checked.
     replayed = await client_key_replay(
         db.productdocumentation, payload.clientKey, user_id=current_user.id, include=INCLUDE
     )
     if replayed is not None:
         return await attach_completeness("product", public_encode(replayed, current_user))
     data = decimal_to_string(clean_data(payload.model_dump()))
-    # A queued or stale write that still names a merged artisan lands on the survivor
-    # (services/artisan_merge.redirect_payload) instead of a dangling-reference 422.
     await redirect_payload(data)
-    # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
-    # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
-    # its own gate beside the line above rather than instead of it: `workshopId` is
-    # `WorkshopAssignment`, `designWorkshopId` is creator / admin / `DesignWorkshopViewer`.
-    # `assert_payload_workshop` calls `load_workshop_or_404(for_edit=True)` — the same helper the
-    # stage writes and the questionnaire attach use — because filing a record under a workshop
-    # puts it inside that workshop's scoped lists and totals, which is a change to somebody
-    # else's record. Ungated, any client could post a stranger's workshop id and file into it,
-    # which is the hole `_require_attachable_workshop` was written to close one door over.
-    # `filed_under=None`: a row that does not exist yet is filed nowhere.
-    #
-    # BOTH GATES COME BEFORE ``attach_location``, which WRITES — the replay banner above says so —
-    # so a create refused after it left a ``Location`` row behind that nothing references, on every
-    # refused save (2026-10-09).
     await assert_payload_workshop(data, current_user, filed_under=None)
-    # THE MASTER CRAFT LIST (2026-10-20): the craft is a ``craftId`` from the list, and ``craftName``
-    # is its copy. An old client's typed name is matched onto the list or kept for review. Below the
-    # workshop gates, so a refused create reads nothing.
     data = await craft_master.resolve_record_craft(db, data, keep_name=True)
     data = await fill_craft_name(data)
     data = await attach_location(data)
@@ -399,28 +195,16 @@ async def create_product(
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
     apply_status_policy_create(current_user, data)
-    # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
     try:
         created = await db.productdocumentation.create(data=data, include=INCLUDE)
     except Exception as exc:
-        # THE RACE THE PRE-READ ABOVE CANNOT SETTLE, and the same belt-and-braces
-        # ``artisans.create_artisan`` puts behind ``_guard_identity_conflicts``: two passes of one
-        # queue in flight together (two browser tabs, a sync that fired twice, a restored queue
-        # drained beside the original) each found no row and each planned an INSERT. Only the index
-        # can decide that, and the loser's answer is the winner's row rather than a 500.
-        #
-        # ``None`` MEANS THIS WAS NOT A ``clientKey`` COLLISION AT ALL, so the original error goes on
-        # up untouched. Swallowing it would report a create that failed as one that succeeded.
         raced = await client_key_replay_after_violation(
             db.productdocumentation, payload.clientKey, exc, user_id=current_user.id, include=INCLUDE
         )
         if raced is None:
             raise
         return await attach_completeness("product", public_encode(raced, current_user))
-    # No grant lookup on the create: a MediaFile points at its product by ``productId``, and this
-    # product did not exist until the statement above, so ``media`` is empty by construction and there
-    # is no URL for a resolved set to decide about. The viewer is still named, for the identity mask.
     return await attach_completeness("product", public_encode(created, current_user))
 
 
@@ -430,10 +214,6 @@ async def get_product(
 ) -> dict[str, Any]:
     product = await require_record(db.productdocumentation, product_id)
     await hydrate_relations([product], RELATIONS)
-    # The uploader half alone, and for this detail read as much as for the list: the ``media`` this
-    # hydrates comes through ``MediaFile.productId``, so it cannot be a design-workshop attachment.
-    # See "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above; ``media_workshops`` is left empty on
-    # purpose.
     return await attach_completeness(
         "product",
         public_encode(product, current_user, media_urls=await media_url_owners(current_user)),
@@ -447,56 +227,22 @@ async def update_product(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     product = await require_record(db.productdocumentation, product_id)
-    # ``exclude_unset=True`` IS THE PRECONDITION OF ``clearable``, not a stylistic choice: it is what
-    # makes a present key mean "the caller sent this". Drop it and every optional the client left
-    # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
     data = decimal_to_string(
         clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     )
     await redirect_payload(data)
-    # THE PRECONDITION IS A QUESTION, NOT A COLUMN — taken out of the body here, asked inside the
-    # transaction below. ``take_expected_updated_at`` says why it has to leave ``data`` this early:
-    # everything between this line and the write reads the dict, and a stray key would become an
-    # audit entry, a provenance stamp, or a 500 naming a column this table does not have.
     expected_updated_at = take_expected_updated_at(data)
-    # Moving a record into (or to a different) workshop is a workshop submission too — re-check
-    # assignment + window, so the create-time guard can't be bypassed by PATCHing the workshop in later.
     check = None
     if "workshopId" in data and data.get("workshopId") != product.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
-    # Same gate on the PATCH, so the create-time check cannot be bypassed by filing the record
-    # afterwards. The destination is keyed on PRESENCE, so an edit that does not mention the
-    # workshop is not re-validated — a record filed under a workshop the designer was later removed
-    # from must still be editable by them. `filed_under` is the workshop the stored row names, whose
-    # inspector and two directors may not change this record at all, an unfile and a move out
-    # included (2026-10-09). Above ``attach_location``, which writes, for the create route's reason.
     await assert_payload_workshop(data, current_user, filed_under=product.designWorkshopId)
     data = await craft_master.resolve_record_craft(db, data, stored=product, keep_name=True)
     data = await fill_craft_name(data, stored=product)
     data = await attach_location(data)
-    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
-    # ends in ``record_revision``, which used to COMMIT on its own a handful of statements before the
-    # update below — so a request that died in the gap (P2024 on a cross-region pool, a dropped
-    # connection) left a ledger entry asserting a change to a product that still holds the old
-    # values. ``client=tx`` is load-bearing rather than decorative: ``db.tx()`` hands back a DIFFERENT
-    # client, so a callee writing through the module singleton is not inside this block however it
-    # reads. The argument in full is in ``access.record_revision``; the 403 ordering is untouched,
-    # because ``guard_record_edit`` still refuses above its own write.
     async with db.tx() as tx:
-        # BEFORE ``guard_record_edit``, WHICH IS THE FIRST WRITE IN THIS BLOCK. That helper ends in
-        # ``record_revision`` — a ledger entry asserting a change — so a refusal raised after it
-        # would leave a committed claim about an edit that was then turned down: the exact defect the
-        # transaction wrapping above was added to end, arrived at from the other side. Raising here
-        # means the rollback takes the ledger entry with it.
-        #
-        # ``None`` PASSES AND CHANGES NOTHING, which is every client shipped to date.
-        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
         await lock_and_assert_expected_updated_at(tx, "productdocumentation", product, expected_updated_at)
         await guard_record_edit(product, current_user, data, "product", client=tx)
         await apply_status_policy_update(current_user, product, data)
-        # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's
-        # edit) and pinned after the status policy, so an already-flagged record cannot be
-        # self-approved.
         stamp_workshop_submission(data, check=check, record=product)
         pin_pending_if_late(data, current_user, check=check, record=product)
         merge_field_provenance(data, current_user, previous=product)
@@ -504,15 +250,6 @@ async def update_product(
         updated = await tx.productdocumentation.update(
             where={"id": product_id}, data=data, include=INCLUDE
         )
-    # The PATCH response carries ``media`` (it is in ``INCLUDE``) and the editor need not be the
-    # uploader — an EDIT-tier grantee or a professor routinely saves a product somebody else
-    # photographed. Resolved rather than left to the cheap default so a photograph that was openable
-    # before the save is still openable in the response that comes back from it; a URL that vanishes on
-    # save reads as the save having destroyed the file.
-    #
-    # ``INCLUDE`` is derived from ``RELATIONS``, so the rows it returns are the same ``productId``-keyed
-    # rows the list returns and the same reasoning settles the second half: the uploader set alone,
-    # ``media_workshops`` empty by decision. See "WHY THIS MODULE STAYS ON THE UPLOADER HALF" above.
     return await attach_completeness(
         "product",
         public_encode(updated, current_user, media_urls=await media_url_owners(current_user)),
@@ -523,7 +260,5 @@ async def update_product(
 async def delete_product(product_id: str, current_user: Any = Depends(get_current_user)) -> None:
     assert_can_delete(current_user)
     product = await require_record(db.productdocumentation, product_id)
-    # Not by the inspector or a director of the workshop it is filed under, admins included: its
-    # records are its content (``services/record_design_workshop``, 2026-10-09).
     await assert_may_write_a_record_filed_under(product.designWorkshopId, current_user)
     await db.productdocumentation.delete(where={"id": product_id})

@@ -1,25 +1,3 @@
-"""The Field Repository's searches of this portal: ``POST /cross-portal/peer/search`` and ``.../record``.
-
-The first peer-RECEIVING routes on the designer portal. The caller is the Field Repository's
-server, admitted by the shared token and a fresh nonce (``services/cross_portal_peer``), and every
-answer is signed over the request it answers. Both are POST so the query text stays out of URLs and
-proxy logs. Every route answers 404 until ``cross_portal.search_active``.
-
-How a request is treated (docs/SEARCH.md §3.5):
-
-1. The requester's e-mail is matched to an account here. A match brings that account's own read
-   rules (design-workshop visibility included); no match gets the floor, ``audience = 'ALL'``.
-   Either way only ``shareable`` documents are considered.
-2. Consent is re-checked live in the same SQL: every artisan a record names must still carry a
-   ``CrossPortalArtisanLink``, so an unlink takes effect before the indexer catches up.
-3. Each search is logged (``action=SEARCH``, the asking account, how many results) — never the query.
-4. 120 searches per 10 minutes per asking account; then a signed 429.
-5. What goes back is :data:`cross_portal.PEER_ITEM_KEYS` plus ``linkedArtisanIds`` (the Field
-   Repository's ids for the artisans a record names, so it can apply its own consent once more), on
-   search rows and on the single record alike.
-   Never a media URL, a storage key, a phone number, e-mail, Aadhaar, Pehchan, date of birth or address.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -40,11 +18,9 @@ router = APIRouter(prefix="/cross-portal/peer", tags=["cross-portal"])
 ACTION_SEARCH = "SEARCH"
 ACTION_RECORD_VIEW = "RECORD_VIEW"
 
-#: Searches one asking account may make in :data:`RATE_WINDOW`.
 RATE_LIMIT = 120
 RATE_WINDOW = timedelta(minutes=10)
 
-#: Characters of a record's body shown on the other portal's read-only card.
 RECORD_SNIPPET_CHARS = 400
 
 
@@ -94,7 +70,6 @@ async def _local_account(requester: Requester) -> Any | None:
     if not email or "@" not in email:
         return None
     user = await db.user.find_first(where={"email": {"equals": email, "mode": "insensitive"}})
-    # An account the allow-list refuses (REJECTED or SUSPENDED) is not active: it gets the floor.
     if user is None or await barred_among([user.email]):
         return None
     return user
@@ -230,7 +205,6 @@ async def peer_search_record(
         "snippet": snippet,
         "recordDate": row.get("recordDate"),
         "openUrl": _open_url(settings, row["openPath"]),
-        # The Field Repository re-applies its own consent with these, as it does for search rows.
         "linkedArtisanIds": [
             remote_ids[a] for a in row.get("artisanIds") or [] if a in remote_ids
         ],

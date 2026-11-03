@@ -1,12 +1,3 @@
-"""C1 — the sanction order opens the workshop a planned row was for, and fills stage 1 from it.
-
-Owner decision (2026-10-17): one annual-plan row is one workshop; the officer may pick only an
-exactly matching row; the sanctioned amount prints on the cover.
-
-Arranged like ``tests/test_sanction_orders.py``: every database call in a private ``asyncio.run``
-loop while no ``TestClient`` is alive (seed, then observe), requests in between.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -30,11 +21,8 @@ APP = Path(sanction_orders.__file__).resolve().parents[1]
 
 
 def test_the_sanction_module_reaches_the_plan_only_through_its_own_service() -> None:
-    """The census in ``test_annual_plan_is_not_a_workshop`` stays exact: the order links a plan row
-    through ``services/annual_plan`` and never names the table itself."""
     for module in ("services/sanction_orders.py", "api/routes/sanction_orders.py"):
         text = (APP / module).read_text(encoding="utf-8")
-        # The census's own pattern: a word, so the body field `annualPlanEntryId` is not the table.
         assert not re.search(r"\bannualplanentry\b", text.lower()), module
         assert re.search(r"annual_plan\.", text), module
 
@@ -85,7 +73,6 @@ def world() -> Any:
                 }
             )
             facts["officer"] = officer
-            # A Regional Director answering for Odisha only — the plan's own scope rule.
             director_email = f"c1-director-{stamp}@example.org"
             director = await db.user.create(
                 data={
@@ -126,7 +113,6 @@ def world() -> Any:
                     **base,
                 }
             )
-            # The same reference in an older plan year, already withdrawn.
             facts["withdrawn"] = await db.annualplanentry.create(
                 data={
                     "planYear": 2098,
@@ -260,7 +246,6 @@ def world() -> Any:
             facts["gujarat_after"] = await db.annualplanentry.find_unique(
                 where={"id": facts["gujarat"].id}
             )
-            # A seed that writes nothing (a workshop id that does not exist) reads back as failed.
             ghost = type("Ghost", (), {"id": f"c1-ghost-{stamp}"})()
             facts["ghost_seeded"] = await sanction_orders._seed_the_report_copy(
                 ghost,
@@ -300,7 +285,6 @@ def test_the_lookup_matches_only_the_exact_number(world: Any) -> None:
     assert (
         items[1]["pickable"] is False and items[1]["reason"] == annual_plan.SANCTION_PICK_WITHDRAWN
     )
-    # Punctuation is part of the reference: no fuzzy match.
     assert world["lookup_punctuation"].json()["items"] == []
 
 

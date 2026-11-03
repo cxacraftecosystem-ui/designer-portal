@@ -1,14 +1,3 @@
-"""Test-only builders for Aadhaar documents, signed with TEST keys made here — never real data.
-
-UIDAI publishes no sample offline e-KYC file and its only sample Secure QR (the 2019 specification's
-V1 number) is not signed by any published certificate, so every document a test verifies is built
-by this module, in UIDAI's layout, and signed with a key generated for the run. The name, the date
-of birth and every digit below are invented.
-
-Also here: the two ZIP encryptions UIDAI's files use (Python's ``zipfile`` can read ZipCrypto but
-not write it, and can do neither for WinZip AES), and a fake ASA for the online tests.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -36,7 +25,6 @@ from app.services.aadhaar import xmldsig
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# Invented values. 2345 is not anybody's Aadhaar tail in particular; the names are placeholders.
 TEST_NAME = "Kamla Devi Prajapati"
 TEST_DOB = "07-05-1987"
 TEST_LAST4 = "2345"
@@ -78,8 +66,6 @@ def reference_id(last4: str = TEST_LAST4, generated: datetime | None = None) -> 
     return last4 + moment.strftime("%Y%m%d%H%M%S") + f"{moment.microsecond // 1000:03d}"
 
 
-# ── Secure QR ────────────────────────────────────────────────────────────────────────────────
-
 
 def secure_qr_payload(
     *,
@@ -90,9 +76,8 @@ def secure_qr_payload(
     gender: str = "F",
     photo: bytes | None = None,
 ) -> bytes:
-    """The bytes UIDAI signs: fields, 0xFF-separated, then a stand-in photo containing 0xFF."""
     fields = [
-        "3",  # indicator: e-mail and mobile hashes present (unversioned layout)
+        "3",
         ref or reference_id(),
         name,
         dob,
@@ -110,10 +95,10 @@ def secure_qr_payload(
         "Bagru",
     ]
     if version:
-        fields = [version, *fields, "6789"]  # V2 onwards: last four of the mobile
+        fields = [version, *fields, "6789"]
     text = b"\xff".join(value.encode("iso-8859-1") for value in fields) + b"\xff"
     if photo is None:
-        photo = b"\x00\x00\x00\x0cjP  \r\n\x87\n" + bytes(range(256)) * 3  # contains 0xFF bytes
+        photo = b"\x00\x00\x00\x0cjP  \r\n\x87\n" + bytes(range(256)) * 3
     tail = b"" if version else hashlib.sha256(b"e").digest() + hashlib.sha256(b"m").digest()
     return text + photo + tail
 
@@ -125,7 +110,6 @@ def sign_qr(payload: bytes, key: rsa.RSAPrivateKey) -> bytes:
 def qr_text(signed: bytes) -> str:
     compressed = gzip.compress(signed)
     value = int.from_bytes(compressed, "big")
-    # str(int) refuses past 4,300 digits; a real QR's number is longer, so convert in chunks.
     chunks: list[str] = []
     while value:
         value, chunk = divmod(value, 10**1000)
@@ -138,8 +122,6 @@ def qr_text(signed: bytes) -> str:
 def build_secure_qr(key: rsa.RSAPrivateKey, **kwargs: object) -> str:
     return qr_text(sign_qr(secure_qr_payload(**kwargs), key))  # type: ignore[arg-type]
 
-
-# ── Offline e-KYC XML ────────────────────────────────────────────────────────────────────────
 
 
 def contact_hash(value: str, share_code: str, last_digit: int) -> str:
@@ -194,8 +176,6 @@ def offline_xml(
         )
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8")
 
-
-# ── ZIP encryption: ZipCrypto and WinZip AES ─────────────────────────────────────────────────
 
 _CRC_TABLE = []
 for _n in range(256):
@@ -274,25 +254,17 @@ def aes_zip(name: str, data: bytes, password: str) -> bytes:
     return _zip(name, salt + verifier + ciphertext + tag, 99, 0, len(data), 0x1, extra)
 
 
-# ── a fake ASA ───────────────────────────────────────────────────────────────────────────────
-
 
 @dataclass
 class FakeAsa:
-    """Plays the ASA and UIDAI: checks the AUA's signature, decrypts the PID with the TEST UIDAI
-    encryption key, checks the OTP, and answers signed with the TEST UIDAI signing key."""
-
     aua: TestIdentity
     uidai_encryption: TestIdentity
     uidai_signing: TestIdentity
     otp: str = "123456"
-    #: When set, every answer is ret="n" with this UIDAI error code.
     error: str | None = None
     timeout: bool = False
-    #: Every request the fake saw, for assertions. Bodies only — they contain no plaintext PID.
     seen: list[tuple[str, bytes]] = field(default_factory=list)
     issued_txns: set[str] = field(default_factory=set)
-    #: The last decrypted PID, so a test can prove what was inside the encryption.
     last_pid: bytes | None = None
     kyc_name: str = TEST_NAME
 
@@ -346,7 +318,6 @@ class FakeAsa:
         return httpx.Response(404)
 
     def decrypt_pid(self, auth_root: etree._Element) -> tuple[bytes, bytes]:
-        """(pid xml, hmac plaintext) recovered with the TEST UIDAI private key."""
         session_key = self.uidai_encryption.key.decrypt(
             base64.b64decode(auth_root.find("Skey").text or ""), padding.PKCS1v15()
         )

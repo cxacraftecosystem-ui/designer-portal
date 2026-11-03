@@ -1,15 +1,3 @@
-"""The officers' create door writes the craft the way the ordinary create door does.
-
-``POST /design-workshop-oversight/workshops`` used to write ``craftName`` alone, so a workshop an
-officer opened had no ``craftId`` and fell out of every craft filter and off the craft's own page.
-It now runs the body through ``craft_master.craft_columns``, the same call
-``POST /design-workshops`` makes: a ``craftId`` must name an ACTIVE craft and its name follows it;
-a bare name is matched onto the list and kept as typed when nothing matches.
-
-**NO DATABASE.** The opener and the craft reads are replaced by recorders; what is asserted is
-which columns and which stage-1 values reach ``open_design_workshop``.
-"""
-
 import asyncio
 from types import SimpleNamespace
 

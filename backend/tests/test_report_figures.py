@@ -1,19 +1,3 @@
-"""The three things a generated report contains that are not text: the map, the infographics and
-the photographs that are placed beside what they are photographs of.
-
-Every assertion here defends the same property, which is the only property that matters for a
-document a ministry reads as fact: A FIGURE IS DRAWN FROM WHAT WAS RECORDED OR IT IS NOT DRAWN.
-There is no placeholder chart, no zero-filled category and no invented pin. A donut reading
-"0 selected, 0 rejected, 0 pending" is not an empty figure — it is a claim that nothing was
-selected, and no reader can tell that apart from a stage nobody filled in.
-
-The other half is the mirror of it and just as expensive: a figure that quietly VANISHES. A map
-that disappears whenever the village names are unfamiliar reads to a designer as a broken
-renderer, and a photograph that sits in the media table one join away from the prototype it
-belongs to is data the designer captured and the report never showed. Both of those shipped
-once; every test below names the one it prevents.
-"""
-
 import app.services.stage_definitions  # noqa: F401  - installs the registry
 from app.services.report_builder import (
     FIGURES,
@@ -39,10 +23,6 @@ from app.services.report_model import (
 from app.services.report_templates import TEMPLATES, SpecialSection, template
 from app.services.stage_schema import FieldType, stages
 
-# --------------------------------------------------------------------------------------
-# Fixtures
-# --------------------------------------------------------------------------------------
-
 
 def _meta(**kw) -> ReportMeta:
     base = {"title": "Workshop", "subtitle": "Cluster", "generated_at": "2026-08-07T00:00:00Z"}
@@ -66,12 +46,6 @@ def _build(data: WorkshopData, template_id: str = "DETAILED_TECHNICAL"):
 
 
 def _all_text(document) -> str:
-    """Every character the document would print, whatever block kind carries it.
-
-    Walks runs generically rather than naming block types, so a table cell, a heading, a key-value
-    pair and a card caption are all searched. A helper that only read tables is how an earlier
-    version of a grouping test passed against a report that was actually wrong.
-    """
     out: list[str] = []
 
     def harvest(value) -> None:
@@ -111,20 +85,8 @@ def _chart(document, title_fragment: str) -> ChartBlock:
     return found[0]
 
 
-# --------------------------------------------------------------------------------------
-# The catalogue: a template may only name a figure that exists
-# --------------------------------------------------------------------------------------
-
 
 def test_every_figure_a_template_names_exists_in_the_catalogue():
-    """A typo in a template's ``figures`` tuple has no other way to announce itself.
-
-    ``report_templates`` deliberately holds the figure ids as plain strings — it must not import
-    the builder, because the builder imports it — so nothing at import time checks that
-    ``"COST_BY_HEAD"`` is spelled the way the catalogue spells it. Without this test the only
-    symptom of a misspelling is a figure that silently never prints, in a sixty-page document
-    nobody proof-reads against the data.
-    """
     for report_template in TEMPLATES:
         for section in report_template.sections:
             for figure_id in section.figures:
@@ -135,8 +97,6 @@ def test_every_figure_a_template_names_exists_in_the_catalogue():
 
 
 def test_every_catalogued_figure_has_a_builder_method():
-    """``_figure`` reaches its builder by ``getattr``, so a renamed method is an AttributeError
-    at render time rather than at import — a 500 on the download button of a finished workshop."""
     builder = ReportBuilder(_data(), template("DCH_STANDARD"), _resolver, meta=_meta())
     for figure_id, (stage_key, method_name) in FIGURES.items():
         assert callable(getattr(builder, method_name, None)), \
@@ -145,8 +105,6 @@ def test_every_catalogued_figure_has_a_builder_method():
 
 
 def test_the_full_templates_carry_a_map_and_a_chart_section():
-    """The two templates a ministry actually receives. A figure nothing places is a figure that
-    does not exist, and the placement lives here rather than in the builder on purpose."""
     for template_id in ("DCH_STANDARD", "DETAILED_TECHNICAL"):
         specials = [s.special for s in template(template_id).sections]
         assert SpecialSection.MAP in specials, f"{template_id} places no map"
@@ -154,8 +112,6 @@ def test_the_full_templates_carry_a_map_and_a_chart_section():
 
 
 def test_the_map_follows_the_participant_roster():
-    """Position IS the figure's argument. Printed under the table of thirty names the map answers
-    the question that table raises; printed anywhere else it is a decorative map of India."""
     for template_id in ("DCH_STANDARD", "DETAILED_TECHNICAL"):
         sections = template(template_id).sections
         roster = next(i for i, s in enumerate(sections)
@@ -165,41 +121,20 @@ def test_the_map_follows_the_participant_roster():
 
 
 def test_the_buyer_catalogue_never_prints_the_cost_breakdown():
-    """PHOTO_CATALOGUE goes to the person negotiating against the cluster, and the cost-by-head
-    figure prints the maker's material and labour cost beside the price they are being quoted."""
     catalogue = template("PHOTO_CATALOGUE")
     costing = catalogue.section_for("COSTING_MARKET_LINKAGE")
     assert costing is not None and costing.include_figures is False
     assert not any(s.special is SpecialSection.CHART for s in catalogue.sections)
 
 
-# --------------------------------------------------------------------------------------
-# The map
-# --------------------------------------------------------------------------------------
-
 
 def test_no_state_and_no_district_means_no_map_at_all():
-    """A map of India with no idea which part of it the workshop happened in is a decoration.
-
-    Not an empty frame and not a heading over nothing: the whole section is absent, because a
-    heading with a blank rectangle under it is the single most common way a generated report
-    looks broken to the officer who opens it.
-    """
     document = _build(_data(singletons={"WORKSHOP_SETUP": {"workshopTitle": "W",
                                                            "venue": "Community hall"}}))
     assert _maps(document) == []
 
 
 def test_a_map_with_no_points_still_renders():
-    """THE REGRESSION THIS FILE EXISTS FOR. Stage 1 named Odisha and nothing in the record could
-    be geocoded — no venue address, no artisan whose village this build's atlas knows.
-
-    The block is emitted anyway, with an empty point tuple, because the tinted state IS the
-    figure in that case: the record genuinely says "this workshop happened in Odisha" and the
-    map says exactly that and no more. An earlier build skipped the section whenever nothing
-    resolved, which a designer reads as a broken renderer rather than as unresolvable data, and
-    which no test would have caught because a missing figure raises nothing.
-    """
     document = _build(_data(singletons={"WORKSHOP_SETUP": {"state": "Odisha"}}))
     maps = _maps(document)
     assert len(maps) == 1
@@ -211,15 +146,11 @@ def test_a_map_with_no_points_still_renders():
 
 
 def test_a_district_alone_is_enough_to_draw_the_map():
-    """Stage 1 offers state and district separately and a designer may fill in either first."""
     document = _build(_data(singletons={"WORKSHOP_SETUP": {"district": "Bargarh"}}))
     assert len(_maps(document)) == 1
 
 
 def test_a_measured_venue_fix_wins_over_the_typed_address():
-    """``venueLocation`` is a coordinate somebody stood at; the address is a name looked up in a
-    table. Preferring the lookup would move the venue to the district headquarters for every
-    workshop held in a village, which is most of them."""
     document = _build(_data(singletons={"WORKSHOP_SETUP": {
         "state": "Odisha", "district": "Bargarh", "venue": "Weavers' Service Centre",
         "venueLocation": {"lat": 21.33331, "lon": 83.61672},
@@ -229,8 +160,6 @@ def test_a_measured_venue_fix_wins_over_the_typed_address():
 
 
 def test_a_zero_zero_fix_falls_back_to_the_address_rather_than_the_gulf_of_guinea():
-    """``0, 0`` is what a form that never obtained a fix writes. Rejecting it here is what keeps
-    the venue on the map at all: the address still resolves to the right state."""
     document = _build(_data(singletons={"WORKSHOP_SETUP": {
         "state": "Rajasthan", "village": "Bagru", "venueLocation": {"lat": 0.0, "lon": 0.0},
     }}))
@@ -239,15 +168,6 @@ def test_a_zero_zero_fix_falls_back_to_the_address_rather_than_the_gulf_of_guine
 
 
 def test_every_roster_map_key_is_a_real_participant_field():
-    """``MAP_ROSTER_PLACE_KEYS`` named ``block`` for a long time, which is a ``workshopSetup``
-    field and not a participant one, so a third of the map's roster read had never returned
-    anything but ``None``.
-
-    Nothing catches that at import and nothing can. ``validate_registry`` does check
-    ``caption_for``, ``ref_filter_by``, ``label_field``, promoted paths and hydration targets
-    against real fields — but it lives in ``stage_schema``, which ``report_builder`` imports, so it
-    cannot see these constants without an import cycle. The check has to be a test instead.
-    """
     entity = next(e for s in stages() if s.key == MAP_ROSTER_STAGE
                   for e in s.entities if e.key == MAP_ROSTER_ENTITY)
     for key in (*MAP_ROSTER_PLACE_KEYS, MAP_ROSTER_STATE_KEY, MAP_ROSTER_PIN_KEY):
@@ -260,14 +180,6 @@ def test_every_roster_map_key_is_a_real_participant_field():
 
 
 def test_the_map_reads_the_roster_row_s_own_frozen_address():
-    """THE ROW DECIDES. ``REFERENCE_HYDRATION["participant.artisanRef"]`` copies village,
-    district, state, pincode and address onto the roster row at save time, so the frozen copy the
-    participant table prints is sitting right beside the ref — and the map must print the same
-    answer that table does, from the same bytes.
-
-    The row here has no ``artisanRef`` at all, which is also the hand-typed case: a participant
-    who walked in on day two, whose village the designer wrote down themselves.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -280,24 +192,6 @@ def test_the_map_reads_the_roster_row_s_own_frozen_address():
 
 
 def test_a_live_artisan_record_never_moves_a_pin_the_roster_row_has_already_frozen():
-    """THE ONE PLACE A SUBMITTED REPORT RE-RESOLVED A LIVE ROW, and this is the test for it.
-
-    ``_artisan_points`` used to build every pin from ``self.data.reference(...)`` first and read
-    the row's own keys only ``if not text``. ``WorkshopData.references`` is filled by
-    ``design_workshops.load_report_references``, which issues an unqualified ``find_many`` against
-    the CURRENT ``Artisan`` table at render time and reads the district off the live ``Location``.
-    So a researcher correcting an artisan's address in June — or a co-designer merging the record
-    into a duplicate — moved a pin in a February report that had already been handed to an
-    officer, while the participant table two pages earlier went on printing the frozen copy. One
-    document, two answers about where one person lives, and nothing on the page to say why.
-
-    It never even needed an edit: hydration is only-fill-blanks, so a designer who OVERTYPED the
-    roster row's district got the same disagreement on the day they typed it.
-
-    The fixture makes the disagreement total — the row froze Barpali in Odisha, the live record
-    now says Bhuj in Gujarat — so restoring the old precedence fails both assertions rather than
-    shifting a pin by a few kilometres.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -316,19 +210,6 @@ def test_a_live_artisan_record_never_moves_a_pin_the_roster_row_has_already_froz
 
 
 def test_a_roster_row_that_states_no_address_falls_back_to_the_referenced_artisan_record():
-    """Rows saved before the artisan hydration mapping widened carry no stated address at all, and
-    for those the ``Artisan`` record is still the only place the address exists. That is why
-    ``ReferencedRecord.place/district/state`` are kept and why deleting them would drop those rows
-    off the map.
-
-    THIS TEST WAS ``test_artisan_homes_come_from_the_referenced_artisan_record`` AND ITS DOCSTRING
-    PINNED A BUG. It asserted the reference-first precedence as though it were the design, on the
-    stated ground that "No roster field holds a district. The participant row records a village as
-    free text" — which stopped being true when ``REFERENCE_HYDRATION["participant.artisanRef"]``
-    began copying village, district, state, pincode and address onto the row. The fixture is
-    unchanged, because a row with no stated address is exactly what the fallback is for; only the
-    claim about the tree is corrected, and the row-first case is asserted above it.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Rajasthan", "district": "Jaipur"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -347,22 +228,6 @@ def test_a_roster_row_that_states_no_address_falls_back_to_the_referenced_artisa
 
 
 def test_the_fallback_joins_the_village_before_the_district_the_way_the_row_branch_does():
-    """ONE VILLAGE, TWO PINS, DECIDED BY WHEN THE ROW HAPPENED TO BE SAVED.
-
-    The legacy branch built its search string as ``", ".join((ref_district, ref_place))`` — the
-    district FIRST — while the row-first branch above it, ``_venue_point``, and
-    ``MAP_ROSTER_PLACE_KEYS``' own comment all join the finest part first. That is not a matter of
-    taste: ``place_atlas.resolve_place`` scans longest runs first and LEFTMOST WINS AT EQUAL WIDTH
-    ("Rudraprayag, Dehradun" stays on the town the researcher led with), so a district that is also
-    a curated town outranks the village standing beside it. Bargarh and Barpali are both in the
-    atlas and 16 km apart, so a pre-widening row for a Barpali weaver resolved to BARGARH and was
-    labelled Bargarh, while the identical address on a post-widening row took the row-first branch
-    as "Barpali, Bargarh" and resolved to Barpali. Two pins and two labels for one village, in one
-    figure, with nothing on the page to say why.
-
-    Bargarh is chosen deliberately: a district the atlas does NOT hold as a town would let either
-    order pass, which is how this survived.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -383,19 +248,6 @@ def test_the_fallback_joins_the_village_before_the_district_the_way_the_row_bran
 
 
 def test_the_row_s_own_district_and_state_are_both_read_not_just_the_village():
-    """TWO FIXES IN ONE FIXTURE, because they fail together.
-
-    The row-side read used to take the FIRST non-empty of ``MAP_ROSTER_PLACE_KEYS`` and never
-    looked at the row's ``state`` at all — the state came from stage 1, always. So an artisan who
-    travelled in from the next state, and whose hamlet this build's atlas has never heard of, was
-    geocoded as "hamlet, the workshop's state": the district they actually named was never
-    consulted and neither was the state they actually named, and the pin landed on the WORKSHOP's
-    state capital. Joining the row's village and district the way ``_venue_point`` joins the
-    venue's address, and reading the row's own state before stage 1's, is what places them.
-
-    The village here is invented on purpose. A hamlet the atlas knows would resolve from its own
-    name whatever state was passed, and the test would pass against the old code by luck.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Rajasthan", "district": "Jaipur"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -413,20 +265,6 @@ def test_the_row_s_own_district_and_state_are_both_read_not_just_the_village():
 
 
 def test_a_row_that_froze_a_village_but_no_state_is_placed_from_the_record_not_the_workshop():
-    """THE ROW SHAPE THE ROW-FIRST PRECEDENCE PINNED 1,300 KM AWAY, and the reason the legacy gate
-    asks about the STATE and not only about the address text.
-
-    ``"village": "village"`` has been in ``REFERENCE_HYDRATION["participant.artisanRef"]`` since the
-    initial commit; ``district`` and ``state`` were added much later. A roster row saved in between
-    carries a village and NOTHING that can place it — so while the gate read ``if not text`` those
-    rows took the row-first branch, never reached their ``Artisan`` record, fell through to the
-    WORKSHOP's state, and were geocoded as "hamlet, Rajasthan": one pin on Jaipur, with Odisha not
-    tinted at all. A row carrying MORE frozen data drew a worse pin than one carrying none — delete
-    the ``village`` key from this fixture and the old code placed it correctly.
-
-    The village is invented on purpose. A hamlet the atlas knows would resolve from its own name
-    whatever state was passed and the test would pass against the old code by luck.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Rajasthan", "district": "Jaipur"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -450,20 +288,6 @@ def test_a_row_that_froze_a_village_but_no_state_is_placed_from_the_record_not_t
 
 
 def test_a_pin_dropped_on_the_artisan_s_own_place_is_drawn_where_it_was_dropped():
-    """``participant.subjectLocation`` is the pin a researcher dropped on the artisan's OWN place,
-    hydrated onto the roster row at save time — and no renderer read it.
-
-    The map geocoded the district NAME instead, so a report holding an exact coordinate for an
-    artisan drew them on a district centroid or, where the atlas knew only the state, on the state
-    capital — and then counted them in the caption's "drawn at its state capital" sentence, exactly
-    as if no pin had ever been dropped. The pin did print, as a raw "21.20411, 83.60122" key-value
-    line under the participant table, where no reader can use it.
-
-    The fixture's coordinate is deliberately NOT Barpali's atlas position (21.1918, 83.5906), so a
-    fix that quietly went on geocoding the village name fails on the numbers rather than passing by
-    coincidence. It is the STATED pin: ``_subject_point`` is the only coordinate allowed to cross
-    onto a stage entry, because the device's own fix is the desk the record was typed at.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -477,10 +301,6 @@ def test_a_pin_dropped_on_the_artisan_s_own_place_is_drawn_where_it_was_dropped(
     assert "drawn at its state capital" not in block.caption, \
         "a surveyed pin must never be described as an unresolvable place standing in on a capital"
     assert "Odisha" in block.highlight
-    # ONE LABEL GRAMMAR PER FIGURE, pinned rather than left incidental. Every other pin on this map
-    # is named by the atlas, which returns one token; this pin is named from the row, and the first
-    # version of it carried the whole joined address ("Barpali, Bargarh"). A figure with two kinds
-    # of label invites a reader to look for the distinction between them, and there is none.
     assert home.label == "Barpali", (
         f"the surveyed pin is labelled {home.label!r} where every geocoded pin beside it carries a "
         f"single place name"
@@ -488,9 +308,6 @@ def test_a_pin_dropped_on_the_artisan_s_own_place_is_drawn_where_it_was_dropped(
 
 
 def test_a_zero_zero_subject_pin_falls_back_to_the_stated_address():
-    """``0, 0`` is the Gulf of Guinea and is what a form that never obtained a fix writes. The
-    artisan still has a stated village, and losing them off the map for a null pin would be the
-    same regression ``_geo_point`` was written to prevent for the venue."""
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -503,16 +320,6 @@ def test_a_zero_zero_subject_pin_falls_back_to_the_stated_address():
 
 
 def test_a_surveyed_pin_on_an_unplaceable_village_is_not_counted_as_approximate():
-    """THE CAPTION HALF OF THE SURVEYED PIN, on a fixture where the sentence would actually print.
-
-    ``test_a_pin_dropped_on_the_artisan_s_own_place_is_drawn_where_it_was_dropped`` also asserts
-    the caption, but its village resolves precisely through the atlas, so that assertion would hold
-    with the fix reverted too and proves nothing on its own. Here the village is one this build has
-    never heard of: without the ``subjectLocation`` branch the row falls to the state seat, counts
-    as approximate, and the report tells a reader that an artisan whose home was SURVEYED WITH A
-    GPS was "drawn at its state capital" — the one sentence on the figure that a reader uses to
-    decide how much of it to believe.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -531,20 +338,6 @@ def test_a_surveyed_pin_on_an_unplaceable_village_is_not_counted_as_approximate(
 
 
 def test_a_surveyed_pin_keeps_a_state_spelling_the_canonicaliser_does_not_know():
-    """A PIN WHOSE STATE IS DROPPED IS A PIN ON AN UNTINTED REGION, with nothing saying why.
-
-    Every other pin on this map carries ``canonical_state(found.state) or found.state`` — the
-    canonical name where the closed list knows it, the record's own spelling where it does not.
-    The surveyed pin was built with ``canonical_state(state) or ""``, so a state the list has never
-    learned became the empty string, ``_render_map`` filtered it out of ``highlight``, and the
-    figure drew a pin in a region it did not tint. Carried through, ``report_map._tint_states``
-    still cannot seed the fill — but it returns the name in ``missed`` and the figure prints
-    "Not tinted: …" beneath itself, which is a statement a reader can act on.
-
-    "Kalinga" is not on the closed list under any alias (the renames it does carry are Orissa,
-    Pondicherry and Uttaranchal), so it stands for the free-text spellings the older half of the
-    corpus holds.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Odisha", "district": "Bargarh"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -560,8 +353,6 @@ def test_a_surveyed_pin_keeps_a_state_spelling_the_canonicaliser_does_not_know()
 
 
 def test_artisans_from_one_place_fold_into_one_pin_that_counts_them():
-    """Six weavers from Bagru resolve to one coordinate, and six pins stacked on that coordinate
-    look like one pin — so a workshop of six read as a workshop of one."""
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Rajasthan"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -580,9 +371,6 @@ def test_artisans_from_one_place_fold_into_one_pin_that_counts_them():
 
 
 def test_a_participant_who_stated_no_place_is_counted_in_the_caption_not_pinned():
-    """Falling back to the workshop's own state for an artisan whose address was never recorded
-    would stack thirty pins on the state capital and claim "artisans came from across Rajasthan"
-    about a record that says nothing whatsoever. The gap goes in the caption instead."""
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Rajasthan"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -599,14 +387,6 @@ def test_a_participant_who_stated_no_place_is_counted_in_the_caption_not_pinned(
 
 
 def test_a_place_the_atlas_cannot_resolve_says_so_in_the_caption():
-    """A village this build does not know is drawn at its state capital, hundreds of kilometres
-    away. The pin is labelled with the STATE so it never claims to know more than it does, and
-    the caption explains once, in words, why a pin may not sit where a reader expects.
-
-    The atlas answers "only the state" for a string it half-recognises as readily as the state
-    seat table does for one it does not recognise at all, and reading the first of those as a
-    precise fix made the map candid about half its pins and silent about the other half.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Rajasthan"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -623,8 +403,6 @@ def test_a_place_the_atlas_cannot_resolve_says_so_in_the_caption():
 
 
 def test_the_map_tints_every_state_a_pin_landed_in_as_well_as_the_workshop_s_own():
-    """A workshop whose artisans travelled from the next state over must tint both, or the map
-    silently reports the workshop as a purely local event."""
     document = _build(_data(
         singletons={"WORKSHOP_SETUP": {"state": "Rajasthan"}},
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -637,8 +415,6 @@ def test_the_map_tints_every_state_a_pin_landed_in_as_well_as_the_workshop_s_own
 
 
 def test_the_venue_sentence_names_the_place_the_record_names():
-    """A designer who typed "Bagru" and reads "Workshop venue: Rajasthan" concludes the report
-    lost their answer. The pin's own label still says what the atlas resolved."""
     document = _build(_data(singletons={"WORKSHOP_SETUP": {
         "state": "Rajasthan", "district": "Jaipur", "village": "Bagru",
         "venue": "Cooperative hall",
@@ -646,29 +422,12 @@ def test_the_venue_sentence_names_the_place_the_record_names():
     assert "Cooperative hall, Bagru, Jaipur" in _maps(document)[0].caption
 
 
-# --------------------------------------------------------------------------------------
-# The infographics
-# --------------------------------------------------------------------------------------
-
 
 def test_a_section_with_no_data_emits_no_chart():
-    """An empty workshop produces a cover, a contents page and not one figure.
-
-    This is the rule the whole module is built around. A chart is read as a finding, and a
-    finding derived from nothing is an invented one — on a document that becomes a sanctioned
-    amount, that is not a cosmetic failure.
-    """
     assert _charts(_build(_data())) == []
 
 
 def test_a_chart_with_a_zero_total_is_never_drawn():
-    """A follow-up round where nothing had been adopted yet.
-
-    Three visits were made and three products are still under trial, so every category is
-    honestly zero — and a line at zero across three intervals is a picture of a failure the
-    record does not claim. It is also a division by zero waiting for the first renderer that
-    forgets to check, which a donut of the same series would hit immediately.
-    """
     document = _build(_data(collections={"POST_WORKSHOP_FOLLOWUP": {"followUp": [
         {"interval": "M3", "adoptionStatus": "TRIAL"},
         {"interval": "M6", "adoptionStatus": "TRIAL"},
@@ -678,8 +437,6 @@ def test_a_chart_with_a_zero_total_is_never_drawn():
 
 
 def test_a_zero_total_block_is_refused_even_if_a_builder_returns_one():
-    """The belt to the braces. Every ``_chart_*`` method already refuses to build a figure the
-    record cannot fill; this guard catches the next one, written next year, that forgets to."""
     from app.services.report_model import ChartKind
 
     builder = ReportBuilder(_data(), template("DCH_STANDARD"), _resolver, meta=_meta())
@@ -693,8 +450,6 @@ def test_a_zero_total_block_is_refused_even_if_a_builder_returns_one():
 
 
 def test_one_category_is_a_number_not_a_picture():
-    """A single bar labelled "Sketches: 12" carries what the metric row already carries at the
-    cost of a third of a page, and a one-slice donut is a filled circle."""
     document = _build(_data(collections={
         "SKETCH_DEVELOPMENT": {"sketch": [{"sketchNo": f"SK-{i}"} for i in range(9)]},
     }))
@@ -702,18 +457,6 @@ def test_one_category_is_a_number_not_a_picture():
 
 
 def test_the_whole_document_states_one_number_for_one_measure():
-    """ONE AUTHORITY, and the stage says which: the override.
-
-    Both halves used to be true at once. The chart and the front-page metric row each derived
-    their counts from the rows, and stage 18's ``designsCountOverride`` printed RAW forty pages
-    later as an ordinary key-value — so a designer who recorded 24 designs because only 18
-    sketches were ever photographed into the record got a document reading "Sketches 10" at the
-    front and "Number of designs (override) 24" in the middle, with the reason under the second
-    one. An officer reading it cannot tell which figure to quote.
-
-    The override wins wherever the count appears, the raw fields are HIDDEN so it is stated once,
-    and the designer's reason is printed with it.
-    """
     document = _build(_data(
         singletons={"WORKSHOP_OUTCOMES": {
             "designsCountOverride": 12,
@@ -733,7 +476,6 @@ def test_the_whole_document_states_one_number_for_one_measure():
     metrics = next(b for b in document.blocks if isinstance(b, MetricRowBlock))
     assert {label: value for label, value, _unit in metrics.metrics}["Sketches"] == "12"
 
-    # And the raw override is NOT also printed as a field of its own, anywhere.
     labels = [
         label
         for block in document.blocks if isinstance(block, KeyValueBlock)
@@ -743,7 +485,6 @@ def test_the_whole_document_states_one_number_for_one_measure():
 
 
 def test_a_count_nobody_overrode_is_still_counted_from_the_records():
-    """The default and the common case: derivation, so the report and the data cannot drift."""
     document = _build(_data(
         singletons={"WORKSHOP_OUTCOMES": {"achievements": "Done."}},
         collections={
@@ -757,9 +498,6 @@ def test_a_count_nobody_overrode_is_still_counted_from_the_records():
 
 
 def test_a_cost_head_nobody_entered_is_absent_rather_than_zero():
-    """"Transport ₹ 0" beside four real heads reads as "transport was free", when what the
-    record says is that nobody entered it. On a sheet that becomes a sanctioned amount the
-    difference between those two readings is the whole point of the sheet."""
     document = _build(_data(collections={"COSTING_MARKET_LINKAGE": {"costSheet": [
         {"materialCost": "400.00", "labourCost": "900.00"},
         {"materialCost": "600.00", "labourCost": "1200.00", "transportCost": "0.00"},
@@ -770,8 +508,6 @@ def test_a_cost_head_nobody_entered_is_absent_rather_than_zero():
 
 
 def test_an_unparseable_cost_cell_does_not_poison_the_whole_breakdown():
-    """``float("NaN")`` survives a plain ``float()`` call happily and then turns every sum it
-    touches into NaN — one bad cell rendering an entire cost breakdown as bars of nothing."""
     document = _build(_data(collections={"COSTING_MARKET_LINKAGE": {"costSheet": [
         {"materialCost": "400.00", "labourCost": "900.00"},
         {"materialCost": "not a number", "labourCost": "NaN", "packagingCost": "150.00"},
@@ -781,8 +517,6 @@ def test_an_unparseable_cost_cell_does_not_poison_the_whole_breakdown():
 
 
 def test_one_price_across_every_product_is_not_a_histogram():
-    """A cluster that agreed one price for the whole range is a real state, and it draws as a
-    single bar carrying nothing the price column does not already carry."""
     document = _build(_data(collections={"COSTING_MARKET_LINKAGE": {"costSheet": [
         {"expectedPrice": "1800.00"} for _ in range(5)
     ]}}))
@@ -790,7 +524,6 @@ def test_one_price_across_every_product_is_not_a_histogram():
 
 
 def test_price_bands_are_numbers_a_person_would_choose():
-    """A cost sheet binned at "₹ 0–1,383" is arithmetically correct and unreadable."""
     document = _build(_data(collections={"COSTING_MARKET_LINKAGE": {"costSheet": [
         {"expectedPrice": p} for p in ("400.00", "900.00", "1400.00", "2600.00", "4100.00")
     ]}}))
@@ -798,21 +531,6 @@ def test_price_bands_are_numbers_a_person_would_choose():
     assert labels[0] == "0–999"
     assert all("," not in label or label.count(",") == 2 for label in labels)
 
-
-# --------------------------------------------------------------------------------------
-# The survey figures (stage 8)
-# --------------------------------------------------------------------------------------
-#
-# STAGE 8 IS THE STAGE THAT COLLECTS A DISTRIBUTION AND, UNTIL THESE FIGURES EXISTED, REACHED THE
-# READER AS NOTHING BUT A TABLE. Thirty rows of free text do not say that twenty-six are consumers
-# and the retailer view rests on one person — and stage 9's price bands, its SWOT and its design
-# direction all cite "the survey" as their evidence.
-#
-# BOTH FIGURES CARRY THE SAME OBLIGATION AS EVERY OTHER ONE IN THIS FILE, plus one more that is
-# particular to a survey: the count a chart is built from must be visible, because a survey is the
-# one stage whose summary states a number (``responsesCollected``) that can be far larger than the
-# rows anybody actually entered. A bar chart over twelve rows under a summary claiming a hundred
-# responses is a picture of twelve people presented as a picture of a hundred.
 
 
 def _survey(rows, *, collected=None) -> WorkshopData:
@@ -822,7 +540,6 @@ def _survey(rows, *, collected=None) -> WorkshopData:
 
 
 def test_the_survey_is_charted_by_respondent_group():
-    """The figure the survey table raises and never answers: who was actually asked."""
     document = _build(_survey([
         {"respondentGroup": "CONSUMER"},
         {"respondentGroup": "CONSUMER"},
@@ -833,10 +550,6 @@ def test_the_survey_is_charted_by_respondent_group():
 
 
 def test_the_respondent_figure_runs_in_registry_order_not_by_count():
-    """``RESPONDENT_GROUP`` is declared consumer first, then the trade, then the makers, then the
-    institutions, so the same picture has the same shape in every report and two workshops can be
-    compared by eye. Sorting by count would reshuffle the axis for every workshop, which is the one
-    property that makes that comparison possible."""
     document = _build(_survey([
         {"respondentGroup": "EXPORTER"},
         {"respondentGroup": "EXPORTER"},
@@ -850,8 +563,6 @@ def test_the_respondent_figure_runs_in_registry_order_not_by_count():
 
 
 def test_a_group_nobody_surveyed_is_absent_rather_than_zero():
-    """"Exporter 0" beside four real bars is read as "exporters were asked and had nothing to
-    say". What the record says is that none were met — the same rule the follow-up line follows."""
     labels = [label for label, _v in _chart(_build(_survey([
         {"respondentGroup": "CONSUMER"},
         {"respondentGroup": "RETAILER"},
@@ -860,9 +571,6 @@ def test_a_group_nobody_surveyed_is_absent_rather_than_zero():
 
 
 def test_a_respondent_group_this_build_has_never_heard_of_is_still_plotted():
-    """A phone one release ahead of the server can store a token this build does not know.
-    Dropping it would shrink the survey silently; ``enum_label`` already prefers the raw token to
-    failing an export, and this figure prints it after the groups the registry does know."""
     chart = _chart(_build(_survey([
         {"respondentGroup": "CONSUMER"},
         {"respondentGroup": "BLOCK_PRINTER_GUILD"},
@@ -871,8 +579,6 @@ def test_a_respondent_group_this_build_has_never_heard_of_is_still_plotted():
 
 
 def test_a_response_with_no_group_is_counted_in_the_caption_not_dropped_in_silence():
-    """THE HOUSE RULE THIS FILE EXISTS FOR, one stage over: a tally that quietly stops short is
-    indistinguishable from a survey that reached fewer people than it did."""
     chart = _chart(_build(_survey([
         {"respondentGroup": "CONSUMER"},
         {"respondentGroup": "RETAILER"},
@@ -884,8 +590,6 @@ def test_a_response_with_no_group_is_counted_in_the_caption_not_dropped_in_silen
 
 
 def test_responses_the_summary_counts_but_nobody_entered_are_named_in_the_caption():
-    """A hundred people answered in a market and twelve were written up. A figure drawn from the
-    twelve is a figure about twelve people, and no reader can recover that from the picture."""
     chart = _chart(_build(_survey([
         {"respondentGroup": "CONSUMER"},
         {"respondentGroup": "RETAILER"},
@@ -895,8 +599,6 @@ def test_responses_the_summary_counts_but_nobody_entered_are_named_in_the_captio
 
 
 def test_a_stated_count_below_the_rows_entered_is_not_reported_as_missing_work():
-    """The designer's typed number going stale is not work skipped, and "-3 were never entered"
-    is worse than saying nothing."""
     chart = _chart(_build(_survey([
         {"respondentGroup": "CONSUMER"},
         {"respondentGroup": "CONSUMER"},
@@ -909,8 +611,6 @@ def test_a_stated_count_below_the_rows_entered_is_not_reported_as_missing_work()
 
 
 def test_a_survey_nobody_filled_in_draws_no_figure_at_all():
-    """Not an empty frame, not a zero-filled one. The stage section prints its own "Not recorded."
-    note; a chart would be a finding derived from nothing."""
     assert not [c for c in _charts(_build(_survey([]))) if "respondent" in c.title.lower()]
     assert not [c for c in _charts(_build(_survey([
         {"response": "A"}, {"response": "B"},
@@ -918,18 +618,12 @@ def test_a_survey_nobody_filled_in_draws_no_figure_at_all():
 
 
 def test_one_respondent_group_is_a_number_not_a_picture():
-    """The same rule the yield figure follows: a single bar costs a third of a page and carries
-    what the table already carries."""
     assert not [c for c in _charts(_build(_survey([
         {"respondentGroup": "CONSUMER"} for _ in range(9)
     ]))) if "respondent group" in c.title.lower()]
 
 
 def test_what_buyers_would_pay_is_a_different_figure_from_what_the_workshop_charges():
-    """Stage 17's ``expectedPrice`` is what the workshop means to charge; stage 8's
-    ``priceExpectation`` is what a buyer in a market said they would pay. The gap between the two
-    is the most useful thing this report shows a designer, and it exists only because they are two
-    figures rather than one merged distribution."""
     document = _build(_data(
         collections={
             "MARKET_SURVEY_CAPTURE": {"surveyResponse": [
@@ -949,8 +643,6 @@ def test_what_buyers_would_pay_is_a_different_figure_from_what_the_workshop_char
 
 
 def test_the_price_figure_states_how_many_respondents_actually_named_a_price():
-    """A price expectation is optional on the survey form, so the bars are built from a subset —
-    and a histogram over four of thirty responses read as thirty is the defect this states away."""
     chart = _chart(_build(_survey([
         {"respondentGroup": "CONSUMER", "priceExpectation": "300.00"},
         {"respondentGroup": "CONSUMER", "priceExpectation": "900.00"},
@@ -962,10 +654,6 @@ def test_the_price_figure_states_how_many_respondents_actually_named_a_price():
 
 
 def test_a_money_value_arrives_as_a_string_and_is_still_banded_as_a_number():
-    """``priceExpectation`` is a MONEY field, and ``stage_schema.coerce_value`` stores every one as
-    a fixed-2 decimal STRING so it survives the JSON round trip without a binary-float artefact. A
-    figure that compared those as text would band "900.00" beside "1800.00" by their first
-    characters."""
     chart = _chart(_build(_survey([
         {"priceExpectation": "300.00"},
         {"priceExpectation": "1800.00"},
@@ -977,8 +665,6 @@ def test_a_money_value_arrives_as_a_string_and_is_still_banded_as_a_number():
 
 
 def test_an_unpriced_survey_draws_the_group_figure_and_no_price_figure():
-    """Half the data present is not a reason to withhold the half that is, and it is not a reason
-    to draw the half that is not."""
     document = _build(_survey([
         {"respondentGroup": "CONSUMER"},
         {"respondentGroup": "RETAILER"},
@@ -989,9 +675,6 @@ def test_an_unpriced_survey_draws_the_group_figure_and_no_price_figure():
 
 
 def test_both_survey_figures_are_placed_by_the_stage_section_not_by_a_template_edit():
-    """The placement this change relies on: ``_standard_sections`` builds every stage section with
-    ``include_figures`` defaulting to True, so owning the stage in ``FIGURES`` is the whole of the
-    placement. If that ever stops being true, these figures vanish from every template silently."""
     assert FIGURES["SURVEY_RESPONDENTS"][0] == "MARKET_SURVEY_CAPTURE"
     assert FIGURES["SURVEY_PRICE_EXPECTATIONS"][0] == "MARKET_SURVEY_CAPTURE"
     rows = [{"respondentGroup": g} for g in ("CONSUMER", "CONSUMER", "RETAILER")]
@@ -1003,8 +686,6 @@ def test_both_survey_figures_are_placed_by_the_stage_section_not_by_a_template_e
 
 
 def test_the_follow_up_line_runs_in_registry_order_not_alphabetical_order():
-    """"M12" sorts before "M3", and a follow-up line that goes 3 → 12 → 6 months reads as a
-    collapse and a recovery that never happened."""
     document = _build(_data(collections={"POST_WORKSHOP_FOLLOWUP": {"followUp": [
         {"interval": "M12", "adoptionStatus": "ADOPTED_IN_PRODUCTION"},
         {"interval": "M3", "adoptionStatus": "ADOPTED_IN_PRODUCTION"},
@@ -1017,8 +698,6 @@ def test_the_follow_up_line_runs_in_registry_order_not_alphabetical_order():
 
 
 def test_an_interval_that_has_not_been_visited_yet_is_absent_not_zero():
-    """A twelve-month column on a workshop that ran four months ago is not "zero adoption", it
-    is a visit that has not happened."""
     document = _build(_data(collections={"POST_WORKSHOP_FOLLOWUP": {"followUp": [
         {"interval": "M3", "adoptionStatus": "ADOPTED_IN_PRODUCTION"},
         {"interval": "M6", "adoptionStatus": "ADOPTED_ON_ORDER"},
@@ -1028,8 +707,6 @@ def test_an_interval_that_has_not_been_visited_yet_is_absent_not_zero():
 
 
 def test_a_figure_is_drawn_at_most_once_per_document():
-    """DCH_STANDARD asks for the outcome figures at the front AND carries the outcomes stage
-    twenty pages in. Printing the same picture twice makes a reader hunt for the difference."""
     document = _build(_data(collections={
         "SKETCH_DEVELOPMENT": {"sketch": [{"sketchNo": f"SK-{i}"} for i in range(4)]},
         "PROTOTYPE_DEVELOPMENT": {"prototype": [{"prototypeCode": "PR-1"}]},
@@ -1042,8 +719,6 @@ def test_a_figure_is_drawn_at_most_once_per_document():
 
 
 def test_a_chart_section_with_nothing_to_show_prints_no_heading_either():
-    """A heading over an empty frame is how a generated report looks broken. The CHART section
-    exists precisely for records that may have no figures in them."""
     from app.services.report_model import HeadingBlock, runs_text
 
     document = _build(_data(singletons={"WORKSHOP_SETUP": {"state": "Odisha"}}), "DCH_STANDARD")
@@ -1051,18 +726,8 @@ def test_a_chart_section_with_nothing_to_show_prints_no_heading_either():
     assert not any("in figures" in h.lower() for h in headings)
 
 
-# --------------------------------------------------------------------------------------
-# Auto-placed photographs
-# --------------------------------------------------------------------------------------
-
 
 def _placed(document) -> list[tuple[str, str]]:
-    """Every image the document places, as ``(media id, caption)``, in document order.
-
-    Both block kinds, because :meth:`ReportBuilder._place_images` draws one photograph as an
-    ``ImageBlock`` and several as a grid — a test that looked at only one of them would pass
-    for a prototype with four photographs and miss the one with a single portrait.
-    """
     out: list[tuple[str, str]] = []
     for block in document.blocks:
         if isinstance(block, ImageBlock):
@@ -1073,22 +738,10 @@ def _placed(document) -> list[tuple[str, str]]:
 
 
 def _in_place(data: WorkshopData):
-    """Build under a template that has NO photographic annexure.
-
-    DETAILED_TECHNICAL deliberately reprints every picture as a contact sheet at the back, so a
-    count taken over its whole block list sees each photograph twice — which is correct
-    behaviour and useless for testing placement. These tests are about the picture appearing
-    BESIDE the thing it is a photograph of, so they read the body of the report only.
-    """
     return _build(data, "DCH_STANDARD")
 
 
 def test_a_ref_to_an_artisan_pulls_that_artisan_s_photograph():
-    """THE GAP THIS CLOSES. A REF field stores an id and nothing else, and hydration copies only
-    the display fields a designer chose — never a picture onto an entity that owns a gallery of
-    its own. So the report described a participant, and the photograph of that participant sat
-    in the media table one join away with nothing in the document pointing at it.
-    """
     document = _in_place(_data(
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
             {"serialNo": 1, "name": "Bhikari Meher", "artisanRef": "a1"},
@@ -1100,7 +753,6 @@ def test_a_ref_to_an_artisan_pulls_that_artisan_s_photograph():
 
 
 def test_the_photograph_is_captioned_with_the_record_s_name_not_the_field_s_label():
-    """"Artisan" under a photograph is a category. "Bhikari Meher" is a caption."""
     document = _in_place(_data(
         collections={"EXISTING_PRODUCTS_BASELINE": {"existingProduct": [
             {"name": "Cotton saree", "artisanRef": "a1"},
@@ -1112,15 +764,6 @@ def test_the_photograph_is_captioned_with_the_record_s_name_not_the_field_s_labe
 
 
 def test_a_ref_to_a_documented_product_pulls_the_catalogue_photograph():
-    """``prototype.productRef`` seeds only a NAME, deliberately, and this docstring used to give
-    the wrong reason for it — "hydration must never overwrite a gallery", which is not the rule.
-    ``hydrate_entries`` seeds a gallery WHEN EMPTY and never overwrites one, and
-    ``existingProduct.productPhotos`` is seeded from the product's own photograph on purpose. The
-    prototype's gallery is left unseeded for the separate reason written at
-    ``prototype.productRef``: a prototype is defined by how it DIFFERS from the product it derives
-    from. Either way the picture has no copy on the row, so without the reference carrier the
-    report described a prototype of a documented product with the product's photograph nowhere in
-    it."""
     document = _in_place(_data(
         collections={"PROTOTYPE_DEVELOPMENT": {"prototype": [
             {"prototypeCode": "PR-01", "name": "Table runner", "productRef": "p1"},
@@ -1132,20 +775,6 @@ def test_a_ref_to_a_documented_product_pulls_the_catalogue_photograph():
 
 
 def test_a_borrowed_photograph_is_captioned_with_the_name_the_row_froze():
-    """THE ONE PLACE A LIVE RE-RESOLVED NAME REACHED PAPER.
-
-    Every external REF in the registry is ``report_role=HIDDEN`` and none is any entity's
-    ``label_field``, so a reference's ``label`` printed in exactly one position: the caption under
-    the photograph borrowed from the record it points at. That label is
-    ``REFERENCE_MODELS[model].label(row)`` evaluated against the record as it stands TODAY, while
-    ``prototype.productName`` two lines up the same page is the frozen copy hydration wrote at save
-    time. Rename the product record after the workshop closes and one page carries both answers:
-    "Developed from: Sambalpuri Saree" above a photograph captioned "Sambalpuri Ikat Saree —
-    revised 2027", with nothing to say which the workshop actually worked from.
-
-    Generic, not per-entity: the caption follows ``reference_hydration_for``'s own ``"name"``
-    mapping to whichever box on this row the name was copied into.
-    """
     document = _in_place(_data(
         collections={"PROTOTYPE_DEVELOPMENT": {"prototype": [
             {"prototypeCode": "PR-01", "name": "Table runner", "productRef": "p1",
@@ -1162,34 +791,12 @@ def test_a_borrowed_photograph_is_captioned_with_the_name_the_row_froze():
 
 
 def test_every_photographable_record_can_be_captioned_from_the_name_its_row_froze():
-    """THE CENSUS THAT MAKES THE FROZEN-NAME CAPTION STAY CLOSED, AND IT FOUND ``Craft``.
-
-    ``_reference_caption`` walked the hydration mapping looking for the literal source key
-    ``"name"``. Four of the five reference models publish their display column under that key and
-    the fifth does not: ``REFERENCE_MODELS["Craft"].data`` emits ``{"craftName": r.name, …}`` while
-    its ``label`` is ``r.name`` — the same column, a different key, because stage 1's cover asks
-    for "Craft name". ``Craft`` also declares ``media_field="craftId"``, so a craft photograph
-    really does reach ``_images``' second pass, and it was captioned from the LIVE record while
-    ``workshopSetup.craftName`` — a COVER_FIELD — printed the copy frozen at save time. Rename a
-    craft after the workshop closes and the COVER PAGE and the picture beneath it carry two names
-    for one craft.
-
-    DERIVED, NOT ENUMERATED, so the next model whose ``data`` lambda renames its key fails here
-    instead of on a ministry's cover page: the name key is found by asking each model which of its
-    published keys carries the same value its ``label`` reads, over a probe row that answers every
-    column with its own name. Nothing in this test consults
-    ``report_builder._REFERENCE_NAME_SOURCES``, which is the table under test.
-    """
     import logging
 
     from app.services import design_workshops as dw
     from app.services.stage_schema import reference_hydration_for
 
     class _Echo:
-        """A record whose every column answers with its own name, so ``label`` and ``data`` can be
-        compared BY VALUE without a database. ``__getattr__`` rather than fixed attributes: a
-        lambda that starts reading a new column must not make the probe raise."""
-
         def __getattr__(self, name: str) -> str:
             return f"<{name}>"
 
@@ -1197,16 +804,9 @@ def test_every_photographable_record_can_be_captioned_from_the_name_its_row_froz
     checked = 0
     for model, spec in dw.REFERENCE_MODELS.items():
         if not spec.media_field:
-            # No photograph can be borrowed from this model at all — ``Process`` says at length why
-            # it has none — so there is no caption to get wrong.
             continue
         probe = _Echo()
         label = spec.label(probe)
-        # THE PROBE TRIPS THE CARRY WARNINGS, WHICH IS NOISE AND NOT A FINDING. Four of these
-        # lambdas run an ENUM token through ``_translated``, which logs an ERROR naming a token no
-        # translation table carries — true of "<productType>" and of nothing a real record holds.
-        # Left to print, this test emits five ERROR lines on every green run, which is how a suite
-        # teaches its readers that ERROR lines mean nothing.
         logging.disable(logging.ERROR)
         try:
             published = spec.data(probe, None)
@@ -1251,10 +851,6 @@ def test_every_photographable_record_can_be_captioned_from_the_name_its_row_froz
 
 
 def test_a_borrowed_photograph_still_falls_back_to_the_record_s_own_name():
-    """Where the mapping seeds no name — ``existingProduct.artisanRef`` writes ``artisanName`` and
-    a row saved before that mapping existed carries none — the reference's label is still the right
-    caption, for the reason the replaced line gave: the field's label is the RELATIONSHIP and not
-    the subject, so "Artisan" under a photograph is a category where "Sunita Bag" is a caption."""
     document = _in_place(_data(
         collections={"EXISTING_PRODUCTS_BASELINE": {"existingProduct": [
             {"name": "Cotton saree", "artisanRef": "a1"},
@@ -1266,10 +862,6 @@ def test_a_borrowed_photograph_still_falls_back_to_the_record_s_own_name():
 
 
 def test_the_designer_s_own_photographs_come_before_the_borrowed_one():
-    """A prototype whose maker shot progress photographs must not lead with a catalogue picture
-    of the product it was based on. The report is about the workshop; the borrowed image is
-    context, and the registry's field ORDER must not be what decides which leads — ``productRef``
-    happens to be declared five fields above ``prototypePhotos``."""
     document = _in_place(_data(
         collections={"PROTOTYPE_DEVELOPMENT": {"prototype": [
             {"prototypeCode": "PR-01", "name": "Table runner", "productRef": "p1",
@@ -1284,9 +876,6 @@ def test_the_designer_s_own_photographs_come_before_the_borrowed_one():
 
 
 def test_a_hydrated_photograph_is_not_printed_twice():
-    """``participant.artisanRef`` DOES seed ``participant.photo`` at save time, so the row's own
-    media field and the reference resolve to the very same media row. Deduplicating by media id
-    rather than by field is what keeps one portrait from appearing twice under one name."""
     document = _in_place(_data(
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
             {"serialNo": 1, "name": "Bhikari Meher", "artisanRef": "a1", "photo": "same-media"},
@@ -1299,7 +888,6 @@ def test_a_hydrated_photograph_is_not_printed_twice():
 
 
 def test_a_reference_with_no_photograph_places_nothing():
-    """A roster row picked from a list for an artisan nobody has photographed is ordinary."""
     document = _in_place(_data(
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
             {"serialNo": 1, "name": "Bhikari Meher", "artisanRef": "a1"},
@@ -1310,9 +898,6 @@ def test_a_reference_with_no_photograph_places_nothing():
 
 
 def test_a_ref_whose_record_never_loaded_is_not_an_error():
-    """``WorkshopData.references`` empty is a supported state — it is what the on-device builder
-    hands over, and what a reference load that failed leaves behind. The report loses a pin and
-    a picture and prints."""
     document = _in_place(_data(collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
         {"serialNo": 1, "name": "Bhikari Meher", "artisanRef": "a1"},
     ]}}))
@@ -1321,7 +906,6 @@ def test_a_ref_whose_record_never_loaded_is_not_an_error():
 
 
 def test_a_referenced_photograph_the_resolver_cannot_find_is_skipped_not_fatal():
-    """A photo that failed to sync is a gap the report survives, not an error."""
     document, _warnings = build_report(
         _data(
             collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
@@ -1336,8 +920,6 @@ def test_a_referenced_photograph_the_resolver_cannot_find_is_skipped_not_fatal()
 
 
 def test_a_template_that_excludes_photographs_places_no_referenced_one_either():
-    """PHOTO_CATALOGUE prints the makers with ``include_photos=False``. A borrowed picture must
-    obey the same instruction the row's own pictures obey, or the exclusion is a half-measure."""
     document = _build(_data(
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
             {"serialNo": 1, "name": "Bhikari Meher", "artisanRef": "a1"},
@@ -1349,9 +931,6 @@ def test_a_template_that_excludes_photographs_places_no_referenced_one_either():
 
 
 def test_the_media_annexure_gathers_the_referenced_photographs_too():
-    """DETAILED_TECHNICAL is the archival copy and its contact sheet is meant to be exhaustive.
-    A picture the body of the report placed but the annexure missed would leave a reader who
-    counted the annexure believing the record holds fewer photographs than it does."""
     data = _data(
         collections={"WORKSHOP_PLAN_PARTICIPANTS_OPENING": {"participant": [
             {"serialNo": 1, "name": "Bhikari Meher", "artisanRef": "a1"},
@@ -1363,17 +942,6 @@ def test_the_media_annexure_gathers_the_referenced_photographs_too():
     assert archival.count("media-portrait") == 2, \
         "once beside the roster row and once in the annexure"
 
-
-# --------------------------------------------------------------------------------------
-# Rich text
-# --------------------------------------------------------------------------------------
-#
-# No field in the registry is RICH_TEXT yet — the type, the editor, the normaliser and both
-# renderers landed before the first field was promoted to it. That is exactly why these tests
-# build their own entity rather than waiting for one: the day somebody changes a LONG_TEXT
-# declaration to RICH_TEXT, the report path either already carries the marks or it silently
-# prints the document's own JSON into a ministry submission, and finding out then is finding out
-# too late.
 
 
 def _rich(*spans: tuple[str, tuple[str, ...]], kind: str = "PARAGRAPH") -> dict:
@@ -1403,9 +971,6 @@ def _rendered(row: dict):
 
 
 def test_rich_text_reaches_the_document_with_its_marks():
-    """THE ONLY PATH THAT KEEPS THE FORMATTING. A designer who bolded three product names and
-    numbered five recommendations wrote structure, not decoration; flattening it here would make
-    the rich-text editor a more expensive textarea."""
     from app.services.report_model import ParagraphBlock
 
     document = _rendered({"prose": _rich(
@@ -1423,8 +988,6 @@ def test_rich_text_reaches_the_document_with_its_marks():
 
 
 def test_a_rich_text_list_becomes_one_list_block_not_five():
-    """Emitting one block per item restarts the numbering at every line — a five-point
-    recommendation list printed as "1. 1. 1. 1. 1."."""
     from app.services.report_model import BulletListBlock
 
     value = {"blocks": [{"kind": "ORDERED_ITEM", "spans": [{"text": f"Point {i}"}]}
@@ -1437,9 +1000,6 @@ def test_a_rich_text_list_becomes_one_list_block_not_five():
 
 
 def test_rich_text_in_a_key_value_cell_keeps_its_marks():
-    """A key-value cell holds runs and cannot hold a block, which is the same constraint a table
-    cell is under and gets the same answer: ``rich_text.plain_runs``. The alternative was
-    ``runs_of(str(the stored dict))``, which printed the document's own JSON into the cell."""
     from app.services.report_model import KeyValueBlock
 
     document = _rendered({"note": _rich(("Delivered ", ()), ("late", ("BOLD",)))})
@@ -1451,10 +1011,6 @@ def test_rich_text_in_a_key_value_cell_keeps_its_marks():
 
 
 def test_a_rich_text_value_never_prints_as_its_own_json():
-    """The failure that made this whole path necessary: a RICH_TEXT dict fell through to
-    ``clean_text``, which stringifies whatever it is given, so the report printed
-    ``{'blocks': [{'kind': 'PARAGRAPH', ...}]}`` into a ministry submission — and every emptiness
-    check read that JSON-shaped string as a filled field, so nothing reported a problem."""
     from app.services.report_model import runs_text
 
     document = _rendered({
@@ -1474,13 +1030,11 @@ def test_a_rich_text_value_never_prints_as_its_own_json():
 
 
 def test_an_empty_rich_value_prints_nothing_at_all():
-    """An editor that has been opened and closed stores an empty document, not None."""
     document = _rendered({"prose": {"blocks": [{"kind": "PARAGRAPH", "spans": []}]}})
     assert document.blocks == ()
 
 
 def test_a_plain_string_under_a_promoted_field_still_prints():
-    """Promoting LONG_TEXT to RICH_TEXT must not blank the prose already stored under it."""
     from app.services.report_model import runs_text
 
     document = _rendered({"prose": "Written before the field was promoted."})
@@ -1489,25 +1043,6 @@ def test_a_plain_string_under_a_promoted_field_still_prints():
 
 
 def test_a_promoted_tools_box_prints_names_for_ids_and_keeps_what_was_typed():
-    """``toolsUsed`` was TAGS until 2026-09-03, so one stored array holds BOTH shapes.
-
-    ── THE THREE ANSWERS, AND EACH OF THEM HAS A READER ──────────────────────────────────────────
-
-    An id that RESOLVES prints the tool record's name, which is the entire point of promoting a
-    retyped free-text box into a picker. An id that does NOT resolve prints nothing — the record was
-    deleted after this step cited it, and a bare cuid in a ministry's table is worse than a visible
-    gap, which is the REF branch's own long-standing ruling applied to a list. Anything else prints
-    ITSELF: "pit loom" is a designer's own word for their own fieldwork, and every value stored under
-    these two keys before the promotion is one of those — as is every value a fielded 0.0.7 handset
-    is writing today, because it still draws the old tag box.
-
-    ORDER IS THE STORED ORDER, because a list of tools is not sorted anywhere else and re-ordering
-    it here would make the table disagree with the form the designer filled in.
-
-    ``format_value`` IS ASSERTED SEPARATELY because it is the answer for every caller that CANNOT
-    reach the repository — completeness, search text, the on-device mirror. Running those tokens
-    through ``enum_label`` (an empty table for this field) is what would have printed cuids there.
-    """
     from app.services.report_builder import ReferencedRecord, format_value
     from app.services.stage_schema import Cardinality, EntitySpec, FieldSpec, FieldType
 
@@ -1527,30 +1062,21 @@ def test_a_promoted_tools_box_prints_names_for_ids_and_keeps_what_was_typed():
     builder = ReportBuilder(data, template("DETAILED_TECHNICAL"), _resolver, meta=_meta())
 
     row = {"toolsUsed": [
-        "cmsik2jg8000eh8xc1lcy661a",   # resolves
-        "pit loom",                    # typed before the promotion
-        "cmsjb6qaq01ar4otfh1p0hm1a",   # an id whose record is gone
-        "SK-01",                       # typed, and not remotely id-shaped
+        "cmsik2jg8000eh8xc1lcy661a",
+        "pit loom",
+        "cmsjb6qaq01ar4otfh1p0hm1a",
+        "SK-01",
     ]}
     assert builder._value(tools, row) == "Pit loom, pit loom, SK-01"
 
-    # The repository-free answer: every token, joined, and nothing dressed up as an enum label.
     assert format_value(tools, row["toolsUsed"]) == (
         "cmsik2jg8000eh8xc1lcy661a, pit loom, cmsjb6qaq01ar4otfh1p0hm1a, SK-01"
     )
-    # And an entity built round it still renders, so the arm is reachable from a real render pass
-    # rather than only from a direct call.
     assert entity.field("toolsUsed") is tools
 
 
-# --------------------------------------------------------------------------------------
-# Finding the records a report REFERENCES, without a database
-# --------------------------------------------------------------------------------------
-
 
 def test_reference_ids_finds_only_the_external_models():
-    """A ``Dw…`` ref_model points at another entry OF THIS SAME WORKSHOP, already loaded. Looking
-    one up as though it were an artisan would query a Prisma delegate that does not exist."""
     from app.services.design_workshops import reference_ids
 
     class _Row:
@@ -1560,10 +1086,10 @@ def test_reference_ids_finds_only_the_external_models():
     found = reference_ids([
         _Row("participant", {"artisanRef": "artisan-1"}),
         _Row("participant", {"artisanRef": "artisan-2"}),
-        _Row("participant", {"artisanRef": "artisan-1"}),          # the same artisan twice
-        _Row("participant", {"name": "typed in by hand"}),         # no reference at all
+        _Row("participant", {"artisanRef": "artisan-1"}),
+        _Row("participant", {"name": "typed in by hand"}),
         _Row("prototype", {"productRef": "product-1", "sketchRef": "dw-entry-1"}),
-        _Row("costSheet", {"productRef": "dw-final-1"}),           # a DwFinalProduct, not external
+        _Row("costSheet", {"productRef": "dw-final-1"}),
     ])
     assert found == {"Artisan": {"artisan-1", "artisan-2"},
                      "ProductDocumentation": {"product-1"}}
@@ -1576,26 +1102,6 @@ def test_reference_ids_of_an_empty_record_is_empty():
 
 
 def test_reference_ids_follows_a_record_backed_multi_enum_as_well_as_a_ref():
-    """``toolsUsed`` holds an ARRAY of the ids a REF holds one of — and prose beside them.
-
-    ── WHY THE WALK HAD TO LEARN A SECOND TYPE (2026-09-03) ──────────────────────────────────────
-
-    This function is what fills ``WorkshopData.references``, and ``ReportBuilder._value`` resolves a
-    promoted field's tokens through exactly that map. Left as a REF-only walk, every tool id would
-    have been unresolvable and the report would have printed NOTHING where a tool's name belongs —
-    strictly worse than the free-text TAGS list the promotion replaced.
-
-    ── AND WHY THE PROSE IS COLLECTED TOO, RATHER THAN FILTERED OUT BY SHAPE ─────────────────────
-
-    A fielded 0.0.7 handset still draws a tag box for these keys and writes ``"pit loom"``. Those
-    strings join the wanted set, miss every id in the table and cost one row of a bounded ``IN``
-    clause; ``_value`` then prints them verbatim. Deciding here which tokens "look like ids" would
-    put a second opinion about that in a second file, and the two would disagree eventually.
-
-    THE STRING CHECK COMES FIRST IN THE IMPLEMENTATION, and this is the case that proves why: a
-    ``str`` is iterable, so a REF whose value fell into the list arm would be collected one
-    CHARACTER at a time — 25 single-letter misses per citation on the report path's busiest read.
-    """
     from app.services.design_workshops import reference_ids
 
     class _Row:
@@ -1605,11 +1111,6 @@ def test_reference_ids_follows_a_record_backed_multi_enum_as_well_as_a_ref():
     found = reference_ids([
         _Row("processStep", {"toolsUsed": ["tool-1", "pit loom"], "processRef": "process-1"}),
         _Row("prototype", {"toolsUsed": ["tool-1", "tool-2", "  "], "productRef": "product-1"}),
-        # A BARE STRING UNDER A MULTI KEY, which the scalar arm catches and is right to catch:
-        # `hydrate_entries` wraps a scalar into a list for a multi field, so a row written before a
-        # promotion — or by a client that misread the type — can legitimately hold one. Collecting
-        # it costs one row of an `IN` clause and lets the report resolve a name it would otherwise
-        # print as an id.
         _Row("prototype", {"toolsUsed": "tool-3"}),
     ])
     assert found["ToolDocumentation"] == {"tool-1", "pit loom", "tool-2", "tool-3"}
@@ -1618,17 +1119,6 @@ def test_reference_ids_follows_a_record_backed_multi_enum_as_well_as_a_ref():
 
 
 def test_a_referenced_record_states_its_village_before_its_free_text_place():
-    """``Location.village`` is the stated address a researcher typed into the closed hierarchy;
-    ``Artisan.place`` is the free text that was all the corpus had before those columns existed.
-    Preferring the free text would ignore the better answer on every modern record.
-
-    THE MODEL IS AN ARGUMENT NOW, and passing it is the whole of what changed here: this function
-    runs at RENDER time, so preferring ``location.village`` for a model whose relation had merely
-    been switched on would rewrite the place printed in documents already submitted. It therefore
-    keys on the model name instead of on whether the relation happens to be loaded, and only
-    ``Artisan`` reads the relation. Both calls below were left on the old one-argument signature
-    when that guard landed, and failed with a ``TypeError`` rather than a wrong answer.
-    """
     from app.services.design_workshops import _reference_place
 
     class _Location:
@@ -1641,15 +1131,6 @@ def test_a_referenced_record_states_its_village_before_its_free_text_place():
 
 
 def test_a_referenced_record_falls_back_to_its_free_text_place():
-    """Half the corpus predates the stated-address columns, and for every model but the artisan the
-    denormalised ``place`` is what render time prints — whether or not the relation is loaded.
-
-    THE OLD NAME AND REASON WERE "no location row", on the ground that a documented product's picker
-    query did not include the relation. It does now (the record's stated address reaches boxes of its
-    own at SAVE time), so the absence of the attribute is no longer what makes this true: the guard
-    on the model name is. A product row WITH a location must still print the free-text place here,
-    which is what keeps an already-submitted document unchanged, so that is what this asserts.
-    """
     from app.services.design_workshops import _reference_place
 
     class _Location:
@@ -1665,24 +1146,8 @@ def test_a_referenced_record_falls_back_to_its_free_text_place():
     assert _reference_place(_LoadedProduct(), "ProductDocumentation") == ("Barpali", "", "")
 
 
-# --------------------------------------------------------------------------------------
-# The two halves of one document must agree
-# --------------------------------------------------------------------------------------
-
 
 def test_a_required_reference_to_a_deleted_row_is_not_counted_as_recorded():
-    """THE DOCUMENT THAT DISAGREED WITH ITSELF.
-
-    The completeness annexure read "13. Prototype Development | 144/144 | 100% | Complete" and
-    no warning was emitted for stage 13 — while eighteen pages earlier the SAME report printed
-    "Prototype | Not recorded." in all 18 prototypeStageLog tables and all 18 materialUsage
-    tables. Thirty-six occurrences, identical in the .docx and the PDF. The renderer blanks an
-    opaque id whose row was deleted; the scorer only checked that the string was non-empty.
-
-    ``prototypeRef`` below names a row that is not in the record, exactly as a deleted parent
-    does — and "Stage logs: Prototype" is the label that must appear in the annexure's
-    Outstanding column and nowhere appeared before.
-    """
     from app.services.report_model import TableBlock, runs_text
 
     data = _data(collections={"PROTOTYPE_DEVELOPMENT": {
@@ -1709,8 +1174,6 @@ def test_a_required_reference_to_a_deleted_row_is_not_counted_as_recorded():
 
 
 def test_a_reference_that_still_resolves_is_still_counted():
-    """The other half, asserted on the scorer so the claim is exact: an id that resolves counts
-    as filled, and only an id that does not stops counting."""
     from app.services.stage_schema import stage, stage_completeness
 
     spec = stage("PROTOTYPE_DEVELOPMENT")
@@ -1728,42 +1191,17 @@ def test_a_reference_that_still_resolves_is_still_counted():
     assert "Stage logs: Prototype" not in resolving.missing
 
 
-# ------------------------------------------------------------------------------------------
-# Opaque ids must not reach the page, whatever the field's declared type
-# ------------------------------------------------------------------------------------------
-
 
 def test_a_text_field_holding_a_bare_record_id_prints_nothing_rather_than_the_id():
-    """The REF guard's argument, applied to the field that actually reaches a reader.
-
-    `_looks_like_an_id` was written for REF and stopped there. Stage 21's
-    `mediaQualityFlag.mediaId` is declared TEXT — there is no `Media` ref_model to point at — and
-    it is that entity's `label_field`, so a designer flagging a blurred photograph grew a table
-    whose File column read `cmsjb6qaq01ar4otfh1p0hm1a`. A bare cuid in a ministry's table is worse
-    than a visible gap: the gap is legible as missing, the cuid looks like an answer.
-    """
     from app.services.report_builder import _looks_like_an_id
 
     assert _looks_like_an_id("cmsjb6qaq01ar4otfh1p0hm1a") is True
     assert _looks_like_an_id("SK-01") is False
     assert _looks_like_an_id("Sambalpuri stole") is False
-    # Free text that merely CONTAINS an id keeps every character — it is a designer's own words.
     assert _looks_like_an_id("duplicate of cmsjb6qaq01ar4otfh1p0hm1a") is False
 
 
 def test_no_template_prints_a_bare_record_id_through_a_text_field():
-    """The guard above is DEFENCE IN DEPTH, and this test says honestly why.
-
-    `mediaQualityFlag.mediaId` is the only TEXT field in the registry whose name implies an id and
-    which carries a printing role — and it is that entity's `label_field`, so if its stage were ever
-    printed the table's File column and every card heading would read `cmsjb6qaq01ar4otfh1p0hm1a`.
-    Today it is not printed: NO template includes `DATA_QUALITY_ARCHIVE`, so the leak is latent
-    rather than live, and claiming otherwise would be claiming a fix for a bug nobody could see.
-
-    Both halves are asserted, so the day somebody adds stage 21 to a template — a reasonable thing
-    to want — this test fails and points at the guard that already handles it, instead of the change
-    silently shipping cuids into a document submitted to a ministry.
-    """
     from app.services.stage_schema import STAGES, FieldType, ReportRole
 
     printed = {section.stage_key for t in TEMPLATES for section in t.sections if section.stage_key}

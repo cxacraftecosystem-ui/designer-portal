@@ -1,18 +1,3 @@
-"""THE APPROVING AUTHORITY'S DECISIONS, OVER A DATABASE.
-
-Every gate and every state the pure module (``test_design_workshop_approvals.py``) can only assert of
-the source, asserted here of rows: each role allowed or refused, rule 7's refusals, the wrong-state
-refusals, the mandatory sentence, the freeze and hand-on's finality, one ``ReviewLog`` row per
-decision, and two approvals at once producing exactly one.
-
-THE SHAPE IS ``test_workshop_join_sync.py``'s: a SYNC module fixture seeds through a private
-``asyncio.run`` and only then starts the ``TestClient``; the tests drive the client and never touch
-``db``. Each test owns its own workshop, so the module is order-independent. The race test is the
-one exception and runs AFTER the client has closed, in its own ``asyncio.run``, calling the route
-coroutines directly — the rule conftest's "HOW A DATABASE-BACKED MODULE IS SUPPOSED TO REACH THE
-DATABASE" states: no database call while a client is alive.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +20,6 @@ pytestmark = [
     ),
 ]
 
-#: slug -> role.
 ACCOUNTS = {
     "ministry": "MINISTRY_ADMIN",
     "ministry2": "MINISTRY_ADMIN",
@@ -46,14 +30,11 @@ ACCOUNTS = {
     "rd": "REGIONAL_DIRECTOR",
     "ad": "ASSISTANT_DIRECTOR",
     "professor": "PROFESSOR",
-    # An authority member who is also the designer on one workshop, and one who inspects another.
     "authoring_ministry": "MINISTRY_ADMIN",
     "inspecting_ministry": "MINISTRY_ADMIN",
-    # An authority member appointed the workshop's Assistant Director: rule 7c — not barred.
     "ad_ministry": "MINISTRY_ADMIN",
 }
 
-#: Each test's own workshop, by name, and the status it starts in.
 WORKSHOPS = {
     "approve": "PRE_SUBMISSION",
     "approve_twice": "PRE_SUBMISSION",
@@ -173,7 +154,6 @@ def world():
 
 
 def _close_the_client(world: dict[str, Any]) -> None:
-    """End the app's lifespan so a test may reach the database itself, as conftest requires."""
     if not world["closed"]:
         world["client"].__exit__(None, None, None)
         world["closed"] = True
@@ -206,10 +186,6 @@ def _post(world, slug: str, name: str, verb: str, body: dict[str, Any]):
         headers=_as(world, slug),
     )
 
-
-# --------------------------------------------------------------------------------------
-# Who may ask at all
-# --------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("slug", ["admin", "designer", "inspector", "rd", "ad", "professor"])
@@ -247,10 +223,6 @@ def test_the_queue_and_the_count_answer_the_authority(world):
     assert bad.status_code == 422
 
 
-# --------------------------------------------------------------------------------------
-# Approve
-# --------------------------------------------------------------------------------------
-
 
 def test_a_ministry_admin_approves_and_one_audit_row_is_written(world):
     answer = _approve(world, "ministry", "approve")
@@ -285,10 +257,6 @@ def test_a_report_not_handed_in_cannot_be_approved(world):
     assert "Pre-submission" in answer.json()["detail"]
 
 
-# --------------------------------------------------------------------------------------
-# Rule 7
-# --------------------------------------------------------------------------------------
-
 
 def test_an_authority_member_who_worked_on_it_is_refused(world):
     answer = _approve(world, "authoring_ministry", "authored")
@@ -308,10 +276,6 @@ def test_an_authority_member_in_a_director_post_is_not_barred(world):
     assert _approve(world, "ad_ministry", "ad_post").status_code == 200
 
 
-# --------------------------------------------------------------------------------------
-# Revise, hand on, and finality
-# --------------------------------------------------------------------------------------
-
 
 def test_a_withdrawal_needs_a_reason_and_clears_the_approval(world):
     assert _approve(world, "ministry", "withdraw").status_code == 200
@@ -326,7 +290,6 @@ def test_a_withdrawal_needs_a_reason_and_clears_the_approval(world):
     assert body["decisions"][0]["kind"] == "APPROVAL_WITHDRAWN"
     assert body["inspectionFeedback"][0]["byApprovingAuthority"] is True
     assert body["inspectionFeedback"][0]["sentBack"] is True
-    # Withdrawn: nothing left to hand on.
     assert _post(world, "master", "withdraw", "hand-on", {}).status_code == 422
 
 
@@ -339,7 +302,6 @@ def test_the_authority_can_send_back_without_approving(world):
 
 def test_hand_on_records_the_office_and_is_final_to_every_header_edit(world):
     assert _approve(world, "ministry", "hand_on").status_code == 200
-    # Rule 7e: the approver may hand on.
     answer = _post(world, "ministry", "hand_on", "hand-on", {"note": "By post."})
     assert answer.status_code == 200, answer.text
     body = answer.json()
@@ -357,7 +319,6 @@ def test_hand_on_records_the_office_and_is_final_to_every_header_edit(world):
 
 
 def test_a_handed_on_report_can_be_returned_by_the_authority(world):
-    # R1, on the report the test above handed on (independent if run alone: hand it on first).
     wid = world["workshops"]["hand_on"]
     read = world["client"].get(f"/api/design-workshop-approvals/{wid}", headers=_as(world, "master"))
     if read.json()["status"] != "SUBMITTED":
@@ -380,7 +341,6 @@ def test_an_approved_report_is_frozen_to_its_designers(world):
         f"/api/design-workshops/{wid}/stages/WORKSHOP_SETUP", json={"entries": []}, headers=_as(world, "designer")
     )
     assert save.status_code == 403
-    # Frozen to the content admins too (2026-10-20): they delete everything else, never this.
     for slug in ("ministry2", "admin"):
         renamed = client.patch(f"/api/design-workshops/{wid}", json={"title": "Renamed"}, headers=_as(world, slug))
         assert renamed.status_code == 403, (slug, renamed.text)
@@ -396,7 +356,6 @@ def test_a_legacy_submitted_report_has_nothing_to_withdraw(world):
 
 
 def test_each_decision_wrote_exactly_one_audit_row(world):
-    """Read back AFTER the client: the rows the decisions above left, one per decision."""
     _close_the_client(world)
     ids = world["workshops"]
     rows = asyncio.run(_read_back([ids["approve"], ids["approve_twice"], ids["stale"], ids["withdraw"]]))
@@ -410,7 +369,6 @@ def test_each_decision_wrote_exactly_one_audit_row(world):
 
 
 def test_two_approvals_at_once_produce_exactly_one(world):
-    """The compare-and-set decides it: both read PRE_SUBMISSION, one write matches, one does not."""
     from fastapi import HTTPException
 
     from app.api.routes import design_workshop_approvals as routes

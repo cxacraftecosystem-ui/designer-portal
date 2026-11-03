@@ -1,39 +1,3 @@
-"""Turning one planned row into a real workshop — and the silent ways that loses its header.
-
-The contract tests in section 1 need nothing. The behavioural tests in section 2 need Postgres:
-
-    docker compose up -d postgres
-    cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
-
-══ THE DEFECT EVERY TEST IN THIS FILE IS ABOUT ═══════════════════════════════════════════════════
-
-``stage_schema.PROMOTED_COLUMNS`` says which stage-1 fields are copied onto ``DesignWorkshop``
-COLUMNS. The stage entry is the writer; the column is the index. A promoted column written with NO
-STAGE ENTRY BEHIND IT is nulled by the designer's first stage-1 save, under a 200 reading "Stage
-saved": ``touched_entities`` gains ``workshopSetup`` for any entry naming it, the web sends a read
-stage's singleton whether or not it holds anything, and ``_coerce_promoted`` nulls a promoted column
-of a touched entity whose value is blank.
-
-Nothing warns. Completeness does not move. The workshop loses its craft, cluster, state, district,
-venue and dates, becomes invisible to every list filter on those axes, and shows "—" in the list's
-own columns for the whole fortnight of capture.
-
-``promote_entry``'s ``seeded`` map is a SECOND hand-written join between a data source and the
-registry's field keys — the first being ``designers.PREFILL_MAP``, which
-``tests/test_designer_prefill_contract.py`` guards and which imports only that map, so it cannot see
-this one. Section 1 is that guard, for this map.
-
-══ HOW SECTION 2 REACHES THE DATABASE, AND WHY IT MATTERS ════════════════════════════════════════
-
-Every database call in section 2 happens inside ONE SYNC fixture, in a private ``asyncio.run`` loop,
-before or after a ``TestClient`` exists but never while one is running. ``db`` is a process-wide
-Prisma singleton shared with the app, and a Prisma connection is BOUND TO THE EVENT LOOP THAT OPENED
-IT — so a module-scoped ASYNC fixture connects in one loop, starts the app in another, and every
-promote then fails inside the ROUTE with ``RuntimeError: … is bound to a different event loop``.
-``tests/test_workshop_join_sync.py`` and ``tests/test_seed_shared_questionnaire.py`` carry the
-convention; the block comment at the head of section 2 records how the phases are ordered here.
-"""
-
 import ast
 import asyncio
 import inspect
@@ -58,13 +22,6 @@ PASSWORD = "annual-plan-promotion-password"
 
 
 def _literal_keys(source: str, name: str) -> list[str]:
-    """The first element of every pair in a ``{name} = {...}`` comprehension over a tuple of tuples.
-
-    Read with ``ast`` rather than with a regular expression, so that a comment mentioning a key, or
-    a key spelled across two lines, cannot make this test agree with something the code does not do.
-    """
-    # `textwrap.dedent`, not `inspect.cleandoc`: cleandoc strips the indent of every line after the
-    # first, which un-indents the BODY of a module-level function whose source starts at column 0.
     tree = ast.parse(textwrap.dedent(source))
     found: list[str] = []
 
@@ -81,10 +38,6 @@ def _literal_keys(source: str, name: str) -> list[str]:
                 _collect(node.value)
             self.generic_visit(node)
 
-        # ``columns: dict[str, Any] = {...}`` IS AN ``AnnAssign`` AND NOT AN ``Assign``. Missing it
-        # made this reader answer an empty list — and an empty list makes every "every key is …"
-        # assertion below vacuously true, which is the one failure mode a contract test must not
-        # have. The `assert passed` / `assert SEEDED_KEYS` lines are what caught it.
         def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
             if isinstance(node.target, ast.Name) and node.target.id == name and node.value:
                 _collect(node.value)
@@ -102,24 +55,12 @@ def _workshop_setup_fields() -> dict[str, Any]:
     raise AssertionError("the registry has no workshopSetup entity")
 
 
-# The seeded literal moved into `plan_stage_one_values` on 2026-10-17 (C1), so the sanction register's
-# door fills stage 1 by the same rule; `promote_entry` calls it.
 SEEDED_KEYS = _literal_keys(inspect.getsource(annual_plan.plan_stage_one_values), "seeded")
 COLUMN_KEYS = _literal_keys(inspect.getsource(annual_plan.promote_entry), "columns")
 
 
-# --------------------------------------------------------------------------------------
-# 1. The two hand-written joins, guarded. No database.
-# --------------------------------------------------------------------------------------
-
 
 def test_every_promoted_key_promote_entry_seeds_is_a_real_workshop_setup_field():
-    """TWO SILENT FAILURES AT ONCE, and neither leaves a trace anywhere else.
-
-    A key that does not exist on the entity is written into the stage JSON FOR EVER and rendered by
-    nothing; a key that exists but is deprecated is written into a field no form shows. Both look
-    exactly like success from the outside — the promotion returns 201 and the workshop appears.
-    """
     fields = _workshop_setup_fields()
     assert SEEDED_KEYS, "the seeded map must be readable — has it been rewritten?"
     for key in SEEDED_KEYS:
@@ -128,8 +69,6 @@ def test_every_promoted_key_promote_entry_seeds_is_a_real_workshop_setup_field()
 
 
 def test_every_promoted_key_is_a_column_the_registry_actually_promotes():
-    """The other half: a key the registry does NOT promote is seeded into a stage nobody reads it
-    from as a header, so the workshop's own row never carries it and every list filter misses it."""
     promoted = {
         path.split(".", 1)[1] for path in PROMOTED_COLUMNS if path.startswith("workshopSetup.")
     }
@@ -138,13 +77,6 @@ def test_every_promoted_key_is_a_column_the_registry_actually_promotes():
 
 
 def test_no_parser_clip_cap_exceeds_the_field_it_is_promoted_into():
-    """THE PAIR CANNOT DRIFT IN EITHER DIRECTION, and the reason is a hole rather than an oversight.
-
-    ``seed_designer_prefill`` runs ``validate_entry(..., enforce_required=False)``, and a value that
-    validator REFUSES is DROPPED AND ONLY LOGGED — "a value refused here vanished completely". The
-    promoted COLUMN is still written. So a parser cap one character looser than its FieldSpec writes
-    a column with no stage entry behind it, which is exactly the state the first stage-1 save nulls.
-    """
     fields = _workshop_setup_fields()
     assert _CAP_MIRRORS, "the mirror map must not be empty"
     for role, field_key in _CAP_MIRRORS.items():
@@ -156,11 +88,6 @@ def test_no_parser_clip_cap_exceeds_the_field_it_is_promoted_into():
 
 
 def test_every_seeded_role_that_is_promoted_has_a_cap_mirror():
-    """A promoted TEXT value with no entry in ``_CAP_MIRRORS`` is a value nothing bounds.
-
-    Date and enum values are exempt — they are not clipped and cannot be over-length — so the
-    exemption is spelled by TYPE and not by a hand-kept list of names.
-    """
     fields = _workshop_setup_fields()
     bounded = {key for key in SEEDED_KEYS if fields[key].max_length}
     mirrored = set(_CAP_MIRRORS.values())
@@ -168,13 +95,6 @@ def test_every_seeded_role_that_is_promoted_has_a_cap_mirror():
 
 
 def test_every_column_promote_entry_passes_is_a_header_column_and_none_is_stage_one_owned():
-    """THE OTHER HALF OF THE SEEDED/COLUMNS SPLIT, and the half that is easy to get backwards.
-
-    ``venue``, ``implementingAgency``, ``sponsor`` and ``workshopCode`` are SEEDED and must never
-    ALSO be passed as columns: they belong to ``_STAGE_ONE_OWNS``, and ``seed_designer_prefill``
-    applies ``promoted_values`` and updates those columns itself. Passing them here as well makes
-    this door a second writer of a column with exactly one writer.
-    """
     from app.api.routes import design_workshops as dw_routes
 
     header = set(dw_routes._HEADER_TEXT_COLUMNS) | set(dw_routes._HEADER_DATE_COLUMNS)
@@ -189,13 +109,6 @@ def test_every_column_promote_entry_passes_is_a_header_column_and_none_is_stage_
 
 
 def test_the_promote_body_is_bounded_exactly_as_the_create_body_is():
-    """TWO DOORS WRITING INTO ONE TABLE MUST NOT CARRY TWO RULES.
-
-    Both bodies reach ``DesignWorkshopViewer`` through the same helper, and
-    ``schemas/design_workshops.py`` writes out why the list is capped at all: the route reads every
-    named account out of the user table before it writes anything, so an uncapped list lets one
-    caller choose how much work the server does.
-    """
     promote = AnnualPlanPromoteRequest.model_fields
     create = DesignWorkshopCreate.model_fields
 
@@ -211,19 +124,6 @@ def test_the_promote_body_is_bounded_exactly_as_the_create_body_is():
 
 
 def test_the_promote_body_bounds_the_template_id_to_the_same_closed_set_the_create_body_does():
-    """**THE THIRD FIELD, AND IT WAS THE ONE NOBODY PINNED.**
-
-    The test above pins the two designer fields and has done since the body landed; ``templateId``
-    was never mentioned, and it reaches the same ``DesignWorkshop.templateId`` — plain ``TEXT``, no
-    enum, no CHECK. ``resolve_template_id`` hands an unknown header value back verbatim and
-    ``report_templates.template()`` falls back to the DCH standard for anything it does not know, so
-    a typo was a 201 that stored a token nothing offers, printed the DCH standard on every report
-    until stage 20 was answered, and wrote the bogus id into the ``DwReportExport`` provenance
-    register where the history screen renders it as the NAME of the template a file used.
-
-    ``PHOTO-CATALOGUE`` is the realistic mistake (the id is ``PHOTO_CATALOGUE``), and the assertion
-    is that the two doors answer the SAME WAY rather than that either answers a particular way.
-    """
     from pydantic import ValidationError
 
     for bad in ("PHOTO-CATALOGUE", "DCH_STANDRD", "", "anything at all"):
@@ -233,27 +133,11 @@ def test_the_promote_body_bounds_the_template_id_to_the_same_closed_set_the_crea
             DesignWorkshopCreate(title="A workshop", templateId=bad)
         assert "templateId must be one of" in str(promote_refusal.value)
 
-    # AND THE DEFAULT IS STILL ACCEPTED, or the guard has closed the door it was protecting.
     assert AnnualPlanPromoteRequest().templateId == "DCH_STANDARD"
     assert AnnualPlanPromoteRequest(templateId="PHOTO_CATALOGUE").templateId == "PHOTO_CATALOGUE"
 
 
 def test_the_promotion_folds_the_lead_designer_into_the_set_that_is_checked_and_granted():
-    """**ONE CREATION PATH MEANS ONE NORMALISATION OF THE TWO DESIGNER FIELDS.**
-
-    ``open_design_workshop`` validates and grants ``designer_ids`` and uses ``designer_id`` for
-    nothing but the prefill. So a body naming only ``designerUserId``, passed through unfolded,
-    produced: ``wanted = set() - {actor.id}`` empty, so ``assert_every_designer_may_be_named`` never
-    ran — no empanelment roster read, no platform allow-list read, no ``DESIGN_WORKSHOP_ROLES``
-    test; ``attach_the_named_designers`` skipped, so no viewer row and a 404 for the named person on
-    the workshop that carries their name; and ``seed_designer_prefill`` copying their displayName,
-    biography, designation, qualification, phone, email and postal address into stage 1 and stage 3
-    of a report bound for a ministry anyway. ``POST /api/design-workshops`` 422s the identical body.
-
-    Read at the source because the behavioural version needs Postgres, and because what is being
-    asserted is that the normalisation happens AT ALL — ``named_designer_team(lead, [])`` returning
-    ``(lead, [lead])`` is already pinned by ``tests/test_workshop_designer_naming.py``.
-    """
     source = inspect.getsource(annual_plan.promote_entry)
     assert "named_designer_team(" in source, (
         "promote_entry hands the raw body to open_design_workshop; a lead named alone is then "
@@ -267,21 +151,6 @@ def test_the_promotion_folds_the_lead_designer_into_the_set_that_is_checked_and_
 
 
 def test_the_promotion_stamp_is_a_compare_and_set_and_not_a_blind_update():
-    """**THE DATABASE DOES NOT BACK THE ALREADY-PROMOTED REFUSAL, AND A COMMENT SAID IT DID.**
-
-    ``AnnualPlanEntry.designWorkshopId`` is ``@unique``, which stops two PLAN ROWS pointing at one
-    workshop — the thing ``test_the_database_also_refuses_a_second_workshop_on_one_row`` below
-    actually exercises. It says nothing about one plan row being promoted twice: each promotion
-    mints a fresh workshop id, so no other row holds either value and neither UPDATE conflicts. Two
-    managers pressing "Open the workshop" on one row inside the second ``open_design_workshop``
-    takes — or one browser retrying the POST — both read ``designWorkshopId = None``, both pass the
-    409 above, and two complete workshops are created with the same title, the same seeded stage-1
-    header and the same promoted ``workshopCode``. The last ``update`` wins; the other is a
-    permanent orphan the directory can never reach, delete or explain.
-
-    AST rather than a substring search, because what is being asserted is the SHAPE of the write:
-    an ``update_many`` whose WHERE carries ``designWorkshopId: None`` beside the id.
-    """
     tree = ast.parse(textwrap.dedent(inspect.getsource(annual_plan.promote_entry)))
     stamps = [
         node
@@ -298,26 +167,14 @@ def test_the_promotion_stamp_is_a_compare_and_set_and_not_a_blind_update():
         "overwrite and a second promotion of the same row simply replaces the first"
     )
 
-    # AND THE DOCSTRING SAYS THE UNIQUE INDEX DOES **NOT** BACK THIS REFUSAL. It claimed the
-    # opposite — "`designWorkshopId` is `@unique`, so the database refuses it too" — which is true
-    # of a different thing entirely (two PLAN ROWS pointing at one workshop) and is exactly the
-    # sentence that would talk the next reviewer out of this finding. Asserted as a POSITIVE
-    # correction rather than as the absence of the old wording, because the correction has to quote
-    # what it is correcting for the next reader to follow it.
     source = inspect.getsource(annual_plan.promote_entry)
     assert "THE DATABASE DOES NOT BACK THIS REFUSAL" in source, (
         "promote_entry no longer records that the unique index does not cover a row promoted twice"
     )
-    # AND THE LOSER'S WORKSHOP IS TAKEN BACK OUT. A byte-identical twin left in the directory is
-    # indistinguishable from the winner to anybody who later has to decide which is real.
     assert "deletedAt" in source
 
 
 def test_a_plan_row_with_no_title_still_produces_a_scannable_workshop_title():
-    """``DesignWorkshop.title`` is NOT NULL and is the one promoted column ``_coerce_promoted``
-    refuses to blank, so a plan row with no title still has to produce one — and never the bare
-    number, because a list of three hundred rows reading "DPW/2026/017" is a list nobody can scan."""
-
     class _Entry:
         workshopNo = "DPW/2026/017"
         plannedTitle = None
@@ -349,22 +206,7 @@ def test_a_plan_row_with_no_title_still_produces_a_scannable_workshop_title():
     assert len(annual_plan.promotion_title(_Long())) == 220
 
 
-# --------------------------------------------------------------------------------------
-# 2. The promotion itself. NEEDS POSTGRES.
-# --------------------------------------------------------------------------------------
-#
-# EVERY DATABASE CALL BELOW IS IN THE ONE SYNC FIXTURE, in a private ``asyncio.run`` loop, with no
-# ``TestClient`` alive at the time — the convention ``tests/test_workshop_join_sync.py`` and
-# ``tests/test_seed_shared_questionnaire.py`` set out, and the reason is in this module's header.
-#
-# The fixture runs in four phases: seed (rows, before any request) → act (the requests whose result
-# a database read has to observe, one TestClient) → observe (the read-backs and the one direct
-# service call, the client now shut down) → yield (a second client, live, for every test that needs
-# no read-back and can therefore keep driving the route itself).
 
-
-#: BOUNDARY-LENGTH VALUES, AND THAT IS THE POINT OF THE FIXTURE. The failure these tests exist to
-#: catch appears ONLY at the boundary: a fixture of short strings passes with every cap wrong.
 BOUNDARY = {
     "craftName": "c" * 160,
     "clusterName": "k" * 160,
@@ -379,14 +221,6 @@ BOUNDARY = {
 
 @pytest.fixture(scope="module")
 def world():
-    """One ministry admin, one plan row per test, and every database call this module makes.
-
-    SYNC, not async — see the block comment above. A module-scoped ASYNC fixture opens the shared
-    Prisma connection in one event loop and then starts the app in another, and the app's own
-    handlers fail with ``RuntimeError: … is bound to a different event loop`` on every promote. That
-    is what filled CI with ``Unhandled error on POST /api/annual-plan/…/promote`` for tests whose
-    assertions were never reached.
-    """
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -402,31 +236,12 @@ def world():
     facts["answers"] = answers
     facts["rows"] = rows
 
-    # ---------------------------------------------------------------------------------
-    # Phase 1 — seed. A private loop, no app, no TestClient.
-    # ---------------------------------------------------------------------------------
     async def seed() -> None:
         async def entry(**overrides: Any):
             workshop_no = overrides.pop("workshopNo", f"DPW/2099/{uuid.uuid4().hex[:6]}")
             data = {
                 "planYear": 2099,
                 "workshopNo": workshop_no,
-                # ⚠ UNIQUE PER ROW, AND THE ORPHAN COUNT BELOW DEPENDS ON IT BEING SO. Two mistakes
-                # were made here in one day and the second is the instructive one.
-                #
-                # It first read "A planned workshop" — the same string on EVERY row — which made two
-                # refusal tests vacuous: they count workshops whose title carries this row's marker,
-                # `promotion_title` returns `plannedTitle[:220]` whenever plannedTitle is set, so the
-                # marker identified nothing and `count(...) == 0` was true whatever the route did.
-                #
-                # The fix then used the MODULE's uuid stamp, which is shared by every row in the
-                # module — so the count matched every workshop this module created, including the
-                # legitimate promotions, and the same two tests failed claiming an orphan that was
-                # somebody else's perfectly good workshop. A marker that over-matches is as useless
-                # as one that matches nothing; it just fails in the louder direction.
-                #
-                # The row's own `workshopNo` is the thing that is actually unique per row, so it is
-                # what the title carries.
                 "plannedTitle": f"A planned workshop {workshop_no}",
                 "workshopKind": "DESIGN_PROTOTYPE_DEVELOPMENT",
                 "plannedStartDate": datetime(2026, 3, 12, tzinfo=UTC),
@@ -437,18 +252,6 @@ def world():
             return await db.annualplanentry.create(data=data)
 
         async def account(slug: str, role: str, name: str, *, empanelled: bool = False):
-            """One account, and OPTIONALLY the roster row that makes a DESIGNER usable.
-
-            ⚠ A `User` ROW WITH `role = "DESIGNER"` IS NOT AN ELIGIBLE DESIGNER, and every test in
-            this module that names one was failing on exactly that once the connection errors
-            stopped hiding it: "Running a design workshop requires Designer access or above", and
-            "… is not on the ACTIVE designer roster, so they cannot sign in at all."
-
-            Eligibility is SET MEMBERSHIP, not a rank floor — a professor outranks a designer and
-            still cannot run a workshop — and the set is the ACTIVE `DesignerRoster`. So a designer
-            the promotion route is expected to ACCEPT needs the roster row; the ones it is expected
-            to REFUSE deliberately do not get one, which is what makes those refusals real.
-            """
             user = await db.user.create(
                 data={
                     "email": f"plan-{slug}-{uuid.uuid4().hex[:8]}@example.org",
@@ -464,10 +267,6 @@ def world():
                         "fullName": user.name,
                         "institution": "Directorate of Handicrafts",
                         "isActive": True,
-                        # `admin`, the enclosing local, NOT `facts["admin"]`: this helper is defined
-                        # before that key is set and called after, and a closure resolves at call
-                        # time — but reading through `facts` would depend on an assignment ordering
-                        # forty lines away that nothing else in this file cares about.
                         "addedById": admin.id,
                     }
                 )
@@ -494,29 +293,8 @@ def world():
             )
             facts["admin"] = admin
 
-            # The rows the LIVE tests promote for themselves. One each, because a promotion is not
-            # repeatable and a shared row would make this module order-dependent.
             for key in ("plain", "twice", "withdraw_refused"):
                 entries[key] = await entry()
-            # ⚠ THE ONE ROW IN THIS MODULE WHOSE `workshopNo` IS NOT RANDOM, AND WHY IT IS STAMPED
-            # HERE RATHER THAN IN `BOUNDARY`.
-            #
-            # Every other row gets `DPW/2099/<uuid>`; this one takes `BOUNDARY`'s literal `"w" * 60`,
-            # because sixty IS the assertion — these tests exist to catch a cap that is wrong only at
-            # the boundary, and a short string passes with every cap wrong. But a LITERAL is unique
-            # exactly once: `@@unique([planYear, workshopNoKey])` means the first run of this module
-            # against a persistent database stores `WWW…W`, and every run afterwards dies in the
-            # fixture with a UniqueViolationError before a single test body is reached — nine errors
-            # whose message says nothing about the boundary and everything about the constraint.
-            #
-            # That is not hypothetical and it is not old: it went unseen because the local Postgres
-            # was stopped, so this module had NEVER RUN TWICE. The day the container came back it
-            # passed once and then failed nine times, which reads exactly like a regression and is
-            # not one.
-            #
-            # So the length is kept and the tail is made the module's own: 52 w's plus the 8-hex
-            # stamp is still exactly sixty characters, so the boundary is unchanged and the row is
-            # new on every run. Keep the arithmetic if you edit either half.
             stamped_boundary = {**BOUNDARY, "workshopNo": ("w" * 52) + stamp}
             assert len(stamped_boundary["workshopNo"]) == len(BOUNDARY["workshopNo"]), (
                 "the boundary row must stay exactly as long as BOUNDARY declares — that length is "
@@ -525,48 +303,20 @@ def world():
             entries["boundary"] = await entry(**stamped_boundary)
             entries["withdrawn"] = await entry(withdrawnAt=datetime.now(UTC))
 
-            # The rows whose promotion has to be read back out of the tables afterwards.
             entries["ineligible_plural"] = await entry()
             entries["ineligible_lead"] = await entry()
             entries["lead_alone"] = await entry()
             entries["race"] = await entry()
-            # NOT empanelled, deliberately: these two are what the "refuses an ineligible designer"
-            # tests name, and a professor is refused by the ROLE arm regardless of any roster row.
             facts["professor_plural"] = await account("prof", "PROFESSOR", "A professor")
             facts["professor_lead"] = await account("lead-prof", "PROFESSOR", "A professor")
-            # EMPANELLED, because this one is the designer the route must ACCEPT — the test asserts
-            # the workshop IS created and the viewer row granted. Without the roster entry the route
-            # refuses her before the assertion is reached, and the test fails for a reason that has
-            # nothing to do with what it is about.
             facts["lead_designer"] = await account("lead", "DESIGNER", "Meera Kanungo", empanelled=True)
-            # A PLATFORM ADMIN, for the one test that writes INSIDE a promoted workshop.
-            #
-            # The fixture's own `admin` is a MINISTRY_ADMIN, and a ministry admin may promote a plan
-            # row into a workshop and then may NOT save a stage in it: `DESIGN_WORKSHOP_ROLES` is
-            # {DESIGNER, ADMIN, MASTER_ADMIN} and running a workshop is SET MEMBERSHIP, not a rank
-            # floor. That is a defensible split — the ministry commissions the workshop, the designer
-            # runs it — and it is not this module's business to assert or to argue.
-            #
-            # So the stage-save test uses an account that may. What it is about is whether the
-            # PROMOTED COLUMNS survive a stage save; routing it through an actor the route refuses
-            # would make it fail for a reason that has nothing to do with that.
             facts["platform_admin"] = await account("platform-admin", "ADMIN", "A platform admin")
 
-            # THE STALE SNAPSHOT the race is forced with: the row as it read BEFORE anybody
-            # promoted it. Taken here, before the act phase's winning POST, because that is what
-            # makes it stale.
             facts["stale"] = await db.annualplanentry.find_unique(
                 where={"id": entries["race"].id}
             )
-            # Recorded as a SCALAR, not re-read off the model in the test: `promote_entry` is handed
-            # that very object in phase 3, and a test asserting over it afterwards would be asking
-            # the snapshot what it looks like after the thing it was a snapshot of.
             facts["stale_link_at_snapshot"] = facts["stale"].designWorkshopId
 
-            # THE DATABASE'S OWN REFUSAL of a second workshop on one plan row. Pure database, no
-            # route in it at all, so it is driven here; the outcome is RECORDED rather than
-            # asserted, so a unique index that quietly went away fails the test that owns the rule
-            # instead of erroring every test in the module out of the fixture.
             first = await entry()
             second = await entry()
             promoted = await db.designworkshop.create(
@@ -591,9 +341,6 @@ def world():
         finally:
             await db.disconnect()
 
-    # ---------------------------------------------------------------------------------
-    # Phase 2 — act. One TestClient, and only the requests a read-back has to observe.
-    # ---------------------------------------------------------------------------------
     def act(client: Any) -> None:
         headers = _headers(facts)
 
@@ -607,30 +354,11 @@ def world():
         promote("lead_alone", {"designerUserId": facts["lead_designer"].id})
         promote("race", {})
 
-    # ---------------------------------------------------------------------------------
-    # Phase 3 — observe. The client is shut down; the singleton is free again.
-    # ---------------------------------------------------------------------------------
     async def observe() -> None:
         from fastapi import HTTPException
 
         await db.connect()
         try:
-            # THE ORPHAN IS COUNTED PER PLAN ROW, NOT OVER THE WHOLE TABLE, because a global
-            # ``designworkshop.count()`` bracketing one POST cannot survive being moved into a
-            # fixture that makes several: the legitimate promotion moves the total.
-            #
-            # ⚠ MATCHED ON ``plannedTitle``, NOT ON ``workshopNo``, AND THE DIFFERENCE IS WHETHER
-            # THIS TEST CHECKS ANYTHING AT ALL. The note here used to say "promotion_title always
-            # begins with the plan row's workshopNo". IT DOES NOT: ``annual_plan.promotion_title``
-            # returns ``plannedTitle[:220]`` whenever plannedTitle is set, and it is set on every row
-            # this fixture seeds. The workshopNo therefore appeared in NO title, the count was
-            # structurally 0, and both refusal tests passed without the route being asked anything.
-            # Caught in review on 2026-09-14, before it ever ran green.
-            #
-            # ``plannedTitle`` now carries the module's uuid stamp (see ``entry`` above), so it IS
-            # unique per row and IS what lands in the title. NO ``deletedAt`` FILTER, deliberately:
-            # HEAD counted every row, and a refusal that created a workshop and then soft-deleted it
-            # is still a refusal that created a workshop — exactly the orphan this asks about.
             for key in ("ineligible_plural", "ineligible_lead"):
                 plan = entries[key]
                 rows[key] = {
@@ -647,19 +375,8 @@ def world():
                     where={"designWorkshopId": created.json()["workshop"]["id"]}
                 )
 
-            # THE RACE, forced rather than run: ``promote_entry`` is handed the STALE row — the
-            # snapshot read before the winning POST above — and the compare-and-set has to catch
-            # what the in-memory check cannot. Both counts are taken HERE, immediately around the
-            # call, so the bracket is exactly the one write it is about.
             rows["race"] = {}
             before = await db.designworkshop.count(where={"deletedAt": None})
-            # EVERY exception is recorded, not only HTTPException, and the reason is where this call
-            # now lives. It runs inside the MODULE FIXTURE, so an exception that escapes here does
-            # not fail one test — it errors every test in the module, with a traceback about the
-            # fixture rather than about the compare-and-set. Recording the type instead lets the
-            # assertion say what actually happened: "expected a 409 refusal, got PrismaError" is a
-            # sentence somebody can act on, and a bug that is not an HTTPException is exactly the
-            # kind this test exists to notice.
             try:
                 await annual_plan.promote_entry(
                     facts["stale"], actor=facts["admin"], designer_id=None, designer_ids=[]
@@ -696,26 +413,14 @@ def client(world):
 
 
 def _headers(world) -> dict[str, str]:
-    """The MINISTRY admin — the actor every promotion in this module is made by."""
     return {"Authorization": f"Bearer {create_access_token(subject=world['admin'].id)}"}
 
 
 def _platform_headers(world) -> dict[str, str]:
-    """A PLATFORM admin — an ADMIN rather than the MINISTRY_ADMIN `_headers` mints for.
-
-    KEPT THOUGH THE STAGE-SAVE TEST NO LONGER NEEDS IT, because the distinction it draws is still
-    real and this module is where it would next be needed: `DESIGN_WORKSHOP_CREATOR_ROLES` remains
-    {ADMIN, MASTER_ADMIN}, so a ministry admin may now WRITE inside a workshop and still may not
-    OPEN a bare one outside the promotion route.
-    """
     return {"Authorization": f"Bearer {create_access_token(subject=world['platform_admin'].id)}"}
 
 
 def _promote(client: Any, world: dict[str, Any], key: str, body: dict[str, Any] | None = None):
-    """A live promotion of one of the fixture's plan rows, for the tests that need no read-back.
-
-    What the convention forbids is a DATABASE call while a client is alive, not a request.
-    """
     return client.post(
         f"/api/annual-plan/{world['entries'][key].id}/promote",
         json=body or {},
@@ -735,8 +440,6 @@ def test_promoting_a_row_creates_one_workshop_and_records_the_link(world, client
 
 @needs_db
 def test_a_promoted_row_cannot_be_promoted_twice(world, client) -> None:
-    """409 NAMING THE EXISTING WORKSHOP. The unique index refuses it too, but a constraint violation
-    cannot say WHICH workshop, and "which" is the only useful thing to tell the administrator."""
     assert _promote(client, world, "twice").status_code == 201
     second = _promote(client, world, "twice")
     assert second.status_code == 409
@@ -745,11 +448,6 @@ def test_a_promoted_row_cannot_be_promoted_twice(world, client) -> None:
 
 @needs_db
 def test_the_database_also_refuses_a_second_workshop_on_one_row(world) -> None:
-    """THE ROUTE IS NOT THE ONLY GUARD, because a rule like this gets a second door added to it.
-
-    Driven in the fixture — it is two UPDATEs and no route — and reported here, so that an index
-    which quietly went away fails this test rather than the module's setup.
-    """
     assert world["one_workshop_one_row"] == "UniqueViolationError", (
         "a second plan row was allowed to point at a workshop another row already holds — "
         "`AnnualPlanEntry.designWorkshopId` is no longer unique and the route is now the only guard"
@@ -767,55 +465,6 @@ def test_the_database_also_refuses_a_second_workshop_on_one_row(world) -> None:
     ),
 )
 def test_the_promoted_workshop_survives_its_first_stage_one_save(world, client) -> None:
-    """THE DEFECT TEST, WITH A BOUNDARY-LENGTH FIXTURE. CURRENTLY XFAIL — READ THIS BEFORE TOUCHING IT.
-
-    ── WHAT FAILS, AND IT IS REAL ───────────────────────────────────────────────────────────────
-
-    "craftName was nulled by the first save". The chain, traced end to end on 2026-09-14:
-
-      1. `annual_plan.promote_entry` seeds BOTH halves — the `DesignWorkshop` column and the
-         `workshopSetup` stage entry behind it — and its own comment says why in as many words:
-         "writing any of them as a COLUMN without also writing the stage entry behind it gets it
-         nulled by the first stage-1 save under a 200 reading 'Stage saved'". That is wired
-         correctly; `seeded` reaches `open_design_workshop`.
-      2. `workshopSetup` is a SINGLETON, and a singleton save REPLACES its `data` wholesale. This
-         test sends `{"block": "Bhujodi"}`, so the seeded `craftName` leaves the entry.
-      3. `_coerce_promoted` then sees the entity writing a row with no `craftName` in it and NULLs
-         the column — which is its documented rule, pinned by
-         `test_stage_version_guard::test_a_surviving_sibling_still_promotes_when_another_row_is_refused`:
-         "a column whose entity IS writing a row and whose value is blank is still NULLed".
-
-    ── WHY IT IS NOT SIMPLY FIXED HERE ──────────────────────────────────────────────────────────
-
-    The two rules genuinely conflict. Making an ABSENT key mean "leave alone" was tried in this
-    session and reverted: it breaks the stage-version-guard test above, which is the write-once
-    prevention — a designer who clears a wrong sanction number must see the column cleared.
-
-    Three coherent resolutions exist and each is somebody's call, not a test's:
-      (a) accept it — a real stage-1 form loads the seeded entry and posts every field back, so
-          only a PARTIAL payload (an offline patch, a hand-rolled client) can reach this;
-      (b) make a singleton save MERGE rather than replace, which changes save semantics everywhere;
-      (c) give `_coerce_promoted` the provenance of the current value, so it blanks what stage 1
-          wrote and never what the promotion wrote.
-
-    ── WHY XFAIL AND NOT DELETION ───────────────────────────────────────────────────────────────
-
-    Because the behaviour is real and a deleted test is a decision nobody can find later. `strict=True`
-    means this goes RED the moment the behaviour changes, so whoever fixes it is forced to come back
-    and remove the marker rather than leaving a permanently-yellow test behind.
-
-    THIS TEST HAD NEVER RUN until 2026-09-14: every case in its module died at fixture setup on a
-    cross-loop error, and the actor it uses could not save a stage at all until MINISTRY_ADMIN
-    entered `DESIGN_WORKSHOP_ROLES`. The behaviour it names is older than both.
-
-
-    Promote, read the workshop, save stage 1 with an unrelated field, re-read: every promoted column
-    unchanged. With short strings this passes with every cap wrong, which is why every text value in
-    the fixture is exactly its FieldSpec's ``max_length``.
-
-    Every reading is taken through the ROUTE, which is what makes this a live test rather than a
-    recorded one: the columns are what the workshop's own screen shows.
-    """
     created = _promote(client, world, "boundary")
     assert created.status_code == 201, created.text
     workshop_id = created.json()["workshop"]["id"]
@@ -829,12 +478,6 @@ def test_the_promoted_workshop_survives_its_first_stage_one_save(world, client) 
     saved = client.put(
         f"/api/design-workshops/{workshop_id}/stages/WORKSHOP_SETUP",
         json={"entries": [{"entityKey": "workshopSetup", "data": {"block": "Bhujodi"}}]},
-        # THE MINISTRY ADMIN AGAIN, and that line is the point of this test rather than an
-        # oversight. It briefly used a platform admin because MINISTRY_ADMIN was not in
-        # `DESIGN_WORKSHOP_ROLES`, so the tier that promotes a plan row into a workshop could not
-        # then save a stage in the workshop it had just created. The owner ruled on 2026-09-14
-        # that it should be able to; the set now carries the three directorate tiers, and this is
-        # the test that proves the workflow no longer dead-ends one step after it starts.
         headers=_headers(world),
     )
     assert saved.status_code in (200, 201), saved.text
@@ -855,9 +498,6 @@ def test_a_withdrawn_row_cannot_be_promoted(world, client) -> None:
 
 @needs_db
 def test_naming_an_ineligible_designer_refuses_the_whole_promotion(world) -> None:
-    """THE ORPHAN-DRAFT FAILURE. Eligibility is asked ABOVE the create, so a refusal leaves no
-    committed, untitled-looking workshop behind — and the plan row stays un-promoted, so the
-    administrator can simply try again with the right name."""
     professor = world["professor_plural"]
     response = world["answers"]["ineligible_plural"]
     assert response.status_code == 422
@@ -872,20 +512,6 @@ def test_naming_an_ineligible_designer_refuses_the_whole_promotion(world) -> Non
 
 @needs_db
 def test_naming_an_ineligible_lead_designer_alone_refuses_the_promotion_too(world) -> None:
-    """**THE SINGULAR TWIN OF THE TEST ABOVE, AND THE ONE THAT HAD NEVER BEEN WRITTEN.**
-
-    Every promote test in this file sent the PLURAL field, so the singular path was never exercised
-    — and it was the one with the hole in it. ``open_design_workshop`` builds ``wanted`` from
-    ``designer_ids`` alone, so ``{"designerUserId": <a professor>}`` used to skip
-    ``assert_every_designer_may_be_named`` entirely: 201, no viewer row for the person named (a 404
-    for them on the workshop that carries their name), and ``seed_designer_prefill`` copying their
-    profile — displayName, biography, designation, qualification, phone, email, postal address —
-    into stage 1 and stage 3 of a ministry report. The identical body on ``POST
-    /api/design-workshops`` was a 422 before anything was created.
-
-    UNVERIFIED LOCALLY: the generated Prisma client on this machine predates today's models and
-    ``prisma generate`` does not run here, so this first executes in CI.
-    """
     professor = world["professor_lead"]
     response = world["answers"]["ineligible_lead"]
     assert response.status_code == 422, response.text
@@ -901,15 +527,6 @@ def test_naming_an_ineligible_lead_designer_alone_refuses_the_promotion_too(worl
 
 @needs_db
 def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_named_on(world) -> None:
-    """The other half of the same defect: the lead has to END UP with a viewer row.
-
-    ``attach_the_named_designers`` ran only ``if designer_ids``, so a body naming only the lead
-    wrote no row at all and the designer whose name is on the cover got a 404 on their own
-    workshop — "the exact silent failure ``attach_the_named_designers`` documents itself as existing
-    to prevent".
-
-    UNVERIFIED LOCALLY — see the test above.
-    """
     created = world["answers"]["lead_alone"]
     assert created.status_code == 201, created.text
 
@@ -922,22 +539,6 @@ def test_a_lead_designer_named_alone_is_granted_the_workshop_they_are_named_on(w
 
 @needs_db
 def test_a_second_promotion_that_slips_past_the_check_creates_no_orphan_workshop(world) -> None:
-    """**THE RACE, FORCED RATHER THAN RUN.**
-
-    The window is between ``promote_entry``'s ``if entry.designWorkshopId`` check and its stamp, and
-    it is real (`open_design_workshop` is four awaits and explicitly not transactional). It cannot
-    be produced reliably from a test client, so the fixture does what the race does: hands
-    ``promote_entry`` a STALE row — the snapshot it read before somebody else promoted — and this
-    asserts the compare-and-set catches what the in-memory check cannot.
-
-    TWO PROPERTIES, AND THE SECOND IS THE ONE THAT COSTS MONEY. The call is refused (409), AND the
-    workshop this call had already created is taken back out — a byte-identical twin left in the
-    directory, with the same title, the same seeded stage-1 header and the same promoted
-    ``workshopCode``, is indistinguishable from the winner to anybody who later has to decide which
-    one is real.
-
-    UNVERIFIED LOCALLY — see above.
-    """
     assert world["stale_link_at_snapshot"] is None, (
         "the snapshot handed to promote_entry was taken AFTER the row was promoted, so it is not "
         "stale and the compare-and-set is not being exercised at all"
@@ -948,7 +549,6 @@ def test_a_second_promotion_that_slips_past_the_check_creates_no_orphan_workshop
     winning_id = winner.json()["workshop"]["id"]
 
     seen = world["rows"]["race"]
-    # Named first, so a non-HTTP failure reads as itself rather than as "expected 409, got None".
     assert seen["refusal_type"] is None, (
         f"the stale promotion raised something that is not an HTTPException: {seen['refusal_type']}. "
         "That is not the refusal this test is about — the compare-and-set did not get as far as "
@@ -967,9 +567,6 @@ def test_a_second_promotion_that_slips_past_the_check_creates_no_orphan_workshop
 
 @needs_db
 def test_withdrawing_a_promoted_row_is_refused(world, client) -> None:
-    """A designer may be standing in the courtyard. Withdrawing the line would take it out of the
-    directory while the workshop, its viewers, its media and its report went on existing — and
-    nothing anywhere would say why the two disagree."""
     assert _promote(client, world, "withdraw_refused").status_code == 201
     refused = client.post(
         f"/api/annual-plan/{world['entries']['withdraw_refused'].id}/withdraw",

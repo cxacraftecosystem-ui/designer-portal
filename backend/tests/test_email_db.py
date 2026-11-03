@@ -1,13 +1,3 @@
-"""E-mail against a real database: the migration's table and column, the notification preference
-routes, a password link an administrator chose to e-mail, and the worker draining it.
-
-ONE SYNC TEST, in the order ``conftest.py`` prescribes under "HOW A DATABASE-BACKED MODULE IS
-SUPPOSED TO REACH THE DATABASE": seed in a private ``asyncio.run`` -> drive the ``TestClient`` ->
-read back and drain in another private ``asyncio.run`` once the client is closed. No database call is
-ever made while a client is alive. SES is stubbed at ``mailer.send``; mail is switched on for the
-length of the test by replacing ``get_settings`` in the two mail modules.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -73,7 +63,6 @@ def test_preferences_a_mailed_link_and_the_drain(monkeypatch: pytest.MonkeyPatch
     with TestClient(app) as client:
         first = client.get("/api/preferences/notifications", headers=headers)
         assert first.status_code == 200, first.text
-        # 2026-10-18 added three more choices beside it; the original pair keeps its meaning.
         assert {k: first.json()[k] for k in ("available", "emailReviewNotes")} == {
             "available": True,
             "emailReviewNotes": True,
@@ -85,7 +74,6 @@ def test_preferences_a_mailed_link_and_the_drain(monkeypatch: pytest.MonkeyPatch
         assert saved.status_code == 200, saved.text
         again = client.get("/api/preferences/notifications", headers=headers).json()
         assert (again["available"], again["emailReviewNotes"]) == (True, False)
-        # The appearance body does not carry the opt-out, so saving a theme leaves it alone.
         assert client.put("/api/preferences/me", json={"theme": "dark"}, headers=headers).status_code == 200
         assert client.get("/api/preferences/notifications", headers=headers).json()["emailReviewNotes"] is False
 

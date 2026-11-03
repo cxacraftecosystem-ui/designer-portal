@@ -1,21 +1,3 @@
-"""AUTH LIMITATIONS (2026-10-17): the two-step key, a first password's re-authentication, its own
-code budget, and the forwarded-hop default.
-
-1. ``TWO_FACTOR_ENCRYPTION_KEY`` — TOTP secrets sealed under their own key, versioned by a key id, so
-   rotating ``JWT_SECRET`` no longer locks two-step users out. Legacy values still open; previous keys
-   still open; a value moves to the current key on use and through
-   ``scripts/reencrypt_two_factor_secrets.py``; the boot warns in the transition and fails only when
-   told to.
-2. A first password on a provider-only account needs a FRESH provider proof for THIS account — a
-   Google ID token or a Microsoft/Yahoo code issued in the last five minutes — not a recent session.
-3. Its second-step check spends its own five-per-fifteen-minutes budget, never the sign-in's (N3).
-4. ``FORWARDED_CLIENT_HOPS`` defaults to 2.
-
-The first half needs no database. The second follows the sync pattern ``tests/conftest.py``
-describes: one ``asyncio.run`` seeds every row before the ``TestClient`` starts, and every later read
-goes through ``client.portal``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -48,7 +30,6 @@ def _new_key() -> str:
 
 @pytest.fixture
 def keys(monkeypatch):
-    """Set the two key settings for one test; ``None`` means unset."""
     settings = get_settings()
 
     def configure(current: str | None, previous: str | None = None) -> None:
@@ -58,10 +39,6 @@ def keys(monkeypatch):
     configure(None, None)
     return configure
 
-
-# ==================================================================================================
-# 1. The key — no database
-# ==================================================================================================
 
 
 def test_without_a_key_values_are_legacy_and_still_open(keys):
@@ -83,7 +60,7 @@ def test_with_a_key_values_carry_its_id_and_survive_a_jwt_secret_rotation(keys, 
 
 
 def test_legacy_ciphertext_still_opens_once_a_key_is_set_and_moves_to_it(keys):
-    legacy = two_factor.encrypt_secret(SECRET)  # no key yet: v1 under JWT_SECRET
+    legacy = two_factor.encrypt_secret(SECRET)
     keys(_new_key())
     assert two_factor.decrypt_secret(legacy) == SECRET
     assert not two_factor.is_current(legacy)
@@ -104,7 +81,7 @@ def test_rotation_with_previous_keys(keys):
     under_new = two_factor.reencrypted(under_old)
     assert under_new is not None and two_factor.is_current(under_new)
 
-    keys(new)  # the previous key dropped
+    keys(new)
     assert two_factor.decrypt_secret(under_old) is None, "dropped too early: unreadable, not a 500"
     assert two_factor.decrypt_secret(under_new) == SECRET
 
@@ -117,8 +94,6 @@ def test_a_value_cannot_be_relabelled_to_another_key(keys):
     other = two_factor.key_id(two_factor.parse_key(second))
     assert two_factor.decrypt_secret(f"v2:{other}.{rest}") is None
     version, iv, tag, body = stored.split(".")
-    # The FIRST character: the last one of an unpadded base64url body carries padding bits, so
-    # flipping it can decode to the same bytes and the tamper goes unseen (a flake, ~1 run in 16).
     flipped = ("A" if body[0] != "A" else "B") + body[1:]
     assert two_factor.decrypt_secret(".".join((version, iv, tag, flipped))) is None
 
@@ -168,7 +143,6 @@ def test_boot_fails_loudly_when_the_key_is_required_and_missing(keys, monkeypatc
     monkeypatch.setattr(two_factor, "encryption_census", _census(enabled=2, current=2))
     with pytest.raises(RuntimeError, match="TWO_FACTOR_ENCRYPTION_KEY is not set"):
         asyncio.run(two_factor.check_keys_at_boot())
-    # Nobody has two-step on: nothing to lock out, so even a required key does not stop the boot.
     monkeypatch.setattr(two_factor, "encryption_census", _census())
     asyncio.run(two_factor.check_keys_at_boot())
 
@@ -194,16 +168,10 @@ def test_the_first_password_code_budget_is_five_on_its_own_counter():
     answers = [rate_limit.first_password_code_attempt(account)[0] for _ in range(6)]
     assert answers == [True] * 5 + [False]
     assert rate_limit.FIRST_PASSWORD_CODE_WINDOW_SECONDS == 900.0
-    # The sign-in budget for the same account is untouched by all of that.
     assert rate_limit.account_credential_attempt(account)[0] is True
     rate_limit.reset_account_credential_budget()
 
 
-# ==================================================================================================
-# The database half
-# ==================================================================================================
-
-#: slug -> (provider, two-step on)
 ACCOUNTS: dict[str, tuple[str, bool]] = {
     "fresh": ("GOOGLE", False),
     "stale": ("GOOGLE", False),
@@ -222,7 +190,6 @@ ACCOUNTS: dict[str, tuple[str, bool]] = {
 }
 
 
-#: This module's accounts holding a value sealed under a (test-only, random) key.
 _SEEDED_SEALED: dict[str, Any] = {
     "email": {"startswith": "authlim-"},
     "OR": [{"twoFactorSecret": {"startswith": "v2:"}}, {"twoFactorPendingSecret": {"startswith": "v2:"}}],
@@ -244,8 +211,6 @@ def world():
     async def seed() -> dict[str, Any]:
         await db.connect()
         try:
-            # An interrupted earlier run can leave values sealed under a random key no longer
-            # configured; the boot rightly refuses those (the key was lost), so clear them first.
             await db.user.update_many(where=_SEEDED_SEALED, data=_UNSEALED)
             now = datetime.now(UTC)
             people: dict[str, Any] = {}
@@ -258,7 +223,6 @@ def world():
                     "authProvider": provider,
                 }
                 if two_step:
-                    # Legacy ciphertext — what every account with two-step on holds today.
                     data |= {
                         "twoFactorEnabled": True,
                         "twoFactorSecret": two_factor.encrypt_secret(SECRET),
@@ -283,7 +247,6 @@ def world():
     people = asyncio.run(seed())
     with TestClient(app) as client:
         yield {"client": client, "people": people, "address": address}
-        # Tests here seal values under random keys; left behind, they would stop the next boot.
         _read(client, db.user.update_many, where=_SEEDED_SEALED, data=_UNSEALED)
 
 
@@ -321,8 +284,6 @@ def _first_password(world: dict[str, Any], slug: str, **body: Any) -> Any:
 def _row(world: dict[str, Any], slug: str) -> Any:
     return _read(world["client"], db.user.find_unique, where={"id": world["people"][slug].id})
 
-
-# ── 2. a first password needs a fresh provider proof ──────────────────────────────────────────────
 
 
 @needs_db
@@ -408,8 +369,6 @@ def test_a_stale_or_mismatched_microsoft_code_is_refused(world, monkeypatch):
     assert _row(world, "microsoftStale").passwordHash is None
 
 
-# ── 3. the second step, on its own budget ─────────────────────────────────────────────────────────
-
 
 def _wrong(code: str) -> str:
     return "000000" if code != "000000" else "111111"
@@ -442,12 +401,9 @@ def test_wrong_codes_here_spend_their_own_budget_and_never_lock_sign_in(world, m
     assert (row.twoFactorFailedAttempts or 0) == 0, "the sign-in's code budget was spent"
     assert (row.twoFactorRecoveryFailedAttempts or 0) == 0
     assert not two_factor.is_locked(row) and not two_factor.fully_locked(row)
-    # Even the right code waits for the window; the sign-in door is open throughout.
     locked_out = _first_password(world, "budget", **proof, twoFactorCode=two_factor.current_totp(SECRET))
     assert locked_out.status_code == 429
 
-
-# ── 1, against the database: re-encryption on use, and the backfill ─────────────────────────────
 
 
 @needs_db
@@ -469,7 +425,6 @@ def test_the_backfill_is_a_dry_run_by_default_and_idempotent(world, keys):
 
     client = world["client"]
     ids = [world["people"]["backfillA"].id, world["people"]["backfillB"].id]
-    # One of the two also holds a pending setup, under the legacy key too.
     _read(
         client,
         db.user.update,
@@ -503,13 +458,8 @@ def test_the_backfill_prints_counts_only_and_refuses_without_a_key(keys, capsys)
     assert "not set" in out and "@" not in out
 
 
-# ==================================================================================================
-# Review follow-ups (2026-10-17)
-# ==================================================================================================
-
 
 def test_boot_fails_without_a_key_when_values_were_sealed_under_one(keys, monkeypatch):
-    # TWO_FACTOR_KEY_REQUIRED is off: a release .env that lost the key also lost the flag.
     monkeypatch.setattr(get_settings(), "two_factor_key_required", False)
     monkeypatch.setattr(two_factor, "encryption_census", _census(enabled=2, unreadable=2, versioned=2))
     with pytest.raises(RuntimeError, match="key was lost"):
@@ -590,7 +540,6 @@ def test_a_microsoft_proof_survives_a_wrong_code_without_a_second_redemption(wor
     rate_limit.reset_account_credential_budget()
     idp = FakeIdP().install(monkeypatch)
     idp.issue(idp.sign(idp.microsoft_claims(world["address"]("microsoftTwoStep"))))
-    # One session throughout, as a client holds one token: the remembered proof is bound to it.
     session = _as(world, "microsoftTwoStep")
 
     def send(code: str) -> Any:
@@ -603,7 +552,6 @@ def test_a_microsoft_proof_survives_a_wrong_code_without_a_second_redemption(wor
     wrong = send(_wrong(two_factor.current_totp(SECRET)))
     assert wrong.status_code == 400
     assert wrong.headers.get("x-two-factor-required") == "1"
-    # The provider would refuse the code a second time.
     idp.next_answer = (400, {"error": "invalid_grant"})
     right = send(two_factor.current_totp(SECRET))
     assert right.status_code == 200, right.text

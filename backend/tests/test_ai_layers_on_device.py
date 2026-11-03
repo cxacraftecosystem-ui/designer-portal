@@ -1,15 +1,3 @@
-"""A layer a model on the handset produced: ``POST /design-workshops/{id}/ai-layers/on-device``.
-
-The Android app runs PROOFREAD and TRANSLATION with a Gemma 4 model it downloaded and verified on the
-phone (``DwTier2Engine.kt``), then records the words here. Three properties are pinned:
-
-* the planner fixes the tier at TIER_2, records the passage it was given, and refuses a model or a
-  kind nobody pinned for a handset;
-* the route keeps the designer set and the workshop check in front of it and is refused by the
-  schema before either for a body that is not the device contract;
-* it runs no model, reaches no provider and is behind neither money gate.
-"""
-
 from __future__ import annotations
 
 import inspect
@@ -87,7 +75,6 @@ def test_no_acceptance_is_set_by_a_device_layer():
 
 
 def test_the_planner_is_the_shared_one_and_not_a_copy():
-    """It must go through ``proofread`` / ``translate`` so the layer law is the one cloud rows meet."""
     from app.services import ai_verbs
 
     source = inspect.getsource(ai_verbs.on_device)
@@ -115,11 +102,9 @@ def test_the_route_calls_no_provider_and_neither_money_gate():
     assert "load_workshop_or_404(workshop_id, current_user, for_edit=True)" in body
 
 
-# ── Over HTTP, with the database replaced by a tripwire ────────────────────────────────────────
-
 
 class _DatabaseTouched(Exception):
-    """The route's guards all passed and its body started working."""
+    pass
 
 
 class _Tripwire:
@@ -215,7 +200,6 @@ def test_a_body_that_is_not_the_device_contract_is_refused_before_any_gate(api, 
 
 
 def test_the_android_body_and_this_schema_name_the_same_keys():
-    """``dwTier2LayerBody`` in ``DwTier2Layer.kt`` sends these keys for a supplied-text run."""
     from app.schemas.design_workshops import AiOnDeviceLayerIn
 
     assert set(AiOnDeviceLayerIn.model_fields) == set(_BODY)

@@ -1,13 +1,3 @@
-"""Rows written by one ``create_many`` share a ``createdAt``, so every read of them ends on ``id``.
-
-A stage save inserts all its new ``DwStageEntry`` rows in one statement (and so one ``now()``), and a
-single-row entity's rows all sit at ordinal 0; a custom-section plan inserts its new fields the same
-way. An ``ORDER BY ordinal, "createdAt"`` therefore leaves those rows in whatever order Postgres
-happens to return them, which can differ between two reads of the same workshop. These tests run the
-readers over a fake table that answers ties in a different physical order each time and require the
-same answer both times.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -24,8 +14,6 @@ def _clauses(order: Any) -> list[tuple[str, str]]:
 
 
 class _Table:
-    """``find_many`` that honours ``order`` and breaks anything it leaves open by physical order."""
-
     def __init__(self, rows: list[Any]) -> None:
         self.rows = rows
         self.orders: list[Any] = []
@@ -39,7 +27,6 @@ class _Table:
 
 
 def _entries() -> list[Any]:
-    # Three rows of one save: same ordinal, same createdAt — only the id tells them apart.
     return [
         SimpleNamespace(id=f"ent_{n}", ordinal=0, createdAt=SAME_INSTANT, designWorkshopId="dw_1")
         for n in ("b", "c", "a")

@@ -1,10 +1,3 @@
-"""THE MINISTRY PACKS' DIGEST, OVER A DATABASE.
-
-One message per recipient per period however often the scheduler reruns (outbox topic
-``ministry-packs:{period}``); nothing for a recipient demoted since subscribing; nothing at all for
-on-demand packs; and a body that carries the signed-in page's link and never a presigned one.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -31,7 +24,6 @@ TOPIC = "ministry-packs:2026-09"
 
 
 async def _finished_month(ready: dict[str, int]) -> None:
-    """Every scheme of PERIOD finished: READY with ``ready[scheme]`` workshops, EMPTY otherwise."""
     from prisma import Json
 
     for scheme in packs.scheme_keys():

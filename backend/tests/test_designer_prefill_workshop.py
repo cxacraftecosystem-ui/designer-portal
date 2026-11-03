@@ -1,11 +1,3 @@
-"""Designer profile -> workshop prefill, field by field, plus the per-workshop read. No database.
-
-Covers the 2026-10-21 request: every profile column a stage asks for again reaches its box, the
-profile's Location card answers the address boxes when the columns are blank, the workshop read
-picks the right designer's profile, and ``GET /design-workshops/{id}/designer-prefill`` answers the
-shape both clients read.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -18,7 +10,6 @@ from app.api.routes import design_workshops as routes
 from app.services import design_workshop_oversight as oversight, designers
 from app.services.designers import PREFILL_MAP, PROFILE_FIELDS
 
-#: One answer per mapped column, and what the prefill must hand the stage box for it.
 _ANSWERS: dict[str, tuple[Any, Any]] = {
     "displayName": ("Latha Nayak", "Latha Nayak"),
     "institution": ("NIFT Bhubaneswar", "NIFT Bhubaneswar"),
@@ -151,10 +142,6 @@ async def test_a_typed_column_wins_over_the_location(monkeypatch):
     )
 
 
-# --------------------------------------------------------------------------------------
-# Whose profile a workshop reads
-# --------------------------------------------------------------------------------------
-
 
 def _workshop(designer_name: str = "", creator: str = "admin") -> SimpleNamespace:
     return SimpleNamespace(id="w1", designerName=designer_name, createdById=creator)
@@ -208,10 +195,6 @@ async def test_a_source_with_no_profile_answers_nothing(monkeypatch):
         {},
     )
 
-
-# --------------------------------------------------------------------------------------
-# The route
-# --------------------------------------------------------------------------------------
 
 
 async def test_the_route_answers_the_designer_and_the_non_empty_values(monkeypatch):

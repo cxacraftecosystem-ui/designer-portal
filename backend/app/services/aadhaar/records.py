@@ -1,17 +1,3 @@
-"""Writing a verification onto a User or an Artisan, the admin's decision, and the audit trail.
-
-THE ONLY WRITER OF THE ``aadhaarVerif*`` COLUMNS. Every method in this package ends in a
-``VerifiedIdentity``; this module turns it into the minimal row update the Aadhaar Act and its
-regulations permit and nothing more (see ``identity.VerifiedIdentity`` for what is excluded).
-
-EVERY ATTEMPT IS AUDITED, success or refusal, in the one ledger this product has for "who changed
-what on a record": ``RecordRevision``, recordType ``user`` or ``artisan``. The entry carries the
-method, the outcome, a refusal code and the last four digits — never a name, a date of birth, a
-number, or anything from the document — under one key, ``aadhaarVerification``, in the
-``{old, new}`` shape both clients' history panels already render. A ``logger.info`` line says the
-same for the operator's log.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -34,8 +20,6 @@ STATUS_REJECTED = "REJECTED"
 RECORD_USER = "user"
 RECORD_ARTISAN = "artisan"
 
-#: Every column the verification writes. A test holds the schema to exactly this set, so a new
-#: column is a decision recorded in two places rather than a side effect.
 USER_COLUMNS = (
     "aadhaarVerifyStatus",
     "aadhaarVerifyMethod",
@@ -85,9 +69,6 @@ async def audit_attempt(
     last4: str | None = None,
     client: Any = None,
 ) -> None:
-    """One ledger row per attempt. ``outcome`` is VERIFIED / NAME_MISMATCH / REFUSED / ACCEPTED /
-    REJECTED / WITHDRAWN / OTP_SENT; ``code`` is the refusal code (never a sentence with data in it).
-    """
     entry: dict[str, Any] = {
         "old": previous,
         "new": outcome,
@@ -153,7 +134,6 @@ def _result_columns(
 
 
 async def apply_to_user(user: Any, identity: VerifiedIdentity, actor: Any) -> Any:
-    """Write a verified identity onto an account. Returns the updated row."""
     data, state = _result_columns(identity, getattr(user, "name", None), actor, keep_dob=False)
     async with db.tx() as tx:
         updated = await tx.user.update(where={"id": user.id}, data=data)
@@ -174,18 +154,12 @@ async def apply_to_user(user: Any, identity: VerifiedIdentity, actor: Any) -> An
 
 
 def stored_aadhaar_last4(artisan: Any) -> str | None:
-    """The last four digits the artisan register holds (``aadhaarLast4``; the register keeps no number)."""
     from app.services.aadhaar_fingerprint import stored_last4
 
     return stored_last4(artisan)
 
 
 async def apply_to_artisan(artisan: Any, identity: VerifiedIdentity, actor: Any) -> Any:
-    """Write a verified identity onto an artisan record. Returns the updated row.
-
-    REFUSES a document for a different Aadhaar: where the record already holds a number and UIDAI's
-    last four digits disagree with it, the card in the field worker's hand is somebody else's.
-    """
     stored = stored_aadhaar_last4(artisan)
     if stored and identity.last4 and stored != identity.last4:
         raise AadhaarError(
@@ -210,7 +184,6 @@ async def apply_to_artisan(artisan: Any, identity: VerifiedIdentity, actor: Any)
 
 
 async def decide(record_type: str, row: Any, admin: Any, accept: bool) -> Any:
-    """An admin's decision on a NAME_MISMATCH: accept it (VERIFIED) or reject it (REJECTED)."""
     if _status_word(row) != STATUS_NAME_MISMATCH:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -243,8 +216,6 @@ async def decide(record_type: str, row: Any, admin: Any, accept: bool) -> Any:
 
 
 async def withdraw(record_type: str, row: Any, actor: Any) -> Any:
-    """Clear every verification column — the account holder withdrawing, or a field worker undoing
-    a verification made against the wrong record."""
     columns = USER_COLUMNS if record_type == RECORD_USER else ARTISAN_COLUMNS
     data = dict.fromkeys(columns)
     async with db.tx() as tx:
@@ -267,7 +238,6 @@ async def withdraw(record_type: str, row: Any, actor: Any) -> Any:
 
 
 def summary(row: Any) -> dict[str, Any]:
-    """The verification as a client reads it — the same keys on both record types."""
     signed_at = getattr(row, "aadhaarVerifySignedAt", None)
     verified_at = getattr(row, "aadhaarVerifiedAt", None)
     decided_at = getattr(row, "aadhaarVerifyDecidedAt", None)

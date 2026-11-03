@@ -1,58 +1,3 @@
-"""Runtime-editable third-party API keys: encrypted at rest, rotatable from the Settings hub.
-
-WHY THIS EXISTS
----------------
-Every provider key (OpenAI, ElevenLabs, Deepgram, Gemini, MapTiler, Google OAuth) used to live only
-in the process environment. Rotating one — an expired trial key, a quota-exhausted Gemini key, a new
-STT provider — meant an SSH session onto the EC2 box, an edit to the systemd unit/.env, and a restart
-of BOTH the API and the queue worker. That is slow, needs shell access nobody else has, and drops
-in-flight uploads. This module stores an optional *database override* per key so the master admin can
-read, rotate and test keys from the UI, and the change takes effect on the next call — no restart.
-
-RESOLUTION ORDER (``get_secret`` / ``peek_secret``)
-    1. the decrypted ``ManagedSecret`` row, when one exists and can be decrypted;
-    2. otherwise the environment/settings value.
-An EMPTY ManagedSecret table therefore behaves *exactly* like the previous environment-only setup,
-which is what makes this safe to deploy without touching any existing configuration.
-
-ENCRYPTION KEY — READ THIS BEFORE ROTATING JWT_SECRET
------------------------------------------------------
-Values are Fernet (AES-128-CBC + HMAC) ciphertext. The Fernet key comes from the optional
-``SECRETS_ENCRYPTION_KEY`` env var. When that is absent we DERIVE one deterministically from
-``JWT_SECRET`` via HKDF-SHA256 with a fixed info string, so the feature works with zero new
-configuration on every existing deployment.
-
-  *** Consequence: if SECRETS_ENCRYPTION_KEY is not set and JWT_SECRET is rotated, every stored ***
-  *** secret becomes PERMANENTLY UNDECRYPTABLE. They are not lost data (the environment values  ***
-  *** still apply and the master admin can re-enter each key), but they cannot be recovered.    ***
-  *** Set SECRETS_ENCRYPTION_KEY explicitly before you ever rotate JWT_SECRET.                  ***
-
-We handle that case gracefully rather than loudly: ``decrypt`` returns None, the row is flagged
-``lastStatus = FAILED`` with an explanatory ``lastError`` so the UI shows it needs re-entering, and
-the resolver falls back to the environment value. A key rotation must never take transcription down.
-
-THREADING / CACHING
--------------------
-Transcription runs in worker threads (``asyncio.to_thread``) where awaiting Prisma is impossible, and
-it would be wasteful to hit the database for a key on every chunk of every upload anyway. So the
-overrides are cached in-process for ``_CACHE_TTL_SECONDS`` and read through two entry points:
-
-  * ``get_secret`` (async)  — refreshes the cache if stale, then resolves. Use from request handlers.
-  * ``peek_secret`` (sync)  — cache + environment only, never touches the database. Safe inside a
-    thread; the async caller that spawned the thread is responsible for priming the cache first
-    (see ``app.services.ai``, which calls ``refresh_if_stale`` before every ``to_thread`` hop).
-
-Writes call ``invalidate()``, so a key saved in the UI is live on the very next call rather than up
-to a TTL later.
-
-SECURITY
---------
-Plaintext leaves this module in exactly two places: the value handed to a provider HTTP call, and the
-master-admin-only reveal endpoint. It is never logged, never put in an error message (probe errors
-carry a status code, never a response body, which could echo the key back), and never serialised into
-a list response — those carry only a 4-character ``hint``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -78,36 +23,12 @@ from app.core.db import db
 
 logger = logging.getLogger(__name__)
 
-# Domain-separation string for the derived Fernet key. NEVER change it: every stored ciphertext is
-# bound to it, so a new info string is indistinguishable from a JWT_SECRET rotation.
-#
-# *** THESE TWO STRINGS DELIBERATELY SURVIVED THE "Design Prototype Workshop" REBRAND. ***
-# They read like a leftover brand name and they are not: they are key-derivation inputs, not
-# labels. HKDF is a pure function of (key material, salt, info), so editing the info to match the
-# product's new name derives a DIFFERENT Fernet key from the same JWT_SECRET — and the deployed
-# ManagedSecret rows were written under the old one. Every provider key an admin has entered
-# through the Settings hub would decrypt to nothing on the next deploy, present as
-# ``lastStatus = FAILED``, and silently fall back to whatever is in the process environment;
-# transcription would keep working only for keys that happen to also be set there. The rows are
-# not recoverable afterwards, because the input that produced the key is gone. A cosmetic edit
-# here costs a manual re-entry of every managed key on a production box, so the brand stays put.
-# If these ever genuinely must move, the migration is: decrypt with the old info, re-encrypt with
-# the new one, in one pass, before any process runs the new code — not a find-and-replace.
 _HKDF_INFO = b"field-repository/managed-secrets/v1"
 
-# A SEPARATE info string for the verdict-fingerprint pepper, so the value that authenticates
-# "is this still the same key?" is not the value that decrypts stored secrets. Same rule: never
-# change it, or every stored fingerprint stops matching and every environment key re-freezes.
-# The rebrand note above applies verbatim to this one too.
 _FINGERPRINT_HKDF_INFO = b"field-repository/secret-verdict-fingerprint/v1"
 
-# How long a resolved override stays trusted in memory. Short enough that a rotation done on another
-# process (the queue worker, a second uvicorn box) is picked up within half a minute; long enough that
-# a multi-chunk transcription does not run a query per chunk. Same-process writes call invalidate(),
-# so the TTL only ever matters for cross-process propagation.
 _CACHE_TTL_SECONDS = 30.0
 
-# Reachability probes must be snappy: they run inline in a master admin's "Test" click.
 _PROBE_TIMEOUT_SECONDS = 5
 
 _STATUS_UNKNOWN = "UNKNOWN"
@@ -124,38 +45,22 @@ _UNDECRYPTABLE_ERROR = (
 )
 
 
-# --- Encryption ------------------------------------------------------------------------------------
-
 
 @lru_cache(maxsize=1)
 def _fernet() -> Fernet:
-    """The Fernet used for every read and write, built once per process.
-
-    ``SECRETS_ENCRYPTION_KEY`` may be either a real Fernet key (``Fernet.generate_key()``) or any
-    high-entropy passphrase — a passphrase is stretched through the same HKDF as the JWT_SECRET
-    fallback. Accepting both matters because an operator who pastes a random hex string would
-    otherwise get a hard crash, and "silently ignore the operator's key and use the derived one"
-    would be far worse: it decrypts nothing they wrote with the intended key.
-    """
     settings = get_settings()
     configured = (settings.secrets_encryption_key or "").strip()
     if configured:
         with suppress(Exception):
-            return Fernet(configured.encode("utf-8"))  # already a well-formed Fernet key
+            return Fernet(configured.encode("utf-8"))
         logger.info(
             "SECRETS_ENCRYPTION_KEY is not a Fernet key; deriving one from it via HKDF instead"
         )
         return Fernet(_derive_fernet_key(configured))
-    # No dedicated key configured: derive from JWT_SECRET so the feature needs no new configuration.
-    # See the module docstring for the rotation caveat this creates.
     return Fernet(_derive_fernet_key(settings.jwt_secret))
 
 
 def _derive_fernet_key(source: str) -> bytes:
-    """HKDF-SHA256(source) -> the 32 urlsafe-base64 bytes Fernet expects. Deterministic by design:
-    the same input must always yield the same key or previously stored ciphertext stops decrypting.
-    (No salt for the same reason — there is nowhere stable to persist one that is not itself a
-    secret store.)"""
     raw = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=_HKDF_INFO).derive(
         source.encode("utf-8")
     )
@@ -167,11 +72,6 @@ def encrypt(value: str) -> str:
 
 
 def decrypt(token: str) -> str | None:
-    """Plaintext, or None when the ciphertext cannot be opened with the current key.
-
-    Returns None instead of raising so a changed encryption key degrades to "the environment value
-    applies and the UI says re-enter this one" rather than a 500 on every transcription.
-    """
     try:
         return _fernet().decrypt(token.encode("utf-8")).decode("utf-8")
     except (InvalidToken, ValueError, TypeError):
@@ -180,14 +80,6 @@ def decrypt(token: str) -> str | None:
 
 @lru_cache(maxsize=1)
 def _fingerprint_pepper() -> bytes:
-    """The server-side key that makes a stored fingerprint useless to anyone holding only the data.
-
-    Derived from the same source as the Fernet key (SECRETS_ENCRYPTION_KEY, else JWT_SECRET) through
-    a DIFFERENT HKDF info string, so the two never coincide. Rotating that source changes the pepper
-    and every stored fingerprint stops matching — which re-freezes every environment-backed engine
-    until it is tested again. That is the correct direction to fail, and it is the same rotation
-    caveat the module docstring already documents for the ciphertext.
-    """
     settings = get_settings()
     source = (settings.secrets_encryption_key or "").strip() or settings.jwt_secret
     return HKDF(
@@ -196,30 +88,12 @@ def _fingerprint_pepper() -> bytes:
 
 
 def fingerprint(value: str) -> str:
-    """A stable, non-invertible identifier for a key value — NOT a way to recover or check one.
-
-    Answers exactly one question: "is the key in the environment right now the same one that passed
-    the test we have on file?" A plain digest would answer it too, and would also let anyone with a
-    database dump confirm a guessed key — feasible for a structured value like a Google client ID.
-    Keying the digest with a pepper that lives outside the database removes that: without it, a
-    candidate's fingerprint cannot even be computed.
-    """
     return hmac.new(_fingerprint_pepper(), value.encode("utf-8"), hashlib.sha256).hexdigest()
 
-
-# --- The registry of manageable keys -----------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class ManagedKey:
-    """One key the Settings hub may manage.
-
-    ``settings_attr`` is the field on :class:`app.core.config.Settings` holding the environment
-    fallback — the registry is the ONLY place the env-var name and the settings field are tied
-    together, so nothing else has to know that e.g. NEXT_PUBLIC_MAPTILER_API_KEY lands on
-    ``maptiler_api_key``. ``probe`` is a cheap reachability check, run only when explicitly asked.
-    """
-
     key: str
     label: str
     description: str
@@ -234,11 +108,6 @@ def _probe_http(
     params: dict[str, str] | None = None,
     secret: str = "",
 ) -> tuple[bool, str | None]:
-    """GET *url* and turn the outcome into (ok, short human error).
-
-    Deliberately reports only the status code, never the response body: provider error payloads
-    sometimes echo the offending key back, and this string is persisted and shown in the UI.
-    """
     try:
         response = requests.get(
             url, headers=headers or {}, params=params or {}, timeout=_PROBE_TIMEOUT_SECONDS
@@ -258,7 +127,6 @@ def _probe_http(
 
 
 def _redact(message: str, secret: str) -> str:
-    """Belt-and-braces: never let a key slip into a stored/displayed error string."""
     if secret and len(secret) >= 8 and secret in message:
         return message.replace(secret, "***")
     return message
@@ -273,14 +141,6 @@ def _probe_openai(value: str) -> tuple[bool, str | None]:
 
 
 def _probe_anthropic(value: str) -> tuple[bool, str | None]:
-    """Anthropic's model list — the cheapest authenticated GET the API has.
-
-    ``anthropic-version`` is NOT optional and is not a courtesy: the API rejects a request without
-    it, so a probe that omitted the header would report every valid key as broken. It is pinned to
-    the long-standing ``2023-06-01`` rather than to anything newer because this call reads a list of
-    ids and needs no feature that a later version introduces — the point is to learn whether the key
-    authenticates, and the oldest version that answers that is the one least likely to move.
-    """
     return _probe_http(
         "https://api.anthropic.com/v1/models",
         headers={"x-api-key": value, "anthropic-version": "2023-06-01"},
@@ -303,7 +163,6 @@ def _probe_deepgram(value: str) -> tuple[bool, str | None]:
 
 
 def _probe_meta(value: str) -> tuple[bool, str | None]:
-    """Meta Model API: list models. No audio is sent and nothing is billed."""
     return _probe_http(
         "https://api.meta.ai/v1/models",
         headers={"Authorization": f"Bearer {value}"},
@@ -320,8 +179,6 @@ def _probe_gemini(value: str) -> tuple[bool, str | None]:
 
 
 def _probe_gemini_pool(value: str) -> tuple[bool, str | None]:
-    """Probe the FIRST key of the rotation pool. Testing every key would burn free-tier quota on a
-    button click; the first one failing is already the signal the admin needs."""
     first = next((part.strip() for part in value.replace("\n", ",").split(",") if part.strip()), "")
     if not first:
         return False, "Enter at least one key."
@@ -329,19 +186,12 @@ def _probe_gemini_pool(value: str) -> tuple[bool, str | None]:
 
 
 def _probe_maptiler(value: str) -> tuple[bool, str | None]:
-    # The style document is the same asset the web map loads, so a 200 here proves the exact thing
-    # the frontend needs (key valid AND allowed for this origin-less server-side request).
     return _probe_http(
         "https://api.maptiler.com/maps/streets-v2/style.json", params={"key": value}, secret=value
     )
 
 
 def _probe_google_client_id(value: str) -> tuple[bool, str | None]:
-    """A client ID is public and has no authenticated endpoint to poke, so validate its SHAPE.
-
-    Google issues ``<digits>-<hash>.apps.googleusercontent.com``; a truncated paste (the common
-    mistake) is caught by this and would otherwise only surface as "Google sign-in stopped working".
-    """
     candidate = value.strip()
     if candidate.endswith(".apps.googleusercontent.com") and len(candidate) > 30:
         return True, None
@@ -440,17 +290,11 @@ def is_managed(key: str) -> bool:
     return key in MANAGED_KEYS
 
 
-# --- The in-process cache ---------------------------------------------------------------------------
-
-# Replaced wholesale (never mutated in place) so a reader in another thread always sees a complete,
-# self-consistent snapshot without needing a lock.
 _overrides: dict[str, str] = {}
 _loaded_at: float = 0.0
 
 
 def invalidate() -> None:
-    """Drop the cached overrides so the next resolution re-reads the database. Called after every
-    write, which is what makes a key saved in the UI take effect immediately."""
     global _loaded_at
     _loaded_at = 0.0
 
@@ -460,11 +304,6 @@ def _cache_is_fresh() -> bool:
 
 
 async def refresh_if_stale(force: bool = False) -> None:
-    """Reload the override cache when it has expired. Never raises.
-
-    A database hiccup must not take transcription down: on failure we keep whatever snapshot we have
-    (or fall through to environment values) exactly as if no override existed.
-    """
     if not force and _cache_is_fresh():
         return
     global _overrides, _loaded_at
@@ -478,7 +317,7 @@ async def refresh_if_stale(force: bool = False) -> None:
     undecryptable: list[Any] = []
     for row in rows:
         if row.key not in MANAGED_KEYS:
-            continue  # a row for a key we no longer manage: ignore rather than resurrect it
+            continue
         plaintext = decrypt(row.valueEnc)
         if plaintext is None:
             undecryptable.append(row)
@@ -487,8 +326,6 @@ async def refresh_if_stale(force: bool = False) -> None:
     _overrides = fresh
     _loaded_at = time.monotonic()
 
-    # Flag (once) anything we could not open, so the UI can tell the admin to re-enter it instead of
-    # silently serving the stale environment value forever.
     for row in undecryptable:
         logger.error(
             "Managed secret %s could not be decrypted; falling back to the environment", row.key
@@ -506,11 +343,8 @@ async def refresh_if_stale(force: bool = False) -> None:
             )
 
 
-# --- Resolution -------------------------------------------------------------------------------------
-
 
 def env_value(key: str) -> str | None:
-    """The environment/settings fallback for *key*, or None when it is blank/absent."""
     spec = MANAGED_KEYS.get(key)
     if spec is None:
         return None
@@ -520,12 +354,6 @@ def env_value(key: str) -> str | None:
 
 
 def peek_secret(key: str) -> str | None:
-    """Resolve *key* WITHOUT touching the database — cached override first, environment second.
-
-    Safe to call from a worker thread (transcription, measurement). The caller must have primed the
-    cache with ``refresh_if_stale`` on the event loop first; if it has not, this simply returns the
-    environment value, i.e. the pre-existing behaviour.
-    """
     override = _overrides.get(key)
     if override:
         return override
@@ -533,19 +361,11 @@ def peek_secret(key: str) -> str | None:
 
 
 async def get_secret(key: str) -> str | None:
-    """Resolve *key*: the stored decrypted override if there is one, else the environment value."""
     await refresh_if_stale()
     return peek_secret(key)
 
 
 def gemini_key_pool() -> list[str]:
-    """Every Gemini key to rotate across, in order and de-duplicated.
-
-    Mirrors ``Settings.gemini_api_keys`` (single GEMINI_API_KEY first, then the GEMINI_API_KEYS list)
-    but resolves each half through the override layer, so a key saved in the UI wins over the env one
-    while an empty ManagedSecret table reproduces the old list exactly. Synchronous on purpose: the
-    measurement call runs in a thread.
-    """
     parts: list[str] = []
     single = peek_secret("GEMINI_API_KEY")
     if single:
@@ -564,29 +384,12 @@ def gemini_key_pool() -> list[str]:
     return ordered
 
 
-# --- Verdicts for environment-supplied keys -----------------------------------------------------------
-#
-# A test verdict for a key entered through the UI is written onto its ManagedSecret row and survives
-# anything. A key supplied by the ENVIRONMENT has no such row, and giving it one would copy the
-# deployed value into the database as an override — changing which value the transcription chain
-# sends, in order to persist a boolean. So the boolean gets a table of its own: SecretTestResult
-# holds the verdict and NOTHING that could reconstruct the key (see `fingerprint` above, and the
-# migration that creates the table).
-#
-# Everything below fails soft. A verdict is a convenience, and losing one costs a click on the Test
-# button; it must never be the reason a settings page 500s or a transcription does not run.
-
 
 def _verdict_of(row: Any) -> dict[str, Any]:
     return {"status": row.status, "checkedAt": row.checkedAt, "error": row.error}
 
 
 def _still_describes_current_key(row: Any) -> bool:
-    """True when the stored verdict is about the value the environment holds RIGHT NOW.
-
-    This is how a rotation invalidates a verdict, matching what ``set_secret`` does for a
-    database-backed key: a new key is unproven, whatever the old one managed to pass.
-    """
     current = env_value(row.key)
     if not current:
         return False
@@ -594,7 +397,6 @@ def _still_describes_current_key(row: Any) -> bool:
 
 
 async def environment_verdicts() -> dict[str, dict[str, Any]]:
-    """Every stored environment verdict that still describes the current key, by key name."""
     try:
         rows = await db.secrettestresult.find_many()
     except Exception as exc:  # noqa: BLE001 - a missing verdict must not break the settings page
@@ -617,7 +419,6 @@ async def environment_verdict(key: str) -> dict[str, Any] | None:
 async def record_environment_verdict(
     key: str, value: str, *, ok: bool, checked_at: datetime, error: str | None
 ) -> None:
-    """Persist the outcome of testing the ENVIRONMENT's value for *key*. Never stores the value."""
     payload = {
         "status": _STATUS_OK if ok else _STATUS_FAILED,
         "checkedAt": checked_at,
@@ -633,47 +434,14 @@ async def record_environment_verdict(
         logger.warning("Could not persist the environment key verdict for %s (%s)", key, exc)
 
 
-# --- Description (what the API returns) ---------------------------------------------------------------
-
 
 def _hint(value: str | None) -> str | None:
-    """Last four characters, so an admin can tell two keys apart without revealing either. Values too
-    short to hide are reduced to an ellipsis rather than half-printed."""
     if not value:
         return None
     return value[-4:] if len(value) > 8 else "…"
 
 
 def _override_is_readable(row: Any | None) -> bool:
-    """Can the ciphertext on *row* actually be opened with the key this process holds?
-
-    THE PROVENANCE OF A MANAGED SECRET IS NOT "DOES A ROW EXIST". It is "which value will the next
-    provider call actually send", and those two answers part company in exactly the case the module
-    header warns about: JWT_SECRET rotated while SECRETS_ENCRYPTION_KEY was unset leaves every
-    stored override permanently unopenable, ``refresh_if_stale`` drops it from ``_overrides``
-    (see :func:`refresh_if_stale`, which never adds an undecryptable row to the cache), and
-    ``peek_secret`` falls through to the environment value. Deriving ``source``/``hint``/
-    ``configured`` from ``row is not None`` — which is what this function replaces — then told the
-    admin a fact about the STORED key while handing them the ENVIRONMENT one, on all three surfaces
-    that exist to tell two keys apart: ``GET /secrets/{key}/reveal`` returned the environment
-    plaintext labelled ``source: "database"``, the Test button probed the environment value and
-    stamped the verdict on the row (erasing the "re-enter this key" flag), and the Settings hub
-    printed the stored key's last four characters beside the environment key's value. Three audit
-    findings, one cause; fix it here and all three surfaces tell the truth without a special case
-    of their own. Do not reintroduce a ``row is not None`` provenance test anywhere downstream.
-
-    DECRYPTING HERE RATHER THAN CONSULTING ``_overrides`` is deliberate and load-bearing. The cache
-    is up to ``_CACHE_TTL_SECONDS`` behind a row written by another process (the queue worker, a
-    second API box), so a perfectly healthy override saved elsewhere twenty seconds ago is simply
-    absent from it — reading readability off the cache would replace the old lie with a fresh one
-    that says a working key is broken. ``decrypt`` is a pure function of the ciphertext already in
-    hand, and it is cheap: on this machine a Fernet open of the 140-byte token these rows carry
-    measures 55 µs, and a token that cannot be opened fails in 9 µs (timeit, 100k loops, CPython in
-    backend/.venv). The seven decrypts a Settings-hub load costs are ~0.4 ms — noise beside the
-    query that fetched the rows.
-
-    Never returns, logs or stores the plaintext: only whether there was one.
-    """
     if row is None:
         return False
     token = getattr(row, "valueEnc", None)
@@ -683,18 +451,6 @@ def _override_is_readable(row: Any | None) -> bool:
 def _describe(
     spec: ManagedKey, row: Any | None, verdict: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """The safe, value-free projection of one managed key. NEVER add the plaintext to this dict.
-
-    ``verdict`` is the durable SecretTestResult for an ENVIRONMENT-supplied key, and is consulted
-    only when there is no ManagedSecret row: a stored override carries its own verdict columns and
-    the two must not be mixed, since they describe different values.
-
-    ``source`` names WHERE THE VALUE IN FORCE COMES FROM, which is why an unopenable override reads
-    as ``environment`` (or ``unset``) and not as ``database`` — the environment value is what every
-    provider call, and the reveal endpoint, will actually use. The fact that a broken row is sitting
-    behind it is not lost, it moves to ``overrideUnreadable``, which is what a client renders as
-    "this override needs re-entering" and what ``test_secret`` branches on.
-    """
     environment = env_value(spec.key)
     stored = row is not None
     readable = _override_is_readable(row)
@@ -705,12 +461,6 @@ def _describe(
     else:
         source = SOURCE_UNSET
     updated_by = getattr(row, "updatedBy", None) if stored else None
-    # THE ROW'S OWN VERDICT COLUMNS WIN FOR ANY STORED ROW, readable or not. When the row cannot be
-    # opened, refresh_if_stale has just written FAILED + _UNDECRYPTABLE_ERROR onto it, and that is
-    # the ONE durable signal telling the operator which overrides must be re-entered after a key
-    # rotation. Letting an environment SecretTestResult (a verdict about a different value, quite
-    # possibly a passing one) supply lastStatus here would hide it — the same erasure test_secret
-    # used to perform, arriving by another route.
     if stored:
         last_status, last_checked_at, last_error = row.lastStatus, row.lastCheckedAt, row.lastError
     elif verdict is not None:
@@ -725,32 +475,13 @@ def _describe(
         "key": spec.key,
         "label": spec.label,
         "description": spec.description,
-        # "Something will be sent to the provider" — an override nobody can decrypt supplies
-        # nothing, so with no environment value behind it this key is genuinely unconfigured.
         "configured": readable or bool(environment),
         "source": source,
-        # True ONLY for the rotation casualty: a row exists and its ciphertext is dead. Callers use
-        # it to say "the stored override needs re-entering" beside a value that came from elsewhere.
-        #
-        # AND IT IS HALF OF "IS THERE A ROW TO DELETE", which is a different question from `source`
-        # and must be answered from both fields together: a row exists exactly when
-        # `source == "database"` OR `overrideUnreadable` is true. The Settings hub learned this the
-        # expensive way — it drew its "Clear override" button from `source == "database"` alone, so
-        # making `source` honest above took the button off the one row that needs it and left the
-        # admin reading "this override cannot be decrypted" with no control to remove it (see
-        # `hasStoredOverride` in frontend/components/settings/ApiKeysPanel.tsx). If a client only
-        # ever needs "does a row exist", give it a field of its own here — never let it go back to
-        # inferring row existence from `source`.
         "overrideUnreadable": stored and not readable,
-        # The fingerprint an admin compares against a provider dashboard, so it must describe the
-        # key IN FORCE. `row.hint` was written from the stored value; once that value is unreadable
-        # the hint names a key the deployment is not using, which is worse than showing none.
         "hint": (row.hint if readable else _hint(environment)),
         "lastStatus": last_status,
         "lastCheckedAt": last_checked_at,
         "lastError": last_error,
-        # Still reported for an unreadable row: who last saved the override, and when, is exactly
-        # the person and date an operator needs in order to work out which key to re-enter.
         "updatedBy": (getattr(updated_by, "name", None) or getattr(updated_by, "email", None)),
         "updatedAt": (row.updatedAt if stored else None),
     }
@@ -762,17 +493,6 @@ async def _rows_by_key() -> dict[str, Any]:
 
 
 async def list_managed_secrets() -> list[dict[str, Any]]:
-    """Every registry key with its current state. Registry order (not database order) so the Settings
-    hub always lists the providers in the same, meaningful sequence. No probes are run here.
-
-    The refresh first is what makes the "needs re-entering" flag actually visible. Only
-    :func:`refresh_if_stale` attempts a decrypt, and it is the only thing that writes
-    ``lastStatus = FAILED`` on a row it cannot open. Reading the rows straight from the database — as
-    this did — meant that after a JWT_SECRET rotation the Settings hub, the ONE screen meant to
-    surface the problem, showed every undecryptable key as ``source: database`` / ``UNKNOWN`` / no
-    error: indistinguishable from a healthy override, while the environment value was quietly being
-    used instead. Cheap: one query, cached for the TTL, and it never raises.
-    """
     await refresh_if_stale()
     rows = await _rows_by_key()
     verdicts = await environment_verdicts()
@@ -786,28 +506,9 @@ async def describe_secret(key: str) -> dict[str, Any]:
 
 
 async def reveal_secret(key: str) -> dict[str, Any]:
-    """The plaintext in force for *key*, WITH the provenance of that same plaintext.
-
-    THE VALUE AND ITS LABEL COME OUT OF ONE READ OF ONE ROW, and that is the whole point of this
-    function existing rather than the route calling ``get_secret`` and ``describe_secret`` a line
-    apart. Those are two resolutions of two different questions ("what value applies" and "what does
-    the table look like"), and they disagreed precisely when it mattered: an override that could not
-    be decrypted made ``get_secret`` return the ENVIRONMENT key while ``describe_secret`` labelled it
-    ``source: "database"``, so the one screen an operator uses to check which key is stored where
-    reported a plausible key from the wrong place, in the state this module documents as
-    unrecoverable. A key rotation was therefore left in place because the reveal button said the
-    stored override had survived.
-
-    The refresh first is not decoration: it is what writes the FAILED/"re-enter this key" flag onto
-    a row that has just become unopenable, so the eye button and the list agree about the same row.
-    """
     await refresh_if_stale()
     row = await db.managedsecret.find_unique(where={"key": key})
     token = getattr(row, "valueEnc", None) if row is not None else None
-    # The one place besides a provider call where plaintext leaves this module (see the SECURITY
-    # note in the module docstring). Decrypting the row we just read — rather than reading the
-    # cache — is what ties the returned value to the returned source: both are statements about
-    # this ciphertext, so there is no window in which they can describe different keys.
     override = decrypt(token) if token else None
     if override:
         return {
@@ -825,15 +526,8 @@ async def reveal_secret(key: str) -> dict[str, Any]:
     }
 
 
-# --- Writes -----------------------------------------------------------------------------------------
-
 
 async def set_secret(key: str, value: str, updated_by_id: str | None) -> dict[str, Any]:
-    """Store (or rotate) the override for *key*. Returns the value-free description of the new row.
-
-    ``lastStatus`` resets to UNKNOWN because a previous OK/FAILED verdict describes the OLD key and
-    would be actively misleading next to a freshly pasted one.
-    """
     plaintext = value.strip()
     spec = MANAGED_KEYS[key]
     payload = {
@@ -850,35 +544,19 @@ async def set_secret(key: str, value: str, updated_by_id: str | None) -> dict[st
         data={"create": {"key": key, **payload}, "update": payload},
     )
     invalidate()
-    # WARNING level so the line actually survives: the API process configures no root handler, so
-    # INFO records from app loggers are dropped under uvicorn (see routes/secrets.py reveal). A
-    # credential rotation is rare and security-relevant — it belongs in the journal.
     logger.warning("AUDIT managed-secret set: key=%s by=%s", key, updated_by_id)
     return await describe_secret(key)
 
 
 async def delete_secret(key: str) -> dict[str, Any]:
-    """Remove the override so the environment value applies again (the row is the only override —
-    deleting it can never un-configure a key that the environment still supplies)."""
     await db.managedsecret.delete_many(where={"key": key})
     invalidate()
     logger.warning("AUDIT managed-secret cleared: key=%s", key)
     return await describe_secret(key)
 
 
-# --- Probing ------------------------------------------------------------------------------------------
-
 
 def _undecryptable_probe_note(ok: bool, error: str | None, *, configured: bool) -> str:
-    """What Test has to say when the row it was pressed on cannot be decrypted.
-
-    Both halves matter and neither may be dropped. The re-entry instruction is the durable state of
-    the row and must survive the click that used to erase it; the probe result is the answer to the
-    question the admin actually asked, and returning the row unchanged would make the button look
-    broken. ``lastCheckedAt`` is deliberately NOT advanced to now by the caller: nothing checked the
-    stored key, and a fresh timestamp beside "needs re-entering" reads as "somebody has looked at
-    this and it is fine".
-    """
     if not configured:
         return f"{_UNDECRYPTABLE_ERROR} There is no default value either, so this key can't be used."
     if ok:
@@ -887,15 +565,6 @@ def _undecryptable_probe_note(ok: bool, error: str | None, *, configured: bool) 
 
 
 async def test_secret(key: str) -> dict[str, Any]:
-    """Run this key's probe now and persist the verdict, wherever this key's verdict belongs.
-
-    A database-backed key keeps its verdict on its own ManagedSecret row, exactly as before. An
-    environment-backed key has no such row and must never be given one — that would copy the
-    deployed value into the database as an override — so its verdict goes to SecretTestResult, which
-    stores the outcome and no trace of the value. Either way the verdict now outlives the process,
-    which is what the provider freeze depends on: without it, every deploy told the admins that
-    nothing had been verified and every engine re-froze.
-    """
     spec = MANAGED_KEYS[key]
     value = await get_secret(key)
     checked_at = datetime.now(UTC)
@@ -906,24 +575,11 @@ async def test_secret(key: str) -> dict[str, Any]:
 
     described = await describe_secret(key)
 
-    # A ROW WHOSE CIPHERTEXT IS DEAD GETS ITS VERDICT COLUMNS LEFT ALONE. `value` above came from
-    # the environment (get_secret falls through), so a verdict about it is not a verdict about the
-    # stored key, and writing it onto the row overwrote the FAILED + _UNDECRYPTABLE_ERROR that
-    # refresh_if_stale had just put there — the one durable "re-enter this key" flag an operator has
-    # after a JWT_SECRET rotation. The row then read OK until the cache went stale and the flag came
-    # back, so it alternated between healthy and broken depending on how recently somebody had
-    # pressed Test, and while it read OK the STT freeze thawed on the strength of a key the stored
-    # row does not contain (settings.py `_provider_verification` maps lastStatus == OK to PASSING).
-    # The environment value we DID probe gets its verdict where an environment verdict belongs, in
-    # SecretTestResult, which stores no trace of the value.
     if described["overrideUnreadable"]:
         if value:
             await record_environment_verdict(key, value, ok=ok, checked_at=checked_at, error=error)
         described["lastStatus"] = _STATUS_FAILED
         described["lastError"] = _undecryptable_probe_note(ok, error, configured=bool(value))
-        # WARNING, not INFO: under uvicorn an app logger has no handler and INFO records are
-        # dropped, and "Test said OK about a key that is not the stored one" is the sentence
-        # somebody reading the journal after a rotation needs to find.
         logger.warning(
             "Managed secret %s could not be decrypted; probed the environment value instead "
             "(result %s). The stored override still needs re-entering.",
@@ -952,7 +608,6 @@ async def test_secret(key: str) -> dict[str, Any]:
 
 
 def _safe_probe(spec: ManagedKey, value: str) -> tuple[bool, str | None]:
-    """A probe must never raise — it is a UI button, and an unexpected exception would 500 it."""
     try:
         ok, error = spec.probe(value)
     except Exception as exc:  # noqa: BLE001 - any provider client quirk becomes a readable verdict

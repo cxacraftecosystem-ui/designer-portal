@@ -1,17 +1,3 @@
-"""The duplicate-artisan finder: the form's check, the admin review queue, merge, undo, link.
-
-* ``POST /artisan-duplicates/check`` — any record creator, 30 a minute: who already looks like the
-  artisan being typed. At most five, none below 0.60, birth year rather than birth date, and no
-  identifier value. An ``AADHAAR`` reason only when the caller typed that number.
-* ``GET /artisan-duplicates`` and ``GET /artisan-duplicates/{id}`` — admins: the queue and the
-  merge preview (services/artisan_merge.preview).
-* ``POST .../{id}/merge``, ``.../dismiss``, ``.../reopen``, and for a Field Repository pair
-  ``.../link`` (through ``cross_portal.link_artisan_record``).
-* ``GET /artisan-merges`` and ``POST /artisan-merges/{id}/undo`` — admins, within 30 days.
-
-Admin screens are web-only. The hold at save time lives in ``routes/artisans.create_artisan``.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -37,7 +23,6 @@ _check_buckets = _TokenBuckets(capacity=CHECKS_PER_MINUTE, refill_per_second=CHE
 
 
 def reset_check_budget() -> None:
-    """Forget every caller's /check budget (tests)."""
     global _check_buckets
     _check_buckets = _TokenBuckets(capacity=CHECKS_PER_MINUTE, refill_per_second=CHECKS_PER_MINUTE / 60.0)
 
@@ -46,11 +31,8 @@ def _enum(value: Any) -> str:
     return str(getattr(value, "value", value))
 
 
-# ── The form's check ──────────────────────────────────────────────────────────────────────────
-
 
 async def _craft_for(craft_id: str | None, craft_name: str | None) -> tuple[str | None, str | None]:
-    """(craftId, craftCode) for what the form names, so "same craft" can be asked."""
     craft = None
     if craft_id:
         craft = await db.craft.find_unique(where={"id": craft_id})
@@ -148,8 +130,6 @@ async def check_duplicates(
     }
 
 
-# ── The queue ─────────────────────────────────────────────────────────────────────────────────
-
 
 def _artisan_brief(artisan: Any) -> dict[str, Any] | None:
     if artisan is None:
@@ -235,7 +215,6 @@ async def list_pairs(
     if band:
         where += f' AND "band" = {param(band)}'
     total = counts[band] if band else sum(counts.values())
-    # Band first, and within a band a pair the creator already called different people goes last.
     id_rows = await db.query_raw(
         f"""SELECT "id" FROM "ArtisanDuplicateCandidate" WHERE {where}
             ORDER BY CASE "band" WHEN 'VERY_LIKELY' THEN 0 WHEN 'LIKELY' THEN 1 ELSE 2 END,
@@ -256,7 +235,6 @@ async def list_pairs(
 
 
 async def _remote_view(pair: Any, user: Any) -> dict[str, Any]:
-    """The Field Repository record, fetched live through the logged lookup. Nothing is stored."""
     from app.api.routes import cross_portal as cp
     from app.services import cross_portal
 
@@ -363,7 +341,6 @@ async def reopen_pair(
 async def link_pair(
     pair_id: str, payload: PairLinkIn, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
-    """Link a local artisan to the Field Repository record it matched. Never a merge."""
     from app.api.routes import cross_portal as cp
 
     pair = await artisan_merge.load_pair(pair_id)
@@ -380,8 +357,6 @@ async def link_pair(
     decided = await _decide(pair_id, "LINKED", current_user, None)
     return {"pair": decided, "link": public_encode(link)}
 
-
-# ── Merges ────────────────────────────────────────────────────────────────────────────────────
 
 
 @merges_router.get("")

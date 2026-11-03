@@ -1,11 +1,3 @@
-"""``GET /sanction-orders/awaiting-count`` reads stage 1 ONCE for every order, not once per order.
-
-The badge is asked on every page an officer or an admin opens. It used to call
-``_stage_one_state`` per sanction order — a query each — so 74 orders cost 75 round trips, and it
-was the slowest request on the stage form's open (``frontend/e2e/stage-form-speed.spec.ts``). The
-count must not change by being batched: the same rows, the same pick, the same scorer. No database.
-"""
-
 from types import SimpleNamespace
 
 from app.services import sanction_orders
@@ -64,7 +56,6 @@ async def test_the_badge_reads_stage_one_once_and_counts_what_the_scorer_calls_u
         [
             _entry("w0", COMPLETE),
             _entry("w1", {"workshopTitle": "Half filled"}),
-            # w2 has no stage-1 row at all, w3 only a deleted one: both are waiting.
             _entry("w3", COMPLETE, deleted=True),
             _entry("w4", COMPLETE, ordinal=1),
             _entry("w4", {}, entity="somethingElse", ordinal=0),
@@ -93,7 +84,6 @@ async def test_the_batched_pick_is_the_single_reads_pick(monkeypatch):
 
 
 async def test_the_officers_list_reads_stage_one_once_per_page_and_matches_the_single_read(monkeypatch):
-    """The list built each row with its own stage-1 read — the badge's N+1, one route over."""
     entries = _Table(
         [
             _entry("w0", COMPLETE),
@@ -102,8 +92,6 @@ async def test_the_officers_list_reads_stage_one_once_per_page_and_matches_the_s
     )
     monkeypatch.setattr(sanction_orders, "db", SimpleNamespace(dwstageentry=entries))
 
-    # C1 (2026-10-17): the planned-workshop read is one query per PAGE too, through the annual
-    # plan's module. Counted here so the batched and the single path are held to it alike.
     planned_reads: list[list[str]] = []
 
     async def planned_rows(workshop_ids):

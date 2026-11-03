@@ -1,24 +1,3 @@
-"""Configuration for the AI image features, read WITHOUT touching ``app.core.config``.
-
-WHY A SEPARATE READER. This package is dormant: nothing in the API imports it, every capability
-defaults to off, and none of its dependencies are installed on the production box. Adding a dozen
-fields to the global ``Settings`` object would make every boot of every process parse and carry
-configuration for a feature that is not running, and would couple a strictly optional package to
-the file that must never fail to load. So the flags live here, are read on first use rather than
-at import, and are cached until something asks for a reset.
-
-This is a deliberate staging post, not a rival configuration system. When the features are turned
-on for real, move ``ENV_VARS`` into ``Settings`` verbatim (the aliases are already the env-var
-names) and make ``load()`` read from it — every other module in this package goes through
-``get_ai_settings()``, so that is a one-file change. ``docs/AI_FEATURES.md`` lists the exact
-fields to add.
-
-Precedence matches the rest of the backend: a real environment variable wins, and anything absent
-from the environment falls back to ``backend/.env`` — the same file pydantic-settings reads — so
-an operator who sets ``AI_FEATURES_ENABLED=true`` in the one .env they already maintain gets what
-they expect instead of silent nothing.
-"""
-
 import logging
 import os
 from collections.abc import Mapping
@@ -30,8 +9,6 @@ from app.ai_features.types import Capability
 
 logger = logging.getLogger(__name__)
 
-#: Every variable this package reads, in documentation order. The probe and the .env reader both
-#: iterate this, so a new setting cannot be added without becoming visible to operators.
 ENV_VARS: tuple[str, ...] = (
     "AI_FEATURES_ENABLED",
     "AI_BACKGROUND_REMOVAL_ENABLED",
@@ -75,10 +52,6 @@ ENV_VARS: tuple[str, ...] = (
     "AI_TRANSCRIPT_INSIGHTS_MAX_TRANSLATE_CHARS",
 )
 
-#: The two variables that gate and steer each capability. Errors and the probe quote these names
-#: literally, because "the feature is disabled" is useless to an operator who then has to guess
-#: which of three similarly named flags to set — and the vectorisation pair does not follow the
-#: pattern the other two share.
 CAPABILITY_ENV_VARS: dict[Capability, tuple[str, str]] = {
     Capability.BACKGROUND_REMOVAL: (
         "AI_BACKGROUND_REMOVAL_ENABLED",
@@ -104,40 +77,22 @@ CAPABILITY_ENV_VARS: dict[Capability, tuple[str, str]] = {
 
 
 def enable_var(capability: Capability) -> str:
-    """The variable that turns one capability on, given the master switch is also on."""
     return CAPABILITY_ENV_VARS[capability][0]
 
 
 def provider_var(capability: Capability) -> str:
-    """The variable that chooses a provider for one capability."""
     return CAPABILITY_ENV_VARS[capability][1]
 
 
-# remove.bg refuses inputs over 12 MB, so matching its ceiling means a rejection here reads the
-# same as a rejection there. It is also roughly a 24-megapixel JPEG straight off a field camera.
 _DEFAULT_MAX_BYTES = 12 * 1024 * 1024
-# Decompression-bomb guard, checked from the header before anything decodes the pixels. 24 MP is
-# larger than any camera the field teams use and small enough that a local matte cannot swallow
-# the box: RGBA at 24 MP is ~96 MB per copy, and matting holds several.
 _DEFAULT_MAX_PIXELS = 24_000_000
 _DEFAULT_TIMEOUT_SECONDS = 60.0
-# How much of a non-English transcript is translated in one run. 96k characters is roughly a
-# two-hour interview; the floor keeps a typo from turning every translation into a fragment.
 _DEFAULT_MAX_TRANSLATE_CHARS = 96_000
 _MIN_MAX_TRANSLATE_CHARS = 4_000
 
-#: Enough listings for the price floor in market_research to be reachable twice over, and few
-#: enough that one brief cannot become a hundred credits. Raising it costs money per call.
 _DEFAULT_MARKET_MAX_RESULTS = 20
-#: Queries issued per brief. Three is one broad and two narrowed; more is how a single button
-#: press becomes a bill nobody predicted.
 _DEFAULT_MARKET_MAX_QUERIES = 3
-#: Seconds between outbound market-research calls, process-wide. Not a vendor requirement — a
-#: courtesy floor, so a batch of briefs cannot look like an attack from an address the vendor will
-#: then block for everybody sharing it.
 _DEFAULT_MARKET_MIN_INTERVAL = 1.0
-#: Identifies us to the vendor. An operator who leaves this alone is still identifiable as this
-#: software; the point of overriding it is to add a human to contact before blocking the address.
 _DEFAULT_MARKET_USER_AGENT = (
     "DesignWorkshopBackend/0.1 (craft market research; "
     "set AI_MARKET_RESEARCH_USER_AGENT to add a contact address)"
@@ -149,8 +104,6 @@ _FALSE = frozenset({"0", "false", "no", "off", "n", "f", ""})
 
 @dataclass(frozen=True)
 class AiFeatureSettings:
-    """Resolved configuration. Construct through :func:`build_settings`, never by hand."""
-
     enabled: bool = False
     background_removal_enabled: bool = False
     foreground_separation_enabled: bool = False
@@ -180,8 +133,6 @@ class AiFeatureSettings:
     vectorizer_api_id: str | None = None
     vectorizer_api_secret: str | None = None
     vectorizer_endpoint: str = "https://vectorizer.ai/api/v1/vectorize"
-    # "test" is free and returns a watermarked result; "production" spends a credit per image.
-    # Defaulting to the free mode means a mis-wired experiment cannot quietly run up a bill.
     vectorizer_mode: str = "test"
 
     vector_colormode: str = "color"
@@ -191,8 +142,6 @@ class AiFeatureSettings:
     market_research_max_results: int = _DEFAULT_MARKET_MAX_RESULTS
     market_research_max_queries: int = _DEFAULT_MARKET_MAX_QUERIES
     market_research_min_interval_seconds: float = _DEFAULT_MARKET_MIN_INTERVAL
-    #: The currency retrieved prices are expected in. NOT a conversion target — nothing in this
-    #: package converts between currencies. See market_research.py on why that is a refusal.
     market_research_currency: str = "INR"
     market_research_country: str = "in"
     market_research_language: str = "en"
@@ -204,17 +153,9 @@ class AiFeatureSettings:
     serpapi_api_key: str | None = None
     serpapi_endpoint: str = "https://serpapi.com/search.json"
 
-    #: Human-readable complaints about malformed values, surfaced by the probe rather than thrown.
-    #: A typo in a number must never stop the app; it falls back to the default and says so.
     notes: tuple[str, ...] = field(default=())
 
     def capability_enabled(self, capability: Capability) -> bool:
-        """True only when the master switch AND the capability's own flag are on.
-
-        Two levels because the master switch is the thing an incident responder flips: one
-        variable turns the whole package off without having to know which of three features is
-        misbehaving.
-        """
         if not self.enabled:
             return False
         return {
@@ -226,7 +167,6 @@ class AiFeatureSettings:
         }[capability]
 
     def provider_choice(self, capability: Capability) -> str:
-        """Configured provider id for a capability, or ``"auto"``."""
         return {
             Capability.BACKGROUND_REMOVAL: self.background_removal_provider,
             Capability.FOREGROUND_SEPARATION: self.foreground_separation_provider,
@@ -236,11 +176,6 @@ class AiFeatureSettings:
         }[capability]
 
     def value_for(self, env_var: str) -> str | None:
-        """Current value of one of :data:`ENV_VARS`, for readiness checks and the probe.
-
-        Secrets are returned as-is; the probe only ever asks "is this non-empty", and never
-        prints what it got back.
-        """
         return {
             "REMOVE_BG_API_KEY": self.remove_bg_api_key,
             "REMOVE_BG_ENDPOINT": self.remove_bg_endpoint,
@@ -296,13 +231,6 @@ def _as_float(raw: str | None, default: float, name: str, notes: list[str]) -> f
 
 
 def _as_seconds(raw: str | None, default: float, name: str, notes: list[str]) -> float:
-    """Like :func:`_as_float` but zero is a legitimate answer.
-
-    Separate from ``_as_float`` because the values it reads (a timeout) are meaningless at zero,
-    while the value this reads (a courtesy delay between outbound calls) has an obvious meaning:
-    do not wait. An operator who has been given a generous quota should be able to say so without
-    the setting silently reverting to one second per call.
-    """
     if raw is None or not raw.strip():
         return default
     try:
@@ -317,12 +245,6 @@ def _as_seconds(raw: str | None, default: float, name: str, notes: list[str]) ->
 
 
 def _as_currency(raw: str | None, default: str, name: str, notes: list[str]) -> str:
-    """A three-letter ISO 4217 code, upper-cased. Not validated against a list of real ones.
-
-    Checking the shape catches the typo that matters (a currency symbol or a country code where a
-    code belongs); checking membership of a list would mean shipping and maintaining that list for
-    a package that never converts between currencies anyway.
-    """
     value = (raw or "").strip().upper()
     if not value:
         return default
@@ -333,8 +255,6 @@ def _as_currency(raw: str | None, default: str, name: str, notes: list[str]) -> 
 
 
 def _as_max_translate_chars(raw: str | None, notes: list[str]) -> int:
-    """The translation cap. Anything unreadable or under the floor falls back to the default, with
-    a note: a fragmentary translation is worse than the documented size."""
     name = "AI_TRANSCRIPT_INSIGHTS_MAX_TRANSLATE_CHARS"
     if raw is None or not raw.strip():
         return _DEFAULT_MAX_TRANSLATE_CHARS
@@ -375,11 +295,6 @@ def _as_choice(
 
 
 def build_settings(env: Mapping[str, str]) -> AiFeatureSettings:
-    """Pure translation of a mapping into settings. No file access, no caching, no side effects.
-
-    Kept pure so the tests can assert the default-off contract against ``{}`` without depending
-    on whatever happens to be in the developer's environment or .env file.
-    """
     notes: list[str] = []
     get = env.get
 
@@ -514,22 +429,11 @@ def build_settings(env: Mapping[str, str]) -> AiFeatureSettings:
 
 
 def _env_file_candidates() -> tuple[Path, ...]:
-    """Where ``backend/.env`` might be, in the order pydantic-settings would find it.
-
-    ``Settings`` uses ``env_file=".env"``, i.e. relative to the working directory, which is
-    ``backend/`` for uvicorn, the worker and pytest alike. The second candidate covers a process
-    launched from the repository root, where a relative lookup would find nothing.
-    """
-    package_root = Path(__file__).resolve().parents[2]  # …/backend
+    package_root = Path(__file__).resolve().parents[2]
     return (Path(".env"), package_root / ".env")
 
 
 def _read_env_file() -> dict[str, str]:
-    """Values for :data:`ENV_VARS` found in .env. Unparseable lines are skipped, never raised on.
-
-    Only our own variables are collected: this is a fallback for one package's flags, not a
-    general dotenv loader, and it must not become a second source of truth for DATABASE_URL.
-    """
     wanted = set(ENV_VARS)
     found: dict[str, str] = {}
     for candidate in _env_file_candidates():
@@ -537,7 +441,7 @@ def _read_env_file() -> dict[str, str]:
             if not candidate.is_file():
                 continue
             text = candidate.read_text(encoding="utf-8", errors="replace")
-        except OSError:  # unreadable .env is not a reason to fail a probe
+        except OSError:
             continue
         for line in text.splitlines():
             stripped = line.strip()
@@ -555,7 +459,6 @@ def _read_env_file() -> dict[str, str]:
 
 @lru_cache
 def _merged_environment() -> dict[str, str]:
-    """Our variables from the real environment, falling back to ``backend/.env``."""
     merged = dict(_read_env_file())
     for name in ENV_VARS:
         value = os.environ.get(name)
@@ -566,11 +469,6 @@ def _merged_environment() -> dict[str, str]:
 
 @lru_cache
 def get_ai_settings() -> AiFeatureSettings:
-    """Cached settings for the running process. Call :func:`reset_ai_settings_cache` after a change.
-
-    Cached because every capability call reads it and because the .env fallback touches the disk;
-    a dormant feature has no business stat-ing a file on each request.
-    """
     settings = build_settings(_merged_environment())
     for note in settings.notes:
         logger.warning("ai_features configuration: %s", note)
@@ -578,16 +476,10 @@ def get_ai_settings() -> AiFeatureSettings:
 
 
 def configured_vars() -> tuple[str, ...]:
-    """Which of :data:`ENV_VARS` currently have a non-empty value. NAMES ONLY, never values.
-
-    The probe reports this so an operator can see that, say, REMOVE_BG_API_KEY is present without
-    the report becoming something that must not be pasted into a ticket.
-    """
     environment = _merged_environment()
     return tuple(name for name in ENV_VARS if (environment.get(name) or "").strip())
 
 
 def reset_ai_settings_cache() -> None:
-    """Drop the cache. For tests, and for a future "reload settings" admin action."""
     _merged_environment.cache_clear()
     get_ai_settings.cache_clear()

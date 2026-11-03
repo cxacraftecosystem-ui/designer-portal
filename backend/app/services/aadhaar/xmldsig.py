@@ -1,21 +1,3 @@
-"""Enveloped XML signatures — verified for UIDAI's offline e-KYC XML, created for the AUA's requests.
-
-DELIBERATELY NARROW. A general XMLDSig implementation verifies whatever a document says it signed,
-which is how signature-wrapping attacks work: a valid signature over one element, and the reader
-takes its data from another. This one accepts exactly the shape UIDAI uses and refuses the rest:
-
-* exactly ONE ``ds:Signature`` in the whole document, and it is a direct child of the root;
-* exactly ONE ``ds:Reference``, with ``URI=""`` — the whole document — so whatever the caller reads
-  from the root afterwards is what was signed;
-* transforms limited to the enveloped-signature transform and a canonicalization;
-* RSA PKCS#1 v1.5 with SHA-1 or SHA-256 (UIDAI's offline XML has used both over the years);
-* the key is NEVER taken from the document's own ``KeyInfo``: the signature must verify under one of
-  the certificates the caller trusts (``certs.trusted_certificates``).
-
-The parser resolves no entities, loads no DTD and touches no network, so a hostile upload cannot
-read a file off the server or fetch a URL through it.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -53,8 +35,6 @@ _C14N = {
     C14N_EXCLUSIVE: (True, False),
     C14N_EXCLUSIVE_COMMENTS: (True, True),
 }
-#: UIDAI's own Auth 2.5 response example spells SHA-256 with two non-standard URIs; accepted on the
-#: way in, never written.
 RSA_SHA256_UIDAI_SPELLING = "http://www.w3.org/2000/09/xmldsig#rsa-sha256"
 DIGEST_SHA256_UIDAI_SPELLING = "http://www.w3.org/2000/09/xmldsig#sha256"
 
@@ -71,8 +51,6 @@ _DIGEST = {
 
 
 class SignatureError(Exception):
-    """The document is unsigned, signed in a shape this module refuses, or the signature fails."""
-
     def __init__(self, code: str, detail: str) -> None:
         super().__init__(detail)
         self.code = code
@@ -92,7 +70,6 @@ def safe_parser() -> etree.XMLParser:
 
 
 def parse(data: bytes) -> etree._Element:
-    """Parse untrusted XML. A DOCTYPE is refused outright: UIDAI's documents carry none."""
     from lxml import etree
     if b"<!DOCTYPE" in data[:4096].upper() or b"<!ENTITY" in data.upper():
         raise SignatureError("doctype", "the XML declares a DOCTYPE or an entity")
@@ -103,14 +80,6 @@ def parse(data: bytes) -> etree._Element:
 
 
 def canonicalize(element: etree._Element, algorithm: str) -> bytes:
-    """C14N of ``element`` as a document subset.
-
-    A DEEP COPY IS CANONICALIZED, NEVER THE ELEMENT IN PLACE. libxml2 (measured with lxml 6.1.3 on
-    2026-10-16) canonicalizes an in-document ``SignedInfo`` with a spurious ``xmlns=""`` on
-    ``<Transforms>``, so genuine UIDAI files fail to verify — the defect that makes ``signxml``
-    reject them. A copy carries its in-scope namespace declarations with it and canonicalizes to
-    the bytes UIDAI signed.
-    """
     from lxml import etree
     if algorithm not in _C14N:
         raise SignatureError("c14n", f"unsupported canonicalization {algorithm}")
@@ -151,7 +120,6 @@ def _document_digest(root: etree._Element, signature: etree._Element, reference:
     digest_method = _one(reference, "DigestMethod").get("Algorithm")
     if digest_method not in _DIGEST:
         raise SignatureError("digest", f"unsupported digest {digest_method}")
-    # A COPY of the document with the signature removed — the enveloped-signature transform.
     copy = etree.fromstring(etree.tostring(root), parser=safe_parser())
     for sig in copy.findall(f"{_DS}Signature"):
         copy.remove(sig)
@@ -161,7 +129,6 @@ def _document_digest(root: etree._Element, signature: etree._Element, reference:
 def verify_enveloped(
     root: etree._Element, trusted: Iterable[x509.Certificate]
 ) -> VerifiedSignature:
-    """Verify the document's enveloped signature under one of ``trusted``. Raises SignatureError."""
     all_signatures = list(root.iter(f"{_DS}Signature"))
     if not all_signatures:
         raise SignatureError("unsigned", "the document carries no signature")
@@ -211,11 +178,6 @@ def sign_enveloped(
     c14n_method: str = C14N_INCLUSIVE,
     include_subject_name: bool = True,
 ) -> etree._Element:
-    """Append an enveloped signature over the whole document to ``root`` and return it.
-
-    ``Signature`` is written with the XMLDSig namespace as its DEFAULT namespace and no prefix, the
-    form UIDAI's own samples and its reference AUA client use.
-    """
     from lxml import etree
     for existing in root.findall(f"{_DS}Signature"):
         root.remove(existing)

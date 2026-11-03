@@ -1,8 +1,3 @@
-"""The review aids without a database: note freshness, verdict bookkeeping, batch planning, sorting.
-
-The database-backed half is ``test_dw_review_aids_db.py``.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -25,8 +20,6 @@ def _stage_key(index: int = 0) -> str:
     return stages()[index].key
 
 
-# ── A19: note freshness ────────────────────────────────────────────────────────────────────────────
-
 
 def test_a_note_is_fresh_only_when_its_stage_was_written_after_it():
     first, second = _stage_key(0), _stage_key(1)
@@ -45,8 +38,6 @@ def test_a_whole_report_note_on_an_untouched_report_reads_untouched():
     rows = [{"id": "x", "stageKey": None, "createdAt": AT.isoformat()}]
     assert aids.annotate_freshness(rows, {})[0]["editedSince"] is False
 
-
-# ── C5: verdicts ───────────────────────────────────────────────────────────────────────────────────
 
 
 def test_verdicts_name_only_the_current_round():
@@ -93,8 +84,6 @@ def test_sort_and_filter_values_are_checked():
     assert aids.dated_order("lastHandedInAt", "newest")[0] == {"lastHandedInAt": "desc"}
     assert aids.dated_order("lastHandedInAt", "complete") is None
 
-
-# ── B2: batches ────────────────────────────────────────────────────────────────────────────────────
 
 
 def _batch(**overrides):
@@ -220,8 +209,6 @@ def test_a_revise_with_neither_sentence_nor_notes_is_still_refused():
             notes=[],
         )
 
-
-# ── A22 / C13 helpers ──────────────────────────────────────────────────────────────────────────────
 
 
 def test_the_report_object_key_is_per_workshop_and_export():

@@ -1,40 +1,3 @@
-"""EVERY FIELD A PICKED RECORD HOLDS REACHES THE WORKSHOP, AND THIS IS WHERE THAT IS CHECKABLE.
-
-The requirement in the user's words: "it is okay to have more fields over there, but not less than
-that. Ensure that all those fields are taken in faithfully, without a miss."
-
-That is a claim about two tables — ``design_workshops.REFERENCE_MODELS[model].data`` (which source
-column becomes which data key) and ``stage_schema.REFERENCE_HYDRATION`` (which data key lands on
-which entity field) — plus the ``FieldSpec`` declarations that receive them. Before this file the
-two tables carried 32 field-pairs between five models, and NOTHING anywhere compared them to the
-source records: a Prisma column that reached nothing looked exactly like a Prisma column somebody
-had decided not to carry, and a mapping key that no lambda produced looked exactly like one that
-worked.
-
-So the tests below are not "does hydration still work" — ``test_reference_resolver.py`` owns that,
-against a live database. These are the FIDELITY tests, and they are deliberately shaped so that a
-column added to ``prisma/schema.prisma`` next year fails one of them:
-
-1. **Coverage.** Every column of ``Artisan``, ``ProductDocumentation``, ``ToolDocumentation``,
-   ``Process``/``ProcessStep`` and ``Craft`` is named in an explicit list here — either as CARRIED,
-   with the entity field it lands on, or as NOT CARRIED with the reason. A column that appears in
-   the schema and in neither list fails :func:`test_no_source_column_is_unaccounted_for`. That is
-   the "without a miss" guarantee made mechanical.
-2. **Round trip.** A fully populated source record of each type goes through the REAL
-   ``hydrate_entries`` — the same clearing rule, the same ``coerce_value`` — and every declared
-   target must arrive non-empty.
-3. **The three landmines**, each with its own test: the inches→centimetre conversion, the enum
-   translation tables being TOTAL over their Prisma enums, and the identity number that must
-   arrive masked.
-4. **The two declarations that drift**: hydration source keys against the data lambdas, and the
-   ``fromref()`` help-text marker against the mapping. Both had already drifted when this was
-   written; neither had a guard.
-
-Nothing here touches a database. ``hydrate_entries`` is driven through a fake Prisma client, which
-is what lets a fully populated record be described in one readable literal instead of assembled
-across a module-scoped fixture.
-"""
-
 import re
 from datetime import datetime
 from pathlib import Path
@@ -43,13 +6,8 @@ from typing import NamedTuple
 
 import pytest
 
-# Importing this module is what installs the twenty-two stages into the registry.
 import app.services.stage_definitions  # noqa: F401
 from app.services import design_workshops as dw
-# The two modules the measurement-method carry has to agree with, imported so the assertions read
-# their real values rather than a copy: `record_fields.METHOD_CLAUSES` is the two phrases every
-# record surface already prints, and `measurement_provenance.DIMENSION_FIELDS` is the closed set of
-# columns a method can be stamped on at all.
 from app.services import measurement_provenance, record_fields
 from app.services.records import derive_age, derive_experience_years, mask_identity_number
 from app.services.stage_schema import (
@@ -65,22 +23,12 @@ from app.services.stage_schema import (
 SCHEMA = Path(__file__).resolve().parents[1] / "prisma" / "schema.prisma"
 
 
-# --------------------------------------------------------------------------------------
-# Reading the source of truth: the Prisma schema itself
-# --------------------------------------------------------------------------------------
-
 
 def _schema_text() -> str:
     return SCHEMA.read_text(encoding="utf-8")
 
 
 def _block(kind: str, name: str) -> str:
-    """The body of one ``model`` or ``enum`` declaration, comments stripped.
-
-    Parsed out of the file rather than read off the generated Prisma client, deliberately: the
-    client is regenerated from this file, so a column added and not yet generated would make these
-    tests pass against a schema that no longer matches. The file IS the change under review.
-    """
     text = _schema_text()
     start = re.search(rf"^{kind}\s+{name}\s*\{{", text, re.MULTILINE)
     assert start, f"{kind} {name} is not in {SCHEMA.name}"
@@ -97,11 +45,6 @@ def _block(kind: str, name: str) -> str:
 
 
 def _columns(model: str) -> set[str]:
-    """The SCALAR columns of a model — relations, ids and index directives excluded.
-
-    A relation is recognised by its type being another model (upper-case first letter and not one
-    of the Prisma scalars), which is the same rule the generator uses.
-    """
     scalars = {"String", "Int", "Float", "Boolean", "DateTime", "Decimal", "Json", "BigInt", "Bytes"}
     enums = set(re.findall(r"^enum\s+(\w+)\s*\{", _schema_text(), re.MULTILINE))
     out: set[str] = set()
@@ -121,15 +64,6 @@ def _columns(model: str) -> set[str]:
 
 
 def _relations(model: str) -> set[str]:
-    """The RELATION fields of a model — exactly the ones :func:`_columns` throws away.
-
-    Written because `_columns`' own docstring ("relations, ids and index directives excluded") is
-    the ledger's one structural blind spot, and something real was sitting in it:
-    `ToolDocumentation.artisanLinks` — the whole tool-assignment feature, with a form, four routes
-    and a data-browser filter behind it — reached no workshop and no report, and
-    `test_no_source_column_is_unaccounted_for` could not see it to say so. Same rule as `_columns`,
-    read the other way round: a field whose type is another model.
-    """
     scalars = {"String", "Int", "Float", "Boolean", "DateTime", "Decimal", "Json", "BigInt", "Bytes"}
     enums = set(re.findall(r"^enum\s+(\w+)\s*\{", _schema_text(), re.MULTILINE))
     out: set[str] = set()
@@ -152,77 +86,6 @@ def _enum_members(name: str) -> set[str]:
     return {m.strip() for m in _block("enum", name).splitlines() if m.strip()}
 
 
-# --------------------------------------------------------------------------------------
-# The coverage ledger — the evidence that nothing was missed
-# --------------------------------------------------------------------------------------
-#
-# READ THIS BEFORE ADDING A COLUMN TO ANY OF THE FIVE MODELS. Every scalar column of every model a
-# REF field can point at appears below exactly once: in CARRIED with the workshop field it reaches,
-# or in NOT_CARRIED with the reason it does not. A new column belongs in one of the two lists, and
-# `test_no_source_column_is_unaccounted_for` is what makes that not optional.
-#
-# The reasons in NOT_CARRIED are not decoration. Four categories recur and each is a real decision:
-#
-#  * "bookkeeping" — the source record's own lifecycle (status, review audit, created/updated
-#    timestamps, the id of the user who typed it). These describe the RECORD, not the artisan or
-#    the product, and a report about a workshop has no question they answer.
-#  * "join key" — a foreign key whose VALUE reaches the workshop through the relation it names.
-#  * "provenance, not stated" — the `Location` model's own docstring: latitude/longitude/altitude/
-#    accuracy/capturedAt are a fix of the desk the record was typed at, 1,500 km from the village
-#    on the same row on every live record. Copying them would put a report's map pin on a desk.
-#  * "identity" — THIS CATEGORY NOW HAS NO MEMBER, and the paragraph is kept rather than deleted
-#    because it is the record of a decision that was reversed. It read: "see `aadhaarNumber`, which
-#    is the one column here refused on policy grounds." The owner reversed that on 2026-08-24 —
-#    BOTH identity numbers cross now, BOTH masked to their last four digits by
-#    `records.mask_identity_number` — so `aadhaarNumber` moved to CARRIED and no column is refused
-#    on policy grounds any more. What the owner was shown before deciding, and what would reverse it
-#    again, is written out above `participant.aadhaarNumber` in `stage_definitions`. A category left
-#    standing with its argument intact is how the next reader can tell a considered reversal from a
-#    widening nobody weighed.
-#  * "a form default, not an answer" — a Prisma enum member that is ALSO the column's `@default`
-#    and has no blank alternative in any record form. `ProductType.OTHER`, `MarketDemand.UNKNOWN`
-#    and `MakerType.UNKNOWN` are the three, and the argument is written out above the translation
-#    tables in `design_workshops`. THE COLUMNS ARE STILL CARRIED and stay in the CARRIED lists —
-#    it is the individual MEMBER that translates to nothing, so the box arrives blank for the
-#    designer to answer instead of pre-answered on nobody's behalf. `productType` keeps even the
-#    unmappable member, on `existingProduct.recordType`; `marketDemand` and `maker` have no such
-#    second box, so their default token reaches nothing at all, which is the honest state.
-#
-# RELATIONS ARE LEDGERED SEPARATELY, BELOW, AND THAT IS THE ONE BLIND SPOT THIS FILE HAD.
-# `_columns` is scalars-only by design, so `test_no_source_column_is_unaccounted_for` structurally
-# cannot see a relation — and `ToolDocumentation.artisanLinks`, the entire tool-assignment feature,
-# sat in exactly that gap: built end to end (a form, four routes, a data-browser filter) and
-# reaching no workshop and no report, with the mechanism that promises "nothing was missed" unable
-# to say so. `RELATION_LEDGER` closes it; see `test_no_source_relation_is_unaccounted_for`.
-
-# `status` IS NOT BOOKKEEPING, AND IT USED TO BE FILED AS IF IT WERE — in a line beside
-# `createdAt`, `updatedAt` and `createdById`. `enum RecordStatus { DRAFT PENDING APPROVED REJECTED
-# NEEDS_REVISION }` is a named reviewer's verdict on whether the record is fit to be used;
-# `NEEDS_REVISION`'s schema comment reads "Reviewer sent the record back with comments
-# (reviewNotes); creator edits and resubmits". Filing that as a timestamp is how a REJECTED
-# ToolDocumentation came to sit in the stage-5 picker looking exactly like an approved one, and to
-# hydrate all twenty-four of its fields into a document handed to a ministry officer.
-#
-# IT IS STILL NOT CARRIED, and the reason is the opposite of "it does not matter". It is MUTABLE
-# and a hydrated value is a PERMANENT copy: a tool picked while PENDING is approved the following
-# week, and a frozen "Pending review" in the report would then be a false statement about a named
-# reviewer's decision — worse than the silence it replaced. The verdict is surfaced where it is
-# LIVE instead, in the picker's sublabel at the moment of choosing. See
-# `design_workshops._review_flag` and
-# `test_a_reviewers_verdict_is_visible_while_choosing_and_is_never_copied_onto_the_entry`.
-#: ``designWorkshopId`` ON THE FIVE RECORD MODELS — added 2026-08-28 with the columns themselves.
-#:
-#: It says which Design & Prototype Workshop the record was FILED under, and a carry writes a record
-#: INTO a stage of a design workshop. Those are two different workshops and copying one onto the
-#: other would be a bug rather than an omission: the destination is already known — it is the
-#: workshop whose stage is being filled in, and it is the one that gated the write — while this
-#: column is the SOURCE's filing, which may be another workshop entirely or nothing at all.
-#:
-#: It is also not a fact about the subject. Every value in the ``_CARRIED`` lists is something a
-#: reader of the finished entry learns about the artisan, the product or the tool; this is scope,
-#: enforced by ``services/record_design_workshop.assert_may_file_under`` on the way in and by
-#: ``load_workshop_or_404`` on the way out. A carried copy would sit in a second table asserting a
-#: membership nothing checks, which is exactly the shape of the stale ``status`` refusal below.
 _FILING_SCOPE = (
     "scope, not a fact about the subject — which design workshop the SOURCE record was filed under. "
     "A carry writes into a stage of the DESTINATION workshop, which is already known and already "
@@ -236,21 +99,6 @@ _MUTABLE_VERDICT = (
     "(design_workshops._review_flag) and never written onto an entry."
 )
 
-#: ``clientKey`` ON THE THREE REPLAYABLE RECORD MODELS — added 2026-09-03 by the idempotency lane,
-#: ledgered here in the same wave.
-#:
-#: It is NOT bookkeeping in the "created/updated timestamp" sense and it is worth separating from
-#: them, because the reason it does not cross is sharper than "nobody reads it". It is the
-#: IDEMPOTENCY KEY OF ONE CREATE REQUEST — the value a browser profile or a handset's outbox
-#: generated so that an unanswered POST could be replayed without filing the same fieldwork twice
-#: (``Workshop.clientKey`` carries the whole argument, and ``records.client_key_replay`` is what
-#: reads it). Every value in a CARRIED list is something a reader of the finished entry learns about
-#: the artisan, the product or the tool; this is a fact about a NETWORK EXCHANGE that happened once,
-#: between one device and this server, and it is null on every row nobody ever replayed.
-#:
-#: A carried copy would also be actively misleading in the one place it could land: a stage entry
-#: carrying a record's client key beside its id reads as though the workshop row and the record were
-#: created by the same send, which they never are.
 _AN_IDEMPOTENCY_KEY = (
     "the idempotency key of the CREATE this row came from — a fact about one device's network "
     "exchange, not about the artisan, product or tool. Null on every row nobody replayed; see "
@@ -262,61 +110,23 @@ ARTISAN_CARRIED = {
     "localName": "participant.localName",
     "gender": "participant.gender",
     "phone": "participant.phone",
-    # Folded into the same box: hydration composes "+91 9876543210" from the two columns.
     "phoneCountryCode": "participant.phone",
     "email": "participant.email",
-    "place": "participant.village",            # the fallback when Location.village is empty
+    "place": "participant.village",
     "pehchanCardAvailable": "participant.pehchanCardAvailable",
-    "pehchanCardNumber": "participant.artisanCardNo",   # MASKED — see the identity test
-    # MOVED HERE FROM NOT_CARRIED ON 2026-08-24, ON THE OWNER'S REVERSAL. Its entry there read:
-    # "identity. Masked on every exported surface by policy (records.mask_identity_number, and the
-    # scar in record_fields.py:270-283). It is the deduplication key; 'XXXX XXXX 9012' in a
-    # participant table answers no question a design report asks, and the artisan is already
-    # identified by name, Pehchan card and phone." The owner was shown the exposure in full — a
-    # workshop's stage reads do not pass through `records._redact_sensitive`, a DesignWorkshopViewer
-    # is a grantee, and the entry is a permanent copy — and chose to carry it anyway, masked.
-    #
-    # NO TEST FORCED THIS MOVE, which is exactly why it has to be done by hand and said out loud:
-    # `test_no_source_column_is_unaccounted_for` passes with the column in EITHER list and
-    # `test_no_column_is_both_carried_and_refused` only fires if it is in BOTH. This ledger is the
-    # evidence table for "nothing was missed", and a carried column sitting in the refused list
-    # would make it evidence for the opposite.
-    # The mask is built from the last four (services/aadhaar_fingerprint.py, since 2026-10-17); the
-    # legacy `aadhaarNumber` column that held the full number was dropped on 2026-10-19.
+    "pehchanCardNumber": "participant.artisanCardNo",
     "aadhaarLast4": "participant.aadhaarNumber (MASKED, as XXXX XXXX + these four)",
     "address": "participant.address",
     "notes": "participant.recordNotes",
     "dos": "participant.dos",
     "donts": "participant.donts",
     "recordedAt": "participant.documentedOn",
-    # Added 2026-08-16 with the columns themselves. `dateOfBirth` reaches `participant.age` and NOT
-    # a date field, because the workshop asks for an age and the age is DERIVED here — see
-    # `records.derive_age` and the note on the column: an age stored is wrong within a year.
     "dateOfBirth": "participant.age (derived, never stored)",
-    # Added 2026-08-23 with the column, on the owner's instruction that experience become a derived
-    # field with a date of joining the craft behind it. TWO TARGETS, and the pair is the point: the
-    # DERIVED number is what the participant table's Experience column prints, and the DATE crosses
-    # as well — unlike `dateOfBirth` above, which reaches the report only as its derived number
-    # because the participant entity has no birthday box. A derived figure in a document a ministry
-    # officer reads whose basis is stated nowhere is worse than one that names it.
     "craftStartDate": "participant.craftStartDate + participant.experienceYears (derived)",
-    # STILL CARRIED, and now the SECOND of three answers rather than the only one. The derived value
-    # from `craftStartDate` outranks it where a row has one; every row written before 2026-08-23 has
-    # none — the migration deliberately refuses to guess — so this column is what they all still
-    # print. See the precedence written out in `REFERENCE_MODELS["Artisan"].data`.
     "experienceYears": "participant.experienceYears (the stated number, behind the derivation)",
-    # Still carried, and now only as the FALLBACK for records written before the two columns above
-    # existed. The migration copied every clean numeric value across and deliberately left the ones
-    # it could not parse ("30+", "about 30") in the JSON rather than guessing at them.
     "extraMetadata": "participant.experienceYears + participant.age + specialisation (legacy)",
     "craftId": "participant.specialisation",
     "locationId": "participant.village/state/district/pincode/subjectLocation",
-    # MOVED HERE FROM NOT_CARRIED, where it read "join key — the design workshop already knows which
-    # workshop it belongs to". That was true of the DESIGN workshop and false of this column:
-    # `participant.artisanRef` is the one artisan picker declared ALL_SCOPE, so a roster legitimately
-    # holds artisans documented at another cluster's workshop years earlier, and `documentedOn`
-    # answered when while nothing answered where. The TITLE crosses, through the `workshop` relation;
-    # the id itself still does not.
     "workshopId": "participant.documentedAtWorkshop (Workshop.title, via the relation)",
 }
 _AADHAAR_VERIFICATION = "not carried — an Aadhaar verification result, never copied off the record"
@@ -332,22 +142,7 @@ ARTISAN_NOT_CARRIED = {
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping — the researcher who typed the record",
     "designWorkshopId": _FILING_SCOPE,
-    # Added 2026-08-29 with the column (requirement 14: Experience becomes Years + Months on both
-    # Artisan and DesignerProfile). NOT carried, and for a reason specific to this column rather
-    # than the generic "no destination exists yet": `record_fields.py`'s "Experience (years)" cell
-    # — the one place an artisan's experience actually reaches a document — is built entirely from
-    # WHOLE YEARS, by three sources in order (derive_experience_years(craftStartDate), the stated
-    # experienceYears column, then the legacy metadata figure); none of the three has ever carried
-    # a sub-year remainder, and `craftStartDate`'s derivation in particular computes elapsed years
-    # from a join date to TODAY, which has no months component to receive. Carrying this column
-    # would mean inventing a second "Experience (years, months)" cell nothing has asked for, purely
-    # because the source table grew a column — exactly the "considered vs. merely not noticed"
-    # distinction this ledger exists to keep visible. If a workshop stage or report ever needs the
-    # finer figure, that is a new field with its own decision, not a silent default for this one.
     "experienceMonths": "no carry target — record_fields.py's Experience cell is whole-years only",
-    # Added 2026-10-16 (docs/AADHAAR.md). The Aadhaar VERIFICATION result is never carried into a
-    # workshop: it is regulated identity data the record encoder strips from every payload, and a
-    # copy hydrated into a stage entry at save time would outlive a withdrawal of the verification.
     "aadhaarVerifyStatus": _AADHAAR_VERIFICATION,
     "aadhaarVerifyMethod": _AADHAAR_VERIFICATION,
     "aadhaarVerifiedAt": _AADHAAR_VERIFICATION,
@@ -364,13 +159,6 @@ ARTISAN_NOT_CARRIED = {
     "aadhaarVerifyDecidedAt": _AADHAAR_VERIFICATION,
 }
 
-# ONE LEDGER ROW, THREE REFERENCING MODELS, AND THE TARGETS ARE NAMED IN FULL FOR A REASON. `Location`
-# hangs off `Artisan`, `ProductDocumentation` and `ToolDocumentation`, and this list is parameterised
-# by MODEL, so it cannot be split per referencing model without inventing a model name `_columns`
-# could not resolve. What it can do is name every box each column reaches: while these values read
-# "participant.state" alone, the product and tool carries landed, the SUBJECT PIN did not, and this
-# file said nothing either way — the tripwire was blind to a missing target on two of the three
-# models because the column was already spoken for by the third.
 LOCATION_CARRIED = {
     "state": "participant.state + existingProduct.recordState + tool.recordState",
     "district": "participant.district + existingProduct.recordDistrict + tool.recordDistrict",
@@ -392,11 +180,6 @@ LOCATION_NOT_CARRIED = {
     "accuracy": "provenance, not stated",
     "capturedAt": "provenance, not stated",
     "placeName": "provenance, not stated — derived from the device fix, not from the artisan",
-    # MOVED HERE FROM CARRIED, and it sat one line above `placeName` contradicting it. It read
-    # "participant.address (fallback when Artisan.address is empty)", and that fallback printed the
-    # reverse-geocoded street of the DESK under an artisan's name, beside a village, district and
-    # state 1,500 km away. `Location`'s own docstring, `LocationInput` and `LocationFields.tsx`
-    # (which labels the box "GPS address") all file it in the PROVENANCE group beside `placeName`.
     "address": (
         "provenance, not stated — the address of the desk the record was typed at, derived from "
         "the same device fix placeName is. Artisan.address is the STATED one and still carries."
@@ -422,13 +205,6 @@ PRODUCT_CARRIED = {
     "lengthInches": "existingProduct.lengthCm (x2.54)",
     "breadthInches": "existingProduct.widthCm (x2.54)",
     "heightInches": "existingProduct.heightCm (x2.54)",
-    # MOVED HERE FROM NOT_CARRIED, where it read "bookkeeping — EXIF written programmatically by the
-    # record form". The EXIF summary is still not carried and never will be; what this column ALSO
-    # holds is `fieldProvenance`, and inside that the `method` stamp `records.merge_field_provenance`
-    # writes on each dimension. Filing the whole column as bookkeeping is how the one fact on it that
-    # a ministry officer needs — that a length is a vision model's estimate off a grid photograph and
-    # not a tape reading — stayed on the record while the number crossed. See
-    # `design_workshops._measurement_method_note`.
     "extraMetadata": "existingProduct.measurementMethodNote (fieldProvenance.method only)",
     "size": "existingProduct.dimensionsNote",
     "timeTakenToCompleteProduct": "existingProduct.productionTimeNote",
@@ -489,24 +265,8 @@ TOOL_CARRIED = {
     "remarks": "tool.remarks",
     "lengthInches": "tool.lengthCm (x2.54)",
     "breadthInches": "tool.breadthCm (x2.54)",
-    # THE THIRD INCH COLUMN, ADDED 2026-08-27. Until that day `ToolDocumentation` had two, and
-    # `tool.heightCm` was a workshop-only box nothing mapped into. The column landed, the carry
-    # converts it like its two siblings, and `tool.heightAsRecorded` below is unaffected: it is the
-    # OLD unit-less `height`, a different column, which is why the tool carries two heights.
     "heightInches": "tool.heightCm (x2.54)",
-    # MOVED HERE FROM NOT_CARRIED, where it read "bookkeeping". Same reason as the product's, and
-    # sharper here: five of this model's eight measurements state no unit either, so the tool table
-    # was the one place a reader had nothing at all to go on. Only `fieldProvenance.method` crosses,
-    # and only for the three INCH columns — `measurement_provenance.DIMENSION_FIELDS` never stamps
-    # the five unit-less ones. See `design_workshops._measurement_method_note`.
     "extraMetadata": "tool.measurementMethodNote (fieldProvenance.method only)",
-    # "source states no unit" FOR THESE TWO IS NOW TRUE OF OLD ROWS ONLY, and the ledger says so
-    # rather than repeating a claim the tool form has overtaken. Since the centimetre/inch pairing
-    # (all four clients label these boxes "Height (cm)" / "Width (cm)" and fill each from its inch
-    # partner) a row saved through any current client holds centimetres; nothing converted the rows
-    # saved before it, so the COLUMN still cannot say which kind a given value is. The destination
-    # boxes are unchanged and still declare no unit, for exactly that reason — see the help text on
-    # `heightAsRecorded`/`widthAsRecorded` in `stage_definitions`.
     "height": "tool.heightAsRecorded (cm since the form pairing; older rows state no unit)",
     "width": "tool.widthAsRecorded (cm since the form pairing; older rows state no unit)",
     "thickness": "tool.thicknessAsRecorded (source states no unit)",
@@ -581,36 +341,19 @@ PROCESS_STEP_NOT_CARRIED = {
 CRAFT_CARRIED = {
     "name": "workshopSetup.craftName",
     "localName": "workshopSetup.craftLocalName",
-    # ── FOUR ENTRIES MOVED OUT OF NOT_CARRIED, AND THE REFUSALS THEY REPLACE ARE WORTH KNOWING ───
-    #
-    # `category`, `description` and `place` were refused on the argument that "stage 1 already asks
-    # all three of its own questions and asks them better". The answer, written out in full above
-    # `REFERENCE_MODELS["Craft"].data`, is that a value which must not overwrite the designer's own
-    # cover fields needs a BOX OF ITS OWN rather than silence — which is what the tool and product
-    # mappings had been doing with their own free-text `place` all along. `recordedAt` was filed as
-    # bookkeeping, which confused the WORKSHOP's dates (on the cover) with the provenance of the
-    # source record (every other reference model carries its own).
     "category": "workshopSetup.craftCategory",
     "description": "workshopSetup.documentedCraftNotes",
     "place": "workshopSetup.craftPlace",
     "recordedAt": "workshopSetup.craftDocumentedOn",
-    # `craftRef` is ALL_SCOPE, so a linked craft may belong to another cluster's study years earlier;
-    # `craftDocumentedOn` answers when and this answers under whose study. The TITLE crosses, through
-    # the `workshop` relation — the id does not.
     "workshopId": "workshopSetup.craftDocumentedAtWorkshop (Workshop.title, via the relation)",
 }
 CRAFT_NOT_CARRIED = {
     "extraMetadata": "bookkeeping",
-    # The shared cross-portal code (C26). An identifier for matching the two portals' records,
-    # not a fact about the craft a report prints; the craft's name already crosses.
     "craftCode": "cross-portal identifier (C26) — matching key, nothing a stage prints",
     "recordedTimezone": "the date is carried as a bare DATE, so the zone has nothing to qualify",
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
     "createdById": "bookkeeping",
-    # THE MASTER CRAFT LIST (2026-10-20, docs/CRAFTS.md). The list's own facts about the craft.
-    # None of them is a stage box today: the cover page names the craft, and its category already
-    # crosses as `craftCategory` through the compatibility column `category`.
     "slug": "cross-portal identity of a master-list craft — a matching key, nothing a stage prints",
     "subCategoryId": "taxonomy link — the category name crosses as `category`",
     "sourceSerial": "the PDF's row number — provenance of the list, not of the workshop",
@@ -623,35 +366,15 @@ CRAFT_NOT_CARRIED = {
     "mergedIntoId": "list bookkeeping — where a MERGED craft went",
 }
 
-# ── THE SIXTH MODEL, AND THE FIRST WHOSE LOADED ROWS ARE CONFIDENTIAL ──────────────────
-#
-# `QuestionnaireInterview` is the GLOBAL artisan questionnaire's SITTING — a title, a date, a place,
-# a language, a named set of artisans, a review status. Not the per-workshop custom `Questionnaire`;
-# the five reasons are on `REFERENCE_MODELS["QuestionnaireInterview"]` and none of them is about
-# taste. Cited from stage 6's new `artisanBaseline` singleton, whose stage is titled "Existing
-# Products & Artisan Baseline" and had no entity for the artisan half.
-#
-# EVERY REFUSAL BELOW IS A DISCLOSURE DECISION, WHICH IS WHY THIS LEDGER MATTERS MORE HERE THAN
-# ANYWHERE ELSE IN THE FILE. The other five models describe objects — a saree, a loom, a dye
-# sequence. This one describes an afternoon spent with named people, and the columns it refuses are
-# refused because a design workshop's stage reads do NOT pass through `records._redact_sensitive`, a
-# `DesignWorkshopViewer` is a grantee, and a hydrated value is a permanent copy the report never
-# re-resolves. `test_no_artisan_answer_or_name_crosses_from_an_interview` executes the refusals; this
-# table is what makes a future widening a decision rather than an omission.
 QUESTIONNAIRE_INTERVIEW_CARRIED = {
     "title": "artisanBaseline.interviewTitle",
     "interviewDate": "artisanBaseline.interviewDate",
     "place": "artisanBaseline.interviewPlace",
     "language": "artisanBaseline.interviewLanguage",
     "recordedAt": "artisanBaseline.interviewDocumentedOn",
-    # The TITLE crosses through the `workshop` relation; the id does not. Same shape as
-    # `Craft.workshopId` above, and needed for the same reason: the picker is WORKSHOP-scoped, but on
-    # a design workshop with no linked `Workshop` it falls back to the whole table and reports
-    # `scoped: false`, so an out-of-cluster sitting can legitimately be picked.
     "workshopId": "artisanBaseline.interviewDocumentedAtWorkshop (Workshop.title, via the relation)",
 }
 QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
-    # ── UNIFY U0 (22 Oct 2026): the shared questionnaire's columns; none crosses into a report ──
     "clientKey": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "closedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "endedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
@@ -672,13 +395,6 @@ QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
     "state": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "submittedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "version": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
-    # THE ONE JUDGEMENT CALL IN THE MODEL, AND IT GOES TO EXCLUSION. Unlike `Artisan.notes` (carried
-    # as the roster row's record notes), whose subject is the one person named on the row it lands
-    # on, an interview's notes are unbounded free prose about a GROUP of which the report may name
-    # one — so a sentence about "the second weaver's daughter" can be neither attributed nor
-    # redacted, and the report has no place to put it. Everything a citation needs is structured. If
-    # the owner wants it, it gets its own box and never a designer's narrative (the two-authors
-    # rule); the default here is silence.
     "notes": (
         "free prose about a GROUP, of which a report page may name one member — unattributable and "
         "unredactable. Unlike the artisan record's notes, whose subject is the person named on the "
@@ -688,24 +404,13 @@ QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
     "reviewNotes": _MUTABLE_VERDICT,
     "reviewedById": _MUTABLE_VERDICT,
     "reviewedAt": _MUTABLE_VERDICT,
-    # A `String? @unique` that a "carry the scalars" instinct sweeps in without noticing. It is the
-    # WORKSHOP SCOPE FOLLOWED BY THE SORTED, COMMA-JOINED LIST OF ARTISAN IDS — a group
-    # re-identification key in one string, which smuggles in exactly the roster the names refusal
-    # excludes, and since 2026-09-20 the workshop id with it.
     "artisanSetKey": (
         "a group re-identification key: the workshop scope plus the sorted, comma-joined ARTISAN "
         "IDS of the sitting. Carrying it would smuggle in the roster the names refusal excludes, "
         "in one string."
     ),
-    # The soft-delete pair (audit H5, 21 Oct 2026): bookkeeping about the RECORD, not a fact about
-    # the people or the craft. A deleted interview is not offered to the picker at all.
     "deletedAt": "bookkeeping: when the interview was soft-deleted. Not a fact a report cites.",
     "deletedById": "bookkeeping: who soft-deleted the interview. Not a fact a report cites.",
-    # `_reference_place` returns `(row.place, '', '')` for every model but `Artisan`, and this model
-    # does not include `location` at all — the cleanest form of the refusal. Its own docstring's
-    # worked example is this exact scenario: "a researcher interviews six artisans in one afternoon
-    # at a cooperative hall", where the device fix would draw all six on the hall. An interview also
-    # has no STATED address to carry: it is an event, not a residence.
     "locationId": (
         "join key, and provenance rather than stated: the desk the record was typed at. This model "
         "does not include the relation at all, so no Location column is one getattr away."
@@ -714,22 +419,10 @@ QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
     "recordedTimezone": "the date is carried as a bare DATE, so the zone has nothing to qualify",
     "createdAt": "bookkeeping",
     "updatedAt": "bookkeeping",
-    # NOT AN "INTERVIEWED BY" BOX. `hydrate_entries` already stamps
-    # `HydrationSource(author_id=row.createdById)` and the field-provenance views show that name —
-    # which is who SAVED the record, not a claim that they conducted the sitting. The same
-    # distinction `_measurement_method_note` exists to keep between the saver and the measurer.
     "createdById": "bookkeeping — and see the refusal of an 'interviewed by' box on the model",
     "designWorkshopId": _FILING_SCOPE,
 }
 
-# ── THE TWO MODELS BEHIND THE COUNTS, LEDGERED BECAUSE THE INCLUDE LOADS THEM ─────────────
-#
-# Same precedent as `ProcessStep` above: these rows are not pickable, they arrive through
-# `REFERENCE_MODELS["QuestionnaireInterview"].include` and a lambda reads them, so every column is a
-# decision. `answerText` being in the CARRIED list is deliberate and is the most important line in
-# this file: its NON-BLANKNESS is counted and its TEXT never crosses in any form, at any masking, in
-# any count-with-sample. Four independent reasons, each sufficient, are on the `_interview_*` helpers
-# and above the hydration mapping.
 QUESTIONNAIRE_RESPONSE_CARRIED = {
     "answerText": (
         "artisanBaseline.interviewQuestionsAnswered — COUNTED (non-blank), NEVER QUOTED. See "
@@ -752,15 +445,8 @@ QUESTIONNAIRE_RESPONSE_NOT_CARRIED = {
     "createdAt": "bookkeeping",
 }
 
-# THE JOIN TABLE ITSELF, LEDGERED BECAUSE `artisanId` IS THE COLUMN THE NAMES REFUSAL IS ABOUT.
-#
-# Nothing is READ off these rows — `_interview_artisan_count` takes `len()` of the list and stops —
-# and that is precisely why it belongs here: "we only counted them" is a decision, and the column
-# that would turn a count into a roster is one `getattr` away in a loop that already has the rows in
-# hand. Every entry is a refusal.
 QUESTIONNAIRE_INTERVIEW_ARTISAN_CARRIED: dict[str, str] = {}
 QUESTIONNAIRE_INTERVIEW_ARTISAN_NOT_CARRIED = {
-    # ── UNIFY U0 (22 Oct 2026): the shared questionnaire's columns; none crosses into a report ──
     "joinedAt": "the shared questionnaire's participant column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "leftAt": "the shared questionnaire's participant column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "sortOrder": "the shared questionnaire's participant column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
@@ -777,7 +463,6 @@ QUESTIONNAIRE_QUESTION_CARRIED = {
     "sectionCode": "artisanBaseline.interviewSectionsCovered (distinct codes, counted)",
 }
 QUESTIONNAIRE_QUESTION_NOT_CARRIED = {
-    # ── UNIFY U0 (22 Oct 2026): the shared questionnaire's columns; none crosses into a report ──
     "artisanField": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "displayCode": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "helpText": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
@@ -785,11 +470,6 @@ QUESTIONNAIRE_QUESTION_NOT_CARRIED = {
     "lineageId": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "questionnaireId": "the shared questionnaire's question column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "questionCode": "cross-portal identifier (C26) — matching key; only counts of questions cross",
-    # NOT A DISCLOSURE ON ITS OWN, and refused all the same: prompts WITHOUT answers answer nothing,
-    # and prompts WITH answers are the thing forbidden above. Only the counts cross. `supersededById`
-    # is the column that exists because a prompt is reworded under answers already given — "How many
-    # looms?" answered "12", reworded to "How many weavers?" — which is the same fact that forbids
-    # freezing a prompt/answer pair into a submitted report.
     "prompt": (
         "a prompt without its answer answers nothing, and with its answer it is the disclosure "
         "refused above. Only the COUNT of answered questions crosses."
@@ -804,18 +484,6 @@ QUESTIONNAIRE_QUESTION_NOT_CARRIED = {
     "updatedAt": "bookkeeping",
 }
 
-# ── THE RELATION LEDGER — the blind spot, ledgered ────────────────────────────────────────────
-#
-# Same contract as the scalar lists above and for the same reason: a relation that reaches nothing
-# must be a decision somebody wrote down, not something nobody looked at. Every relation of every
-# model a REF field can point at appears here exactly once, with what happens to it.
-#
-# THE WORDS THAT RECUR:
-#  * "read by the picker" — the relation is in `REFERENCE_MODELS[…].include` and a lambda reads it.
-#  * "reached by its own picker" — the related records are chosen through a REF field of their own,
-#    so pulling them in through this side would print the same rows twice.
-#  * "bookkeeping" / "join key" — as in the scalar lists.
-#  * "NOT BUILT" — the honest answer, and the one this ledger exists to make sayable.
 RELATION_LEDGER = {
     "Artisan": {
         "craft": "read by the picker — participant.specialisation, via include={'craft': True}",
@@ -861,16 +529,6 @@ RELATION_LEDGER = {
         "tools": "back-reference",
         "media": "back-reference",
         "questionnaireInterviews": "a different feature",
-        # NOT INCLUDED, and correctly so: `prefill_from_profile` (services/designers.py) is the only
-        # reader of `DesignerProfile` on a workshop's path, and it resolves its row with
-        # `find_unique(..., include={"user": True})` — no `location` — then walks `PREFILL_MAP` by
-        # `getattr(profile, column, None)`, a scalar-only read that cannot see a relation regardless
-        # of what the query loaded. A designer's stated address is who they are TODAY, read fresh
-        # every time their own profile page is opened; a workshop's stage entries are copies taken
-        # once, at creation, of facts about THAT workshop (see prefill_from_profile's own docstring
-        # on why a report must not re-derive from a profile that can move institutions later). Those
-        # are two different questions, and this relation answering the first is exactly why it must
-        # not also answer the second.
         "designerProfiles": "NOT carried — see prefill_from_profile; a profile's location is never included",
     },
     "ProductDocumentation": {
@@ -881,13 +539,6 @@ RELATION_LEDGER = {
         ),
         "craft": "carried by value as craftName",
         "workshop": "join key",
-        # REWRITTEN, AND THE OLD TEXT IS WORTH KNOWING BECAUSE IT WAS RIGHT ABOUT THE MECHANISM. It
-        # read "NOT INCLUDED, and NOT a tidy-up to make", on the ground that `_reference_place`
-        # prefers `location.village` over the free-text place and runs at REPORT time. That hazard is
-        # real and is now closed by a condition rather than by the accident of an unloaded relation:
-        # `_reference_place` returns the denormalised `place` for every model except `Artisan`, so
-        # this include changes what SAVE-time hydration can offer and nothing about what an
-        # already-submitted document prints.
         "location": (
             "read by the picker — the STATED address columns and the SUBJECT pin, via "
             "include={'location': True}, into existingProduct.recordState/recordDistrict/"
@@ -913,23 +564,12 @@ RELATION_LEDGER = {
         "workshop": "join key",
         "location": "read by the picker — see the identical note on ProductDocumentation.location",
         "createdBy": "bookkeeping",
-        # REWRITTEN OFF "one photograph per record", which was the whole answer here and was the gap:
-        # the tool record's media card is mounted TWICE — the ordered "Process stages" sequence
-        # (archived as STAGE_STEP_1, STAGE_STEP_2, …) and general "Tool media" — so a tool documented
-        # as a nine-photograph sequence, or explained on video, reached the workshop and the report as
-        # one still with nothing admitting the rest existed.
         "media": (
             "one photograph per record, through _reference_photos (media_field='toolId') — AND "
             "counted into tool.recordMediaNote via include={'media': True}, which also names the "
             "numbered making sequence by its STAGE_STEP_ prefix. A sentence, never the ids."
         ),
         "mediaProcessingJobs": "queue state",
-        # BUILT, AND THIS ENTRY USED TO BE THE REASON THIS LEDGER EXISTS. It read "NOT BUILT" and
-        # listed what carrying the assignment would cost; every line of that list has since landed —
-        # the bounded join, the KEY_VALUE fromref, the frozen-at-pick-time label, the version bump and
-        # the regenerated asset. Kept rather than shortened because the shape of the omission is the
-        # thing this ledger is for: a whole feature (ToolAssignmentSection, four routes in tools.py, a
-        # data_browser filter) reaching no report, invisible to a scalar-column check.
         "artisanLinks": (
             "read by the picker — every assigned artisan's name, newline-separated, into "
             "tool.usedByArtisans (report_role=BULLETS), via "
@@ -937,19 +577,6 @@ RELATION_LEDGER = {
             "why it is ordered by name and de-duplicated, and why 'documented for' and 'used by' are "
             "two boxes rather than one."
         ),
-        # THE CRAFT HALF OF THE SAME FEATURE, AND IT CROSSES BY VALUE WHERE ITS SIBLING CROSSES BY
-        # RELATION — which is the distinction this ledger exists to make sayable rather than a
-        # smaller version of `artisanLinks`. A tool is now linked to SEVERAL crafts (20260915100000),
-        # and `tool.craftName` already holds every linked craft's name joined ", " in link order,
-        # written by the server from these very rows. `REFERENCE_MODELS`'s tool lambda carries
-        # `craftName` verbatim into the stage entry's craft box, so the whole selection reaches the
-        # workshop through the string it was derived from. Adding an include here would fetch the
-        # same names a second time to print them a second time.
-        #
-        # THE IDS NEVER CROSS, which is the same refusal `artisanLinks` records: a stage entry names
-        # crafts in prose, and a craft chosen HERE is not a craft somebody chose for that workshop.
-        # `Craft` has its own picker (workshopSetup.craftRef) for the entry that genuinely is about a
-        # craft.
         "craftLinks": (
             "carried by VALUE, not by relation: tool.craftName already holds every linked craft's "
             "name joined \", \" in link order and IS the box the stage entry fills, so the "
@@ -986,14 +613,7 @@ RELATION_LEDGER = {
         "artisans": "reached by its own picker (participant.artisanRef)",
         "products": "reached by its own picker",
         "tools": "reached by its own picker",
-        # The back-reference of ToolDocumentation.craftLinks, and the second reading of "tools"
-        # above: that relation is the tools whose `craftId` is this craft — the FIRST craft of each —
-        # and this is every tool that names it at all. Nothing includes it and nothing needs to; a
-        # tool is reached by its own picker (tool.toolRef) from whichever side it is asked for.
         "toolLinks": "the tool-to-crafts join; see ToolDocumentation.craftLinks",
-        # REWRITTEN: the photograph half of this stopped being true when the Craft lambda started
-        # reading the `photo` argument it had been throwing away, and the rest of what a craft carries
-        # (video, audio notes, a scanned gazetteer page) now reaches the cover stage as a count.
         "media": (
             "one photograph per record, through _reference_photos (media_field='craftId'), into "
             "workshopSetup.craftPhoto/craftPhotoCaption — AND counted into "
@@ -1001,7 +621,6 @@ RELATION_LEDGER = {
         ),
         "workshops": "join key — the WorkshopCraft reading of workshop scope",
         "code": "NOT INCLUDED — the shared code row (C26); see craftCode",
-        # The master craft list (2026-10-20). A stage reads the craft itself; the picker reads its path.
         "subCategory": (
             "read by the picker — the sublabel's \"Category › Sub-category\", via "
             "include={'subCategory': {'include': {'category': True}}} (design_workshops._craft_path). "
@@ -1014,12 +633,6 @@ RELATION_LEDGER = {
     },
     "QuestionnaireInterview": {
         "createdBy": "bookkeeping — who SAVED the record, which is not a claim about who sat in",
-        # THE REFUSAL THAT IS EXPRESSED BY AN ABSENT INCLUDE RATHER THAN BY AN IF. `_reference_place`
-        # reads `row.location` for EVERY model and prefers `location.village` over the free-text
-        # `place`, and `load_report_references` runs at RENDER time — so turning this include on would
-        # change what an already-submitted document prints. Its own docstring's worked example is this
-        # model's exact scenario: six artisans interviewed in one afternoon at a cooperative hall,
-        # every one of them drawn on the hall.
         "location": (
             "NOT INCLUDED, deliberately — provenance, not stated. The desk the record was typed at. "
             "Not including it is the cleanest form of the refusal: no Location column is one getattr "
@@ -1100,14 +713,6 @@ LEDGER = [
 
 @pytest.mark.parametrize(("model", "carried", "refused"), LEDGER, ids=[m for m, _c, _r in LEDGER])
 def test_no_source_column_is_unaccounted_for(model, carried, refused):
-    """THE "WITHOUT A MISS" GUARANTEE, MADE MECHANICAL.
-
-    A column exists in the Prisma schema and is not in either list => this fails, naming the
-    column. Somebody then either carries it or writes down why not. The failure is the point: the
-    previous state of this feature was one where a dropped column was indistinguishable from a
-    considered omission, and every one of the nineteen artisan fields that reached nothing looked
-    like somebody's decision until they were enumerated.
-    """
     columns = _columns(model) - {"id"}
     accounted = set(carried) | set(refused)
     missing = sorted(columns - accounted)
@@ -1122,25 +727,6 @@ def test_no_source_column_is_unaccounted_for(model, carried, refused):
 
 @pytest.mark.parametrize("model", sorted(RELATION_LEDGER), ids=sorted(RELATION_LEDGER))
 def test_no_source_relation_is_unaccounted_for(model):
-    """THE ONE SHAPE OF OMISSION THE SCALAR LEDGER IS STRUCTURALLY UNABLE TO SEE.
-
-    `_columns` excludes relations by design, so `test_no_source_column_is_unaccounted_for` — the
-    mechanism whose docstring promises "a column exists in the Prisma schema and is not in either
-    list => this fails" — was blind to every many-to-many in the schema. `ToolDocumentation`
-    `artisanLinks` sat in that blind spot for the whole life of the tool-assignment feature: built,
-    shipped, reaching no workshop and no report, and looking to this file exactly like something
-    that had been considered.
-
-    A relation added to any of these seven models now fails here until somebody writes down what
-    happens to it — including, and especially, "nothing".
-
-    IT IS A TRIPWIRE AND IT PASSES BY CONSTRUCTION TODAY, which is worth stating so that a green run
-    is not read as evidence that anything in this lane works. Nothing it asserts can be broken by a
-    source change; it fires on the next SCHEMA change. Its negative control is therefore on itself:
-    deleting ``artisanLinks`` from ``RELATION_LEDGER["ToolDocumentation"]`` must fail it, which is
-    what shows ``_relations`` really parses a many-to-many out of ``schema.prisma`` rather than
-    quietly returning an empty set and passing every model.
-    """
     declared = _relations(model)
     accounted = set(RELATION_LEDGER[model])
     missing = sorted(declared - accounted)
@@ -1160,27 +746,17 @@ def test_no_column_is_both_carried_and_refused(model, carried, refused):
 
 
 def test_the_ledger_names_real_workshop_fields():
-    """A CARRIED entry that names a field the registry does not have is a lie in the evidence.
-
-    Parsed loosely — the values are prose that may name two targets or add a parenthetical — so
-    this checks every ``entity.field`` token it can find rather than the whole string.
-    """
     known = {f"{entity.key}.{spec.key}"
              for _s, entity in all_entities() for spec in entity.fields}
     for model, carried, _refused in LEDGER:
         for column, target in carried.items():
             for token in re.findall(r"\b([a-z]\w*)\.(\w+)\b", target):
                 path = f"{token[0]}.{token[1]}"
-                # Only check tokens that look like entity.field, not "x2.54" or file names.
                 if token[0] in {e.key for _s, e in all_entities()}:
                     assert path in known, (
                         f"{model}.{column} claims to reach {path}, which is not in the registry"
                     )
 
-
-# --------------------------------------------------------------------------------------
-# The two tables must agree with each other, and with the fromref() marker
-# --------------------------------------------------------------------------------------
 
 
 def test_the_registry_is_sound():
@@ -1188,39 +764,15 @@ def test_the_registry_is_sound():
 
 
 def test_every_mapping_source_exists_and_every_produced_key_lands():
-    """THE GUARD ``validate_registry`` IS STRUCTURALLY UNABLE TO BE.
-
-    ``stage_schema`` must not import ``design_workshops``, so it checks hydration TARGETS and says
-    in a comment that it cannot check SOURCES. The consequence was ``ProductDocumentation.data``
-    producing ``localName`` for years, no mapping reading it, and ``existingProduct`` having no box
-    for it — three omissions that each looked like one of the other two's job. A typo on the source
-    side had exactly the same signature and would have been permanent.
-    """
     assert dw.validate_reference_carry() == []
 
 
 def test_a_field_that_promises_to_fill_itself_in_actually_does():
-    """``fromref()`` IS A FOURTH DECLARATION OF THE HYDRATION TABLE AND IT HAD ALREADY DRIFTED.
-
-    ``fromref`` appends the FROM_REF sentence — "Filled in from the linked record when one is
-    chosen" — to a field's help text, and that sentence ships to the browser and to the bundled
-    Android asset. ``validate_registry`` cannot see it: it is help text. So the marker and the
-    mapping were free to disagree, and they did, in both directions at once — ``tool.source``
-    claimed a carry that no mapping provided, and ``existingProduct.category`` was hydrated while
-    saying nothing at all.
-
-    Asserted in BOTH directions because the two failures cost different things. A field that
-    promises and does not deliver leaves the designer waiting for a box to fill itself; a field
-    that delivers without promising has the designer type over a value the picker is about to
-    supply, and only-fill-blanks then makes the designer's version permanent, which is fine — but
-    they were never told the record had an answer.
-    """
     from app.services.stage_definitions import FROM_REF
 
     promises: set[str] = set()
     for _stage, entity in all_entities():
         for spec in entity.fields:
-            # In ``details`` since 2026-10-17 — the line behind the field's "i", not its help.
             if FROM_REF in spec.details:
                 promises.add(f"{entity.key}.{spec.key}")
 
@@ -1238,18 +790,8 @@ def test_a_field_that_promises_to_fill_itself_in_actually_does():
     )
 
 
-# --------------------------------------------------------------------------------------
-# LANDMINE 1 — the source measures in inches and the workshop declares centimetres
-# --------------------------------------------------------------------------------------
-
 
 def test_inches_become_centimetres_and_the_factor_is_exact():
-    """A SILENT COPY WOULD PUT "12 cm" IN A GOVERNMENT REPORT FOR A SAREE 30.48 cm LONG.
-
-    The inch has been DEFINED as 25.4 mm since 1959, so 2.54 is exact and this is a pin, not an
-    approximation check. Rounded to two places to match the source columns, which are
-    ``Decimal(10, 2)``.
-    """
     assert dw._inches_to_cm(12) == 30.48
     assert dw._inches_to_cm("1") == 2.54
     assert dw._inches_to_cm(None) is None
@@ -1257,15 +799,9 @@ def test_inches_become_centimetres_and_the_factor_is_exact():
 
 
 def test_the_source_columns_say_inches_and_the_target_fields_say_centimetres():
-    """The two halves of the reason the conversion has to exist, asserted rather than assumed.
-
-    If somebody ever renames the Prisma columns to plain ``length``, or drops ``unit="cm"`` off the
-    workshop fields, the conversion becomes wrong in a way no other test would notice.
-    """
     for model in ("ProductDocumentation", "ToolDocumentation"):
         assert "lengthInches" in _columns(model)
         assert "breadthInches" in _columns(model)
-        # The tool gained its third on 2026-08-27, so both models now declare the same triple.
         assert "heightInches" in _columns(model)
 
     for entity_key, field_keys in (
@@ -1278,23 +814,12 @@ def test_the_source_columns_say_inches_and_the_target_fields_say_centimetres():
 
 
 def test_the_tool_measurements_whose_unit_nobody_knows_do_not_claim_one():
-    """``height``/``width``/``thickness``/``weight``/``radius`` carry NO unit on the tool record.
-
-    The Prisma columns have no suffix, the record form labels them with the bare words, and the
-    record sheet prints them bare. Declaring ``unit="cm"`` on the receiving fields would convert an
-    unknown into a stated wrong answer — which is worse than the blank it replaces, and is the
-    same class of failure as skipping the conversion above.
-    """
     for field_key in ("heightAsRecorded", "widthAsRecorded", "thicknessAsRecorded",
                       "weightAsRecorded", "radiusAsRecorded"):
         spec = _field("tool", field_key)
         assert spec.unit == "", f"tool.{field_key} claims a unit the source record does not state"
         assert "unit" in spec.help.lower(), f"tool.{field_key} does not warn the designer"
 
-
-# --------------------------------------------------------------------------------------
-# LANDMINE 2 — the enum translation tables must be TOTAL over their Prisma enums
-# --------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -1308,15 +833,6 @@ def test_the_tool_measurements_whose_unit_nobody_knows_do_not_claim_one():
     ],
 )
 def test_every_translation_table_names_every_member_of_its_prisma_enum(prisma_enum, table):
-    """A PARTIAL MAP DEGRADES SILENTLY INTO A STALE MAP.
-
-    ``_PRODUCT_TYPE_TO_CATEGORY`` held two of ProductType's six members and ``.get()`` returned
-    None for the rest. That was the right behaviour and it was invisible: nothing distinguished
-    "FINISHED_GOOD deliberately has no category" from "somebody forgot FINISHED_GOOD", and nothing
-    at all would have distinguished either from "a seventh member shipped last week". A member with
-    no honest destination is now spelled ``None``, and this test is what makes the schema and the
-    tables move together.
-    """
     members = _enum_members(prisma_enum)
     assert set(table) == members, (
         f"the translation table for {prisma_enum} is out of step with prisma/schema.prisma: "
@@ -1330,20 +846,10 @@ def test_every_translation_table_names_every_member_of_its_prisma_enum(prisma_en
     [("ProductType", "PRODUCT_TYPE"), ("MakerType", "MAKER_TYPE")],
 )
 def test_the_mirrored_registry_lists_match_their_prisma_enums(prisma_enum, registry_enum):
-    """``PRODUCT_TYPE`` and ``MAKER_TYPE`` exist to RECEIVE a source value, so they must mirror it.
-
-    Every other list in ``ENUMS`` is a question a designer answers and is free to have its own
-    vocabulary. These two are the source record's own answer arriving intact, and a token the
-    source can produce but the registry does not know would be dropped by ``coerce_value`` —
-    silently, because a rejected hydration looks exactly like an unfilled column.
-    """
     assert set(ENUMS[registry_enum]) == _enum_members(prisma_enum)
 
 
 def test_the_registry_tradition_list_is_the_tool_forms_shared_list():
-    """One wording for the tradition question (owner decision, 2026-10-19): the registry's
-    TRADITION_TYPE and the tool form's list in app/data/standard_values.json offer the same three
-    answers, with the same codes and the same labels."""
     from app.services import standard_values as sv
 
     assert dict(ENUMS["TRADITION_TYPE"]) == {
@@ -1352,12 +858,6 @@ def test_the_registry_tradition_list_is_the_tool_forms_shared_list():
 
 
 def test_every_translated_target_can_actually_hold_what_the_table_produces():
-    """The other end of the same check: a translation is useless if ``coerce_value`` refuses it.
-
-    ``TraditionType.MODERN`` (a retired code) -> ``CONTEMPORARY`` is a translation and not a
-    passthrough precisely because the raw token is not in ``TRADITION_TYPE``; this asserts the
-    translated one is.
-    """
     for table, registry_enum in (
         (dw._PRODUCT_TYPE_TO_CATEGORY, "PRODUCT_CATEGORY"),
         (dw._PRODUCT_TYPE_TO_MEMBER, "PRODUCT_TYPE"),
@@ -1375,122 +875,31 @@ def test_every_translated_target_can_actually_hold_what_the_table_produces():
 
 
 def test_an_unmapped_token_is_logged_and_not_raised(caplog):
-    """"Refuse loudly" is a TEST failure, not a 500 in a designer's face.
-
-    The loud refusal is ``test_every_translation_table_names_every_member_of_its_prisma_enum``
-    above, which fails before a build leaves the machine. At runtime an unmapped token must cost
-    one blank field, not the whole picker: fifty rows are read in one call and one of them holding
-    a token added last week must not lose the other forty-nine.
-    """
     import logging
 
     with caplog.at_level(logging.ERROR):
         assert dw._translated(dw._MAKER_TYPE_TO_MAKER, "A_TOKEN_FROM_THE_FUTURE") is None
     assert "A_TOKEN_FROM_THE_FUTURE" in caplog.text
-    # An absent value is a different thing and says nothing.
     caplog.clear()
     assert dw._translated(dw._MAKER_TYPE_TO_MAKER, None) is None
     assert caplog.text == ""
 
 
-# --------------------------------------------------------------------------------------
-# LANDMINE 3 — a source that no longer writes, and two identity numbers that must be masked
-# --------------------------------------------------------------------------------------
-
 
 def test_both_identity_numbers_arrive_masked_and_neither_arrives_bare():
-    """THE DEFECT THIS REPOSITORY HAS ALREADY PAID FOR ONCE, ON A NEW SURFACE — AND A REVERSAL.
-
-    ``record_fields.py`` carries the note: "The card number used to print verbatim here while the
-    Aadhaar beside it was masked, so a full PM Vishwakarma ID reached every grantee, dataset
-    downloader and reviewer — a rule that held on the API responses and nowhere else." A design
-    workshop is exactly such a surface: its stage reads do NOT pass through
-    ``records._redact_sensitive``, and a ``DesignWorkshopViewer`` is a grantee. The copy is also
-    permanent by design, so an unmasked number could never be walked back. THAT HALF IS UNCHANGED
-    AND IS WHY BOTH NUMBERS ARE MASKED HERE RATHER THAN ANYWHERE DOWNSTREAM.
-
-    THIS TEST WAS DELIBERATELY INVERTED ON 2026-08-24, AND IT IS NOT A LOOSENING. It was called
-    ``test_the_pehchan_card_number_arrives_masked_and_the_aadhaar_does_not_arrive_at_all`` and its
-    third assertion read::
-
-        assert "aadhaar" not in " ".join(data).lower(), "the Aadhaar number must not be carried
-        at all"
-
-    — which joined the carried dict's KEYS, so it was the assertion that failed the moment the new
-    lambda key landed. THE OWNER REVERSED THE UNDERLYING DECISION, having been shown the exposure in
-    full: that a design workshop's stage reads do not pass through ``records._redact_sensitive``,
-    that a ``DesignWorkshopViewer`` is a grantee, and that a hydrated entry is a PERMANENT copy
-    which clearing ``Artisan.aadhaarNumber`` afterwards does not retract from any entry or any
-    document already written. Both identity numbers cross, both masked to their last four digits, through the
-    same helper.
-
-    WHAT WOULD REVERSE IT AGAIN: delete the ``participant.aadhaarNumber`` FieldSpec, the
-    ``"aadhaarNumber"`` key from ``REFERENCE_MODELS["Artisan"].data``, the pair from
-    ``stage_schema.REFERENCE_HYDRATION["participant.artisanRef"]`` and the same pair from
-    ``frontend/lib/designWorkshops.ts``, then regenerate the Android bundled asset — and restore
-    this test's old name and third assertion. Entries already saved keep their masked number.
-
-    THE ASSERTION THAT DID NOT CHANGE IS THE ONE THAT MATTERS. The bare digits of neither number
-    have ever crossed and still do not: that is the last line, and it is the reason the reversal is
-    a masking decision rather than a disclosure.
-    """
     row = _artisan_row()
     data = dw.REFERENCE_MODELS["Artisan"].data(row, None)
 
     assert data["pehchanCardNumber"] == "XXXX XXXX 5678"
-    # "234567890123" -> last four only. Written as the literal rather than computed from the row,
-    # because a mask asserted through the masker is a test of nothing.
     assert data["aadhaarNumber"] == "XXXX XXXX 0123"
     assert row.pehchanCardNumber not in str(data), "the bare card number is in the carried data"
     assert row.aadhaarFingerprint not in str(data), "the Aadhaar fingerprint is in the carried data"
 
 
-#: Words in an identity-number label that describe the SHAPE OF THE BOX rather than which card the
-#: artisan produced. Two labels may share these — "number" is in both of the registry's two identity
-#: labels and there is no honest way to write either without it — and may share nothing else. See
-#: :func:`test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column`, which explains at
-#: length why adding a card's NAME to this set would defeat the assertion it serves.
 _SHAPE_WORDS = frozenset({"number", "no", "id", "the", "a", "of", "s"})
 
 
 def test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column():
-    """The four properties the 2026-08-24 decision actually rests on, none of which the mask covers.
-
-    The inverted test above proves the VALUE is masked. It cannot see any of the following, and each
-    one is a way this carry could be broken later by somebody who read only that test:
-
-    1. THE REPORT ROLE. The owner's first hard constraint was that this field is KEY_VALUE and
-       never a TABLE_COLUMN. The width sweep
-       (``test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full``)
-       would catch a promotion — but as a width arithmetic failure three
-       entities wide, which reads as a rebalancing problem rather than as a decision being undone.
-       Named here at the field so the next reader knows the role was chosen.
-    2. THE SUM ITSELF, asserted as EXACTLY 100 rather than "not over". ``_table_columns`` falls back
-       to proportional widths when the declared ones do not reach 100, so a table at 99 is already
-       laid out by the fallback and the next column costs nothing — which would quietly make
-       constraint 1 unenforceable rather than violated.
-    3. IDEMPOTENCE OF THE MASK. The key is spelled ``aadhaarNumber`` precisely so that
-       ``records._IDENTITY_KEYS``, which walks nested dicts BY KEY NAME, re-masks the value if a
-       stage entry ever reaches ``public_encode``. That is only safe because a second pass is a
-       no-op: ``normalize_aadhaar`` strips separators, so "XXXX XXXX 0123" normalises to
-       "XXXXXXXX0123" and masks back to itself. If that ever stopped holding, the safety property
-       the key name buys would become a corruption instead.
-    4. THE LABELS, MECHANICALLY. The owner raised the readability risk themselves: two rows reading
-       "XXXX XXXX ####" told apart only by their labels is how the wrong one gets checked against
-       the wrong card. Whether two labels are distinguishable is exactly the judgement a reviewer's
-       eye stops making six months into a relabelling, so it is asserted rather than trusted.
-
-       WHAT IS ASSERTED IS NOT "NO SHARED WORD", AND THE FIRST DRAFT OF THIS TEST WAS WRONG ABOUT
-       THAT — it asserted the strict version and failed on the word "number", which "Aadhaar number"
-       and "Artisan ID / card number" both contain and always will. Recorded rather than quietly
-       relaxed, because the distinction is the whole point of the assertion: a word naming the SHAPE
-       of the box ("number", "no", "id") carries no identity and cannot cause the confusion the
-       owner described. The words that CAN are the ones naming which card is in the artisan's hand,
-       and those must be disjoint. Relabelling this box "Artisan Aadhaar number" still fails, on
-       "artisan", which is the case worth catching. Adding "aadhaar" or "pehchan" to
-       :data:`_SHAPE_WORDS` to make a failure go away would defeat the test, and is the one edit
-       nobody should make to it.
-    """
     aadhaar = _field("participant", "aadhaarNumber")
     pehchan = _field("participant", "artisanCardNo")
 
@@ -1529,20 +938,11 @@ def test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column():
         "names WHICH card rather than the shape of the box. Two masked rows reading "
         "“XXXX XXXX ####” must be told apart by their labels alone"
     )
-    # Belt and braces on the half a stop-word list cannot check: each label must still say which
-    # card it is. A label reduced to nothing but shape words would pass the disjointness above.
     assert "aadhaar" in aadhaar.label.lower()
     assert naming_words(pehchan.label), f"“{pehchan.label}” no longer names a card at all"
 
 
 def _valid_aadhaar() -> str:
-    """A number the application's own Verhoeff routine accepts, rather than a literal that rots.
-
-    The same helper, for the same reason, as ``tests/test_identity_masking.py``: a hand-written
-    twelve digits is a coin flip on the checksum, and since ``participant.aadhaarNumber`` gained
-    ``text_format=AADHAAR`` a checksum-failing literal would be REFUSED — turning an assertion
-    about masking into an assertion about nothing.
-    """
     from app.services.artisan_identity import verhoeff_ok
 
     for last in "0123456789":
@@ -1553,39 +953,6 @@ def _valid_aadhaar() -> str:
 
 
 def test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask():
-    """The decision said MASKED. For one revision only the hydrated value was.
-
-    ── THE DEFECT THIS PINS ────────────────────────────────────────────────────────────────────────
-
-    ``test_both_identity_numbers_arrive_masked_and_neither_arrives_bare`` proves the value the SERVER
-    copies in is a mask, and ``test_the_carried_aadhaar_is_a_mask_a_key_value_and_never_a_column``
-    proves the four properties around it. Neither can see what happens to a value a CLIENT writes,
-    and that was the whole of the gap between the owner's decision and the code:
-
-      * the registry's own help text invited it — "If you hold the full number you can type it in
-        over the mask; your answer is kept";
-      * ``DwIdentityOcr.isIdentityNumberField`` matches identity fields PER FIELD and
-        ``identityKindFor`` answers AADHAAR for this key, so Android's bundled Verhoeff-checked
-        recogniser offered a bare twelve digits into this box in one tap;
-      * a design workshop's stage reads do NOT pass through ``records._redact_sensitive``, a
-        ``DesignWorkshopViewer`` is a grantee, and a hydrated entry is a permanent copy that nothing
-        re-resolves.
-
-    So the twelve digits landed, permanently, in a grantee-readable row, under a decision that said
-    they would not. ``FieldSpec.store_masked`` closes it in ``coerce_value``, which is the one door
-    every save goes through — ``validate_entry`` re-coerces EVERY field on EVERY save, so this also
-    re-masks anything written before the flag existed.
-
-    ── WHY MASK AND NOT REFUSE ─────────────────────────────────────────────────────────────────────
-
-    The other candidate was to refuse anything ``artisan_identity.aadhaar_error`` accepts as a full
-    number, which would have contradicted the second half of the same instruction: "the designer must
-    be able to fill it when it is absent … a designer entitled to the full number can type over the
-    mask". Masking honours both — the box takes what is typed, the column keeps what the report
-    prints. Asserted below so a later reader cannot mistake the choice for an accident.
-
-    Nothing here touches a database.
-    """
     aadhaar = _field("participant", "aadhaarNumber")
     pehchan = _field("participant", "artisanCardNo")
 
@@ -1595,16 +962,6 @@ def test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask():
         "state the owner's 2026-08-24 decision was made against"
     )
 
-    # THE BARE NUMBER, THE GROUPED NUMBER AND THE MASK ITSELF all arrive as the same stored value.
-    # The third is the idempotence that lets hydration and a save agree, and lets
-    # `records._IDENTITY_KEYS` re-mask a stage entry by key name without corrupting it.
-    #
-    # THE NUMBER IS COMPUTED AND NOT WRITTEN DOWN, and that changed on 2026-08-24 when
-    # `text_format=AADHAAR` landed beside the flag. This loop used to use a literal "234567890123",
-    # which is NOT Verhoeff-valid — nothing checked, so nothing cared. Now the format runs before
-    # the mask, so a literal here would either rot into a test that passes for the wrong reason (a
-    # checksum refusal, asserted as though it were a masking) or force the next reader to hand-
-    # verify a checksum. `_valid_aadhaar` asks the application's own routine instead.
     real = _valid_aadhaar()
     grouped = f"{real[:4]} {real[4:8]} {real[8:]}"
     hyphenated = f"{real[:4]}-{real[4:8]}-{real[8:]}"
@@ -1614,26 +971,8 @@ def test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask():
         assert error is None, f"{typed!r} was refused: {error}"
         assert stored == mask, f"{typed!r} was stored as {stored!r}"
 
-    # NOT A REFUSAL OF A REAL NUMBER, because the designer must still be able to answer the box. A
-    # 422 on twelve valid digits would be the reading of the decision this repository deliberately
-    # did not take.
     assert coerce_value(aadhaar, real)[1] is None
 
-    # ── BUT A VALUE THAT WAS NEVER AN AADHAAR NUMBER *IS* REFUSED NOW, AND THAT IS NOT A REVERSAL
-    #    OF THE PARAGRAPH ABOVE ────────────────────────────────────────────────────────────────────
-    #
-    # "Mask rather than refuse" was always an argument about a DESIGNER'S REAL NUMBER: the box must
-    # stay answerable. It was never an argument for accepting anything at all, and for one revision
-    # that is what it bought, because `mask_aadhaar` keeps the last four characters of WHATEVER it
-    # is handed. "hello world 1234" is fourteen characters — inside this field's bound of 20 — so it
-    # normalised to "helloworld1234" and was STORED as a plausible-looking mask, on a permanent
-    # grantee-readable row, printed as a national identity number in a document submitted to a
-    # ministry. The masking is precisely what made it undetectable.
-    #
-    # `test_a_typed_string_that_is_not_an_aadhaar_is_refused_rather_than_masked` in
-    # `test_stage_schema.py` owns this rule and its ordering. It is asserted HERE as well because
-    # this is the test a reader opens to find out what the carried Aadhaar box does, and the two
-    # halves of the answer — a real number is masked, a non-number is refused — are one decision.
     stored, error = coerce_value(aadhaar, "hello world 1234")
     assert stored is None and error is not None, (
         f"a typed string that is not an Aadhaar number was stored as {stored!r}; the format check "
@@ -1644,62 +983,16 @@ def test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask():
         "which is how a typo became a government identity number in a ministry document"
     )
 
-    # THE BOUND STILL BITES, AND BEFORE THE MASK. Masking first would make `max_length` unreachable
-    # on this field — every masked value is 14 characters — so an answer nobody could have meant
-    # would be silently accepted as a plausible mask of its own last four characters.
     assert coerce_value(aadhaar, "x" * 21)[1] is not None
 
-    # THE PEHCHAN BOX IS DELIBERATELY NOT MASKED ON SAVE, and this assertion is the record of that
-    # being a decision. `IdentityCardCapture kind="PEHCHAN"` exists on both clients to write the full
-    # number off the card a designer is holding; masking it would un-ship that control rather than
-    # enforce anything, and no owner decision covers it. If one is ever made, this line is what has
-    # to be argued with.
     assert pehchan.store_masked is False
     assert coerce_value(pehchan, "DL/2024/0001234")[0] == "DL/2024/0001234"
 
-    # PUBLISHED TO THE CLIENTS, because both of them say something about it: the web prints what the
-    # save will keep, and Android masks at the point of capture and masks again in its port of
-    # `coerce_value`. A flag the server enforced silently would leave the handset showing twelve
-    # digits as the designer's saved answer.
     assert field_to_dict(aadhaar, "participant")["storeMasked"] is True
     assert "storeMasked" not in field_to_dict(pehchan, "participant")
 
 
 def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behind_them():
-    """THE GAP THIS TEST WAS WRITTEN TO PIN IS CLOSED, and this is what replaced it.
-
-    It used to assert that ``Artisan`` had NO ``experienceYears`` and NO ``age`` column, that both
-    were read only from the ``extraMetadata`` spellings researchers used before the record registry
-    existed, and that both were therefore blank on every artisan created after ``ArtisanForm``
-    stopped writing free metadata. Its own docstring named the assertion that should fail the day
-    somebody did the migration. That day was 2026-08-16.
-
-    The consequence it was pinning was not abstract: ``participant.age`` and
-    ``participant.experienceYears`` are ``fromref`` fields whose help text promises a designer the
-    picker fills them in, and ``experienceYears`` is a TABLE_COLUMN — so an imported artisan arrived
-    with both boxes blank, an artisan added from inside the workshop had nowhere to record them, and
-    the blank printed in the participant table of every submitted report.
-
-    Four assertions, and the last two are the ones that keep the migration honest:
-
-    1. both columns exist;
-    2. when a row carries them, the COLUMNS win — a stale legacy value cannot shadow a current one;
-    3. when a row does not (every record written before the migration could parse it), the legacy
-       metadata is still read, so the oldest and best-documented artisans do not go blank;
-    4. AGE IS DERIVED FROM THE DATE and not stored, which is why the column is a birthday. An age
-       written down is wrong within a year and nothing in this system would ever say so.
-
-    THREE MORE LANDED 2026-08-23 WITH ``Artisan.craftStartDate``, which puts a THIRD source in front
-    of the two above for experience and makes the order itself the thing worth pinning:
-
-    5. a row with a joining date derives its experience FROM THE DATE, outranking the stated column;
-    6. A ROW WITH THE COLUMN AND NO DATE STILL PRINTS THE COLUMN — which is the assertion that says
-       nothing currently right was blanked in order to make room for the derivation, and it is the
-       one this change could most plausibly have broken. Every row in the live table is this shape;
-    7. an unusable joining date (in the future, or deriving outside the 0..90 the workshop's own
-       field declares) falls THROUGH to the column rather than refusing the row or printing a
-       number the participant table would then reject on a box nobody typed in.
-    """
     columns = _columns("Artisan")
     assert "experienceYears" in columns, "the migration is the point of this test"
     assert "dateOfBirth" in columns
@@ -1709,7 +1002,6 @@ def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behin
         "being written and nothing would ever notice. Store the date, derive the age."
     )
 
-    # 2. The columns win over the legacy metadata, which is deliberately set to DIFFERENT values.
     documented = _artisan_row(
         dateOfBirth=datetime(1971, 1, 8), experienceYears=31,
         extraMetadata={"experienceYears": 22, "age": 44},
@@ -1719,21 +1011,16 @@ def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behin
     assert carried["age"] != 44, "age must be derived from dateOfBirth, not read from metadata"
     assert carried["age"] == derive_age(datetime(1971, 1, 8))
 
-    # 3. A row from before the migration still answers, out of the metadata.
     legacy = dw.REFERENCE_MODELS["Artisan"].data(_artisan_row(), None)
     assert legacy["experienceYears"] == 22
     assert legacy["age"] == 44
 
-    # 4. And a row with neither says nothing, rather than inventing a zero.
     silent = dw.REFERENCE_MODELS["Artisan"].data(
         _artisan_row(extraMetadata={"mediaExif": [{"lat": 1}]}), None
     )
     assert silent["experienceYears"] is None
     assert silent["age"] is None
 
-    # 5. THE DATE OUTRANKS THE NUMBER. All three sources are present and all three disagree, so this
-    #    can only pass on the derivation: "years since a stated start" is right on the day it is
-    #    printed, where a stated number is right on `recordedAt` and decays from then on.
     joined = _artisan_row(
         craftStartDate=datetime(1994, 3, 12), experienceYears=31,
         extraMetadata={"experienceYears": 22, "age": 44},
@@ -1743,23 +1030,14 @@ def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behin
     assert from_date["experienceYears"] not in (31, 22), (
         "the joining date must outrank both the stated column and the legacy metadata"
     )
-    # And the date itself crosses, so the report can say what that number is worked out from.
     assert from_date["craftStartDate"] == "1994-03-12"
 
-    # 6. NOTHING CURRENTLY RIGHT IS BLANKED. Every row in the live table has no joining date — the
-    #    migration adds the column and deliberately refuses to backfill one — so every one of them
-    #    reaches this branch and prints exactly what it printed before the column existed.
     stated_only = dw.REFERENCE_MODELS["Artisan"].data(
         _artisan_row(experienceYears=31, extraMetadata={"experienceYears": 22}), None
     )
     assert stated_only["experienceYears"] == 31
     assert stated_only["craftStartDate"] is None
 
-    # 7. AN UNUSABLE DATE FALLS THROUGH RATHER THAN WINNING OR REFUSING. A future date derives to a
-    #    negative number and a 1900 date derives past 90, which is outside the bounds
-    #    `participant.experienceYears` declares — and `validate_entry` re-coerces every field on
-    #    every save, so a hydrated out-of-range number becomes a refused answer on a box the
-    #    designer never touched. Dropping it leaves the stated column readable instead.
     for unusable in (datetime(2099, 1, 1), datetime(1900, 1, 1)):
         fell_through = dw.REFERENCE_MODELS["Artisan"].data(
             _artisan_row(craftStartDate=unusable, experienceYears=31), None
@@ -1769,11 +1047,6 @@ def test_experience_and_age_now_come_from_columns_with_the_legacy_metadata_behin
 
 
 def test_the_device_fix_never_reaches_the_workshop_and_the_subject_pin_does():
-    """``Location``'s own docstring, asserted: every live record's fix is the desk it was typed at.
-
-    Copying ``latitude``/``longitude`` would put a report's map pin 1,500 km from the village named
-    on the same row. Only the pin a researcher deliberately dropped on the SUBJECT's place crosses.
-    """
     data = dw.REFERENCE_MODELS["Artisan"].data(_artisan_row(), None)
     assert data["subjectLocation"] == {"lat": 21.2, "lon": 83.6}
     assert "accuracy" not in data["subjectLocation"], "a hand-dropped pin has no error bar"
@@ -1783,21 +1056,6 @@ def test_the_device_fix_never_reaches_the_workshop_and_the_subject_pin_does():
 
 
 async def test_the_gps_address_never_becomes_the_artisans_stated_address(monkeypatch):
-    """THE FOURTH LINE OF THE ROSTER USED TO CONTRADICT THE THREE ABOVE IT.
-
-    `participant.address` read `r.address or _rel(r, "location", "address")`. `Location.address` is
-    a PROVENANCE column by three independent declarations — the `Location` docstring, `LocationInput`
-    and `LocationFields.tsx`, which renders it in a box labelled "GPS address" inside a panel
-    captioned "Provenance, not an address. These values say where the device was" — and it is
-    derived from the same device fix `placeName` is, which this file already refused on exactly
-    that ground.
-
-    So an artisan whose own Address box a researcher left blank, while letting the device fill the
-    GPS one (which is automatic), printed in a submitted report as "Village: Barpali / District:
-    Bargarh / State: Odisha / Address: <a street in Kharagpur, West Bengal>". Only-fill-blanks then
-    made it permanent: no re-pick could clear it, and nothing on the page said the value was
-    machine-derived.
-    """
     no_stated_address = _artisan_row(
         address=None,
         location=_location_row(address="Plot 14, campus road, Kharagpur"),
@@ -1812,21 +1070,15 @@ async def test_the_gps_address_never_becomes_the_artisans_stated_address(monkeyp
     assert "Kharagpur" not in str(data), (
         "nothing derived from the device fix may cross — placeName is refused for the same reason"
     )
-    # The three STATED columns beside it still do cross, which is the half that must not be lost.
     assert data["village"] == "Barpali"
     assert data["district"] == "Bargarh"
     assert data["state"] == "Odisha"
 
-    # And the artisan's OWN address is unaffected: it is a stated column and it still carries.
     stated = await _hydrate(
         monkeypatch, "participant", {"artisanRef": "art_1"}, rows={"artisan": [_artisan_row()]},
     )
     assert stated["address"] == "House 4, Weavers' lane"
 
-
-# --------------------------------------------------------------------------------------
-# The round trip: a fully populated record through the REAL hydrate_entries
-# --------------------------------------------------------------------------------------
 
 
 def _field(entity_key: str, field_key: str):
@@ -1843,11 +1095,6 @@ def _entity(entity_key: str):
 def _location_row(**overrides):
     fields = dict(
         state="Odisha", district="Bargarh", village="Barpali", pincode="768029",
-        # A DESK-SHAPED VALUE ON PURPOSE. This used to read "Weavers' lane, near the tank" — a
-        # subject-shaped address on a PROVENANCE row — which made every assertion about it read
-        # as though the two groups of Location columns said the same kind of thing. `placeName`
-        # below is Kharagpur against an Odisha village, ~1,500 km, which is the state of every
-        # live row and is the whole reason neither of these two crosses.
         address="Plot 14, campus road, Kharagpur", placeName="Kharagpur",
         subjectLatitude=21.2, subjectLongitude=83.6,
         latitude=22.314, longitude=87.311, altitude=32.0, accuracy=26.0,
@@ -1858,14 +1105,6 @@ def _location_row(**overrides):
 
 
 def _media_row(**overrides):
-    """One ``MediaFile`` row as the ``media`` relation hands it to a data lambda.
-
-    Only the three attributes ``_media_note`` reads: the type, the original filename (which is what
-    carries ``ToolForm``'s ``STAGE_STEP_n`` naming of an ordered making sequence) and
-    ``extraMetadata``, where the measurement-grid marker lives. A row is deliberately NOT a full
-    MediaFile: everything else on that model is entitlement-gated and must never reach a stage entry,
-    so a fixture that carried it would make a leak look normal.
-    """
     fields = dict(id="med_x", mediaType="IMAGE", originalFilename="loom.jpg", extraMetadata=None)
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -1875,29 +1114,15 @@ def _artisan_row(**overrides):
     fields = dict(
         id="art_1", name="Latha Devi", localName="ଲତା ଦେବୀ", gender="Female",
         phone="9876500001", email="latha@example.org", place="Barpali",
-        # As the register holds an Aadhaar since 2026-10-17: a keyed fingerprint and the last four.
         aadhaarFingerprint="ab" * 32, aadhaarLast4="0123", pehchanCardAvailable=True,
         pehchanCardNumber="PEHCHAN5678", address="House 4, Weavers' lane",
         notes="Prefers morning sessions.", dos="1. Speak in Odia\n2. Show samples",
         donts="1. Do not photograph the loom shed",
         extraMetadata={"experienceYears": 22, "age": 44},
-        # DEFAULTED TO None so this row is the LEGACY case: no columns, values only in metadata.
-        # That keeps every assertion written before the columns existed meaningful — they are now
-        # assertions that the fallback still works for the old records, which is the half of the
-        # old behaviour that had to survive. A row WITH the columns is built explicitly by the test
-        # that covers precedence.
-        # `craftStartDate` joins them on the same terms and for the same reason: NULL is the state
-        # of every row that existed before it was added, so this fixture is the legacy case and the
-        # derived branch is built explicitly by the test that covers the precedence.
         dateOfBirth=None, experienceYears=None, craftStartDate=None,
         recordedAt=datetime(2025, 3, 12, 9, 0), recordedTimezone="Asia/Kolkata",
         craft=SimpleNamespace(name="Sambalpuri Ikat"), location=_location_row(),
-        # WHERE the record was made, which `documentedOn` cannot say. `participant.artisanRef` is
-        # ALL_SCOPE, so this is routinely a different cluster's workshop from the one being written.
         workshop=SimpleNamespace(title="Sambalpuri Ikat cluster survey, Barpali"),
-        # THE SPOKEN INTRODUCTION IS THE POINT OF THIS FIXTURE. The record form's media card asks for
-        # "images, audio introductions, videos, and documents" by name, and `_reference_photos`
-        # resolves one IMAGE — so the audio row here is the material that used to reach nothing.
         media=[
             _media_row(id="med_a1"),
             _media_row(id="med_a2", mediaType="AUDIO", originalFilename="introduction.m4a"),
@@ -1917,18 +1142,7 @@ def _product_row(**overrides):
         rawMaterialsUsed="Cotton yarn", mainToolsUsed="Pit loom, bobbin winder",
         productFunctionUse="Daily and festive wear", remarks="Second-quality weft in one panel.",
         recordedAt=datetime(2025, 4, 2, 11, 0),
-        # THE STATED ADDRESS AND THE SUBJECT PIN, both of which this fixture lacked while the mapping
-        # declared five targets for them — so "a fully documented product arrives whole" was asserting
-        # over a row that was not fully documented and the five boxes read as legitimately empty.
         location=_location_row(),
-        # HOW EACH DIMENSION CAME TO BE KNOWN, in the exact shape `records.merge_field_provenance`
-        # writes: the {by, byName, at} of whoever pressed Save, with `method` merged in BESIDE it
-        # for a dimension column rather than replacing it. This fixture is deliberately the
-        # THREE-WAY case — a vision model read the length off a grid photograph, the breadth was
-        # computed from marks a person placed on a photograph, the height was typed — because that
-        # is the case where a single trailing clause would overstate the machine's part and the note
-        # has to say WHICH number each method produced. `sellingPrice` carries the plain stamp with
-        # no method, which is what every non-dimension column on a real row looks like.
         extraMetadata={
             "fieldProvenance": {
                 "lengthInches": {"by": "usr_7", "byName": "R. Menon",
@@ -1959,21 +1173,12 @@ def _tool_row(**overrides):
         id="tul_1", craftName="Sambalpuri Ikat", place="Barpali", artisanName="Latha Devi",
         toolkitName="Pit loom", localName="ଖଡ଼ି", englishName="Pit treadle loom",
         processUsedIn="Weaving", material="Teak and bamboo", yearsInUse=18,
-        # TWO HEIGHTS, AND THEY ARE DIFFERENT COLUMNS. `heightInches` is the documented one,
-        # added 2026-08-27 and converted into `tool.heightCm`; the bare `height` is the old
-        # column whose unit nothing records, and it lands in `tool.heightAsRecorded`.
         height=180, width=120, lengthInches=96, breadthInches=48, heightInches=30,
         thickness=4.5, weight=95, radius=6,
         maker="CARPENTER", traditionType="HYBRID", replacementCost=12000,
         suggestionsForToolImprovement="A higher bench would ease the back.",
         remarks="Rebuilt in 2019.", recordedAt=datetime(2025, 4, 3, 8, 30),
         location=_location_row(),
-        # ONE STAMPED DIMENSION AND ONE EXPLICITLY UNRECORDED, which is the state of the fleet: a
-        # client that has not implemented its half of the marker makes `method_stamps` write
-        # UNRECORDED rather than nothing, and UNRECORDED must print nothing at a reader — see
-        # `record_fields.METHOD_CLAUSES`. The five unit-less columns (`height`, `width`,
-        # `thickness`, `weight`, `radius`) carry NO stamp at all and cannot: they are outside
-        # `measurement_provenance.DIMENSION_FIELDS`, so `method_stamps` drops any marker naming one.
         extraMetadata={
             "fieldProvenance": {
                 "lengthInches": {"by": "usr_9", "byName": "S. Bal",
@@ -1983,9 +1188,6 @@ def _tool_row(**overrides):
                                   "at": "2025-04-03T08:30:00+00:00", "method": "UNRECORDED"},
             },
         },
-        # The record page's media card is mounted twice: the ordered "Process stages" sequence, whose
-        # captures ToolForm renames STAGE_STEP_n, and general footage. Both shapes are here, plus a
-        # measurement-grid frame, which is a sheet of ruled paper and not footage of the tool.
         media=[
             _media_row(id="med_t1", originalFilename="STAGE_STEP_1_warping.jpg"),
             _media_row(id="med_t2", originalFilename="STAGE_STEP_2_treadles.jpg"),
@@ -2005,10 +1207,6 @@ def _process_row(**overrides):
         id="prc_1", name="Tie and dye", notes="Yarn is tied in sections, dyed, untied, washed.",
         preProcessAvailable=True, recordedAt=datetime(2025, 4, 4, 7, 0),
         product=SimpleNamespace(productName="Sambalpuri saree"),
-        # THE PRE-PROCESS CLIPS THE RECORD FORM MAKES MANDATORY, plus one step's own captures. The
-        # fixture carried neither, so `recordMediaNote` — a declared target of this mapping — was
-        # blank for a row this file describes as fully documented, and the sibling assertion that no
-        # declared target is empty was reading it as a legitimate absence.
         media=[_media_row(id="med_pr1", mediaType="VIDEO", originalFilename="pre-process.mp4")],
         steps=[
             SimpleNamespace(name="Washing", stepType="SEQUENTIAL", sortOrder=2, notes=None,
@@ -2024,19 +1222,6 @@ def _process_row(**overrides):
 
 
 def _craft_row(**overrides):
-    """The fifth reference model's row fixture, and the one that was missing.
-
-    `Craft`'s two names print on the COVER PAGE of every submitted report, which made it the
-    highest-visibility carry of the five and the only one with no database-free round trip:
-    `craftLocalName` was asserted by no backend test at all, and Craft's only executing round trip
-    lived in `test_reference_resolver.py` behind a Postgres skip that nobody's machine satisfies.
-    See `test_a_documented_craft_reaches_the_cover_page_whole`.
-
-    EVERY COLUMN THE CRAFTS PAGE COLLECTS IS HERE NOW, and the fixture used to hold two of them —
-    which is why the sibling test could assert "no declared target is blank" while five of the eight
-    targets were empty for a reason the fixture, not the code, was responsible for. A row that is not
-    fully documented cannot pin what a fully documented one carries.
-    """
     fields = dict(
         id="crf_1", name="Sambalpuri Ikat", localName="ସମ୍ବଲପୁରୀ ବନ୍ଧ",
         category="Weaving", place="Barpali",
@@ -2054,14 +1239,6 @@ def _craft_row(**overrides):
 
 
 def _response_row(**overrides):
-    """One ``QuestionnaireResponse`` as the ``responses`` include hands it to the data lambda.
-
-    THE ANSWER TEXT IS PRESENT IN THE FIXTURE ON PURPOSE, and it is the only fixture in this file
-    whose value must never appear in any assertion about what was stored. The include loads it — there
-    is no scalar `select` on the relation — so a fixture without it would let
-    `test_no_artisan_answer_or_name_crosses_from_an_interview` pass for the wrong reason: nothing
-    would be leaking because nothing was there.
-    """
     fields = dict(
         answerText="Twelve, and two of them belong to my brother.",
         notes="She hesitated before answering.",
@@ -2074,29 +1251,6 @@ def _response_row(**overrides):
 
 
 def _interview_row(**overrides):
-    """One ``QuestionnaireInterview`` as the sixth reference model's picker loads it.
-
-    A SITTING, NOT A FORM: the global artisan questionnaire is a single instrument
-    (`QuestionnaireSection.code` is unique and its `sortOrder` is globally unique), so what a
-    designer picks is this — an afternoon, with a place, a language and a named set of people.
-
-    SIX ARTISANS AND FOUR RESPONSES ACROSS THREE SECTIONS, one of the four saved BLANK. Those
-    numbers are the fixture's whole job. `interviewQuestionsAnswered` is 3 of 4, because `"   "` is a
-    saved row with nothing in it; `interviewSectionsCovered` is 2 of the 3 sections touched, because
-    the section whose only row is that blank one is not covered either. THE BLANK ROW IS THE FIXTURE'S
-    POINT: it used to be counted as a covered section, which made the printed pair
-    "Sections answered: 3 / Questions answered: 3" describe a sitting where one of the three sections
-    holds nothing at all — and made "9 / 0" reachable on a sitting where a researcher had tabbed
-    through nine and answered none.
-
-    THE MEDIA ARM IS NOT IN THIS FIXTURE, on purpose: its two files are a plain photograph and a
-    plainly-named audio file, so it stands for a sitting whose section signal is entirely in its
-    ANSWERS. The clip-nomenclature and metadata arms have their own tests below, which is where the
-    interesting filenames belong.
-
-    NO `location` KEY, matching the model's include. If one is ever added here it is a sign somebody
-    has turned the relation on, which changes what already-submitted documents print.
-    """
     fields = dict(
         id="qi_1",
         title="Barpali weavers, group 2",
@@ -2105,9 +1259,6 @@ def _interview_row(**overrides):
         language="Odia",
         notes="The second weaver's daughter translated for her.",
         status="APPROVED",
-        # The scoped spelling the column has carried since migration 20260920120000:
-        # "<workshopId>|<designWorkshopId>|<sorted artisan ids>". The roster is still in there, which
-        # is the whole reason this field is on the refusal list.
         artisanSetKey="wsh_1||art_1,art_2,art_3,art_4,art_5,art_6",
         recordedAt=datetime(2026, 3, 16, 8, 0),
         createdById="usr_9",
@@ -2152,13 +1303,6 @@ class _Delegate:
 
 
 class _FakeDb:
-    """Enough Prisma client for ``hydrate_entries``: one delegate per model and ``query_raw``.
-
-    Driving the REAL function rather than reimplementing its copy loop is the whole point: the
-    clearing rule, the only-fill-blanks rule and ``coerce_value`` are what decide whether a carried
-    value survives, and a test that skipped them would pass while the feature was broken.
-    """
-
     def __init__(self, rows_by_delegate, photos):
         self._rows = rows_by_delegate
         self._photos = photos
@@ -2167,13 +1311,6 @@ class _FakeDb:
         return _Delegate(self._rows.get(name, []))
 
     async def query_raw(self, _sql, ids, *_binds):
-        # ``*_binds`` AND NOT A FIXED ARITY, because pinning the call shape here is a cost paid by
-        # tests that have nothing to say about it: binding the measurement-grid marker as `$2` — the
-        # tidier form of the interpolation `_reference_photos` guards instead, and the one its guard
-        # says to move to — turned eighteen hydration tests red on the argument count alone. Two
-        # more stubs in `test_entry_provenance.py` are still on the fixed shape and are why that
-        # move has not happened. What a bind MEANS is `_CapturingDb`'s job; here the rows come from
-        # `photos` and the statement is never read.
         return [
             {"parent": parent, "id": media_id, "caption": caption}
             for parent, (media_id, caption) in self._photos.items()
@@ -2182,14 +1319,6 @@ class _FakeDb:
 
 
 async def _hydrate_entry(monkeypatch, entity_key, sent, *, rows, photos=None, previous=None):
-    """Run one entry through the real hydration and return the whole ``PendingEntry``.
-
-    ``_hydrate`` below returns only ``data``, which is what almost every test in this file wants. The
-    exceptions are the two-writer tests: a box written by either of two refs holds the SAME STRING
-    whichever one wrote it, so ``entry.hydrated`` — the ``HydrationSource`` naming the model and the
-    source key — is the only thing that says which. A test reading ``data`` alone would pass with the
-    ordering rule inverted.
-    """
     monkeypatch.setattr(dw, "db", _FakeDb(rows, photos or {}))
     entry = dw.PendingEntry(
         entity=_entity(entity_key), data=dict(sent), previous=dict(previous or {}),
@@ -2200,7 +1329,6 @@ async def _hydrate_entry(monkeypatch, entity_key, sent, *, rows, photos=None, pr
 
 
 async def _hydrate(monkeypatch, entity_key, sent, *, rows, photos=None, previous=None):
-    """Run one entry through the real hydration and return the stored ``data``."""
     entry = await _hydrate_entry(
         monkeypatch, entity_key, sent, rows=rows, photos=photos, previous=previous
     )
@@ -2212,21 +1340,6 @@ def _targets(path: str) -> set[str]:
 
 
 async def test_a_fully_documented_artisan_arrives_whole(monkeypatch):
-    """EVERY declared target of ``participant.artisanRef`` is non-empty. That is the requirement.
-
-    Written as "no target is missing" rather than as twenty-two individual assertions so that a
-    pair added to the mapping is covered the moment it is added, without anybody remembering to
-    extend this test.
-
-    THE JOINING DATE IS SUPPLIED HERE AND NOWHERE ELSE IN THIS FILE, and the asymmetry is worth a
-    sentence. ``_artisan_row`` defaults ``dateOfBirth``/``experienceYears``/``craftStartDate`` to
-    None so that it stands for a row written before those columns existed — which is every row in
-    the live table — and the first two still fill their boxes from the legacy ``extraMetadata``
-    spellings behind them. ``craftStartDate`` has no such fallback and cannot have one: no legacy
-    key ever held a joining date, which is exactly why the migration refuses to invent one. So a
-    "fully documented" artisan has to be told the date, and this test is what says the box is wired
-    rather than merely declared.
-    """
     data = await _hydrate(
         monkeypatch, "participant", {"artisanRef": "art_1"},
         rows={"artisan": [_artisan_row(craftStartDate=datetime(1994, 3, 12))]},
@@ -2235,7 +1348,6 @@ async def test_a_fully_documented_artisan_arrives_whole(monkeypatch):
     blank = sorted(t for t in _targets("participant.artisanRef") if not data.get(t))
     assert blank == [], f"a fully documented artisan left these boxes empty: {blank}"
 
-    # And the values are the record's, not merely present.
     assert data["name"] == "Latha Devi"
     assert data["email"] == "latha@example.org"
     assert data["artisanCardNo"] == "XXXX XXXX 5678"
@@ -2252,14 +1364,6 @@ async def test_a_fully_documented_artisan_arrives_whole(monkeypatch):
 
 
 async def test_a_documented_questionnaire_interview_arrives_whole(monkeypatch):
-    """EVERY declared target of ``artisanBaseline.interviewRef`` is non-empty, and the counts are
-    the counts rather than merely present.
-
-    THIS IS THE ROUND TRIP FOR THE SIXTH REFERENCE MODEL, and it runs the REAL ``hydrate_entries``
-    over a fake Prisma client, so ``coerce_value``, the only-fill-blanks rule and the clearing rule
-    all decide whether a value survives — which is the difference between this and a test that
-    re-implements the copy loop and passes while the feature is broken.
-    """
     data = await _hydrate(
         monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
         rows={"questionnaireinterview": [_interview_row()]},
@@ -2270,15 +1374,9 @@ async def test_a_documented_questionnaire_interview_arrives_whole(monkeypatch):
     assert data["interviewTitle"] == "Barpali weavers, group 2"
     assert data["interviewPlace"] == "Barpali"
     assert data["interviewLanguage"] == "Odia"
-    # THE SITTING'S DATE AND THE TYPING-IN DATE ARE TWO DIFFERENT FACTS, and the fixture makes them
-    # two different days so that a mapping which crossed them could not pass.
     assert data["interviewDate"] == "2026-03-14"
     assert data["interviewDocumentedOn"] == "2026-03-16"
     assert data["interviewArtisanCount"] == 6
-    # THE ROWS TOUCH THREE SECTIONS AND COVER TWO, and three of the four responses carry an answer:
-    # the fourth is "   ", a saved row with nothing in it, and it is the ONLY row of its section. So
-    # the section count drops it for the same reason the answer count does. Reading 3 here means the
-    # blank-row rule has been lost and the two boxes can contradict each other again.
     assert data["interviewSectionsCovered"] == 2
     assert data["interviewQuestionsAnswered"] == 3
     assert data["interviewLastAnsweredOn"] == "2026-03-15"
@@ -2289,14 +1387,6 @@ async def test_a_documented_questionnaire_interview_arrives_whole(monkeypatch):
 
 
 async def test_an_interview_that_answered_nothing_says_zero_rather_than_nothing(monkeypatch):
-    """Zero is a statement about the evidence and a blank is an absence of one.
-
-    A sitting that produced no answers is exactly the citation a reader most needs to see for what it
-    is, so the three counts hydrate as 0 rather than being skipped by
-    ``if value in (None, ""): continue``. This is the ``age``/``experienceYears`` rule — zero is a
-    real value — and it is why the helpers return an int unconditionally rather than falling back to
-    None through an ``or``.
-    """
     data = await _hydrate(
         monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
         rows={"questionnaireinterview": [_interview_row(responses=[], artisans=[], media=[])]},
@@ -2304,24 +1394,11 @@ async def test_an_interview_that_answered_nothing_says_zero_rather_than_nothing(
     assert data["interviewArtisanCount"] == 0
     assert data["interviewSectionsCovered"] == 0
     assert data["interviewQuestionsAnswered"] == 0
-    # No responses => no `max()` to take, and no media => no sentence. Both are absences rather than
-    # zeroes, which is why they are the two keys that answer None.
     assert "interviewLastAnsweredOn" not in data
     assert "interviewMediaNote" not in data
 
 
 async def test_a_section_whose_only_row_is_blank_is_not_a_covered_section(monkeypatch):
-    """THE PAIR OF NUMBERS MUST NOT BE ABLE TO CONTRADICT EACH OTHER, and it could.
-
-    `_interview_sections_covered` counted DISTINCT `sectionCode` over response rows whether they held
-    an answer or not, while `_interview_questions_answered` has always required a non-blank one. So a
-    researcher who opened nine sections, tabbed through them and saved produced nine blank rows, and
-    the `KeyValueBlock` printed "Sections answered: 9" directly above "Questions answered: 0" in a
-    document submitted to a ministry.
-
-    Written as the extreme case rather than as one blank among answers, because that is the shape that
-    made the pair absurd rather than merely generous.
-    """
     tabbed = [
         _response_row(answerText="", question=SimpleNamespace(sectionCode=f"S{n}",
                                                              sectionTitle=f"Section {n}",
@@ -2337,23 +1414,10 @@ async def test_a_section_whose_only_row_is_blank_is_not_a_covered_section(monkey
         "nine sections opened and none answered must not print as nine covered — the two counts "
         "read the same rows and must apply the same non-blank test"
     )
-    # And nothing was ANSWERED, so there is no date to print beside the zero either.
     assert "interviewLastAnsweredOn" not in data
 
 
 async def test_an_interview_recorded_as_section_clips_counts_its_sections(monkeypatch):
-    """THE APP'S ORDINARY WAY OF TAKING AN INTERVIEW USED TO COUNT AS ZERO.
-
-    A sitting captured as one AUDIO CLIP PER SECTION carries its section signal in the clip FILENAME
-    — `questionnaireClipBaseName` in MainActivity.kt builds
-    `SECTION_QUESTION_INTERVIEWNAME_DURATIONHHMMSS_DATETIMEDDMMYYYYHHMM` — and may have NO response
-    rows at all. The old count read only response rows, so the report printed "Sections answered: 0"
-    for a sitting whose View Data matrix (`questionnaire._derived_completed_sections`, which reads
-    the same filenames) showed nine.
-
-    ONE FILE PER SECTION AND ONE SECTION RECORDED TWICE, so the assertion is about DISTINCT sections
-    and would not pass on a plain file count.
-    """
     clips = [
         _media_row(id="med_c1", mediaType="AUDIO",
                    originalFilename="LOOMS_SEC_BARPALIGROUP2_001432_140320260915.m4a"),
@@ -2372,25 +1436,11 @@ async def test_an_interview_recorded_as_section_clips_counts_its_sections(monkey
         "an interview recorded as one clip per section has to count those sections; reading 0 here "
         "is the report contradicting the screen it was checked against"
     )
-    # NOT AN ANSWER COUNT, AND THE TWO ARE DIFFERENT FACTS. A clip is content recorded against a
-    # section and it is not a typed answer to a question, so this stays 0 and stays honest.
     assert data["interviewQuestionsAnswered"] == 0
     assert "interviewLastAnsweredOn" not in data
 
 
 async def test_an_uploaded_photograph_is_not_read_as_a_section_code(monkeypatch):
-    """THE SHAPE CHECK EARNS ITS KEEP HERE, and without it the count would INVENT sections.
-
-    The route this agrees with validates a filename's leading token against the real section-code
-    list. `QuestionnaireSection` is not reachable from an interview row — the divergence path
-    re-fetches with `spec.include` and nothing else — so this validates the NOMENCLATURE instead: five
-    underscore-separated tokens with six digits of duration in the fourth. A camera roll name has one
-    token and a scanned document has two, so neither can pass, and "IMG" does not become a section.
-
-    THE `SEC` SENTINEL IS THE SUBTLE ONE. `questionnaireClipBaseName` substitutes it when it has no
-    section code at all, so a well-formed clip can lead with a token that means "unknown" — and
-    counting that would add one phantom section to every sitting recorded without one.
-    """
     misleading = [
         _media_row(id="med_m1", originalFilename="IMG_2031.jpg"),
         _media_row(id="med_m2", mediaType="PDF", originalFilename="consent_form.pdf"),
@@ -2406,13 +1456,6 @@ async def test_an_uploaded_photograph_is_not_read_as_a_section_code(monkeypatch)
 
 
 async def test_a_section_tagged_on_a_media_row_counts_without_any_response(monkeypatch):
-    """The metadata arm, which is the one the route lists FIRST for media.
-
-    `extraMetadata.sectionCode` names the section outright and needs no lookup at all, and
-    `extraMetadata.questionId` is resolved through the questions THIS ROW's own responses carry. Both
-    are checked here because the second is the one that can only work when the response is present,
-    and a test of the first alone would not show that.
-    """
     rows = [
         _media_row(id="med_s1", mediaType="AUDIO", originalFilename="a.m4a",
                    extraMetadata={"sectionCode": "dyes"}),
@@ -2423,19 +1466,10 @@ async def test_a_section_tagged_on_a_media_row_counts_without_any_response(monke
         monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
         rows={"questionnaireinterview": [_interview_row(responses=[answered], media=rows)]},
     )
-    # `dyes` normalises to `DYES` — the same normalisation the route applies to both ends — and
-    # `q_looms` resolves through the response to LOOMS, which its own answer had already covered.
     assert data["interviewSectionsCovered"] == 2
 
 
 async def test_a_section_the_row_cannot_resolve_leaves_the_box_blank(monkeypatch):
-    """WHERE THE COUNT WOULD BE A FLOOR, NOTHING IS PRINTED — and this is the one such case.
-
-    A media row tagged with a `questionId` whose question has NO response row on this interview cannot
-    be resolved from anything the include loads. The box prints a bare number a reader takes as the
-    whole truth, so an understatement is worse than a blank: `hydrate_entries` skips a None and the
-    field simply does not appear in the block, which is the honest answer available.
-    """
     data = await _hydrate(
         monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
         rows={"questionnaireinterview": [_interview_row(
@@ -2447,21 +1481,10 @@ async def test_a_section_the_row_cannot_resolve_leaves_the_box_blank(monkeypatch
         "an unresolvable section signal must blank the box rather than print a floor; a number the "
         "reader cannot tell is partial is worse than no number"
     )
-    # Everything else on the block still crosses — one unanswerable count is not a reason to lose
-    # the citation.
     assert data["interviewTitle"] == "Barpali weavers, group 2"
 
 
 async def test_the_last_answered_date_ignores_a_row_nobody_answered(monkeypatch):
-    """"Last answered on" AND "Questions answered: 0" COULD PRINT SIDE BY SIDE.
-
-    `_interview_last_answered` maxed `updatedAt` over every response row, so it measured when the
-    sitting was last TOUCHED. A blank row saved after the last real answer moved the printed date
-    forward past it; a sitting of nothing but blank rows printed a date beside a zero.
-
-    The fixture makes the blank row the NEWEST, which is the only arrangement in which a filter that
-    was dropped would still pass.
-    """
     data = await _hydrate(
         monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
         rows={"questionnaireinterview": [_interview_row(responses=[
@@ -2476,7 +1499,6 @@ async def test_the_last_answered_date_ignores_a_row_nobody_answered(monkeypatch)
 
 
 async def test_an_interview_of_nothing_but_blank_rows_prints_no_date(monkeypatch):
-    """The end of the same rule: nothing answered, so there is no answering date to print."""
     data = await _hydrate(
         monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
         rows={"questionnaireinterview": [_interview_row(
@@ -2489,28 +1511,6 @@ async def test_an_interview_of_nothing_but_blank_rows_prints_no_date(monkeypatch
 
 
 async def test_no_artisan_answer_or_name_crosses_from_an_interview(monkeypatch):
-    """THE DISCLOSURE TEST, AND IT IS THE REASON THIS MODEL IS ALLOWED TO EXIST AT ALL.
-
-    ``QuestionnaireResponse.answerText`` and ``.notes`` are free text about a NAMED person. A design
-    workshop's stage reads do NOT pass through ``records._redact_sensitive``, a
-    ``DesignWorkshopViewer`` is a grantee, and a hydrated value is a PERMANENT copy the report never
-    re-resolves — so a leak here is not a display bug, it is a disclosure in a document that has been
-    filed. On top of that the schema cannot say WHICH member of a six-person sitting said any given
-    sentence, and ``QuestionnaireQuestion.supersededById`` exists because a prompt is reworded under
-    answers already given ("How many looms?" answered "12", reworded to "How many weavers?").
-
-    ASSERTED OVER THE WHOLE STORED ROW AS SUBSTRINGS, not key by key, because the failure this guards
-    is a key nobody thought of — a sample folded into a note, a prompt appended to a count, a name
-    swept into a sublabel-shaped box. A per-key assertion would pass for every one of those.
-
-    THE NAMES ARE REFUSED TOO, and deliberately not symmetrically with ``tool.usedByArtisans``, which
-    DOES carry names as BULLETS: a tool assignment is an administrative fact, whereas who sat in a
-    room together is a social one — and decisively, a sitting may include artisans who are NOT on
-    this workshop's roster, so naming them would have a submitted report disclose that a particular
-    person from another cluster was interviewed. ``artisanSetKey`` is refused with them: it is the
-    workshop scope plus the sorted, comma-joined list of artisan IDS, which is the same roster in one
-    string.
-    """
     row = _interview_row()
     data = await _hydrate(
         monkeypatch, "artisanBaseline", {"interviewRef": "qi_1"},
@@ -2534,25 +1534,14 @@ async def test_no_artisan_answer_or_name_crosses_from_an_interview(monkeypatch):
         f"a questionnaire interview carried {leaked} onto a stage entry. Every one of these is "
         f"permanent, unredactable and readable by a grantee. Stored row: {stored}"
     )
-    # And the counts that ARE carried are still there, so this test cannot be satisfied by carrying
-    # nothing at all — which is the way a "nothing leaked" assertion usually goes green.
     assert data["interviewQuestionsAnswered"] == 3
     assert data["interviewArtisanCount"] == 6
 
 
 async def test_the_review_verdict_is_live_in_the_sublabel_and_never_on_the_entry(monkeypatch):
-    """``_review_flag`` on the sixth model, asserted the way it is asserted on the other five.
-
-    ``status`` is MUTABLE and a hydrated value is permanent, so a frozen "Awaiting review" would be a
-    false statement about a named reviewer's decision the week after it changed. The verdict is
-    composed on every ``reference_options`` call instead — into the sublabel, where a designer reads
-    it at the moment of choosing.
-    """
     spec = dw.REFERENCE_MODELS["QuestionnaireInterview"]
     pending = _interview_row(status="PENDING")
     assert "Awaiting review" in spec.sublabel(pending)
-    # The sublabel is where the whole identifying set lives, because the picker's label is a bare
-    # title and two sittings in one fortnight can share one.
     assert "2026-03-14" in spec.sublabel(pending)
     assert "Barpali" in spec.sublabel(pending)
     assert "Odia" in spec.sublabel(pending)
@@ -2566,34 +1555,11 @@ async def test_the_review_verdict_is_live_in_the_sublabel_and_never_on_the_entry
 
 
 def test_the_questionnaire_picker_is_scoped_by_the_account_and_not_by_the_workshop():
-    """The seventh model is the ONE whose rows are not pooled, and this is what keeps it that way.
-
-    ── WHY IT IS DIFFERENT FROM THE OTHER SIX ────────────────────────────────────────────────────
-
-    ``records.viewable_where`` is EMPTY on purpose — every signed-in account may read every artisan,
-    product, tool, process, craft and interview, because the point of pooling the fieldwork is that
-    everyone can see the pool. A ``Questionnaire`` is not pooled: it carries ``ownerId``, a nullable
-    ``designWorkshopId`` and an admin-set ``isShared``, and its own list endpoint narrows on all
-    four. Serving this table through the unscoped path would put every designer in the country's
-    private instruments into a picker whose chosen row is then CITED, permanently, in a report.
-
-    ONE RULE, IMPORTED RATHER THAN RESTATED. ``visible_questionnaire_where`` is the function the list
-    endpoint composes; this asserts it is the same object and not a second copy that can drift wider.
-
-    ── AND WHAT IT DELIBERATELY DOES NOT LOAD ────────────────────────────────────────────────────
-
-    No ``include`` at all. The rows under this model are sections, questions and respondents'
-    ANSWERS, and the eleven refusals ledgered against ``QuestionnaireInterview`` apply here in their
-    strongest form: a hydrated value is a permanent copy printed in a ministry's document. One key
-    crosses, and it is the title.
-    """
     from app.services.questionnaire_forms import visible_questionnaire_where
 
     spec = dw.REFERENCE_MODELS["Questionnaire"]
     assert spec.delegate == "questionnaire"
     assert spec.viewer_where is visible_questionnaire_where
-    # A WORKSHOP scope would be the wrong narrowing AND a redundant one: a form is built before it is
-    # attached, so `designWorkshopId` is null on exactly the instrument a designer is about to cite.
     assert spec.workshop_where is None
     assert spec.include == {}
     assert spec.media_field == "" and spec.artisan_field == "" and spec.filter_field == ""
@@ -2606,44 +1572,19 @@ def test_the_questionnaire_picker_is_scoped_by_the_account_and_not_by_the_worksh
     )
     assert spec.label(row) == "Baseline instrument"
     assert spec.data(row, None) == {"name": "Baseline instrument"}
-    # The sublabel is composed at the moment of choosing and NOTHING in it crosses onto the entry —
-    # `kind` and `isShared` are both mutable, and a frozen copy would be a claim about an
-    # administrator's decision that has since changed.
     label = spec.sublabel(row)
     assert "Market survey" in label and "Shared" in label and "baseline.xlsx" in label
     assert "Market survey" not in str(spec.data(row, None))
 
-    # `label_for(None)` answers "Not stated", which is right in a form that asked the question and
-    # wrong appended to every row of a picker — and every row in this table has a null `kind` today.
     unstated = SimpleNamespace(title="Draft", kind=None, isShared=False, sourceFilename="")
     assert spec.sublabel(unstated) == ""
 
 
 def test_the_interview_picker_orders_by_title_because_nulls_sort_first_under_desc():
-    """``interviewDate`` DESC would float every UNDATED sitting to the top of the picker.
-
-    ``QuestionnaireInterview.interviewDate`` is nullable and Postgres sorts NULLs FIRST under DESC,
-    so ordering by recency puts the rows carrying the LEAST identifying information above the ones
-    carrying the most. Every other model here orders by its label column ascending; the date is in
-    the sublabel, where it is read.
-    """
     assert dw.REFERENCE_MODELS["QuestionnaireInterview"].order == {"title": "asc"}
 
 
 def test_the_interview_model_has_no_photograph_and_cannot_be_cascaded_from():
-    """Two absences that are decisions, pinned so that adding either is deliberate.
-
-    ``media_field``: ``MediaFile.questionnaireInterviewId`` exists and is indexed, so
-    ``"questionnaireInterviewId"`` COULD be added to ``_PHOTO_PARENT_COLUMNS`` — the allowlist
-    ``_reference_photos`` interpolates into raw SQL. It is not, because an interview's images are
-    photographs of named artisans mid-interview and the roster already carries each participant's
-    portrait; ``report_builder._images`` dedupes by media id, so the two would not collapse.
-
-    ``artisan_field``/``filter_field``: the link to artisans is a many-to-many, and the filter arm
-    applies a SCALAR column name, so a nested clause is not expressible in the dataclass as it
-    stands. No field declares ``ref_filter_by`` against this model, and a caller that sends
-    ``filterBy`` anyway gets a 422 rather than an unnarrowed list it believes was narrowed.
-    """
     spec = dw.REFERENCE_MODELS["QuestionnaireInterview"]
     assert spec.media_field == ""
     assert "questionnaireInterviewId" not in dw._PHOTO_PARENT_COLUMNS
@@ -2662,14 +1603,12 @@ async def test_a_fully_documented_product_arrives_whole_and_in_centimetres(monke
         rows={"productdocumentation": [_product_row()]},
         photos={"prd_1": ("med_2", "Front, natural light")},
     )
-    # `category` is the one declared target a SAMPLE cannot fill — that refusal is the subject of
-    # its own test below, and it is what `recordType` exists to compensate for.
     blank = sorted(t for t in _targets("existingProduct.productRef")
                    if not data.get(t) and t != "category")
     assert blank == [], f"a fully documented product left these boxes empty: {blank}"
 
-    assert data["lengthCm"] == pytest.approx(548.64)   # 216 in
-    assert data["widthCm"] == pytest.approx(114.3)     # 45 in, breadth -> width
+    assert data["lengthCm"] == pytest.approx(548.64)
+    assert data["widthCm"] == pytest.approx(114.3)
     assert data["heightCm"] == pytest.approx(5.08)
     assert data["price"] == "4500.00" and data["costOfMaking"] == "2600.00"
     assert data["marketDemand"] == "HIGH"
@@ -2681,12 +1620,6 @@ async def test_a_fully_documented_product_arrives_whole_and_in_centimetres(monke
 
 
 async def test_a_product_type_with_no_honest_category_leaves_the_category_blank(monkeypatch):
-    """The decision the in-code comment argues for, still holding after the widening.
-
-    A SAMPLE is not a kind of product; it is a saree that happens not to be for sale. Guessing
-    would fill a ministry report's Category column with plausible wrong values. The record's own
-    answer is not lost — it lands on ``recordType``, which is the whole reason that box exists.
-    """
     data = await _hydrate(
         monkeypatch, "existingProduct", {"productRef": "prd_1"},
         rows={"productdocumentation": [_product_row(productType="FINISHED_GOOD")]},
@@ -2704,25 +1637,6 @@ async def test_a_product_type_with_no_honest_category_leaves_the_category_blank(
 async def test_an_enum_member_that_is_only_ever_a_form_default_is_not_carried_as_an_answer(
     monkeypatch,
 ):
-    """"THE RESEARCHER CHOSE THIS" AND "NOBODY WAS ASKED" WERE THE SAME STORED TOKEN.
-
-    Three Prisma columns declare a member as their `@default` and no record form offers a blank
-    alternative: `productType ProductType @default(OTHER)`, `marketDemand MarketDemand
-    @default(UNKNOWN)` and `maker MakerType @default(UNKNOWN)`. `ProductForm.tsx` and `ToolForm.tsx`
-    render each select with `defaultValue={initial?.x ?? "<DEFAULT>"}` over a list with no empty
-    member and submit `requiredText(form, "x") || "<DEFAULT>"`; the handset builds the same
-    dropdowns with `includeNone = false`. So an untouched form stores the token and nothing can
-    separate it from a deliberate pick.
-
-    Two of the three PRINT. `existingProduct.category` is one of the six columns the Existing
-    products table lays out, so every uncategorised product asserted "Other" in a ministry report;
-    `existingProduct.marketDemand` has the DEFAULT report_role — KEY_VALUE — so "Market demand: Not
-    known" stood in the per-row extras beneath that table. Only-fill-blanks then made both look
-    answered to the designer as well.
-
-    The record's own answer is not lost: `existingProduct.recordType` still receives OTHER through
-    `_PRODUCT_TYPE_TO_MEMBER`, which is the entire reason that box exists.
-    """
     untouched = await _hydrate(
         monkeypatch, "existingProduct", {"productRef": "prd_1"},
         rows={"productdocumentation": [
@@ -2745,10 +1659,6 @@ async def test_an_enum_member_that_is_only_ever_a_form_default_is_not_carried_as
         f"an unanswered maker arrived as {untouched_tool.get('maker')!r}"
     )
 
-    # AND THE OTHER HALF, which is what stops this becoming "blank everything vague". A token a
-    # researcher had to open the dropdown to reach is an answer and still crosses — including
-    # MakerType.OTHER, which reads like MarketDemand.UNKNOWN and is nothing like it, because
-    # nothing on the tool form defaults to it.
     chosen = await _hydrate(
         monkeypatch, "existingProduct", {"productRef": "prd_1"},
         rows={"productdocumentation": [
@@ -2776,16 +1686,12 @@ async def test_a_fully_documented_tool_arrives_whole(monkeypatch):
     assert data["traditionType"] == "TRANSITIONAL", "HYBRID must be translated, not dropped"
     assert data["lengthCm"] == pytest.approx(243.84)
     assert data["breadthCm"] == pytest.approx(121.92)
-    # The tool's two heights, side by side, which is the whole point of keeping both: 30 in
-    # converted, and the unit-less 180 copied across as the record stated it.
     assert data["heightCm"] == pytest.approx(76.2)
     assert data["heightAsRecorded"] == 180 and data["weightAsRecorded"] == 95
     assert data["yearsInUse"] == 18
     assert data["photoCaption"] == "The loom in the shed"
 
 
-#: The exact sentences the two fixtures above must produce. Written out rather than rebuilt from
-#: the table, so a change to the grammar has to be typed here as well as read there.
 _PRODUCT_METHOD_NOTE = (
     "On the product record: length (vision model estimate), breadth (photo measurement)"
 )
@@ -2793,34 +1699,11 @@ _TOOL_METHOD_NOTE = "On the tool record: length (vision model estimate)"
 
 
 async def test_the_measurement_method_crosses_with_the_number_it_qualifies(monkeypatch):
-    """A HYDRATED CENTIMETRE FIGURE NO LONGER ATTRIBUTES A MACHINE'S GUESS TO A PERSON.
-
-    THE DEFECT. `records.merge_field_provenance` stamps `method: "VISION_MODEL"` beside
-    `{by, byName, at}` on a dimension a vision model estimated off a photograph of the object on a
-    grid sheet, and `record_fields.dims_with_method` prints that on the record sheet, every .xlsx
-    sheet and both CSV exports. Hydration copied the NUMBER and left the stamp on the record — while
-    `hydrate_entries` stamped the entry with `HydrationSource(author_id=row.createdById)`, whose NAME
-    both field-provenance views render. So the workshop entry, and then the .docx a ministry officer
-    reads, asserted that a named human had measured a number a model guessed: the exact defect
-    `services/measurement_provenance` exists to end, one layer further out.
-
-    WHY IT NAMES THE RECORD AND NOT THE BOX. Hydration only fills BLANKS, so a designer who measured
-    the saree themselves keeps their own length beside a hydrated width. A per-dimension label would
-    then sit over the designer's own figure and call it a model's estimate — a new false claim in
-    place of the old one. The sentence is about the RECORD's columns, so it stays true whatever the
-    designer typed, and it says BREADTH because the product record's column is `breadthInches`.
-
-    WHY IT NAMES BOTH METHODS SEPARATELY. The product fixture's length is a vision model's and its
-    breadth is arithmetic over marks somebody placed; one trailing clause would overstate the
-    machine's part on a number a person produced. `dims_with_method` splits its own cell for the
-    same reason.
-    """
     product = await _hydrate(
         monkeypatch, "existingProduct", {"productRef": "prd_1"},
         rows={"productdocumentation": [_product_row()]},
     )
     assert product["measurementMethodNote"] == _PRODUCT_METHOD_NOTE
-    # The height was TYPED, so it is absent from the sentence rather than described.
     assert "height" not in product["measurementMethodNote"]
 
     tool = await _hydrate(
@@ -2828,19 +1711,10 @@ async def test_the_measurement_method_crosses_with_the_number_it_qualifies(monke
         rows={"tooldocumentation": [_tool_row()]},
     )
     assert tool["measurementMethodNote"] == _TOOL_METHOD_NOTE
-    # UNRECORDED prints nothing, so the breadth is unqualified rather than described as unknown.
     assert "breadth" not in tool["measurementMethodNote"]
 
 
 async def test_a_record_whose_dimensions_were_all_typed_says_nothing_at_all(monkeypatch):
-    """TYPED AND UNRECORDED ARE SILENT HERE FOR THE REASON THEY ARE SILENT ON THE RECORD SHEET.
-
-    Every row written before `measurement_provenance` existed carries UNRECORDED, including the ones
-    a model produced, so appending "method not recorded" to most of the database would be noise that
-    trains a reader to skip the clause on the one row where it matters — `record_fields.METHOD_CLAUSES`
-    argues both at length. A blank box is the honest rendering of a legacy row, and this asserts the
-    workshop agrees with the record sheet about that rather than inventing a third answer.
-    """
     typed = await _hydrate(
         monkeypatch, "existingProduct", {"productRef": "prd_1"},
         rows={"productdocumentation": [_product_row(extraMetadata={"fieldProvenance": {
@@ -2863,13 +1737,6 @@ async def test_a_record_whose_dimensions_were_all_typed_says_nothing_at_all(monk
 
 
 async def test_the_note_never_names_a_dimension_that_has_no_number_to_qualify(monkeypatch):
-    """A CLAUSE OVER A BLANK BOX IS A CLAIM ABOUT NOTHING.
-
-    A stamp can outlive its value: `merge_field_provenance` only ever ADDS to the blob, so a
-    researcher who fills in a length, saves, then clears it leaves the method behind. Naming it
-    would put "length (vision model estimate)" on an entry whose Length box the record left empty —
-    and the designer would then type their own tape reading under a sentence crediting a model.
-    """
     data = await _hydrate(
         monkeypatch, "existingProduct", {"productRef": "prd_1"},
         rows={"productdocumentation": [_product_row(lengthInches=None)]},
@@ -2879,13 +1746,6 @@ async def test_the_note_never_names_a_dimension_that_has_no_number_to_qualify(mo
 
 
 def test_the_workshop_prints_the_record_sheets_own_two_phrases_and_not_a_third_vocabulary():
-    """ONE STAMP MUST NOT BE DESCRIBED IN TWO VOCABULARIES ON TWO SURFACES.
-
-    `record_fields.METHOD_CLAUSES`'s own comment calls this "a cross-surface contract" and names the
-    drift it guards against. The workshop note IMPORTS that dict rather than restating it, so this
-    test pins the two phrases themselves — the thing a future surface has to be written against —
-    and pins that the note is built out of them rather than out of a paraphrase.
-    """
     assert record_fields.METHOD_CLAUSES == {
         "VISION_MODEL": "vision model estimate",
         "PHOTO_GEOMETRY": "photo measurement",
@@ -2897,32 +1757,11 @@ def test_the_workshop_prints_the_record_sheets_own_two_phrases_and_not_a_third_v
     for clause in record_fields.METHOD_CLAUSES.values():
         assert clause in _PRODUCT_METHOD_NOTE or clause in _TOOL_METHOD_NOTE
 
-    # TYPED and UNRECORDED are absent by design, not by omission — see the dict's own comment.
     assert "TYPED" not in record_fields.METHOD_CLAUSES
     assert measurement_provenance.UNRECORDED not in record_fields.METHOD_CLAUSES
 
 
 def test_the_method_carry_covers_exactly_the_columns_a_method_can_be_stamped_on():
-    """A PAIR FOR A COLUMN NOTHING STAMPS WOULD BE A SENTENCE ABOUT A STAMP THAT IS NEVER WRITTEN.
-
-    `measurement_provenance.method_stamps` drops a marker naming anything outside
-    `DIMENSION_FIELDS`, and that set is `{lengthInches, breadthInches, heightInches}`. So the tool's
-    five unit-less columns (`height`, `width`, `thickness`, `weight`, `radius`) can never carry a
-    method. This is the assertion that keeps `_METHOD_CARRIED_DIMENSIONS` honest in both
-    directions: nothing outside the stampable set, and every payload key it names is really hydrated.
-
-    THIS TEST WAS A PIN ON THE OLD SHAPE AND IT WENT RED WHEN THE SHAPE CHANGED — CORRECTED
-    2026-08-27. Its last line read `assert "heightInches" not in tool_columns` with the message
-    "ToolDocumentation has no heightInches column", and the paragraph above it cited
-    `measurement_provenance`'s section WHAT THE RECORD HALF STILL CANNOT REACH, which named
-    "the tool's missing `heightInches` column as the reason an accepted vision-model tool height
-    is recorded as nothing". Both have expired in the same change: the column landed (additive,
-    nullable, `20260827120000_tool_height_inches`), `_METHOD_CARRIED_DIMENSIONS` gained its third
-    tool pair, and that section is now WHAT THE RECORD HALF CAN NOW REACH, AND THE PARAGRAPH THAT
-    USED TO SAY OTHERWISE. The pin is INVERTED rather than deleted, because the property it was
-    really guarding — that the tool carries the same stampable triple the product does — is worth
-    asserting in the new direction too, and a deleted assertion guards nothing.
-    """
     table = dw._METHOD_CARRIED_DIMENSIONS
     assert set(table) <= set(dw.REFERENCE_MODELS)
 
@@ -2932,8 +1771,6 @@ def test_the_method_carry_covers_exactly_the_columns_a_method_can_be_stamped_on(
             f"{model} pairs a method against {sorted(columns - measurement_provenance.DIMENSION_FIELDS)}, "
             f"which method_stamps drops — the note would describe a stamp nothing writes"
         )
-        # And the payload keys are the ones the mapping actually carries, so a renamed target
-        # cannot leave the note qualifying a dimension the entry never receives.
         carried = {
             source
             for path, mapping in REFERENCE_HYDRATION.items()
@@ -2945,27 +1782,14 @@ def test_the_method_carry_covers_exactly_the_columns_a_method_can_be_stamped_on(
             f"{model} names payload keys {sorted(payload_keys - carried)} that no mapping hydrates"
         )
 
-    # The five unit-less tool columns are named here so that adding one is a deliberate act.
     tool_columns = {column for _payload, column in table["ToolDocumentation"]}
     assert tool_columns.isdisjoint({"height", "width", "thickness", "weight", "radius"})
-    # And the triple is COMPLETE, which is the half this line used to assert the opposite of.
-    # Narrowing it back to two would silently stop carrying a measured tool height that the
-    # record now holds in a column that states its unit.
     assert tool_columns == {"lengthInches", "breadthInches", "heightInches"}, (
         "the tool's method carry is the same stampable triple as the product's"
     )
 
 
 async def test_the_method_note_is_recomputable_by_the_divergence_path(monkeypatch):
-    """`canonical_divergence` resolves the canonical value by calling `spec.data` AGAIN, with two
-    arguments — so a key it cannot reproduce is reported to an admin as diverged on every audit, for
-    ever. `_media_note`'s docstring records what that already cost once ("EVERY artisan with a
-    photograph read as diverged") and an audit that flags everything flags nothing.
-
-    The note is therefore built inside the data lambda and off the row, never inside
-    `hydrate_entries` where there is no row in hand. This asserts the property directly: the same
-    row, resolved twice by the two paths, gives the same sentence.
-    """
     row = _product_row()
     canonical = dw.REFERENCE_MODELS["ProductDocumentation"].data(row, None)
     hydrated = await _hydrate(
@@ -2977,12 +1801,6 @@ async def test_the_method_note_is_recomputable_by_the_divergence_path(monkeypatc
 
 
 async def test_where_a_tool_was_obtained_is_not_guessed_from_who_made_it(monkeypatch):
-    """``tool.source`` promised a carry it never had. It now promises nothing and delivers nothing.
-
-    Demoted rather than mapped: ``ToolDocumentation`` has no column for where a tool was obtained,
-    and answering "where obtained: carpenter" from ``maker`` would be a plausible wrong sentence in
-    a submitted report.
-    """
     from app.services.stage_definitions import FROM_REF
 
     assert FROM_REF not in _field("tool", "source").details
@@ -2997,13 +1815,6 @@ async def test_where_a_tool_was_obtained_is_not_guessed_from_who_made_it(monkeyp
 async def test_a_documented_process_reaches_the_overview_whole_including_its_sub_steps(
     monkeypatch,
 ):
-    """THE SUB-STEPS REACHED NOTHING ANYWHERE, and this is where they land.
-
-    ``processStep.processRef`` refuses ``steps`` and ``preProcessAvailable`` for good reasons —
-    a whole sequence printed inside one of its own steps, repeated on every row naming the same
-    process. Those reasons are about the ROW. The stage-5 singleton is one per workshop, so the
-    sequence prints once, above the steps table.
-    """
     data = await _hydrate(
         monkeypatch, "traditionalProcess", {"processRef": "prc_1"},
         rows={"process": [_process_row()]},
@@ -3023,21 +1834,6 @@ async def test_a_documented_process_reaches_the_overview_whole_including_its_sub
 
 
 def test_a_step_with_two_notes_is_still_one_bullet_in_the_report():
-    """THREE DOCUMENTED STEPS USED TO PRINT AS FIVE BULLETS, TWO OF THEM UNNUMBERED.
-
-    `documentedSteps` is a LONG_TEXT with `report_role=BULLETS`, and the renderer's pre-promotion
-    path for one of those replaces every semicolon with a newline and then splits on newlines,
-    one bullet per piece; the Android report screen is a port of the same line. `_step_lines`
-    embedded the note verbatim and `.strip()` cannot touch a newline INSIDE a string, so a step
-    whose note came from `MultiNoteInput` — which joins a researcher's several notes with a
-    blank line, on the web form and on the handset alike — split at the blank line and printed
-    its second note as its own bullet, with no number in
-    front of it. `DocumentBuilder.bullets` drops the empty item between them, so there was not even
-    a gap to notice. A ministry officer counted more steps than the researcher documented.
-
-    THE ASSERTION THAT MATTERS IS THE LAST ONE: it re-runs the renderer's own split over the value
-    and requires the count to be unchanged. Anything else would pass while the report still broke.
-    """
     process = _process_row(steps=[
         SimpleNamespace(name="Tying", stepType="SEQUENTIAL", sortOrder=0,
                         notes="Use cotton thread\n\nKnots must be tight"),
@@ -3061,12 +1857,6 @@ def test_a_step_with_two_notes_is_still_one_bullet_in_the_report():
 
 
 async def test_the_overview_narrative_the_designer_writes_is_never_overwritten(monkeypatch):
-    """``processOverview`` is the DESIGNER's required narrative about what they observed.
-
-    The process record's notes are what a researcher wrote months earlier somewhere else. Landing
-    the second in the first would put two authors in one box on every workshop whose designer had
-    not typed yet, and no reader of the .docx could tell which they were reading.
-    """
     assert "processOverview" not in _targets("traditionalProcess.processRef")
     data = await _hydrate(
         monkeypatch, "traditionalProcess", {"processRef": "prc_1"},
@@ -3076,7 +1866,6 @@ async def test_the_overview_narrative_the_designer_writes_is_never_overwritten(m
 
 
 async def test_a_process_step_row_still_receives_only_the_three_it_should(monkeypatch):
-    """The narrow mapping stays narrow. Widening it re-creates the defect the singleton avoids."""
     assert _targets("processStep.processRef") == {"name", "description", "documentedFor"}
     data = await _hydrate(
         monkeypatch, "processStep", {"stepNumber": 1, "processRef": "prc_1"},
@@ -3085,48 +1874,8 @@ async def test_a_process_step_row_still_receives_only_the_three_it_should(monkey
     assert "documentedSteps" not in data and "preProcessAvailable" not in data
 
 
-# --------------------------------------------------------------------------------------
-# `documentedFor` has TWO writers, and which one wins depends on the save
-# --------------------------------------------------------------------------------------
-#
-# WHY THIS BLOCK EXISTS: THE MECHANISM WAS DESCRIBED AND NEVER MEASURED. Four places — the two notes
-# in `stage_schema.REFERENCE_HYDRATION`, the mirror of them in `frontend/lib/designWorkshops.ts`, and
-# the docstring of `cascade-process-product-unit.spec.ts`'s last case — said that because hydration
-# walks fields in DECLARATION order and `productRef` is declared immediately before `processRef`,
-# "the product's own answer lands first and this pass sees a filled box and leaves it alone — the
-# designer's pick wins". The first half is true. The conclusion is true of only SOME saves, and the
-# case it is false in is the cascade's ordinary path.
-#
-# `hydrate_entries` has TWO rules, not one. Only-fill-blanks is the rule for an unchanged ref; a ref
-# that has been RE-POINTED clears every single-valued target of its own mapping first and then
-# rewrites them, so that artisan B's name can never be stored beside artisan A's phone. Change the
-# product and the cascade clears the process, the designer re-picks it, and ONE save then carries two
-# re-pointed refs — so `processRef`'s clear pops the `documentedFor` that `productRef` wrote a moment
-# earlier and writes its own. Declaration order decides who writes FIRST; the re-point decides who
-# writes LAST, and last wins.
-#
-# NOTHING IS BROKEN BY THAT, which is why the code is left alone and these tests pin it rather than
-# a fix: both writers name the same product whenever the stored pair is consistent, and the cascade
-# is what keeps it consistent. What differs is the PROVENANCE MODEL on the box, and — on a pair that
-# is NOT consistent, which `reference_options` refuses to offer but nothing refuses to store — WHICH
-# product the box names. `test_a_stale_pair_prints_the_processs_parent` is that case, recorded as a
-# known limit rather than claimed closed.
-#
-# AND IT IS NOT NEW BEHAVIOUR. `existingProduct.artisanName` is the identical shape and predates all
-# of this: `artisanRef` (declared first) and `productRef` both write it, the artisan cascade forces
-# both to be re-pointed in one save exactly as the process cascade does, and the product record's
-# denormalised `artisanName` therefore wins there too. Those three targets — measured off the
-# registry by `test_exactly_three_boxes_have_two_writers` — are the whole population of this rule.
-
 
 def test_exactly_three_boxes_have_two_writers():
-    """The population of the last-writer-wins rule, derived rather than remembered.
-
-    A FOURTH would arrive silently: nothing in `validate_registry` or `validate_reference_carry` has
-    an opinion about two mappings on one entity naming one target, and the value is usually the same
-    string, so the first symptom is a provenance stamp naming the wrong record. Listed here with the
-    declaration indices, because the order is what the notes in `stage_schema` reason from.
-    """
     doubled: dict[tuple[str, str], list[tuple[int, str, str]]] = {}
     for _stage, entity in all_entities():
         order = [f.key for f in entity.fields]
@@ -3137,8 +1886,6 @@ def test_exactly_three_boxes_have_two_writers():
                 )
     two_writers = {k: sorted(v) for k, v in doubled.items() if len(v) > 1}
     assert two_writers == {
-        # The parent is declared first in all three, which is what the notes rely on for the
-        # only-fill-blanks case and what makes the re-point case the exception rather than the rule.
         ("traditionalProcess", "documentedFor"): [(0, "productRef", "name"),
                                                   (1, "processRef", "productName")],
         ("processStep", "documentedFor"): [(1, "productRef", "name"),
@@ -3154,13 +1901,6 @@ def test_exactly_three_boxes_have_two_writers():
 
 
 async def test_the_product_the_designer_picked_answers_documented_for(monkeypatch):
-    """The only-fill-blanks case, which is the one the four notes describe correctly.
-
-    A fresh row carrying both refs: `productRef` is declared first, writes the product's own `name`,
-    and `processRef`'s identical pair then finds a filled box and leaves it alone. The stamp is the
-    assertion that matters — the two writers produce the same STRING here, so a test that read only
-    the value would pass whichever of them had won.
-    """
     for entity_key, sent in (
         ("traditionalProcess", {"productRef": "prd_1", "processRef": "prc_1"}),
         ("processStep", {"stepNumber": 1, "productRef": "prd_1", "processRef": "prc_1"}),
@@ -3175,17 +1915,6 @@ async def test_the_product_the_designer_picked_answers_documented_for(monkeypatc
 
 
 async def test_re_picking_the_process_hands_the_box_to_the_process(monkeypatch):
-    """THE CASCADE'S ORDINARY PATH, AND THE ONE THE NOTES USED TO DESCRIBE WRONGLY.
-
-    Change the product, the cascade clears the process, the designer picks a new one: ONE save with
-    both refs re-pointed. `processRef`'s clear pops the `documentedFor` `productRef` has just written
-    and rewrites it from the PROCESS's copy of its parent's name.
-
-    The value is right — both records name product B, because the cascade only offered B's processes —
-    and the stamp is what shows who actually wrote it. Asserted rather than corrected: making
-    `productRef` win would mean teaching `hydrate_entries` not to clear a box another ref answered in
-    the same save, which changes the artisan cascade too and buys nothing while the pair is consistent.
-    """
     rows = {
         "productdocumentation": [_product_row(), _product_row(id="prd_2",
                                                               productName="Bandha dupatta")],
@@ -3204,19 +1933,9 @@ async def test_re_picking_the_process_hands_the_box_to_the_process(monkeypatch):
 
 
 async def test_a_stale_pair_prints_the_processs_parent(monkeypatch):
-    """A KNOWN LIMIT, RECORDED SO IT IS NOT CLAIMED CLOSED.
-
-    `reference_options` refuses to OFFER a process that does not belong to the chosen product;
-    `coerce_value` checks type and length only, so nothing refuses to STORE the pair. A stale form or
-    a direct API caller can post product B beside a process belonging to product A — and because the
-    re-pointed `processRef` writes last, the box then prints A: the product the designer did NOT
-    choose. Adding `productRef` to the hydration table narrowed the window (it wins whenever the
-    process is unchanged or blank) and did not close it, and the note in `stage_schema` says so now.
-    """
     rows = {
         "productdocumentation": [_product_row(), _product_row(id="prd_2",
                                                               productName="Bandha dupatta")],
-        # `prc_9` is offered under no product the designer can pick: its parent is product A.
         "process": [_process_row(), _process_row(id="prc_9", name="Stale pick",
                                                  product=SimpleNamespace(
                                                      productName="Sambalpuri saree"))],
@@ -3234,36 +1953,8 @@ async def test_a_stale_pair_prints_the_processs_parent(monkeypatch):
     )
 
 
-# ── THE HALF-DONE CASCADE: PARENT RE-POINTED, CHILD CLEARED, SAVED ───────────────────────────────
-#
-# The four tests above cover both refs POINTING somewhere. This block covers the state BETWEEN the two
-# halves of the cascade, which is the one the notes described wrongly and no test reached: the browser
-# and (now) the handset clear `processRef` the instant the product changes, and one autosave is enough
-# to store the row in that state.
-#
-# `hydrate_entries` used to skip a blank ref outright (`if not ref_id: continue`), so the clear that
-# pops a re-pointed ref's targets was never reached — while `productRef` rewrote `documentedFor`. The
-# row that got stored described product A's process under product B's name with no ref left to
-# re-resolve it by, and nothing in the repository could flag it: `canonical_divergence` reads only
-# fields carrying a `reference` stamp, the surviving stamps still named process A and still re-resolved
-# to exactly what was stored, and `coerce_value` checks type and length and never coherence.
-#
-# `design_workshops._clear_cascade_orphans` is the fix, and the four tests here are its whole contract:
-# it fires on the cascade, and it does NOT fire on the three neighbouring shapes that look like it.
-
 
 async def test_the_half_done_cascade_clears_the_process_it_no_longer_names(monkeypatch):
-    """THE ROW THIS EXISTS TO STOP BEING WRITTEN, asserted box by box.
-
-    Product A -> process P of A -> change the product to B -> save. `productRef` is re-pointed and
-    `processRef` is gone, so every value copied from P goes with it and the box the designer's OWN
-    pick answers is answered from that pick.
-
-    `documentedFor` IS THE ASSERTION THAT MATTERS. It must read B and it must be stamped to the
-    PRODUCT: the pop runs in a pass BEFORE hydration precisely so the parent's write lands afterwards
-    and is not popped back out. If this reads "Sambalpuri saree" the clear is running too late; if it
-    is missing entirely, it is running too late AND popping the parent's own answer.
-    """
     rows = {
         "productdocumentation": [_product_row(id="prd_2", productName="Bandha dupatta")],
     }
@@ -3285,21 +1976,11 @@ async def test_the_half_done_cascade_clears_the_process_it_no_longer_names(monke
     assert entry.data["documentedFor"] == "Bandha dupatta"
     stamp = entry.hydrated["documentedFor"]
     assert (stamp.model, stamp.source_key) == ("ProductDocumentation", "name")
-    # Everything the cleared process had answered is gone rather than standing under the new name.
     left = sorted(k for k in stale if k != "documentedFor" and k in entry.data)
     assert left == [], f"these still describe the process the row no longer names: {left}"
 
 
 async def test_the_half_done_cascade_clears_a_process_steps_required_name(monkeypatch):
-    """THE SAME RULE ON THE COLLECTION, WHERE THE TARGET IS REQUIRED AND PRINTS IN A TABLE.
-
-    `processStep.name` is `required=True` and a TABLE_COLUMN, so the stale value was the most visible
-    of the lot — a step named after another product's process, in the report's step table, under that
-    product's name. It is cleared, and the blank that replaces it is the recoverable direction: the
-    designer sees it, the completeness score counts it and the next submit refuses it, whereas the
-    stale name is invisible and prints. `validate_entry` has already run by the time hydration writes,
-    which is why this is asserted rather than assumed.
-    """
     entry = await _hydrate_entry(
         monkeypatch, "processStep",
         {"stepNumber": 1, "productRef": "prd_2",
@@ -3315,17 +1996,6 @@ async def test_the_half_done_cascade_clears_a_process_steps_required_name(monkey
 
 
 async def test_unlinking_a_participant_still_keeps_the_name_it_filled_in(monkeypatch):
-    """THE DELIBERATE RULE THE CLEAR MUST NOT WEAKEN, and it is the reason the condition is narrow.
-
-    `StageReferenceField` states it outright: "Only the reference is cleared. The name, village and
-    phone it filled in STAY: they are what the designer confirmed in the room, and a report that loses
-    a participant's name because somebody unlinked a duplicate artisan record is the failure the copy
-    exists to prevent."
-
-    `participant.artisanRef` declares no `ref_filter_by`, so it is not a cascaded child and nothing
-    here can reach it. Asserted anyway, because the cheap version of the orphan clear — "pop on any
-    blank ref that used to name a record" — passes every test in the block above and breaks this one.
-    """
     entry = await _hydrate_entry(
         monkeypatch, "participant", {"name": "Latha Devi", "village": "Barpali"},
         rows={}, previous={"artisanRef": "art_1", "name": "Latha Devi", "village": "Barpali"},
@@ -3335,19 +2005,6 @@ async def test_unlinking_a_participant_still_keeps_the_name_it_filled_in(monkeyp
 
 
 async def test_clearing_the_product_too_leaves_the_row_uniformly_stale(monkeypatch):
-    """A CLEARED PARENT IS NOT THIS RULE'S BUSINESS, and the reason is the defect's own shape.
-
-    What made the half-done cascade worse than plain staleness is that ONE of the seven boxes had a
-    second writer, so the row contradicted ITSELF. With `productRef` blank nothing rewrites
-    `documentedFor`, so all seven go stale together and the row stays a true description of process A
-    — merely not of the row's current pick, which is the documented behaviour of an unlink and is the
-    designer's to correct.
-
-    It is also the clause that makes the undecidable case harmless: `validate_entry` drops blank keys,
-    so "the parent was cleared" and "this build never heard of the parent" are the same absence in
-    `data`. Requiring the parent to be NON-BLANK is what stops a build older than `productRef` from
-    tripping the clear — see the test below.
-    """
     entry = await _hydrate_entry(
         monkeypatch, "traditionalProcess",
         {"documentedFor": "Sambalpuri saree", "documentedProcessName": "Tie and dye"},
@@ -3360,12 +2017,6 @@ async def test_clearing_the_product_too_leaves_the_row_uniformly_stale(monkeypat
 
 
 async def test_a_build_that_never_sends_the_product_cannot_trip_the_clear(monkeypatch):
-    """A HANDSET OLDER THAN THE CASCADE CLEARS ITS PROCESS AND LOSES NOTHING ELSE.
-
-    `productRef` is new, so a deployed APK sends `processRef` and no product at all. A designer on
-    that build who unlinks the process is performing the ordinary unlink of the test two above, and it
-    must behave like one — not like a cascade, which is a gesture that build cannot even make.
-    """
     entry = await _hydrate_entry(
         monkeypatch, "traditionalProcess",
         {"documentedFor": "Sambalpuri saree", "documentedProcessName": "Tie and dye"},
@@ -3377,19 +2028,6 @@ async def test_a_build_that_never_sends_the_product_cannot_trip_the_clear(monkey
 
 
 async def test_the_older_artisan_cascade_gets_the_same_treatment(monkeypatch):
-    """THE RULE IS WRITTEN OFF `ref_filter_by`, SO THE CASCADE THAT PREDATES STAGE 5 IS COVERED TOO.
-
-    `existingProduct.productRef` is narrowed by `artisanRef`, and `existingProduct.artisanRef` is a
-    second writer of `artisanName`. So the half-done cascade there has exactly the shape stage 5 has:
-    change the artisan, the product is cleared, `artisanName` is rewritten to artisan B — and the
-    product's name, material, tools, price and remarks stayed artisan A's product's. It was
-    survivable while the visible mismatch was one product name in one cell of a collection; it is the
-    same defect, and it is fixed by the same pass rather than by a stage-5 special case.
-
-    Asserted here rather than left to the general rule, because "the population is whatever the
-    registry declares" is a claim about a loop and this is the case that makes it true of a mapping
-    nobody was thinking about while writing it.
-    """
     stale = {
         "name": "Sambalpuri saree",
         "material": "Cotton yarn",
@@ -3409,14 +2047,6 @@ async def test_the_older_artisan_cascade_gets_the_same_treatment(monkeypatch):
 
 
 async def test_a_prototypes_source_product_goes_when_the_artisan_does(monkeypatch):
-    """THE FOURTH CASCADE, WHOSE PARENT WRITES NOTHING — so the row was stale rather than incoherent.
-
-    `prototype.productRef` is narrowed by `artisanRef` and `prototype.artisanRef` has no hydration
-    mapping at all, so nothing rewrote a box beside the stale one. It is popped anyway: "Developed
-    from: <a product documented for the artisan this row no longer names>" is the same wrong
-    attribution one step removed, and a rule that fired on three of four cascades would be a rule
-    nobody could state or predict.
-    """
     entry = await _hydrate_entry(
         monkeypatch, "prototype",
         {"artisanRef": "par_2", "productName": "Sambalpuri saree"},
@@ -3428,18 +2058,6 @@ async def test_a_prototypes_source_product_goes_when_the_artisan_does(monkeypatc
 
 
 async def test_the_clear_runs_even_when_the_payload_resolves_no_record_at_all(monkeypatch):
-    """THE PLACEMENT, NOT THE RULE — and it is why the pass is not folded into the loop below.
-
-    `hydrate_entries` returns early when no entry names a record it could resolve. A row that goes
-    from "product A, process P" to "product B, no process" DOES resolve one, but the assertion here is
-    about the ordering guarantee rather than about reachability: the pop is a separate pass that runs
-    before both the early return and the write loop, so the parent's own write is the LAST thing to
-    touch `documentedFor` regardless of declaration order.
-
-    Written by re-pointing the product at a record the fake client does not hold. Nothing resolves, so
-    the write loop has nothing to say — and the stale narrative still has to go, because the row now
-    names a product that is not the one the narrative describes.
-    """
     entry = await _hydrate_entry(
         monkeypatch, "traditionalProcess",
         {"productRef": "prd_missing", "documentedFor": "Sambalpuri saree",
@@ -3456,14 +2074,6 @@ async def test_the_clear_runs_even_when_the_payload_resolves_no_record_at_all(mo
 
 
 async def test_an_older_client_sending_only_the_process_still_fills_the_box(monkeypatch):
-    """WHY THE CHILD'S PAIR IS KEPT RATHER THAN REMOVED, as an executing case.
-
-    A build that predates the cascade sends `processRef` and no `productRef`. The parent's pair
-    cannot fire, and `processRef`'s `productName` is what stops the box printing blank. (The other
-    reason is archive-wide: `Process.data` must go on producing `productName` or
-    `entry_provenance.canonical_divergence` reports every `documentedFor` stamped before today as
-    diverged — but that is about the LAMBDA's keys, and this is about the mapping that consumes one.)
-    """
     entry = await _hydrate_entry(
         monkeypatch, "traditionalProcess", {"processRef": "prc_1"},
         rows={"process": [_process_row()]},
@@ -3474,28 +2084,6 @@ async def test_an_older_client_sending_only_the_process_still_fills_the_box(monk
 
 
 async def test_a_documented_craft_reaches_the_cover_page_whole(monkeypatch):
-    """THE COVER PAGE'S CARRY WAS THE ONE NOBODY EXECUTED.
-
-    `workshopSetup.craftName` is `required=True` and `report_role=COVER`, and `craftLocalName` is
-    COVER beside it — the craft's name in the local script, printed on the front of every document
-    handed to a ministry officer. Both were pinned only by STATIC checks: the mapping table, the
-    `fromref` marker and the browser mirror. Nothing executed them. So a `coerce_value` change, a
-    `_reference_data` change or a rename of the target would have left the whole developer-machine
-    suite green while the local-script name went blank on the cover — and the more severe variant
-    is a strict save refused on stage 1 for a box the picker was supposed to fill.
-
-    Written in the same generic shape as its four siblings, so a pair added to the mapping is
-    covered the moment it is added.
-
-    WHAT IT PROVES AND WHAT IT DOES NOT, because "it passed" means less here than elsewhere in this
-    file. It pins no behaviour this lane INTRODUCED — the craft carry already worked — so reverting
-    any source change made alongside it leaves this green. What it does is execute a path that was
-    only ever checked statically: its negative control is on the declarations it reads, and
-    deleting the ``craftLocalName`` pair from ``REFERENCE_HYDRATION["workshopSetup.craftRef"]``, or
-    renaming the target field, fails it here rather than on a ministry's cover page. Do not
-    "strengthen" it by asserting on something this lane changed; it is a coverage test and saying so
-    is the honest version.
-    """
     data = await _hydrate(
         monkeypatch, "workshopSetup", {"craftRef": "crf_1"}, rows={"craft": [_craft_row()]},
         photos={"crf_1": ("med_c1", "The loom shed at Barpali")},
@@ -3505,12 +2093,10 @@ async def test_a_documented_craft_reaches_the_cover_page_whole(monkeypatch):
 
     assert data["craftName"] == "Sambalpuri Ikat"
     assert data["craftLocalName"] == "ସମ୍ବଲପୁରୀ ବନ୍ଧ"
-    # The four that landed earlier in this session, executed rather than declared.
     assert data["craftCategory"] == "Weaving"
     assert data["craftPlace"] == "Barpali"
     assert data["craftDocumentedOn"] == "2024-11-05"
     assert data["craftPhoto"] == "med_c1"
-    # And the two this lane adds: under whose study, and what else is on file.
     assert data["craftDocumentedAtWorkshop"] == "Sambalpuri Ikat cluster survey, Barpali"
     assert data["craftMediaNote"] == (
         "Attached to the craft record: 1 photograph, 1 audio note, 1 document."
@@ -3518,19 +2104,6 @@ async def test_a_documented_craft_reaches_the_cover_page_whole(monkeypatch):
 
 
 async def test_where_a_record_was_documented_crosses_and_the_join_key_does_not(monkeypatch):
-    """THE HALF OF ``documentedOn``'S OWN SENTENCE THAT HAD NO FIELD.
-
-    ``participant.artisanRef`` and ``workshopSetup.craftRef`` are the two pickers declared
-    ALL_SCOPE, so a roster row and a cover page may both legitimately be filled from a record made
-    at a different cluster's workshop years earlier. ``documentedOn`` answers WHEN — its own comment
-    says the point is to "tell a roster row filled from a 2023 survey from one filled last week" —
-    and nothing answered WHERE, which is the reader's next question and the FIRST thing the record
-    page asks.
-
-    THE TITLE CROSSES AND THE ID DOES NOT, which is the same rule as every other by-value carry in
-    this table: a report is a historical document and must still print the workshop's name when the
-    workshop row has been renamed, merged or deleted.
-    """
     roster = await _hydrate(
         monkeypatch, "participant", {"artisanRef": "art_1"},
         rows={"artisan": [_artisan_row()]},
@@ -3538,9 +2111,6 @@ async def test_where_a_record_was_documented_crosses_and_the_join_key_does_not(m
     assert roster["documentedAtWorkshop"] == "Sambalpuri Ikat cluster survey, Barpali"
     assert "wsh_" not in str(roster), "the workshop id is a join key and must not be copied"
 
-    # NULLABLE, AND THE COMMON CASE. `Artisan.workshopId` is optional and the artisans documented
-    # before the column existed carry the WorkshopArtisan join instead, so an unset relation must
-    # leave the box blank rather than reaching for the join or inventing a name.
     unlinked = await _hydrate(
         monkeypatch, "participant", {"artisanRef": "art_1"},
         rows={"artisan": [_artisan_row(workshop=None)]},
@@ -3549,19 +2119,6 @@ async def test_where_a_record_was_documented_crosses_and_the_join_key_does_not(m
 
 
 async def test_what_a_record_has_on_file_is_stated_and_never_copied(monkeypatch):
-    """``_reference_photos`` RESOLVES ONE IMAGE, AND THE REST OF THE RECORD'S MEDIA SAID NOTHING.
-
-    A researcher who recorded an artisan's spoken introduction — which the record form's media card
-    asks for by name — or filmed a product being finished, produced material a designer standing in
-    the room would want, and no box on the row could say it existed. So a reader of the printed
-    roster or product table could not know to ask for it.
-
-    WHAT IS ASSERTED IS THE SHAPE OF THE CARRY AS MUCH AS ITS PRESENCE: a SENTENCE crosses and no
-    media id does. Both refusals are load-bearing and neither is squeamishness —
-    ``hydrate_entries`` seeds a gallery only when it is empty because the designer's own workshop
-    photographs live there, and a referenced record's files are entitlement-gated per file, which
-    ``_reference_photos`` resolves for exactly one image and no more.
-    """
     roster = await _hydrate(
         monkeypatch, "participant", {"artisanRef": "art_1"},
         rows={"artisan": [_artisan_row()]},
@@ -3569,9 +2126,6 @@ async def test_what_a_record_has_on_file_is_stated_and_never_copied(monkeypatch)
     assert roster["recordMediaNote"] == (
         "Attached to the artisan record: 1 photograph, 1 audio note."
     )
-    # The ids of the counted rows are nowhere on the entry. `photo` is the ONE image
-    # `_reference_photos` resolves, and no photos were offered to this call, so any med_… string
-    # appearing here would be the count leaking the files it is deliberately not carrying.
     assert "med_a1" not in str(roster) and "med_a2" not in str(roster)
 
     product = await _hydrate(
@@ -3582,9 +2136,6 @@ async def test_what_a_record_has_on_file_is_stated_and_never_copied(monkeypatch)
         "Attached to the product record: 1 photograph, 1 video."
     )
 
-    # NOTHING ATTACHED SAYS NOTHING, rather than "0 files". A box reading zero in a submitted report
-    # is a claim about the record; a blank one is the absence of a claim, and hydration only fills
-    # blanks, so a wrong sentence here would be permanent.
     silent = await _hydrate(
         monkeypatch, "existingProduct", {"productRef": "prd_1"},
         rows={"productdocumentation": [_product_row(media=[])]},
@@ -3595,20 +2146,6 @@ async def test_what_a_record_has_on_file_is_stated_and_never_copied(monkeypatch)
 async def test_a_tools_numbered_making_sequence_is_named_and_a_grid_frame_is_not_counted(
     monkeypatch,
 ):
-    """TWO MEDIA CARDS ON ONE RECORD PAGE, AND ONE STILL IMAGE REACHING THE REPORT.
-
-    The tool form mounts ``MediaCaptureField`` twice: "Process stages", whose captures it renames
-    ``STAGE_STEP_1``, ``STAGE_STEP_2``, … so they archive in order, and "Tool media" for video and
-    audio notes. A tool whose making was documented as a numbered sequence therefore reached the
-    workshop, and a ministry report, as a single photograph with nothing admitting the rest existed —
-    and the relation ledger's own entry for it said "one photograph per record" as though that were
-    the whole answer.
-
-    AND A SHEET OF RULED PAPER IS NOT FOOTAGE OF THE TOOL. The grid-measurement frame carries
-    ``extraMetadata.purpose = "MEASUREMENT_GRID"`` — the same three-surface marker
-    ``_reference_photos`` sorts LAST rather than counting as the record's photograph — so counting it
-    would overstate by one on exactly the tools that were measured most carefully.
-    """
     data = await _hydrate(
         monkeypatch, "tool", {"toolRef": "tul_1"}, rows={"tooldocumentation": [_tool_row()]},
     )
@@ -3617,9 +2154,6 @@ async def test_a_tools_numbered_making_sequence_is_named_and_a_grid_frame_is_not
         "of which 2 document the making in order."
     )
 
-    # ONE capture in the sequence, because a sentence in a ministry report reads as prose and not as
-    # a count: "of which 1 document the making" is the kind of thing a reader notices instead of the
-    # thing it is telling them.
     single = await _hydrate(
         monkeypatch, "tool", {"toolRef": "tul_1"},
         rows={"tooldocumentation": [_tool_row(media=[
@@ -3646,25 +2180,9 @@ async def test_a_tools_numbered_making_sequence_is_named_and_a_grid_frame_is_not
     )
 
 
-#: WHICH SUBJECT WORD EACH NOTE FIELD'S SENTENCE IS BUILT WITH.
-#:
-#: THE SUBJECT IS PART OF THE BOUND, WHICH THIS TEST USED TO ASSUME AWAY. `_media_note` prints
-#: "Attached to the <subject> record: …", so the sentence's fixed cost is the subject's own length —
-#: and measuring every field against one hard-coded "product" happened to be safe only because the
-#: other three subjects ("artisan", "tool", "craft") are no LONGER than it. "interview" is two
-#: characters longer, so the same twelve-digit bound is 202 rather than 200, and a shared intercept
-#: would have declared a real over-run safe. The subject is now measured per field.
-#: The subject word each field's data lambda passes, and WHETHER THAT CALL SITE PASSES A
-#: ``numbered_prefix``. The second half is what separates the bound a field DECLARES from the longest
-#: sentence it can actually be given: the numbered-making clause is 40 characters plus a sixth
-#: printed integer, and exactly one of the five call sites can produce it. Recording it here rather
-#: than in a comment is what lets the two tests below assert the formula AND the headroom, instead of
-#: asserting the formula and leaving a reader to assume it is tight.
 _MEDIA_NOTE_SUBJECTS = {
     ("participant", "recordMediaNote"): ("artisan", False),
     ("existingProduct", "recordMediaNote"): ("product", False),
-    # `ToolForm` renames every capture in the making-sequence card to `STAGE_STEP_<n>_<name>` on both
-    # the online upload loop and the queued offline array, which is the only numbered_prefix in use.
     ("tool", "recordMediaNote"): ("tool", True),
     ("workshopSetup", "craftMediaNote"): ("craft", False),
     ("artisanBaseline", "interviewMediaNote"): ("interview", False),
@@ -3672,17 +2190,6 @@ _MEDIA_NOTE_SUBJECTS = {
 
 
 def _widest_media_note(digits: int, subject: str = "product", *, numbered: bool = True) -> str:
-    """``_media_note``'s widest sentence when every count is ``digits`` digits wide.
-
-    Every type word present, and the numbered clause present when ``numbered`` — which is the only
-    shape in which all six of the sentence's integers are printed at once. ``subject`` is the literal
-    the data lambda passes, because it is inside the sentence and therefore inside the bound.
-
-    ``numbered=False`` IS WHAT A CALL SITE THAT PASSES NO ``numbered_prefix`` CAN ACTUALLY BE GIVEN,
-    and four of the five can only be given that. The default stays True because the DECLARED bounds
-    are derived from the widest sentence the function can build for a subject, deliberately — see
-    ``stage_definitions``' note on ``interviewMediaNote`` — and the two tests below want both numbers.
-    """
     n = 10 ** digits - 1
     rows = (
         [_media_row(mediaType="IMAGE", originalFilename="STAGE_STEP_1_x.jpg")] * n
@@ -3698,20 +2205,12 @@ def _widest_media_note(digits: int, subject: str = "product", *, numbered: bool 
 
 
 def test_every_media_note_field_is_measured_against_its_own_subject_word():
-    """The map above must name every field a ``_media_note`` sentence actually lands in.
-
-    Derived from the hydration table rather than typed twice: a source key whose value is a
-    ``_media_note`` sentence is one of the two the lambdas produce, so a sixth reference model that
-    carries a note and is not measured below fails here instead of shipping an unmeasured bound.
-    """
     landing: set[tuple[str, str]] = set()
     for path, mapping in REFERENCE_HYDRATION.items():
         entity_key, _, _field_key = path.partition(".")
         for source, target in mapping.items():
             if source in {"recordMediaNote", "craftMediaNote", "interviewMediaNote"}:
                 landing.add((entity_key, target))
-    # `traditionalProcess.recordMediaNote` is deliberately absent from the map: its sentence is
-    # composed by `_process_media_note`, which returns None until `MediaFile` gains a `processId`.
     landing.discard(("traditionalProcess", "recordMediaNote"))
     unmeasured = sorted(landing - set(_MEDIA_NOTE_SUBJECTS))
     assert unmeasured == [], (
@@ -3722,28 +2221,6 @@ def test_every_media_note_field_is_measured_against_its_own_subject_word():
 
 
 def test_the_media_note_cannot_overrun_the_bound_its_field_declares():
-    """``coerce_value`` REFUSES an over-length value rather than truncating it, so the bound is real.
-
-    A refused hydration is not a small thing: the field stays blank, the designer is shown an error
-    on a box they never touched, and the sentence that was supposed to tell a reader the footage
-    exists says nothing at all. The four notes this function fills declare ``max_length=200``.
-
-    ── A FORMULA AND NOT ONE MEASUREMENT, WHICH IS THE POINT OF THIS VERSION ──────────────────────
-    This test used to build a note at 9999 files per type, measure 152 characters and assert
-    152 <= 200. That pinned a HYPOTHESIS — "no record will ever hold more than 9999 files of one
-    type" — dressed as a bound, and the sentence it called "the longest ``_media_note`` can build" is
-    only the longest at four digits. The sentence prints SIX integers (five type words plus the
-    numbered-making clause), so it grows by exactly six characters per digit of width. That slope is
-    MEASURED below rather than assumed, and the bound is then asserted at a width no media table can
-    reach instead of at a width somebody guessed was enough.
-
-    Measured on this tree: 134 characters at one digit, 152 at four, 158 at five, 164 at six — i.e.
-    ``6 * digits + 128``. At TWELVE digits per count that is exactly 200, the declared bound, and at
-    thirteen it breaches — so the note fits until a single record holds 10^12 files of one type. The
-    guard is real (an over-length value is REFUSED, not truncated) and it is unreachable, which is
-    what a bound should say. Note that the twelve-digit assertion below is therefore EXACT rather
-    than slack: lowering ``max_length`` by one character fails it, which is the intended sensitivity.
-    """
     widths = {d: len(_widest_media_note(d)) for d in (1, 2, 3, 4, 5)}
     slopes = {widths[d + 1] - widths[d] for d in (1, 2, 3, 4)}
     assert slopes == {6}, (
@@ -3752,13 +2229,6 @@ def test_the_media_note_cannot_overrun_the_bound_its_field_declares():
         f"is extrapolated from this slope, so it has to be re-derived rather than nudged"
     )
 
-    # Twelve digits: 999,999,999,999 files of ONE type on ONE record. `_media_note`'s own docstring
-    # calls a roster of forty long-documented artisans the worst case in the repository.
-    #
-    # THE INTERCEPT IS PER SUBJECT NOW, and that is the change: the sentence's fixed cost includes
-    # the subject word, so a single "product"-derived intercept quietly under-measured the one field
-    # whose subject is longer than it. `interviewMediaNote` declares 202 for exactly this reason and
-    # the assertion below is what derives the two extra characters rather than trusting them.
     for (entity_key, field_key), (subject, _numbered) in sorted(_MEDIA_NOTE_SUBJECTS.items()):
         intercept = len(_widest_media_note(1, subject)) - 6
         unreachable = 6 * 12 + intercept
@@ -3771,32 +2241,6 @@ def test_the_media_note_cannot_overrun_the_bound_its_field_declares():
 
 
 def test_the_media_note_headroom_is_measured_rather_than_implied():
-    """WHICH OF THE FIVE BOUNDS ARE TIGHT AND WHICH ARE SLACK, ASSERTED INSTEAD OF ASSUMED.
-
-    The test above derives every declared bound from the WIDEST sentence ``_media_note`` can build for
-    a subject — all five type words AND the numbered-making clause, six printed integers. That is the
-    right thing to declare and it is not the right thing to believe about a particular field, because
-    only ONE of the five call sites passes a ``numbered_prefix``: ``tool.recordMediaNote``, for
-    ``ToolForm``'s ``STAGE_STEP_<n>`` sequence. The other four cannot produce the clause at all, so
-    their reachable worst case is 40 characters and one integer shorter than the number they declare.
-
-    ── WHY THIS TEST EXISTS AT ALL ──────────────────────────────────────────────────────────────
-    ``interviewMediaNote``'s comment claimed 202 was derived EXACTLY for its subject ("6*12 + 128",
-    plus two for the two extra letters of "interview") when 128 is the numbered-clause intercept and
-    that field passes no prefix. The number was right, the reasoning was not, and a reader trusting
-    the reasoning would tighten the bound to a value the formula does not support — or widen the wrong
-    one. So the split is measured here per field: the formula bound, the reachable bound, and the gap
-    between them, with the gap ASSERTED to be zero exactly where the clause is reachable.
-
-    Slack is the safe direction and is deliberately not trimmed: ``coerce_value`` REFUSES an
-    over-length value rather than truncating it, so a bound one character short leaves the box blank
-    and paints an error on a field the designer never touched. What is refused is a bound that nobody
-    can account for.
-    """
-    # EXTRAPOLATED FROM A MEASURED SLOPE AND AN INTERCEPT, never built at twelve digits — the same
-    # method the test above uses and for the same reason: a note at 10^12 files per type would be
-    # 5 x 10^12 fixture rows. The slopes are measured here rather than asserted from arithmetic, so a
-    # count added to or removed from either sentence shape fails this instead of skewing it.
     slopes = {
         numbered: {
             len(_widest_media_note(d + 1, "product", numbered=numbered))
@@ -3820,27 +2264,12 @@ def test_the_media_note_headroom_is_measured_rather_than_implied():
         intercept = len(_widest_media_note(1, subject, numbered=numbered)) - integers
         measured[key] = (declared, integers * 12 + intercept, formula)
 
-    # 1. THE INVARIANT, WHICH IS THE ONLY THING A BOUND HAS TO SATISFY: no field may declare less
-    #    than the widest sentence `_media_note` can build for its subject. `coerce_value` refuses
-    #    rather than truncates, so a bound below the formula is a box that blanks itself on a record
-    #    nobody could have predicted.
     short = {k: v for k, v in measured.items() if v[0] < v[2]}
     assert short == {}, (
         f"these declare a bound BELOW the widest sentence _media_note can build for their subject "
         f"at twelve digits: {short} as (declared, reachable, formula)"
     )
 
-    # 2. AND THE THREE NUMBERS PER FIELD, PINNED. This is the table the comments have to agree with,
-    #    and the shape of it is the correction: the family does NOT declare "the formula's number for
-    #    my subject". Four fields declare a flat 200 — the formula's number for the LONGEST of their
-    #    four subject words ("artisan" and "product", seven letters) — so `tool` (four letters) and
-    #    `craft` (five) ride on it with a few characters of extra slack. "interview" is NINE letters
-    #    and its formula number is 202, which is the whole of why it is the one field that could not
-    #    simply reuse 200.
-    #
-    #    The (declared - reachable) gap is the numbered-making clause: 40 characters plus a
-    #    twelve-digit sixth integer. Only `tool.recordMediaNote` passes a `numbered_prefix`, so it is
-    #    the only one whose gap is small; the other four cannot print the clause at all.
     assert measured == {
         ("participant", "recordMediaNote"): (200, 148, 200),
         ("existingProduct", "recordMediaNote"): (200, 148, 200),
@@ -3857,19 +2286,6 @@ def test_the_media_note_headroom_is_measured_rather_than_implied():
 
 
 def test_the_process_media_note_has_its_own_bound_and_its_own_grammar():
-    """``traditionalProcess.recordMediaNote`` is filled by ``_process_media_note``, not ``_media_note``.
-
-    THE TEST ABOVE USED TO ASSERT THIS BOX AGAINST THE OTHER FUNCTION'S LONGEST OUTPUT, which was
-    harmless over-strictness with a real hole in it: the one note of the five whose grammar is NOT
-    the one being measured was the one left unmeasured. This function prints a total and a per-step
-    breakdown ("N on the process itself, N across N step(s)") off an entirely different sentence,
-    counts no media TYPES, and — see the paragraph naming it in ``_media_note``'s docstring — does
-    not skip a measurement-grid frame, because nothing can attach one to a process record.
-
-    THREE integers, so the sentence is fixed text plus however many digits those three occupy.
-    Measured on this tree: 73 characters of fixed text, so breaching 200 needs 127 digits spread
-    across three counts.
-    """
     def note(own: int, steps: int, per_step: int) -> str:
         process = SimpleNamespace(
             media=[_media_row()] * own,
@@ -3879,12 +2295,10 @@ def test_the_process_media_note_has_its_own_bound_and_its_own_grammar():
         assert built is not None
         return built
 
-    # (own, steps, per-step) -> how many digits the three PRINTED integers occupy in total. The
-    # middle one is the sum across steps, so it is wider than either input.
     cases = {
-        (9, 9, 9): 1 + 2 + 1,               # own=9, per_step=81, covered=9
-        (99, 99, 99): 2 + 4 + 2,            # own=99, per_step=9801, covered=99
-        (999, 999, 999): 3 + 6 + 3,         # own=999, per_step=998001, covered=999
+        (9, 9, 9): 1 + 2 + 1,
+        (99, 99, 99): 2 + 4 + 2,
+        (999, 999, 999): 3 + 6 + 3,
     }
     fixed = {len(note(*args)) - digits for args, digits in cases.items()}
     assert len(fixed) == 1, (
@@ -3895,7 +2309,6 @@ def test_the_process_media_note_has_its_own_bound_and_its_own_grammar():
     fixed_chars = fixed.pop()
 
     bound = _field("traditionalProcess", "recordMediaNote").max_length
-    # 30 digits across three counts is already past anything a bigint column could hold.
     assert bound and fixed_chars + 30 <= bound, (
         f"traditionalProcess.recordMediaNote declares max_length={bound} and "
         f"`_process_media_note` spends {fixed_chars} characters before printing a single digit, "
@@ -3905,17 +2318,6 @@ def test_the_process_media_note_has_its_own_bound_and_its_own_grammar():
 
 
 async def test_the_pin_on_the_subjects_place_now_crosses_for_all_three_models(monkeypatch):
-    """INVARIANT 4 HAS TWO HALVES AND ONLY THE ARTISAN HONOURED BOTH.
-
-    The device's fix never crosses as an address — on this database every one of those fixes is the
-    desk the record was typed at, routinely 1,500 km from the village named on the same row — and the
-    STATED columns and the SUBJECT pin do. The product and tool carries landed the stated strings and
-    left the one coordinate that is genuinely about the village reaching nothing, because neither
-    entity declared a GEO field at all.
-
-    The GEO type is also the requirement-(b) answer for this box on both surfaces: it renders as the
-    same map picker the record page mounts, so nothing client-side is needed.
-    """
     product = await _hydrate(
         monkeypatch, "existingProduct", {"productRef": "prd_1"},
         rows={"productdocumentation": [_product_row()]},
@@ -3929,8 +2331,6 @@ async def test_the_pin_on_the_subjects_place_now_crosses_for_all_three_models(mo
             "a hand-dropped pin has no error bar, and `coerce_value` keeps the key optional so "
             "that 'somebody pointed at this' and 'a device measured this' stay distinguishable"
         )
-        # THE DESK'S OWN FIX, WHICH IS THE POINT OF THE INVARIANT. The fixture's Location carries a
-        # real one (Kharagpur, against an Odisha village) and none of it may appear anywhere.
         for provenance in ("22.314", "87.311", "Kharagpur", "Plot 14"):
             assert provenance not in str(data), (
                 f"{provenance!r} is provenance — the desk the record was typed at — and must never "
@@ -3942,18 +2342,6 @@ async def test_the_pin_on_the_subjects_place_now_crosses_for_all_three_models(mo
 
 
 async def test_a_field_promoted_to_rich_text_still_receives_the_records_prose(monkeypatch):
-    """THE PROMOTION THAT GIVES A DESIGNER THE EDITOR MUST NOT COST THEM THE CARRIED TEXT.
-
-    Seven hydration targets moved from TEXT/LONG_TEXT to RICH_TEXT so that the workshop offers the
-    same control the record page offers for the same fact — the record forms call these their
-    narrative boxes and give every one of them the full editor. The registry documents the promotion
-    as supported and backfill-free, on the grounds that ``coerce_value`` reads a plain string as
-    unformatted prose; this executes it, because "documented as safe" and "safe" are different
-    claims and the failure mode is a paragraph a researcher wrote arriving blank.
-
-    ``_reference_data`` flattens the source's own formatting on the way across (that is what stopped
-    ``{"blocks":…}`` printing into a ministry table), so what must survive is the TEXT.
-    """
     from app.services import rich_text
 
     product = await _hydrate(
@@ -3987,22 +2375,10 @@ async def test_a_field_promoted_to_rich_text_still_receives_the_records_prose(mo
 async def test_re_pointing_at_a_thinly_documented_record_clears_all_of_the_new_fields(
     monkeypatch,
 ):
-    """THE WIDENING MULTIPLIES THE COST OF THE HALF-REWRITE BUG BY THREE.
-
-    ``hydrate_entries`` clears every mapped single-value target before copying, because a row that
-    named artisan A and now names artisan B must not keep A's phone, face and village. That rule
-    was written when the mapping held eight pairs; it now holds twenty-two, so a regression would
-    strand fourteen more of one person's answers under another person's name. Asserted against a
-    record that answers almost nothing, which is the only shape that exposes it.
-    """
     thin = _artisan_row(
         id="art_2", name="Sita Bai", localName=None, gender=None, phone=None, email=None,
         aadhaarFingerprint=None, aadhaarLast4=None, pehchanCardNumber=None, address=None, notes=None, dos=None,
         donts=None, extraMetadata={}, craft=None, location=None, place="Kutch",
-        # THIN MEANS THIN, INCLUDING THE RELATIONS. An artisan typed in during a workshop has no
-        # `workshopId` (the column is nullable) and nothing attached, and both have to be spelled
-        # here: the default fixture now carries a workshop and two files, so inheriting them would
-        # have left this test asserting that a well-documented record clears a well-documented one.
         workshop=None, media=[],
     )
     filled = await _hydrate(
@@ -4029,38 +2405,9 @@ async def test_re_pointing_at_a_thinly_documented_record_clears_all_of_the_new_f
 
 
 async def test_the_designers_own_answers_survive_the_widening(monkeypatch):
-    """Only-fill-blanks, across TWENTY-SIX pairs instead of eight.
-
-    A picker that reverted a correction on every save would be worse than retyping, because the
-    designer watches the value change back and has no way to make it stick. The widening more than
-    triples the number of boxes that rule protects.
-
-    THE NUMBER IS MEASURED, NOT REMEMBERED, and this docstring had it wrong: it read "twenty-two"
-    after ``REFERENCE_HYDRATION["participant.artisanRef"]`` had reached 26 (``craftStartDate`` and
-    ``aadhaarNumber`` among the four added since). `StageRecordEmbed.tsx` was corrected 25→26 in the
-    same change that added the twenty-sixth and this line was not — the same drift
-    ``docs/DESIGN_WORKSHOP.md`` fixes ("81") three files away. A stale count in a test name is worse
-    than a stale count in prose: it is the number the next reader trusts when deciding whether the
-    fixture below still covers the mapping.
-    """
     typed = {
         "artisanRef": "art_1", "name": "Latha (Ammaji)", "email": "ammaji@example.org",
         "district": "Bolangir", "dos": "1. Ask before recording",
-        # HARD CONSTRAINT 2 OF THE 2026-08-24 AADHAAR DECISION, PINNED BY THE TEST THAT ALREADY
-        # OWNS THE RULE IT DEPENDS ON. The designer here is entitled to the full number and typed
-        # it over the mask; only-fill-blanks must leave it exactly as typed. If hydration ever
-        # overwrote a designer's answer, THIS is the box where the failure is worst — the mask
-        # would silently replace the one thing an officer could check against the card, and the
-        # designer would watch their own correction disappear with no way to make it stick.
-        #
-        # AND IT IS THE FULL NUMBER ON PURPOSE, WHICH IS NOT WHAT A REAL SAVE ENDS UP STORING.
-        # `hydrate_entries` is what is under test here, and it never coerces a value it did not copy —
-        # so the shape of the designer's answer is irrelevant to only-fill-blanks and the strongest
-        # fixture is the one whose reversion would matter most. What DOES coerce it, one layer out, is
-        # `coerce_value`: `participant.aadhaarNumber` declares `store_masked`, so a real save of this
-        # row stores "XXXX XXXX 0123". Both facts are wanted and neither weakens the other — see
-        # `test_a_full_aadhaar_typed_into_the_carried_box_is_stored_as_the_mask`, which owns the
-        # second one.
         "aadhaarNumber": "2345 6789 0123",
     }
     data = await _hydrate(
@@ -4072,18 +2419,8 @@ async def test_the_designers_own_answers_survive_the_widening(monkeypatch):
     assert data["state"] == "Odisha", "the blanks are still filled in"
 
 
-# --------------------------------------------------------------------------------------
-# The photograph's caption, which used to stop at the join
-# --------------------------------------------------------------------------------------
-
 
 def test_every_carried_photograph_carries_its_caption():
-    """A gallery without its caption asks the designer to describe a photograph they never took.
-
-    Each of the three models with a ``media_field`` must map BOTH halves, and the caption target
-    must be the registry's declared caption for that gallery — a caption landing anywhere else
-    would print detached from its picture.
-    """
     for path, photo_target in (
         ("participant.artisanRef", "photo"),
         ("tool.toolRef", "photo"),
@@ -4101,40 +2438,6 @@ def test_every_carried_photograph_carries_its_caption():
 
 
 class _CapturingDb:
-    """Enough Prisma client to see the statement ``_reference_photos`` actually sends.
-
-    THE ASSERTION HAS TO BE ON THE SQL AND NOT ON A RESULT, and that is worth saying out loud.
-    Which MediaFile row wins is decided by Postgres — ``DISTINCT ON`` over a computed sort key —
-    and there is no database on a developer machine. Re-implementing the selection in Python to
-    "test" it would test the re-implementation, which is exactly the toothless shape this file
-    warns about elsewhere. So what is pinned here is the CONTRACT the statement expresses: the
-    marker the three uploading clients write, the transitional clause for rows written before it,
-    and — the part that is easy to get wrong — that the exclusion is a SORT KEY and not a WHERE,
-    so a record whose only image is a grid shot still gets a picture.
-
-    WHAT THIS CANNOT SEE, STATED SO NOBODY READS MORE INTO A GREEN RUN THAN IS THERE. ``query_raw``
-    records the string and answers ``[]``; nothing here parses it. As of 2026-08-20 the statement
-    has NEVER been executed against a Postgres by any suite on this machine, and the reason is NOT
-    that the DB-backed tests are skipped — this paragraph said that, and it is the comfortable
-    version. ``backend/.env`` names ``127.0.0.1:55442``, ``conftest`` publishes it and prints
-    "database: local DSN resolved — database-backed tests WILL run", and
-    ``test_reference_resolver.py``'s ``pytestmark`` skips only a NON-local DSN — so those tests are
-    SELECTED and then fail to connect, because the compose stack is down. Either way nothing sends
-    this SQL to a server, and a syntax error, a bad CTE/``DISTINCT ON`` interaction or a type error
-    in the boolean expression would ship with this file green.
-
-    It was read closely instead: ``extraMetadata`` is JSONB in the init
-    migration so ``->>`` on a non-object answers NULL rather than raising, ``originalFilename`` is
-    NOT NULL so ``is_grid`` can never be NULL and sort ahead of a real candidate on NULLS LAST, and
-    ``DISTINCT ON`` permits ordering by a CTE column absent from the select list. Reading is the
-    whole of the evidence. Replace this paragraph with "executed on <date> against <version>" the
-    first time an ``EXPLAIN`` of it runs, and not before.
-
-    ``*args`` rather than a fixed arity, and ``sql`` starts EMPTY on purpose: the marker guard in
-    ``_reference_photos`` is asserted by proving no statement was sent at all, so a stub that
-    recorded nothing until the call succeeded could not tell "refused" from "sent and ignored".
-    """
-
     def __init__(self):
         self.sql = ""
         self.args = ()
@@ -4150,31 +2453,6 @@ class _CapturingDb:
     [("ToolDocumentation", "toolId"), ("ProductDocumentation", "productId")],
 )
 async def test_the_measurement_grid_shot_is_not_the_records_photograph(monkeypatch, model, column):
-    """THE MINISTRY REPORT PRINTED A SHEET OF GRAPH PAPER CAPTIONED AS THE TOOL.
-
-    ``_reference_photos`` picks the OLDEST IMAGE on the parent, and its docstring justified the
-    ``createdAt, id`` tiebreak only as STABILITY — it never claimed the row was a picture of the
-    subject. Both record forms await their grid-measurement uploads FIRST, before the numbered
-    process captures and before the batch of field photographs, so on any measured product or tool
-    the oldest image is deterministically the calibration frame. That id and its caption are what
-    ``photo``/``photoCaption`` carried, into ``tool.photo`` and into ``existingProduct.productPhotos``
-    — both declared ``report_role=GALLERY`` — so the .docx handed to an officer showed a ruled
-    measurement sheet captioned "Length & breadth grid (measurement) for Pit loom" while the
-    catalogue photographs sat one row later in the same table, unused.
-
-    ``PRODUCT_NOT_CARRIED["measurementImageId"]`` claimed the opposite in this very file ("The
-    catalogue shot is carried through _reference_photos"), which is why nobody looked: refusing the
-    column achieved nothing while the same image reached the same gallery by the path the refusal
-    named as safe.
-
-    THIS QUERY IS ALSO ON THE RENDER PATH, so the fix is not confined to rows saved after it:
-    ``load_report_references`` calls it through ``_load_one_reference_model`` and
-    ``ReferencedRecord.photo`` re-resolves on every generate. A row hydrated BEFORE the fix keeps
-    the frozen grid id in its gallery while the reference now answers the catalogue id, and
-    ``report_builder.ReportBuilder._images`` dedupes by media id, so that row prints BOTH. Pinning
-    that pairing is report_builder's to do — see ``_reference_photos``' docstring, which names it
-    as an open decision rather than a surprise.
-    """
     fake = _CapturingDb()
     monkeypatch.setattr(dw, "db", fake)
     await dw._reference_photos(dw.REFERENCE_MODELS[model], ["rec_1"])
@@ -4182,18 +2460,10 @@ async def test_the_measurement_grid_shot_is_not_the_records_photograph(monkeypat
 
     assert f'm."{column}"' in sql, "the statement must still group by this model's parent key"
 
-    # 1. THE MARKER, WHICH IS A CONTRACT WITH THREE UPLOADING CLIENTS. The two web record forms and
-    # the handset's grid section write extraMetadata.purpose = "MEASUREMENT_GRID"; if this spelling
-    # is ever "tidied" on one side the report silently goes back to printing the grid sheet.
     assert dw.MEASUREMENT_GRID_PURPOSE == "MEASUREMENT_GRID"
     assert '"extraMetadata"' in sql and "'purpose'" in sql
     assert "'MEASUREMENT_GRID'" in sql
 
-    # 1b. AND IT IS INTERPOLATED INTO RAW SQL, WHICH IS WHY IT IS VETTED FIRST. The statement was
-    # interpolating two values and validating one — the column name through `_PHOTO_PARENT_COLUMNS`,
-    # the marker not at all — and "it is a module constant" is a property of today's code that no
-    # test held. This pins the guard: a marker carrying a quote must never reach the statement,
-    # whatever future call site supplies it.
     with pytest.raises(ValueError, match="measurement-grid marker"):
         bad = _CapturingDb()
         monkeypatch.setattr(dw, "db", bad)
@@ -4201,14 +2471,9 @@ async def test_the_measurement_grid_shot_is_not_the_records_photograph(monkeypat
         await dw._reference_photos(dw.REFERENCE_MODELS[model], ["rec_1"])
     assert bad.sql == "", "the unvetted marker reached the statement before the guard ran"
 
-    # 2. THE TRANSITIONAL CLAUSE, for the rows already in the table when the marker shipped. A
-    # caption or a filename is a string a researcher can also type, which is why it is the fallback
-    # and not the rule — and why it may be deleted once the pre-marker rows are gone.
     assert "grid (measurement) for" in sql
     assert "'grid-%'" in sql and "'measure-grid-%'" in sql
 
-    # 3. NOT A `WHERE`. A product whose ONLY image is a grid shot must still get a picture rather
-    # than a blank gallery, so nothing about the grid may narrow the candidate set.
     where = sql[sql.index("WHERE"):sql.index(") SELECT DISTINCT ON (parent)")]
     assert "MEASUREMENT_GRID" not in where and "grid-" not in where and "$2" not in where, (
         f"the grid rule leaked into the WHERE clause, so a grid-only record now hydrates a blank "
@@ -4216,14 +2481,6 @@ async def test_the_measurement_grid_shot_is_not_the_records_photograph(monkeypat
     )
     assert "is_grid" not in where, f"the computed flag must stay a sort key: {where}"
 
-    # 4. AND THE DIRECTION, WHICH IS THE ENTIRE FIX AND THE ONE THING POSITION ALONE CANNOT PIN.
-    # Postgres sorts false before true, so `is_grid ASC` is what puts the grid frame LAST. This
-    # block used to assert only that is_grid outranked created_at and that the clause ended
-    # "created_at ASC, id ASC" — both of which `is_grid DESC` also satisfies, and DESC is the exact
-    # inversion that makes the graph paper win on every measured record deterministically, i.e. the
-    # original defect promoted from an accident of upload order to a rule. The whole clause is
-    # pinned rather than a substring, so the stability tiebreak this docstring argues for — two
-    # renders of one report cannot swap photographs — is pinned in the same line.
     order = sql[sql.rindex("ORDER BY"):].strip()
     assert order == "ORDER BY parent, is_grid ASC, created_at ASC, id ASC", (
         f"the grid frame no longer sorts last, or the deterministic tiebreak is gone: {order}"
@@ -4231,34 +2488,16 @@ async def test_the_measurement_grid_shot_is_not_the_records_photograph(monkeypat
 
 
 def test_a_reviewers_verdict_is_visible_while_choosing_and_is_never_copied_onto_the_entry():
-    """A REJECTED RECORD LOOKED EXACTLY LIKE AN APPROVED ONE IN THE PICKER.
-
-    `reference_options` has no `status` clause, deliberately — the pooling philosophy documented
-    above `records.viewable_where` is that every signed-in account may read every row, and a
-    rejected tool's measurements are still the measurements that were recorded. What was missing was
-    that the designer could not SEE the verdict while choosing, so a tool a reviewer had rejected as
-    a duplicate hydrated all twenty-four of its fields into a document handed to a ministry officer
-    with nothing on the page or in the picker to distinguish it.
-
-    SHOWN, NOT CARRIED. `status` is mutable and a hydrated value is a permanent copy: a tool picked
-    while PENDING is approved the following week, and a frozen "Pending review" would then be a
-    false statement about a named reviewer's decision. The sublabel is recomposed on every picker
-    call, so it is always the current verdict, and nothing about it is written onto the entry.
-    """
     spec = dw.REFERENCE_MODELS["ToolDocumentation"]
 
     assert "Rejected" in spec.sublabel(_tool_row(status="REJECTED"))
     assert "Sent back" in spec.sublabel(_tool_row(status="NEEDS_REVISION"))
     assert "Awaiting review" in spec.sublabel(_tool_row(status="PENDING"))
 
-    # APPROVED is the ordinary case and says nothing: a badge on every row would hide the four
-    # rows that are not approved, which is the whole point of the badge.
     approved = spec.sublabel(_tool_row(status="APPROVED"))
     assert approved == spec.sublabel(_tool_row()), "an approved record must read as it always did"
     assert "Rejected" not in approved and "review" not in approved
 
-    # The verdict reaches the picker and nothing else: it is not a key of the carried data, and
-    # `status` stays in every model's NOT_CARRIED list.
     assert "status" not in dw.REFERENCE_MODELS["ToolDocumentation"].data(_tool_row(), None)
     assert "REJECTED" not in str(
         dw.REFERENCE_MODELS["ToolDocumentation"].data(_tool_row(status="REJECTED"), None)
@@ -4266,27 +2505,6 @@ def test_a_reviewers_verdict_is_visible_while_choosing_and_is_never_copied_onto_
 
 
 def test_no_reference_model_joins_a_relation_none_of_its_lambdas_reads():
-    """A JOIN PER PICKER KEYSTROKE FOR A VALUE NOBODY LOOKS AT, ON A ~756 ms LINK.
-
-    `ProductDocumentation` and `ToolDocumentation` both declared `include={"artisan": True}` while
-    their label, sublabel and data lambdas read only the denormalised scalars (`r.artisanName`,
-    `r.craftName`, `r.place`) — there is no `_rel(r, "artisan", …)` anywhere in either. The include
-    was issued on every `reference_options` call, every `hydrate_entries` save and every
-    `load_report_references`, and discarded.
-
-    THE OBVIOUS "FIX" WAS THE DANGEROUS ONE AND THIS TEST USED TO PIN AGAINST IT, by asserting that
-    `ProductDocumentation` and `ToolDocumentation` declared NO include at all. The hazard it was
-    guarding is real: `_reference_place` prefers `location.village` over the free-text `place` and
-    runs at REPORT time, so switching that relation on would have changed the place string printed in
-    documents already submitted. What has changed is not the hazard but the mechanism — that function
-    is now guarded on the MODEL NAME, so it returns the denormalised `place` for everything except an
-    artisan whether or not the relation is loaded, and the stated address reaches the workshop through
-    the data lambdas at SAVE time into boxes of its own instead.
-
-    SO THE RULE IS "EVERY DECLARED RELATION HAS A NAMED READER", not "declare none". This table is
-    that list, and it is the maintenance cost on purpose: an include added without a reader — a join
-    on every picker keystroke, every save and every report for a value nobody looks at — fails here.
-    """
     readers = {
         "Artisan": {
             "craft": "participant.specialisation",
@@ -4306,37 +2524,12 @@ def test_no_reference_model_joins_a_relation_none_of_its_lambdas_reads():
         "Process": {
             "product": "processStep.documentedFor / traditionalProcess.documentedFor",
             "steps": "traditionalProcess.documentedSteps, via _step_lines",
-            # NO `media` ROW, AND ITS ABSENCE IS THE POINT. `_process_media_note` is still called by
-            # the data lambda — dropping the key would break the promise
-            # `test_a_field_that_promises_to_fill_itself_in_actually_does` checks — but it now returns
-            # None for every process, because `MediaFile` has no `processId` and so `Process` has no
-            # `media` relation to join. The include that claimed otherwise made Prisma refuse the
-            # whole query and 500'd both process pickers until 2026-08-23. THIS TEST IS WHAT CAUGHT
-            # THE HALF-FIX: removing the include without removing this row left a reader named for a
-            # join that no longer happens. Restore both together, or neither — the price of the
-            # `processId` foreign key is written out above that include.
         },
         "Craft": {
             "media": "workshopSetup.craftMediaNote",
             "workshop": "workshopSetup.craftDocumentedAtWorkshop (Workshop.title)",
             "subCategory": "the picker's sublabel, \"Category › Sub-category\" (_craft_path)",
         },
-        # THE SIXTH MODEL, AND THE ONLY ROW HERE WHOSE JOIN LOADS CONFIDENTIAL COLUMNS.
-        #
-        # `responses` is the one to weigh before copying this shape. Its reader is a COUNT — three of
-        # them — and to count the answers Prisma loads them: `include` has no scalar `select`, so
-        # `answerText` and `notes` arrive in the API process on every picker keystroke and are
-        # discarded. That is a materially different cost from `media`'s wide `extraMetadata`, and the
-        # right follow-up is a `count_include`/`_count` facility on `ReferenceModel` so the answers
-        # never leave Postgres. It cannot be a third lambda parameter or an injection by
-        # `_reference_data`: `entry_provenance.canonical_divergence` calls `spec.data(rec, photo)` with
-        # exactly two arguments and re-fetches with `spec.include`, and a key that path cannot
-        # recompute is reported to an admin as `diverged` on every audit, for ever.
-        #
-        # NO `location` ROW, because there is no `location` INCLUDE — and that absence is the model's
-        # cleanest refusal rather than an omission. `_reference_place`'s own worked example is this
-        # exact scenario: six artisans interviewed in one afternoon at a cooperative hall, every one
-        # of them drawn on the hall. See the model's own note.
         "QuestionnaireInterview": {
             "responses": (
                 "artisanBaseline.interviewSectionsCovered / interviewQuestionsAnswered / "
@@ -4369,61 +2562,12 @@ def test_no_reference_model_joins_a_relation_none_of_its_lambdas_reads():
 
 
 def test_the_photograph_lookup_carries_nothing_a_media_entitlement_would_gate():
-    """``ReferencePhoto`` holds an id and a caption and must not grow a URL or an object key.
-
-    ``records._MEDIA_TAKEABLE_KEYS`` withholds ``url``/``objectKey``/transcripts behind an
-    entitlement, and ``s3.public_url_for_key`` makes the key equivalent to the file. The workshop
-    resolves its own media through ``media_resolver``, which applies that gate; a URL smuggled
-    along this path would go round it.
-    """
     assert {f.name for f in dw.ReferencePhoto.__dataclass_fields__.values()} == {"id", "caption"}
 
 
-# --------------------------------------------------------------------------------------
-# What the widening must not have broken
-# --------------------------------------------------------------------------------------
-
-
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# THE FORMATTED-PROSE COLUMN, WHICH IS A JSON DOCUMENT IN A ``String?`` BOX
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-#
-# Eight of the columns the data lambdas read accept rich text and store it, as JSON, inside the
-# ``String?`` column that used to hold a paragraph — ``rich_text``'s module banner lists them and
-# ``records.prose_contains`` exists because the search had to be taught the same thing. Every
-# hydration target opposite one of them WAS a TEXT or LONG_TEXT box, ``coerce_value``'s text branch
-# passes a string through ``clean_text`` unchanged, and ``report_builder.format_value`` only unwraps
-# a document for a RICH_TEXT field, where the value is a dict.
-#
-# So the JSON was copied onto the stage entry verbatim and printed verbatim — a
-# ``{"blocks": …}`` string in a table column of a document submitted to a ministry — and every
-# emptiness check upstream read that JSON-shaped string as a filled field, so nothing anywhere
-# reported a problem. ``design_workshops._reference_data`` is the flattening; these are its guards.
-#
-# SEVEN OF THOSE TARGETS ARE NOW RICH_TEXT THEMSELVES, which does not weaken the flattening and does
-# not change what it is for. It was promoted so the workshop offers the editor the record page offers
-# for the same fact; the carried value still arrives FLATTENED and is re-read as unformatted prose, so
-# the researcher's marks are still lost across the join (recovering them is a change to
-# ``_reference_data`` and is not this lane's). What the promotion changes is only the STORED SHAPE on
-# the workshop side, and the parametrised test below keys its assertion on the target's declared type
-# for exactly that reason.
 
 
 def _formatted(*paragraphs: str) -> str:
-    """A column value exactly as a record form's rich-text editor writes a FORMATTED one.
-
-    THE FIRST SPAN CARRIES A MARK, AND WITHOUT IT THIS HELPER TESTS NOTHING. ``to_stored_text``
-    stores an UNFORMATTED document as ordinary prose — ``_is_unformatted`` is a whitelist of
-    "nothing interesting is set", and a document of bare paragraphs passes it — so a helper that
-    built two plain paragraphs returned a plain string, and every assertion below that a value "is
-    not JSON" held for a value that was never JSON in the first place. The bold run is what makes
-    the encoder take the ``json.dumps`` branch, which is the state a researcher's column is in
-    after they press **B**, and the only state in which the defect these tests exist for can
-    happen at all.
-
-    ``test_a_formatted_column_is_json_in_the_database_so_the_premise_holds`` is the guard on
-    exactly that, and it is not decoration: it caught this helper being toothless.
-    """
     from app.services import rich_text
 
     blocks = [
@@ -4439,7 +2583,6 @@ def _formatted(*paragraphs: str) -> str:
 
 
 def test_a_formatted_column_is_json_in_the_database_so_the_premise_holds():
-    """The tests below would be worthless if the storage were not what they claim it is."""
     from app.services import rich_text
 
     stored = _formatted("Tied with cotton thread", "then dipped in indigo.")
@@ -4451,13 +2594,10 @@ def test_a_formatted_column_is_json_in_the_database_so_the_premise_holds():
 @pytest.mark.parametrize(
     ("model", "delegate", "row_builder", "column", "entity_key", "ref_key", "target"),
     [
-        # ``processStep.description`` is the worst of them: the registry labels it "What happens"
-        # and it is a TABLE COLUMN of the traditional-process table.
         ("Process", "process", "_process_row", "notes",
          "processStep", "processRef", "description"),
         ("Process", "process", "_process_row", "notes",
          "traditionalProcess", "processRef", "documentedProcessNotes"),
-        # ``existingProduct.material`` is a TABLE COLUMN too, 16% wide.
         ("ProductDocumentation", "productdocumentation", "_product_row", "rawMaterialsUsed",
          "existingProduct", "productRef", "material"),
         ("ProductDocumentation", "productdocumentation", "_product_row", "remarks",
@@ -4477,27 +2617,6 @@ def test_a_formatted_column_is_json_in_the_database_so_the_premise_holds():
 async def test_a_formatted_record_column_arrives_as_prose_and_never_as_json(
     monkeypatch, model, delegate, row_builder, column, entity_key, ref_key, target
 ):
-    """Every rich-text-capable source column, through the REAL hydration, into its real target.
-
-    Parametrised over the pairs rather than written once, because the thing that goes wrong is a
-    SINGLE pair being missed — and the fix is a wrapper over the whole payload precisely so that no
-    pair can be. If a column is promoted to rich text later, add its row here; if the wrapper is
-    ever narrowed to a named list of keys, one of these fails.
-
-    ── THE ASSERTION IS KEYED ON THE TARGET'S TYPE, AND IT DID NOT USED TO BE ────────────────────
-    It read ``"blocks" not in landed`` for every pair, on the premise — stated in the block comment
-    above and in ``_reference_data``'s docstring — that "every hydration target opposite one of them
-    is a TEXT or LONG_TEXT box". Seven of these targets have since been promoted to RICH_TEXT so the
-    workshop offers the same editor the record page offers, and for those the stored value is a
-    document BY DESIGN: ``coerce_value``'s RICH_TEXT branch normalises it through the rich-text model
-    and ``report_builder.format_value`` unwraps it by TYPE, so a dict there prints as prose and is not
-    the defect. The defect is a JSON-shaped STRING sitting in a plain-text box, which is still exactly
-    what the other two pairs must never see.
-
-    So both arms assert the same thing about what a reader ends up with — the researcher's words, no
-    braces — and neither one weakens: a RICH target that received the raw JSON as a STRING would fail
-    the plain-text comparison below, because ``from_json`` of that string reads the braces as prose.
-    """
     stored = _formatted("Tied with cotton thread", "then dipped in indigo.")
     row = globals()[row_builder](**{column: stored})
     sent = {ref_key: row.id}
@@ -4527,21 +2646,6 @@ async def test_a_formatted_record_column_arrives_as_prose_and_never_as_json(
 
 
 def test_an_unformatted_column_leaves_the_flattening_boundary_untouched():
-    """The identity half, and it is the half that decides whether the fix is safe to ship.
-
-    ``plain_from_stored`` returns a plain string as the SAME OBJECT rather than round-tripping it
-    through ``from_plain``/``to_plain``, which would strip each line, collapse runs of blank lines
-    and drop trailing whitespace. Applying that to the repository would silently reformat every
-    note, remark and address in it — a diff nobody asked for, across data this app's users are the
-    custodians of rather than the authors of.
-
-    ASSERTED AT ``_reference_data`` AND NOT AFTER ``hydrate_entries``, which is the correction this
-    test needed. A hydrated value has also been through ``coerce_value``, whose text branch has
-    normalised these columns since long before any of this — so "byte for byte" is a claim about
-    the FLATTENING BOUNDARY and never was one about the stored entry. Asserting it downstream tests
-    somebody else's behaviour and fails for a reason that has nothing to do with the fix, which is
-    exactly what the first version of this test did.
-    """
     prose = "Dyed twice.  Second dip is  longer.\n"
     row = _process_row(notes=prose)
     data = dw._reference_data(dw.REFERENCE_MODELS["Process"], row, None)
@@ -4552,15 +2656,6 @@ def test_an_unformatted_column_leaves_the_flattening_boundary_untouched():
 
 
 async def test_the_subject_pin_is_not_flattened_into_a_string(monkeypatch):
-    """THE REGRESSION THE FIX ITSELF NEARLY SHIPPED, and the reason its guard is one line long.
-
-    ``rich_text.plain_from_stored`` treats a ``dict`` as a document it does not need to detect:
-    ``to_plain({"lat": …, "lon": …})`` finds no ``blocks`` key, answers ``EMPTY``, and returns "".
-    ``participant.subjectLocation`` is exactly such a dict — the pin a researcher dropped on the
-    artisan's own place — so a wrapper applied to every value regardless of type would have blanked
-    it on every pick, which is the same class of silent loss the wrapper was written to end.
-    ``_reference_data`` therefore flattens ``str`` values and nothing else.
-    """
     row = _artisan_row(notes=_formatted("Prefers the afternoon."))
     data = await _hydrate(
         monkeypatch, "participant", {"artisanRef": row.id}, rows={"artisan": [row]}
@@ -4574,13 +2669,6 @@ async def test_the_subject_pin_is_not_flattened_into_a_string(monkeypatch):
 
 
 def test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full():
-    """Six declared widths summing to 100 is a table already in submitted documents.
-
-    ``report_builder._table_columns`` caps at six and falls back to proportional widths when the
-    declared ones do not add up, which silently re-lays-out a table somebody has already printed
-    and filed. Every field this lane added is KEY_VALUE for that reason, and the report prints
-    those in the per-row block beneath the table, so nothing is lost by it.
-    """
     for entity_key in ("participant", "tool", "processStep"):
         entity = _entity(entity_key)
         widths = [f.column_width_pct for f in entity.fields
@@ -4590,34 +2678,6 @@ def test_no_new_table_column_was_added_to_a_table_whose_widths_are_already_full(
         )
 
 
-# Entities whose declared TABLE_COLUMN widths do NOT govern their table today, with the sum they
-# actually reach. ``_render_table`` uses the declared widths only when they add up to 100 (within
-# half a point) and otherwise lays the table out proportionally — free text gets twice the share of
-# a number or a date — so every percentage written beside a field of these five is a dead
-# declaration that reads as a decision.
-#
-# Twenty-four of the twenty-nine tabular entities DO add up, which is what makes these five drift
-# rather than design. Two of them are over: somebody added a column and did not rebalance.
-#
-# THEY ARE RECORDED RATHER THAN REBALANCED, and that is a deliberate refusal. Making a sum reach
-# 100 does not tidy a number up — it switches a table from one layout to another, in documents that
-# have been printed and filed, which is the exact consequence the note above ``participant``'s
-# address fields refuses to incur. Which of the two layouts is right is a judgement about the
-# printed page and belongs to whoever owns it, not to a test and not to a passing edit. What a test
-# CAN do is stop the set growing and stop any of these drifting further, which is what
-# :func:`test_the_tables_whose_declared_widths_govern_still_do` does.
-#
-# THE SAME FIVE ENTITIES ARE WHERE THE TWO SURFACES DRAW DIFFERENT TABLES, and that is one fact and
-# not two, which is why the handset's answer is recorded on the SAME line as the declared sum rather
-# than in a second table that can drift out of step with this one. `ReportScreen.tableColumns` on the
-# phone NORMALISES the declared hints — scale them to 100, last column absorbs the residue — where
-# `_render_table` DISCARDS them and re-weights 2.0 for free text against 1.0 for everything else. The
-# two agree wherever the declared sum is already 100, which is twenty-four of the twenty-nine tabular
-# entities; for these five the same workshop's .docx paginates and wraps differently depending on
-# which machine built it. `handset` below is what the phone lays out today, to 4 decimal places.
-#
-# To retire an entry: rebalance that entity's first six widths to 100 and delete its line — both
-# halves of it, because at 100 the two rules coincide and there is nothing left to record.
 class _NonGoverning(NamedTuple):
     declared_sum: float
     handset: tuple[float, ...]
@@ -4635,47 +2695,16 @@ _WIDTHS_THAT_DO_NOT_GOVERN = {
 
 
 def _governing_widths(entity):
-    """The widths ``report_builder._render_table`` would actually read, and their sum.
-
-    ``_table_columns`` caps at six, so a seventh declared column contributes NOTHING to the sum and
-    prints as a key-value line beneath each row instead. ``existingProduct`` declares seven and its
-    first six add to exactly 100, which is somebody having done this arithmetic on purpose; two of
-    the entities in the exemption above declare seven and did not.
-
-    THIS IS A TRANSCRIPTION AND IT DELIBERATELY OMITS TWO OF ``_table_columns``' FILTERS, so read
-    the vectors below as recorded AT FULL TIER and not as tier-independent. ``_table_columns``
-    filters ``self._visible(f)`` — ``not deprecated`` AND ``spec.tier.rank <= template.max_tier.rank``
-    — and ``not f.type.is_media``; this function keeps only the ``not deprecated`` half. Both
-    omissions are no-ops as the registry stands: no field is declared both TABLE_COLUMN and
-    media-typed (``test_a_media_field_is_never_a_table_column_whatever_role_it_declares`` drives a
-    synthetic entity precisely because none exists), and the tier filter drops nothing under a
-    template that admits every tier. A template with a LOWER ``max_tier`` would drop columns and
-    re-weight the survivors, and this parity test cannot see that — so a divergence introduced at
-    BASIC would pass here. Widen the transcription, not the exemption list, if that day comes.
-    """
     columns = [f for f in entity.fields
                if f.report_role.value == "TABLE_COLUMN" and not f.deprecated][:6]
     return columns, sum(f.column_width_pct for f in columns)
 
 
 def test_the_tables_whose_declared_widths_govern_still_do():
-    """A declared width that stops being read is a layout decision silently discarded.
-
-    THE BLIND SPOT THIS CLOSES. The guard beside it checks three entities and asks only that their
-    widths do not EXCEED 100 — so a table that drifted DOWN to 88 passed it while being laid out by
-    the proportional fallback, and the twenty-six entities it does not name were never checked at
-    all. Five of them are in that state right now and are listed in ``_WIDTHS_THAT_DO_NOT_GOVERN``
-    with the sum each reaches — and, on the same line, the layout the handset draws for it instead,
-    which :func:`test_the_two_surfaces_lay_out_the_same_table_the_same_way` pins.
-
-    Every other tabular entity must either declare nothing (proportional by design) or add up.
-    """
     drifted = []
     for _stage, entity in all_entities():
         columns, total = _governing_widths(entity)
         if not columns or not total:
-            # No table, or no width declared anywhere on it — proportional by design, which is a
-            # legitimate choice and not something to assert about.
             continue
         governs = abs(total - 100.0) < 0.5
         recorded = _WIDTHS_THAT_DO_NOT_GOVERN.get(entity.key)
@@ -4700,18 +2729,9 @@ def test_the_tables_whose_declared_widths_govern_still_do():
 
 
 def _server_table_widths(columns):
-    """The widths ``report_builder._render_table`` hands ``TableBlock``, as it computes them.
-
-    A transcription of that branch and not a call into it, because ``_render_table`` needs a
-    ``ReportBuilder``, a ``TemplateSection`` and rows to reach the four lines that matter. It is
-    six lines long and pinned by :func:`test_the_two_surfaces_lay_out_the_same_table_the_same_way`
-    against the Android rule; if it ever stops matching the source, that test is the one that has
-    to be re-read rather than repaired.
-    """
     declared = sum(c.column_width_pct for c in columns)
     if declared and abs(declared - 100.0) < 0.5:
         return [c.column_width_pct for c in columns]
-    # Free text gets twice the share of a number or a date, and every declared width is discarded.
     weights = [2.0 if c.is_free_text else 1.0 for c in columns]
     widths = [100.0 * w / sum(weights) for w in weights]
     widths[-1] += 100.0 - sum(widths)
@@ -4719,13 +2739,6 @@ def _server_table_widths(columns):
 
 
 def _handset_table_widths(columns):
-    """The widths ``ReportScreen.tableColumns`` hands ``TableBlock`` on the phone, in Python.
-
-    NORMALISE AND ABSORB, which is a different rule and not a rounding difference: a declared width
-    above zero is a HINT that is kept and scaled, an unhinted column takes an even share of the
-    remainder with a 4% floor, the vector is scaled to 100 and the last column absorbs the residue.
-    Nothing is ever discarded, which is exactly where it parts company with the server.
-    """
     hinted = sum(c.column_width_pct for c in columns)
     unhinted = sum(1 for c in columns if c.column_width_pct <= 0)
     share = max((100.0 - hinted) / unhinted, 4.0) if unhinted else 0.0
@@ -4736,25 +2749,6 @@ def _handset_table_widths(columns):
 
 
 def test_the_two_surfaces_lay_out_the_same_table_the_same_way():
-    """ONE WORKSHOP, ONE REGISTRY, TWO .docx FILES THAT PAGINATE DIFFERENTLY.
-
-    The server and the handset both draw the same six columns from the same registry and then
-    compute their widths by DIFFERENT RULES — ``_render_table`` discards the declared widths and
-    re-weights free text at 2.0, ``ReportScreen.tableColumns`` keeps them and normalises. Where the
-    declared sum is already 100 the two coincide exactly, and for twenty-four of the twenty-nine
-    tabular entities it is. For the other five the same stage prints at one width at the office and
-    another in the field, and until this test existed that divergence was written down only in a
-    KDoc on ``tableColumns`` — so nothing failed when it widened, and nothing failed when a sixth
-    entity joined the five.
-
-    THIS IS THE SAFE HALF AND IT IS DELIBERATELY NOT THE FIX. Converging costs one surface the
-    layout of documents already printed and filed whichever direction it goes, so which rule wins
-    is the owner of the printed page's call and needs a changelog note. What a test can do is fail
-    the moment the set changes or a recorded vector moves, which is what this does. The six-column
-    cap is the part the two surfaces DO agree on and must keep agreeing on — ``_governing_widths``
-    takes the same first six as ``_table_columns`` and ``tableColumns``' callers, AT FULL TIER;
-    its docstring names the two filters it omits and why they are no-ops today.
-    """
     disagreed = []
     for _stage, entity in all_entities():
         columns, declared = _governing_widths(entity)
@@ -4770,9 +2764,6 @@ def test_the_two_surfaces_lay_out_the_same_table_the_same_way():
                     f"{[round(x, 4) for x in handset]}"
                 )
             continue
-        # A recorded divergence is pinned to the number it actually reaches, both sides. Widening
-        # it is the failure this exists to catch: "these five differ" is not a fact anybody can act
-        # on, "prototype's first column moved from 10.7 to 6.0 on the phone" is.
         assert len(recorded.handset) == len(columns), (
             f"{entity.key} now draws {len(columns)} columns and _WIDTHS_THAT_DO_NOT_GOVERN records "
             f"{len(recorded.handset)} — re-record the handset vector beside its declared sum"
@@ -4794,11 +2785,6 @@ def test_the_two_surfaces_lay_out_the_same_table_the_same_way():
 
 
 def test_the_hydration_table_grew_and_no_pair_was_lost():
-    """The 32 pairs that already worked are still there, plus the ones this lane added.
-
-    Spot-checked rather than pinned as a whole: a full snapshot would have to be edited on every
-    legitimate widening, which is how a pin becomes something people update without reading.
-    """
     for path, source, target in (
         ("workshopSetup.craftRef", "craftName", "craftName"),
         ("participant.artisanRef", "specialisation", "specialisation"),
@@ -4810,61 +2796,18 @@ def test_the_hydration_table_grew_and_no_pair_was_lost():
     ):
         assert REFERENCE_HYDRATION[path][source] == target
 
-    # THE FLOOR IS MEASURED, NOT REMEMBERED. It said 81 until 2026-08-22, which was the count at
-    # some earlier point in the same lane — the table had already grown past it, so the assertion
-    # was passing with 26 pairs of slack and would have gone on passing through the removal of a
-    # quarter of the carry. A floor with slack in it is a floor that is not holding anything up.
-    # Re-measure before raising it again:
-    #   PYTHONUTF8=1 .venv/Scripts/python.exe -c "import app.services.stage_definitions; \
-    #     from app.services.stage_schema import REFERENCE_HYDRATION; \
-    #     print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"
-    # RE-MEASURED 2026-08-24 with the same command, after `participant.aadhaarNumber` landed: 109.
-    # Raised rather than left at 107 for the reason the paragraph above gives — two pairs of slack
-    # is two pairs that could be deleted with the floor still green.
-    #
-    # RE-MEASURED 2026-09-03 with the same command, after the two INTERNAL carries landed: 135
-    # across 13 mappings. The +12 is `finalProduct.prototypeRef` (9) and
-    # `prototypeValidation.prototypeRef` (3), whose sources are rows of the workshop rather than
-    # records in another table — see the internal-carry section of `REFERENCE_HYDRATION`. Raised for
-    # the same reason again: leaving it at 109 would have left twenty-six pairs of slack, i.e. the
-    # whole of the new carry plus half of `participant.artisanRef`, deletable with this test green.
     pairs = sum(len(m) for m in REFERENCE_HYDRATION.values())
     assert pairs >= 135, (
         f"the carry is down to {pairs} field-pairs; it was 32 before this lane, 107 as measured on "
         "2026-08-22, 109 on 2026-08-24 and 135 on 2026-09-03, and a drop means a mapping was "
         "removed rather than a source column disappearing"
     )
-    # AND THE INTERNAL PAIR IS SPOT-CHECKED LIKE THE SEVEN ABOVE, in both directions of the shape
-    # that distinguishes it: a source key that is a FIELD OF ANOTHER ENTITY rather than a column of
-    # another table, and a target whose name differs from it (`lengthCm -> finalLengthCm`), which is
-    # exactly the pair a key-name match would silently drop.
     assert REFERENCE_HYDRATION["finalProduct.prototypeRef"]["materials"] == "materials"
     assert REFERENCE_HYDRATION["prototypeValidation.prototypeRef"]["lengthCm"] == "finalLengthCm"
 
 def test_no_reference_model_asks_prisma_for_a_media_relation_its_delegate_does_not_have():
-    """A ``media`` include is only legal on a delegate whose model really declares the relation.
-
-    THIS IS THE CLASS BEHIND A LIVE 500, and the instance is worth stating because the comment that
-    should have prevented it was already there and already correct. ``REFERENCE_MODELS["Process"]``
-    opened with "``MediaFile`` has no ``processId``" — true — and then asked for
-    ``include={"media": True}`` on both ``Process`` and ``ProcessStep``. Prisma refuses that query
-    outright (``UnknownRelationalFieldError``), so BOTH process pickers 500'd for every designer on
-    every save of stage 5 until 2026-08-23.
-
-    ``MediaFile`` reaches a record two different ways and only one of them is a relation: typed
-    foreign keys (``artisanId``, ``craftId``, ``workshopId``, ``productId``, ``toolId``) which give
-    the model a ``media MediaFile[]`` back-relation, and the polymorphic
-    ``linkedRecordType``/``linkedRecordId`` pair, which gives it nothing Prisma can include. A
-    process's footage exists — ``ProcessForm`` writes it as ``linkedRecordType: "process"`` and
-    ``"processstep"`` — it simply cannot be reached by an include.
-
-    So this reads the schema rather than a hand-kept list: every delegate that declares
-    ``media MediaFile[]`` may ask for it, and nothing else may. Adding a sixth model with a media
-    include and no back-relation fails here instead of in production.
-    """
     schema = SCHEMA.read_text(encoding="utf-8")
 
-    # Models whose Prisma block declares the back-relation, keyed the way `delegate` spells them.
     with_relation = {
         name.lower()
         for name, body in re.findall(r"^model\s+(\w+)\s*\{(.*?)^\}", schema, re.DOTALL | re.MULTILINE)
@@ -4894,7 +2837,6 @@ def test_no_reference_model_asks_prisma_for_a_media_relation_its_delegate_does_n
 
 
 def _asks_for_media(include: dict) -> bool:
-    """True when ``include`` asks for ``media`` at the top level or nested under a relation."""
     for key, value in include.items():
         if key == "media" and value:
             return True
@@ -4903,40 +2845,12 @@ def _asks_for_media(include: dict) -> bool:
     return False
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# THE INTERNAL CARRY — a source that is another row of the same workshop (2026-09-03)
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-#
-# Everything above this line is about a REF pointing at a record in ANOTHER TABLE. The two mappings
-# below point at an ENTITY OF THIS REGISTRY: `finalProduct.prototypeRef` and
-# `prototypeValidation.prototypeRef` both name a `DwPrototype`, which is a `DwStageEntry` row the
-# designer filled in at stage 13 of the same workshop.
-#
-# THE LEDGER IDIOM IS THE SAME AND THE POPULATION IS DIFFERENT, which is the only thing worth
-# reading slowly. `_columns(model)` parses `schema.prisma` because an external source's fields ARE
-# Prisma columns; an internal source's fields are REGISTRY FIELDS, so the population comes from
-# `EntitySpec.fields` and the parser is not involved. Everything else holds: every live field of the
-# source entity appears exactly once, in CARRIED with the box it reaches or in NOT_CARRIED with the
-# reason it does not, and a field added to `prototype` next year fails
-# `test_no_internal_source_field_is_unaccounted_for` BY NAME until somebody decides about it.
-#
-# WHY THE REFUSALS ARE WRITTEN OUT TWICE FOR ONE SOURCE ENTITY. `prototype` feeds two mappings and
-# they refuse different things for different reasons — stage 16 refuses `materialCost` because it
-# has one cost box where the source has two, stage 15 refuses it because a validation row is a
-# JUDGEMENT and has no cost box at all. Collapsing them into one list would make both reasons into
-# one reason that is true of neither, and this file's whole claim is that a refusal is a decision
-# somebody made rather than a gap somebody left.
-
-#: Repeated in `PROTOTYPE_TO_VALIDATION_NOT_CARRIED` for the nineteen boxes stage 15 declares that
-#: describe the REVIEW rather than the piece. One constant rather than nineteen paraphrases, because
-#: nineteen paraphrases of one argument is how a ledger stops being read.
 _A_JUDGEMENT_NOT_A_DESCRIPTION = (
     "stage 15 is a JUDGEMENT of a prototype — a decision, five quality ratings, two approvals, a "
     "reason and a checklist — and the row is not a second description of the piece. The three "
     "measurements are the only boxes that re-ask something the prototype states."
 )
 
-#: The photographs, on both mappings and for one reason.
 _MEDIA_STAYS_WHERE_IT_WAS_TAKEN = (
     "media never crosses on an INTERNAL carry: both rows are in ONE workshop, so the copy would be "
     "the SAME media ids under two headings and report_builder's image pass dedupes by media id — "
@@ -5072,8 +2986,6 @@ PROTOTYPE_TO_VALIDATION_NOT_CARRIED = {
     ),
 }
 
-#: ``(hydration path, source entity key, carried, refused)``. Parameterised so a failure names the
-#: MAPPING rather than reporting a set difference over two entities at once.
 INTERNAL_LEDGER = [
     (
         "finalProduct.prototypeRef",
@@ -5091,14 +3003,6 @@ INTERNAL_LEDGER = [
 
 
 def _live_field_keys(entity_key: str) -> set[str]:
-    """The source entity's answerable fields.
-
-    DEPRECATED FIELDS ARE EXCLUDED, which is the internal equivalent of ``_columns`` skipping the
-    id: ``entity_to_dict`` drops a deprecated field from the wire and ``validate_entry`` rebuilds
-    ``cleaned`` from the live specs, so the key is deleted from the source row on its next ordinary
-    save. A carry from one would work until somebody opened stage 13, and then stop — which is why
-    ``validate_registry`` refuses the mapping outright and why the ledger has nothing to say here.
-    """
     entity = next(e for _s, e in all_entities() if e.key == entity_key)
     return {f.key for f in entity.fields if not f.deprecated}
 
@@ -5109,15 +3013,6 @@ def _live_field_keys(entity_key: str) -> set[str]:
     ids=[p for p, _e, _c, _r in INTERNAL_LEDGER],
 )
 def test_no_internal_source_field_is_unaccounted_for(path, source_entity, carried, refused):
-    """THE "WITHOUT A MISS" GUARANTEE, FOR A SOURCE THAT IS A STAGE ROW RATHER THAN A TABLE.
-
-    A field exists on the source entity and is in neither list => this fails, naming the field.
-    Somebody then either carries it or writes down why not. It is the same mechanism
-    :func:`test_no_source_column_is_unaccounted_for` applies to the five record models, pointed at
-    the registry instead of at ``schema.prisma`` — and it matters MORE here rather than less,
-    because a registry field is added in the same file as the mapping, by the same person, in the
-    same afternoon, so "I will come back to the carry" is a decision nothing else would record.
-    """
     fields = _live_field_keys(source_entity)
     accounted = set(carried) | set(refused)
     missing = sorted(fields - accounted)
@@ -5148,20 +3043,6 @@ def test_no_internal_source_field_is_both_carried_and_refused(path, source_entit
 def test_the_internal_ledger_is_the_mapping_and_not_a_description_of_it(
     path, source_entity, carried, refused
 ):
-    """THE LEDGER MUST EQUAL THE TABLE, OR IT IS EVIDENCE FOR SOMETHING THAT IS NOT HAPPENING.
-
-    The external ledger above is deliberately loose — its values are prose that may name two boxes
-    or add a parenthetical, because a Prisma column can reach a workshop through a derivation or a
-    lambda. An internal mapping has no lambda between the two: the source row's ``data`` is read by
-    key. So the ledger can be held to EQUALITY here, in both directions, which is strictly the
-    stronger check and costs nothing.
-
-    Both directions matter and they fail for different reasons. A CARRIED entry the table does not
-    have is a ledger claiming a carry nobody wrote — the shape `existingProduct.productName` had on
-    the external side, where a mapping key that no lambda produced hydrated nothing for years. A
-    table pair the ledger does not have is a carry nobody weighed, which is the whole subject of
-    this file.
-    """
     mapping = REFERENCE_HYDRATION[path]
     declared = {source: f"{path.partition('.')[0]}.{target}" for source, target in mapping.items()}
     assert declared == carried, (
@@ -5172,20 +3053,6 @@ def test_the_internal_ledger_is_the_mapping_and_not_a_description_of_it(
 
 
 def test_every_internal_ref_is_either_hydrated_or_refused_in_writing():
-    """THE OTHER HALF OF THE DECISION, AND THE ONE A READER WILL COME LOOKING FOR.
-
-    Fifteen live REF fields name a ``Dw…`` entity of this registry. Two hydrate; the other thirteen
-    were read and left alone, each with its reason written above ``REFERENCE_HYDRATION``'s internal
-    carry section. This test does not read those reasons — prose is not checkable — but it does
-    refuse to let the POPULATION change without somebody coming back here: a sixteenth internal ref
-    added next year fails this by name, and whoever adds it then either maps it or adds it to the
-    list below having read why its thirteen neighbours are on it.
-
-    IT IS A TRIPWIRE AND IT PASSES BY CONSTRUCTION TODAY, exactly as
-    ``test_no_source_relation_is_unaccounted_for`` does, and for the same reason it is still worth
-    its lines: nothing a source change can do breaks it, and a REGISTRY change is precisely what it
-    is watching for.
-    """
     internal = {
         f"{entity.key}.{field.key}"
         for _stage, entity in all_entities()
@@ -5222,21 +3089,8 @@ def test_every_internal_ref_is_either_hydrated_or_refused_in_writing():
     )
 
 
-# --------------------------------------------------------------------------------------
-# The internal carry, driven through the REAL hydrate_entries
-# --------------------------------------------------------------------------------------
-
 
 class _StageRows:
-    """``db.dwstageentry`` for the internal resolver, and it enforces the two clauses that matter.
-
-    NOT A STUB THAT RETURNS EVERYTHING. The scope (``designWorkshopId``) and the liveness
-    (``deletedAt: None``) are the whole safety of resolving a reference inside the workshop, and a
-    double that ignored them would let the tests below pass while a stage-16 row filled itself from
-    another cluster's prototype or from one the designer had deleted. So this applies both, and the
-    two negative tests further down are what prove it is applying them rather than finding nothing.
-    """
-
     def __init__(self, rows):
         self._rows = rows
 
@@ -5256,22 +3110,11 @@ class _StageRows:
 
 
 class _WorkshopDb:
-    """Enough Prisma client for an INTERNAL hydration: one table, and nothing else is touched.
-
-    ``_FakeDb`` above carries a delegate per reference model and a ``query_raw`` for the photograph
-    lookup; neither is reached here, because ``hydrate_entries`` builds its external ``wanted`` map
-    from ``REFERENCE_MODELS`` and the entries below name no external ref at all. A separate double
-    says that in code rather than in a comment: if a change ever made the internal path go looking
-    for a delegate or a photograph, these tests fail with AttributeError instead of quietly
-    resolving something.
-    """
-
     def __init__(self, rows):
         self.dwstageentry = _StageRows(rows)
 
 
 def _stage_row(entity_key, row_id, data, **overrides):
-    """One ``DwStageEntry`` as the internal resolver reads it."""
     fields = dict(
         id=row_id,
         designWorkshopId="dw_1",
@@ -5285,7 +3128,6 @@ def _stage_row(entity_key, row_id, data, **overrides):
     return SimpleNamespace(**fields)
 
 
-#: A prototype as stage 13 stores one, with every box the two mappings read filled in.
 _PROTOTYPE_DATA = {
     "prototypeCode": "PT-01",
     "name": "Bandha tote, wide gusset",
@@ -5304,14 +3146,6 @@ _PROTOTYPE_DATA = {
 
 
 async def _hydrate_internal(monkeypatch, entity_key, sent, *, rows, previous=None, workshop="dw_1"):
-    """One entry through the REAL hydration, with a workshop's stage rows behind it.
-
-    Driving ``hydrate_entries`` itself rather than reimplementing the copy is the same decision
-    ``_hydrate`` above makes and for the same reason: the only-fill-blanks rule, the
-    clear-and-rewrite rule and ``coerce_value`` are what decide whether a carried value survives,
-    and a test that skipped them would pass while the feature was broken. What is different here is
-    only which resolver runs.
-    """
     monkeypatch.setattr(dw, "db", _WorkshopDb(rows))
     entry = dw.PendingEntry(
         entity=_entity(entity_key), data=dict(sent), previous=dict(previous or {}),
@@ -5322,16 +3156,6 @@ async def _hydrate_internal(monkeypatch, entity_key, sent, *, rows, previous=Non
 
 
 async def test_a_prototype_fills_the_catalogue_row_that_names_it(monkeypatch):
-    """THE FIDELITY TEST, AND IT IS THE REPORT DEFECT STATED AS AN ASSERTION.
-
-    A designer fills a prototype in at stage 13, opens stage 16, picks it, and saves with the
-    catalogue boxes blank. Every one of the nine mapped boxes must arrive — through
-    ``coerce_value``, so the TAGS list is a list, the money-free decimals are numbers and the
-    rich-text narrative is a normalised document rather than the bare string it was stored as.
-
-    Written as "no declared target is missing" rather than as nine assertions so that a pair added
-    to the mapping is covered the moment it is added.
-    """
     entry = await _hydrate_internal(
         monkeypatch,
         "finalProduct",
@@ -5345,26 +3169,14 @@ async def test_a_prototype_fills_the_catalogue_row_that_names_it(monkeypatch):
     assert entry.data["materials"] == ["Cotton", "Jute webbing"]
     assert entry.data["lengthCm"] == 38.0
     assert entry.data["makingTimeDays"] == 3.5
-    # RICH_TEXT is normalised through the rich-text model on the way in, exactly as a typed value
-    # is: the phone builds its own report from the stored draft, so a bare string in a
-    # document-shaped box is a paragraph missing from the copy handed to a visiting officer.
     assert isinstance(entry.data["makingProcess"], dict)
     assert "blocks" in entry.data["makingProcess"]
-    # AND NOTHING THE MAPPING DOES NOT NAME. The catalogue's own code is untouched, the working
-    # photographs do not become the plate, and the two cost heads stay where the arithmetic is.
     assert entry.data["productCode"] == "FP-01"
     assert "finalPhotos" not in entry.data
     assert "costPrice" not in entry.data
 
 
 async def test_the_boxes_the_designer_answered_are_left_exactly_as_they_answered_them(monkeypatch):
-    """ONLY-FILL-BLANKS, ON THE ONE SOURCE A DESIGNER OWNS BOTH ENDS OF.
-
-    The catalogue measurement is taken off the finished piece and the prototype's was taken at
-    making; where the two differ the designer has measured, and a picker that reverted a measurement
-    would be watched doing it. The TAGS box is the second half of the rule — a list already holding
-    something is not seeded either, which is `hydrate_entries`' multi arm.
-    """
     entry = await _hydrate_internal(
         monkeypatch,
         "finalProduct",
@@ -5380,31 +3192,15 @@ async def test_the_boxes_the_designer_answered_are_left_exactly_as_they_answered
     assert entry.data["name"] == "Bandha tote (retail)"
     assert entry.data["lengthCm"] == 39.5
     assert entry.data["materials"] == ["Cotton"]
-    # The blanks beside them still fill, which is what makes this only-fill-blanks and not a refusal.
     assert entry.data["widthCm"] == 12.0
     assert entry.data["weightG"] == 420.0
 
 
 async def test_a_prototype_edited_afterwards_does_not_rewrite_a_catalogue_row(monkeypatch):
-    """THE DIVERGENCE TEST. A hydrated value is a PERMANENT copy taken at save time.
-
-    This is the property the whole feature exists for, met on the surface where the instinct is
-    strongest that it should NOT hold: both rows are on screens the same designer owns, so "I fixed
-    the prototype, why did the catalogue not follow" is a question somebody will ask. The answer is
-    the one ``REFERENCE_HYDRATION``'s note gives at length — a workshop report is a historical
-    document, and a value that re-resolved at render time would rewrite a submitted .docx from a
-    live row — and it is the same answer for an internal source as for an artisan record.
-
-    THE MECHANISM IS ONLY-FILL-BLANKS AND NOTHING ELSE, which is why this is worth asserting rather
-    than assuming. The second save names the SAME prototype, so ``replaced`` is false, so the
-    clear-and-rewrite branch does not run and the filled boxes are skipped. Change that branch's
-    condition and this fails; nothing else in the suite would.
-    """
     edited = dict(_PROTOTYPE_DATA, lengthCm=41.0, name="Bandha tote, MK II", weightG=500.0)
     entry = await _hydrate_internal(
         monkeypatch,
         "finalProduct",
-        # What the row already holds, echoed back by the client on an ordinary re-save.
         {
             "prototypeRef": "ent_proto",
             "name": "Bandha tote, wide gusset",
@@ -5423,20 +3219,11 @@ async def test_a_prototype_edited_afterwards_does_not_rewrite_a_catalogue_row(mo
     assert entry.data["name"] == "Bandha tote, wide gusset"
     assert entry.data["lengthCm"] == 38.0
     assert entry.data["weightG"] == 420.0
-    # And nothing was stamped, because nothing was written: the provenance map may never claim
-    # authorship of a value this save did not produce.
     assert "name" not in entry.hydrated
     assert "lengthCm" not in entry.hydrated
 
 
 async def test_re_pointing_at_another_prototype_clears_and_rewrites(monkeypatch):
-    """The one case that DOES overwrite, and the internal carry gets it identically.
-
-    A catalogue row holding prototype A's dimensions beside prototype B's id is a document that
-    measures two different things under one heading — the same shape as the old artisan's phone
-    beside the new artisan's name, on a table a ministry reads. What the new prototype cannot answer
-    is CLEARED rather than left standing.
-    """
     thin = {"name": "Bandha runner", "lengthCm": 120.0}
     entry = await _hydrate_internal(
         monkeypatch,
@@ -5459,18 +3246,10 @@ async def test_re_pointing_at_another_prototype_clears_and_rewrites(monkeypatch)
     assert entry.data["lengthCm"] == 120.0
     assert "weightG" not in entry.data
     assert "dimensionsNote" not in entry.data
-    # THE MULTI ARM IS EXEMPT, matching the gallery rule on all three surfaces: a list is seeded
-    # when empty and never overwritten.
     assert entry.data["materials"] == ["Cotton", "Jute webbing"]
 
 
 async def test_a_prototype_from_another_workshop_reaches_nothing(monkeypatch):
-    """THE SCOPE CLAUSE, PROVED RATHER THAN ASSERTED IN A COMMENT.
-
-    An id from another workshop is a stale form or a replayed offline queue, not a 403 — but it must
-    not be followed, or one cluster's catalogue would be filled from another cluster's prototypes.
-    The row exists, is live, and carries every value; only its ``designWorkshopId`` differs.
-    """
     entry = await _hydrate_internal(
         monkeypatch,
         "finalProduct",
@@ -5482,13 +3261,6 @@ async def test_a_prototype_from_another_workshop_reaches_nothing(monkeypatch):
 
 
 async def test_a_deleted_prototype_hydrates_nothing_and_disturbs_nothing(monkeypatch):
-    """A soft-deleted source is a row the designer removed, and it must not fill a catalogue.
-
-    AND THE ROW IS LEFT EXACTLY AS IT IS, which is the same answer the external path gives for a
-    deleted record and the whole reason the values were copied in the first place: what the designer
-    already wrote survives, and the boxes the deleted row would have filled stay blank for them to
-    answer.
-    """
     entry = await _hydrate_internal(
         monkeypatch,
         "finalProduct",
@@ -5503,14 +3275,6 @@ async def test_a_deleted_prototype_hydrates_nothing_and_disturbs_nothing(monkeyp
 
 
 async def test_a_prototype_addressed_by_the_key_the_handset_generated_still_resolves(monkeypatch):
-    """THE OFFLINE HALF, and it is the case this app exists for rather than an edge.
-
-    ``_in_record_options`` matches a scanned code against ``id`` OR ``clientKey`` because a
-    prototype tag has to be printable the afternoon the prototype is made and a workshop can go a
-    fortnight without signal. The resolver here keys on both for the same reason: a row created on a
-    handset carries the key that handset generated, and an id-only lookup would hydrate nothing for
-    exactly that fortnight.
-    """
     entry = await _hydrate_internal(
         monkeypatch,
         "finalProduct",
@@ -5521,12 +3285,6 @@ async def test_a_prototype_addressed_by_the_key_the_handset_generated_still_reso
 
 
 async def test_the_validation_row_takes_the_three_measurements_and_none_of_the_verdict(monkeypatch):
-    """Stage 15's mapping, and the boxes it deliberately leaves to the reviewer.
-
-    The three targets are named DIFFERENTLY from their sources (``lengthCm -> finalLengthCm``),
-    which is exactly the pair a key-name match would silently drop — the defect the external half of
-    this feature paid for once already.
-    """
     entry = await _hydrate_internal(
         monkeypatch,
         "prototypeValidation",
@@ -5542,19 +3300,6 @@ async def test_the_validation_row_takes_the_three_measurements_and_none_of_the_v
 
 
 async def test_a_carried_value_is_stamped_with_the_row_it_came_from(monkeypatch):
-    """PROVENANCE, WHICH IS WHAT MAKES THE DIVERGENCE ABOVE VISIBLE RATHER THAN MERELY ACCEPTED.
-
-    A hydrated value and a typed value are the same string in ``data`` a moment later, so this is
-    the only point at which the difference can be recorded. ``merge_entry_provenance`` reads
-    ``item.hydrated`` immediately afterwards and attributes the box to the SOURCE ROW's author
-    rather than to the designer who picked it — which for an internal carry is the person who filled
-    the prototype in, and is frequently not the person filling in the catalogue.
-
-    THE MODEL IS THE ``Dw…`` NAME AND NOT A ``REFERENCE_MODELS`` KEY, deliberately, and it is worth
-    knowing what that costs: ``entry_provenance.canonical_divergence`` is gated on
-    ``model in REFERENCE_MODELS``, so an admin audit shows the stamp and does NOT re-resolve it
-    against the live prototype row. Named here so the limit is on the record.
-    """
     entry = await _hydrate_internal(
         monkeypatch,
         "finalProduct",
@@ -5569,15 +3314,6 @@ async def test_a_carried_value_is_stamped_with_the_row_it_came_from(monkeypatch)
 
 
 async def test_without_a_workshop_to_scope_to_the_carry_is_skipped_and_says_so(monkeypatch, caplog):
-    """THE ONE FAILURE MODE THIS PATH CAN HAVE, MADE AUDIBLE.
-
-    An internal ref resolves WITHIN one workshop, so a caller that does not name the workshop has
-    nothing to scope the read to. Raising would fail a whole stage save — a designer's afternoon —
-    over a keyword; resolving unscoped would let one workshop's catalogue be filled from another's.
-    So the carry is skipped, the row is left exactly as it arrived, and the log names the model, so
-    that the blank box has a cause somebody can find rather than being the silence this module
-    spends most of its comments avoiding.
-    """
     monkeypatch.setattr(dw, "db", _WorkshopDb([_stage_row("prototype", "ent_proto", _PROTOTYPE_DATA)]))
     entry = dw.PendingEntry(
         entity=_entity("finalProduct"), data={"prototypeRef": "ent_proto"}, previous={},
@@ -5593,19 +3329,6 @@ async def test_without_a_workshop_to_scope_to_the_carry_is_skipped_and_says_so(m
 
 
 def test_the_picker_sends_the_keys_the_mapping_reads_and_no_others(monkeypatch):
-    """THE OTHER END OF THE SAME TABLE: what ``_in_record_options`` puts in an option's ``data``.
-
-    A reference option's ``data`` IS the hydration dictionary, so what belongs in it is exactly the
-    source keys some mapping names — nine for ``DwPrototype``, and NOTHING for the four internal
-    models whose refs were all judged and refused. That second half is the assertion with teeth:
-    ``DwReferenceOption.tentative`` on the handset and
-    ``test_the_flag_travels_and_the_stage_s_answers_do_not`` both depend on a ``DwSketch`` option's
-    ``data`` staying empty, because ``sketch.supersedesSketch`` fills a row that declares
-    ``isTentative`` itself and a copy of that flag would tick the new sketch's box.
-
-    DERIVED FROM THE TABLE RATHER THAN LISTED, which is what stops the picker and the save
-    disagreeing: widen the mapping and the picker widens in the same change.
-    """
     assert dw._internal_carry_keys(dw._dw_entity("DwPrototype")) == (
         "name",
         "artisanRef",
@@ -5618,8 +3341,6 @@ def test_the_picker_sends_the_keys_the_mapping_reads_and_no_others(monkeypatch):
         "processSummary",
         "makingTimeDays",
     )
-    # THE ONE-TAP SUGGESTIONS (owner, C10) read the sketch's name, materials and intended size off
-    # the same payload. Never `isTentative` (asserted below): no suggestion names it.
     assert dw._internal_carry_keys(dw._dw_entity("DwSketch")) == (
         "name",
         "materials",
@@ -5632,26 +3353,10 @@ def test_the_picker_sends_the_keys_the_mapping_reads_and_no_others(monkeypatch):
             f"{model} started travelling in a picker payload; every REF pointing at it was refused, "
             "so either a mapping was added without its ledger row or this allowlist has widened"
         )
-    # AND `isTentative` IS NOT AMONG THEM, named rather than inferred from the empty tuple above: it
-    # is the one key whose arrival would be actively harmful rather than merely wide.
     assert "isTentative" not in dw._internal_carry_keys(dw._dw_entity("DwSketch"))
 
 
 def test_an_internal_mapping_reading_a_field_the_source_does_not_have_fails_validation(monkeypatch):
-    """THE GUARD THE EXTERNAL HALF CANNOT HAVE, AND ITS NEGATIVE CONTROL.
-
-    ``validate_registry`` refuses to check an EXTERNAL mapping's source key — it names a key of a
-    ``REFERENCE_MODELS`` data lambda, and ``stage_schema`` must not import the module that holds
-    them, which is why ``design_workshops.validate_reference_carry`` exists at all. An INTERNAL
-    mapping's source key names a field of an entity of THIS registry, two lines away, so it IS
-    checked. Without this, ``hydrate_entries`` would read an absent key and skip it — silently, and
-    indistinguishably from a source row nobody had filled in — and the first symptom would be a
-    blank column in a catalogue somebody had already submitted.
-
-    A TYPO IS ONLY HALF OF IT. ``validate_registry`` is asserted sound by
-    ``test_the_registry_is_sound`` above, so this is the negative control that shows the new clause
-    can actually fail: the real table is left alone and a fake one is put under it.
-    """
     from app.services import stage_schema as stage_schema_module
 
     monkeypatch.setattr(
@@ -5664,25 +3369,6 @@ def test_an_internal_mapping_reading_a_field_the_source_does_not_have_fails_vali
 
 
 def test_an_internal_mapping_reading_a_RETIRED_field_fails_validation():
-    """THE WORSE HALF, BECAUSE IT WORKS UNTIL IT DOES NOT.
-
-    A source key that never existed hydrates nothing from the first save. A source key that exists
-    and is later DEPRECATED hydrates correctly until somebody opens the source stage and presses
-    Save: ``entity_to_dict`` drops a deprecated field from the wire and ``validate_entry`` rebuilds
-    ``cleaned`` from the live specs, so the key is deleted from the row — and the carry then stops,
-    on a workshop whose earlier rows carry the value, with nothing to attribute it to.
-
-    NO REF IN THE REGISTRY POINTS AT AN ENTITY THAT HAS A DEPRECATED FIELD TODAY (the only one is
-    ``sketchReview.rank``, and nothing references ``DwSketchReview``), so the state has to be
-    manufactured — and it is manufactured on the REAL mapping rather than on a fake one, which makes
-    this the stronger of the two arms: it retires a field ``finalProduct.prototypeRef`` genuinely
-    reads and asserts the registry refuses the pair.
-
-    ``object.__setattr__`` because ``FieldSpec`` is frozen and slotted; the same idiom
-    ``test_an_in_place_attribute_change_still_moves_the_version`` uses, and restored in a ``finally``
-    for the same reason — the registry is a process global and a leaked flag would fail whichever
-    later test happened to read it.
-    """
     spec = _field("prototype", "dimensionsNote")
     object.__setattr__(spec, "deprecated", True)
     try:
@@ -5695,8 +3381,6 @@ def test_an_internal_mapping_reading_a_RETIRED_field_fails_validation():
 
 
 class _CraftListDb:
-    """Just enough of the client for :func:`dw.derive_stage_craft_names`: one read of the crafts."""
-
     def __init__(self, crafts):
         rows = {c.id: c for c in crafts}
 
@@ -5721,11 +3405,6 @@ _FOLDED = SimpleNamespace(id="crf_merged", name="Bandha", status="MERGED")
 
 @pytest.mark.parametrize("craft", [_UNLISTED, _FOLDED, None], ids=["legacy", "merged", "unknown"])
 async def test_stage_one_refuses_a_craft_that_is_not_on_the_list(monkeypatch, craft):
-    """A ``craftRef`` posted directly is held to the header's rule: a NEW link must be ACTIVE.
-
-    The picker offers only ACTIVE crafts (``offered_where``), but nothing stopped a body naming a
-    LEGACY or MERGED craft, which stage 1 then promoted to ``DesignWorkshop.craftId``.
-    """
     monkeypatch.setattr(dw, "db", _CraftListDb([c for c in (_UNLISTED, _FOLDED) if c]))
     entry = _setup_entry({"craftRef": craft.id if craft else "crf_missing", "craftName": "typed"})
     with pytest.raises(dw.HTTPException) as refused:
@@ -5735,7 +3414,6 @@ async def test_stage_one_refuses_a_craft_that_is_not_on_the_list(monkeypatch, cr
 
 
 async def test_stage_one_keeps_a_craft_it_already_links_whatever_its_status(monkeypatch):
-    """Re-saving stage 1 with the craft the row already holds is never refused, and its name follows."""
     monkeypatch.setattr(dw, "db", _CraftListDb([_UNLISTED, _LISTED]))
     kept = _setup_entry({"craftRef": "crf_legacy", "craftName": "x"}, previous={"craftRef": "crf_legacy"})
     picked = _setup_entry({"craftRef": "crf_active", "craftName": "typed"}, previous={"craftRef": "crf_legacy"})

@@ -1,11 +1,3 @@
-"""THE APPROVING AUTHORITY'S DECISIONS, ASSERTED WITHOUT A DATABASE.
-
-The companion to ``test_design_workshop_approvals_db.py``, divided the way the review loop's two test
-modules are: everything here is true of the SOURCE — who the authority is, what each decision writes,
-which state each may be taken from, what each refusal says, what the migration carries, and the shape
-of the router — so it runs in CI's Backend tests job, where there is no Postgres.
-"""
-
 from __future__ import annotations
 
 import inspect
@@ -48,17 +40,12 @@ def _enum(name: str) -> set[str]:
     }
 
 
-# --------------------------------------------------------------------------------------
-# 1. Who decides
-# --------------------------------------------------------------------------------------
-
 
 def test_the_approving_authority_is_the_ministry_admin_and_the_master_admin_and_nobody_else():
     assert frozenset({"MINISTRY_ADMIN", "MASTER_ADMIN"}) == deps.APPROVAL_AUTHORITY_ROLES
     for role in deps.ROLE_RANK:
         user = SimpleNamespace(role=role)
         assert deps.can_approve_design_workshops(user) is (role in deps.APPROVAL_AUTHORITY_ROLES)
-    # ADMIN outranks MINISTRY_ADMIN and is out: a SET, not a floor.
     assert not deps.can_approve_design_workshops(SimpleNamespace(role="ADMIN"))
     assert not deps.can_approve_design_workshops(None)
 
@@ -71,7 +58,6 @@ def test_rule_seven_bars_authors_and_inspectors_and_nothing_else():
     assert "written its stages" in by_writes[0]
     inspecting = posts.approval_refusals(posts={posts.INSPECTOR}, authored=frozenset())
     assert len(inspecting) == 1 and "inspects" in inspecting[0]
-    # 7c: a director post neither grants nor bars.
     for post in (posts.ASSISTANT_DIRECTOR, posts.REGIONAL_DIRECTOR):
         assert posts.approval_refusals(posts={post}, authored=frozenset()) == []
 
@@ -91,10 +77,6 @@ def test_the_rule_seven_module_does_not_name_the_inspection_scope():
         ):
             assert name not in lowered, f"{path.name} names {name}"
 
-
-# --------------------------------------------------------------------------------------
-# 2. The graph
-# --------------------------------------------------------------------------------------
 
 
 def test_five_decision_edges_and_each_names_its_route():
@@ -128,10 +110,6 @@ def test_the_closed_inspection_sentence_is_true_of_each_state():
     assert loop.review_closed_refusal(loop.IN_PROGRESS) == loop.NOT_UNDER_REVIEW_REFUSAL
 
 
-# --------------------------------------------------------------------------------------
-# 3. The freeze
-# --------------------------------------------------------------------------------------
-
 
 def test_approved_and_handed_on_are_frozen_and_a_legacy_submitted_is_not():
     assert plans.frozen_refusal("APPROVED", None) == plans.FROZEN_APPROVED
@@ -156,10 +134,6 @@ def test_the_loader_and_the_two_exempt_doors_carry_the_freeze():
     assert sorted(exempt) == ["record_device_export", "record_dictation_consent"]
     assert "FROZEN_WHERE" in inspect.getsource(routes.update_design_workshop)
 
-
-# --------------------------------------------------------------------------------------
-# 4. The plans
-# --------------------------------------------------------------------------------------
 
 
 def test_an_approval_is_two_writes_guarded_on_status_round_and_what_was_read():
@@ -263,10 +237,6 @@ def test_every_column_the_plans_name_exists():
     assert {*loop.APPROVAL_CACHE_KEYS, *loop.HAND_ON_CACHE_KEYS, "lastHandedInAt"} <= workshop
 
 
-# --------------------------------------------------------------------------------------
-# 5. What a reader is told
-# --------------------------------------------------------------------------------------
-
 
 def test_the_decision_history_decodes_every_kind():
     def row(status_value, notes):
@@ -323,10 +293,6 @@ def test_the_certification_lines():
     assert plans.role_label("MASTER_ADMIN") == "Master Admin"
 
 
-# --------------------------------------------------------------------------------------
-# 6. The migration and the router
-# --------------------------------------------------------------------------------------
-
 
 def test_the_migration_carries_its_checks_keys_and_indexes():
     sql = MIGRATION.read_text(encoding="utf-8")
@@ -358,7 +324,6 @@ def test_every_approvals_route_stands_behind_the_authority_and_the_literal_comes
         "/design-workshop-approvals/{workshop_id}/approve",
         "/design-workshop-approvals/{workshop_id}/revise",
         "/design-workshop-approvals/{workshop_id}/hand-on",
-        # 2026-10-18: "Approve and hand on" and a re-issued office link, behind the same authority.
         "/design-workshop-approvals/{workshop_id}/approve-and-hand-on",
         "/design-workshop-approvals/{workshop_id}/delivery/resend",
     }

@@ -1,12 +1,3 @@
-"""THE REVIEW AIDS OVER A DATABASE (2026-10-17): batches of notes, "Checked, no corrections", the
-directors' notes, round snapshots, queue readiness, the approval screen's photographs and the reuse of
-an unchanged report file.
-
-The shape is ``test_design_workshop_approvals_db.py``'s: a module fixture seeds through a private
-``asyncio.run`` and only then starts the ``TestClient``; the tests drive the client and never touch
-``db`` while it is alive. Each test owns its own workshop.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -185,10 +176,6 @@ def _inspect(world, slug: str, name: str, verb: str, body: Any = None, method: s
     )
 
 
-# --------------------------------------------------------------------------------------
-# B2: batches
-# --------------------------------------------------------------------------------------
-
 
 def test_an_inspector_files_a_tray_of_notes_in_one_request(world):
     answer = _inspect(
@@ -242,7 +229,6 @@ def test_an_inspector_sends_back_with_several_notes(world):
     assert answer.status_code == 200, answer.text
     body = answer.json()
     assert body["status"] == "NEEDS_REVISION"
-    # Newest first on the wire; the first note is the one that sent it back.
     assert [row["sentBack"] for row in reversed(body["inspectionFeedback"])] == [True, False]
     assert body["reviewNotes"] == "First. (and 1 more note)"
 
@@ -261,10 +247,6 @@ def test_the_approver_sends_back_with_a_tray(world):
     assert only["byApprovingAuthority"] and only["sentBack"] and only["fieldKey"] == "venue"
 
 
-# --------------------------------------------------------------------------------------
-# C5: "Checked, no corrections"
-# --------------------------------------------------------------------------------------
-
 
 def test_an_inspector_clears_a_round_and_the_approver_sees_it(world):
     first = _inspect(world, "inspector", "clear", "clearance")
@@ -278,7 +260,6 @@ def test_an_inspector_clears_a_round_and_the_approver_sees_it(world):
     marked = {p["userId"]: p["clearedAt"] for p in read.json()["inspectors"]}
     assert marked[world["people"]["inspector"].id]
     assert marked[world["people"]["inspector2"].id] is None
-    # Never required for approval: the decision view does not read the verdicts at all.
     assert read.json()["mayDecide"]["approve"] is True
 
     some = world["client"].get(
@@ -313,10 +294,6 @@ def test_a_note_ends_the_verdict_and_a_verdict_is_refused_over_notes(world):
     refused = _inspect(world, "inspector", "clear_then_note", "clearance")
     assert refused.status_code == 422
 
-
-# --------------------------------------------------------------------------------------
-# C16: the directors' notes
-# --------------------------------------------------------------------------------------
 
 
 def test_an_assistant_director_files_a_note_marked_with_the_post(world):
@@ -361,10 +338,6 @@ def test_a_director_without_the_post_or_on_a_closed_report_is_refused(world):
     )
     assert closed.status_code == 422
 
-
-# --------------------------------------------------------------------------------------
-# C13: a copy per hand-in
-# --------------------------------------------------------------------------------------
 
 
 def test_a_stage_save_that_resubmits_keeps_a_copy_of_the_round(world):
@@ -413,10 +386,6 @@ def test_handing_in_keeps_a_copy_of_the_round(world):
     )
     assert seen.status_code == 200
 
-
-# --------------------------------------------------------------------------------------
-# B4, A23
-# --------------------------------------------------------------------------------------
 
 
 def test_the_inspection_list_groups_and_scores_its_rows(world):
@@ -471,10 +440,6 @@ def test_the_approver_reads_the_workshops_files(world):
     assert refused.status_code == 403
 
 
-# --------------------------------------------------------------------------------------
-# A22: an unchanged report is served again
-# --------------------------------------------------------------------------------------
-
 
 def test_an_unchanged_report_is_served_from_the_stored_file(world, monkeypatch):
     from app.api.routes import design_workshop_approvals as route
@@ -519,17 +484,15 @@ def test_an_unchanged_report_is_served_from_the_stored_file(world, monkeypatch):
     )
     assert "x-report-reused-from" not in fresh.headers
     assert len(builds) == 2
-    # The rebuild replaced the first PDF: only the newest stored file per format is kept.
     assert deleted == [f"reports/{_wid(world, 'report')}/{first.headers['x-report-export-id']}.pdf"]
     other_format = world["client"].post(
         url, json={"formats": ["DOCX"], "record": True}, headers=_as(world, "ministry")
     )
     assert "x-report-reused-from" not in other_format.headers
-    assert len(deleted) == 1  # another format is not a newer build of the PDF
+    assert len(deleted) == 1
 
 
 def test_the_rows_behind_the_answers(world):
-    """Read back AFTER the client has closed — conftest's rule: no database call while it is alive."""
     world["client"].__exit__(None, None, None)
     world["client"] = _Closed()
     send_back = asyncio.run(_read_back(_wid(world, "send_batch")))
@@ -547,11 +510,6 @@ class _Closed:
         return None
 
 
-# --------------------------------------------------------------------------------------
-# Service-level checks. They run after the client has closed (conftest's rule), each on its own
-# connection.
-# --------------------------------------------------------------------------------------
-
 
 def _with_db(work):
     async def run():
@@ -565,7 +523,6 @@ def _with_db(work):
 
 
 def test_the_snapshot_purge_reaches_past_any_batch_of_deleted_workshops(world):
-    """More than 500 workshops deleted over a year ago: every one's copies go in one pass."""
     from datetime import UTC, datetime, timedelta
 
     from app.services import design_workshop_review_aids as aids
@@ -631,7 +588,6 @@ def test_stored_reports_are_purged_when_stale_or_their_workshop_is_gone(world, m
             "orphan": await db.dwreportexport.create(
                 data={**base, "designWorkshopId": gone.id, "storageKey": f"reports/{tag}/orphan"}
             ),
-            # A hand-on's e-mailed file is the office's download, not a reuse copy: never swept.
             "delivery": await db.dwreportexport.create(
                 data={
                     **base,
@@ -659,7 +615,6 @@ def test_stored_reports_are_purged_when_stale_or_their_workshop_is_gone(world, m
 
 
 def test_a_note_filed_mid_clearance_wins(world, monkeypatch):
-    """The note lands between clear_round's count and its insert: the verdict must not stand."""
     from fastapi import HTTPException
 
     from app.services import design_workshop_review_aids as aids
@@ -669,13 +624,13 @@ def test_a_note_filed_mid_clearance_wins(world, monkeypatch):
 
     async def work():
         record = await db.designworkshop.find_unique(where={"id": wid})
-        actions = type(db.dwinspectionfeedback)  # slotted: patch the class, not the instance
+        actions = type(db.dwinspectionfeedback)
         real_count = actions.count
         calls = {"n": 0}
 
         async def count(self, **kwargs):
             calls["n"] += 1
-            if calls["n"] == 1:  # the first count runs before the other request's note commits
+            if calls["n"] == 1:
                 await db.dwinspectionfeedback.create(
                     data={
                         "designWorkshopId": wid,
@@ -744,6 +699,6 @@ def test_the_report_fingerprint_follows_the_viewer_and_the_records_it_cites(worl
         return as_ministry, as_admin, as_designer, renamed
 
     as_ministry, as_admin, as_designer, renamed = _with_db(work)
-    assert as_ministry == as_admin  # both unrestricted: one file serves both
-    assert as_designer != as_ministry  # a restricted reader's report is their own
-    assert renamed != as_ministry  # a renamed artisan is not served stale
+    assert as_ministry == as_admin
+    assert as_designer != as_ministry
+    assert renamed != as_ministry
