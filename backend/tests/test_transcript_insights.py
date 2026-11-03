@@ -133,7 +133,7 @@ def provider(monkeypatch):
                     "message": f"{what} failed: {state.fail_on[index]}. Nothing was changed."}
         text = state.replies.pop(0) if state.replies else "Translated."
         return {"available": True, "status": "COMPLETED", "text": text, "provider": "anthropic",
-                "model": "claude-sonnet-5-5", "responseModel": "claude-sonnet-5-5"}
+                "model": "claude-sonnet-5-5", "responseModel": "claude-sonnet-5-5-20261015"}
 
     monkeypatch.setattr(ai, "_run_chat_verb", run_chat_verb)
     return state
@@ -288,7 +288,7 @@ def test_a_failed_chunk_fails_the_translation_and_the_summary_is_still_stored(fa
     assert row.translationStatus == ti.FAILED and row.translationText is None
     assert row.summaryLines[0] == "Dabu printing is done in the village."
     assert row.provider == "anthropic" and row.modelId == "claude-sonnet-5-5"
-    assert row.modelVersion == "claude-sonnet-5-5"
+    assert row.modelVersion == "claude-sonnet-5-5-20261015"
     assert row.promptVersion == "transcript-insights/1"
 
 
@@ -569,7 +569,7 @@ def test_get_returns_the_contract_shape(fake, provider):
         "status": "NOT_NEEDED", "text": None, "note": "The transcript is already in English."
     }
     assert insight["provenance"]["promptVersion"] == "transcript-insights/1"
-    assert insight["provenance"]["modelVersion"] == "claude-sonnet-5-5"
+    assert insight["provenance"]["modelVersion"] == "claude-sonnet-5-5-20261015"
     assert insight["provenance"]["generatedAt"].endswith("Z")
     assert insight["edited"] is None
 
