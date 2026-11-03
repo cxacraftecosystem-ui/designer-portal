@@ -15952,7 +15952,7 @@ private fun TranscriptRefineControls(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        "Refining" + (if (mode) " and translating" else "") + " uses an AI model (gpt-4o-mini) at a small cost. Continue?"
+                        "Refining" + (if (mode) " and translating" else "") + " uses an AI model at a small cost. Continue?"
                     )
                     AppToggle(
                         label = "Do not remind me again",

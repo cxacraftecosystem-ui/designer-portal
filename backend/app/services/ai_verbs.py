@@ -271,6 +271,11 @@ def text_of_answer(answer: Mapping[str, Any], *, verb: Verb) -> str:
         raise VerbUnavailable(
             message or f"{verb.human.capitalize()} isn't available right now."
         )
+    if status == "REFUSED":
+        raise VerbError(
+            message
+            or f"The AI model declined this, so {verb.human} recorded nothing. You can write the words yourself."
+        )
     if status in {"EMPTY", "FAILED"}:
         raise VerbError(message or f"{verb.human.capitalize()} produced nothing.")
     text = str(answer.get("text") or "").strip()

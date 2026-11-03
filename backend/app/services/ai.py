@@ -22,7 +22,14 @@ from app.services import (
     subtitles,
     user_ai_keys,
 )
-from app.services.ai_providers import AiProvider, AiTask
+from app.services.ai_providers import (
+    AiProvider,
+    AiTask,
+    ModelDeclined,
+    gemini_reply_text,
+    openai_message_text,
+    openai_sampling,
+)
 from app.services.measurement_provenance import (
     MeasurementProvenance,
     self_reported_confidence,
@@ -104,6 +111,12 @@ def _fault(exc: Exception) -> str:
     """How a provider failed, in the only terms safe to repeat: the status it answered with, or the
     class of transport error."""
     code = getattr(getattr(exc, "response", None), "status_code", None)
+    if code is None:
+        code = getattr(exc, "status_code", None)
+    if isinstance(exc, requests.Timeout) or type(exc).__name__ in {"APITimeoutError", "Timeout"}:
+        return "the service took too long to answer"
+    if code == 402:
+        return "the service's credit has run out"
     if code in (401, 403):
         return "the service did not accept the key"
     if code in (429, 503):
@@ -474,6 +487,8 @@ _TRANSCRIPTION_MESSAGES = transcription_service.Messages(
 
 def _fault_for_status(status: int | None) -> str:
     """``_fault`` for a status the chain already read off the response."""
+    if status == 402:
+        return "the service's credit has run out"
     if status in (401, 403):
         return "the service did not accept the key"
     if status in (429, 503):
@@ -1027,16 +1042,15 @@ def _post_openai_chat(
         json={
             "model": settings.openai_chat_model,
             "messages": messages,
-            "temperature": temperature,
+            **openai_sampling(settings.openai_chat_model, temperature),
         },
         timeout=120,
     )
     response.raise_for_status()
-    payload = response.json()
-    return str(payload["choices"][0]["message"]["content"]).strip()
+    return openai_message_text(response.json())
 
 
-def _refine_sync(text: str, translate_to_english: bool, settings: Settings) -> dict[str, Any]:
+def _refine_prompts(text: str, translate_to_english: bool) -> tuple[str, str]:
     clipped = text.strip()[:_REFINE_MAX_CHARS]
     translate_clause = (
         " Then translate the entire conversation into clear, natural English, preserving meaning."
@@ -1062,6 +1076,11 @@ def _refine_sync(text: str, translate_to_english: bool, settings: Settings) -> d
         "sections with a Markdown horizontal rule on its own line (`---`). Keep it faithful to the "
         "source." + translate_clause + "\n\nRaw transcript:\n\n" + clipped
     )
+    return system, user
+
+
+def _refine_sync(text: str, translate_to_english: bool, settings: Settings) -> dict[str, Any]:
+    system, user = _refine_prompts(text, translate_to_english)
     refined = _post_openai_chat(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         settings,
@@ -1075,6 +1094,29 @@ def _refine_sync(text: str, translate_to_english: bool, settings: Settings) -> d
     }
 
 
+def _refine_keyed_sync(
+    text: str, translate_to_english: bool, credential: AiCredential, settings: Settings
+) -> dict[str, Any]:
+    system, user = _refine_prompts(text, translate_to_english)
+    answer = _chat_verb_keyed(system, user, credential, settings, temperature=0.2)
+    refined = answer.get("text") or None
+    status = str(answer.get("status") or "")
+    if status == "REFUSED":
+        return {
+            "available": True,
+            "status": "FAILED",
+            "refined": None,
+            "message": "The AI model declined this transcript. The raw transcript is unchanged.",
+        }
+    return {
+        "available": True,
+        "status": "COMPLETED" if refined else "EMPTY",
+        "refined": refined,
+        "model": answer.get("model"),
+        "translated": translate_to_english,
+    }
+
+
 async def refine_transcript_text(
     text: str | None,
     translate_to_english: bool,
@@ -1082,16 +1124,19 @@ async def refine_transcript_text(
 ) -> dict[str, Any]:
     """Refine a raw transcript into a clean interviewer/interviewee conversation (Markdown), optionally
     translating it to English. Uses the configured chat model (gpt-4o-mini by default)."""
+    credential = None
     if not await managed_secrets.get_secret("OPENAI_API_KEY"):
-        return {
-            "available": False,
-            "status": "UNAVAILABLE",
-            "refined": None,
-            "message": (
-                "Refinement isn't available right now. An administrator can turn it on in "
-                "Settings."
-            ),
-        }
+        credential = await user_ai_keys.resolve(None, AiTask.TRANSLATE)
+        if credential is None:
+            return {
+                "available": False,
+                "status": "UNAVAILABLE",
+                "refined": None,
+                "message": (
+                    "Refinement isn't available right now. An administrator can turn it on in "
+                    "Settings."
+                ),
+            }
     if not text or not text.strip():
         return {
             "available": True,
@@ -1100,7 +1145,18 @@ async def refine_transcript_text(
             "message": "There is no transcript text to refine yet.",
         }
     try:
+        if credential is not None:
+            return await asyncio.to_thread(
+                _refine_keyed_sync, text, translate_to_english, credential, settings
+            )
         return await asyncio.to_thread(_refine_sync, text, translate_to_english, settings)
+    except ModelDeclined:
+        return {
+            "available": True,
+            "status": "FAILED",
+            "refined": None,
+            "message": "The AI model declined this transcript. The raw transcript is unchanged.",
+        }
     except requests.RequestException as exc:
         logger.error("Transcript refinement failed: %s", redact_secrets(str(exc)))
         return {
@@ -1217,12 +1273,11 @@ def _post_openai_chat_keyed(
     response = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"model": model, "messages": messages, "temperature": temperature},
+        json={"model": model, "messages": messages, **openai_sampling(model, temperature)},
         timeout=VERB_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
-    payload = response.json()
-    return str(payload["choices"][0]["message"]["content"]).strip()
+    return openai_message_text(response.json())
 
 
 def _post_gemini_chat(
@@ -1251,15 +1306,7 @@ def _post_gemini_chat(
         timeout=VERB_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
-    payload = response.json()
-    candidates = payload.get("candidates") or []
-    if not candidates:
-        # A safety block arrives as 200 with no candidates, exactly as a Claude refusal arrives as
-        # 200 with empty content. Returning "" rather than raising keeps it a status the caller can
-        # report, instead of an exception that reads as a network fault.
-        return ""
-    parts = (candidates[0].get("content") or {}).get("parts") or []
-    return "".join(str(part.get("text", "")) for part in parts).strip()
+    return gemini_reply_text(response.json())
 
 
 def _model_for(credential: AiCredential, settings: Settings) -> str:
@@ -1283,6 +1330,22 @@ def _chat_verb_keyed(
 ) -> dict[str, Any]:
     """One text transform against whichever provider the resolved credential names."""
     model = _model_for(credential, settings)
+    try:
+        return _chat_verb_dispatch(system, user, credential, model, temperature=temperature)
+    except ModelDeclined:
+        return {
+            "available": True,
+            "status": "REFUSED",
+            "text": None,
+            "provider": credential.provider.value.lower(),
+            "model": model,
+            "message": "The AI model declined this passage. Nothing was changed; you can write the words yourself.",
+        }
+
+
+def _chat_verb_dispatch(
+    system: str, user: str, credential: AiCredential, model: str, *, temperature: float
+) -> dict[str, Any]:
     if credential.provider is AiProvider.ANTHROPIC:
         return anthropic_verbs.chat_verb(
             system=system, user=user, api_key=credential.api_key, model=model
@@ -2444,6 +2507,16 @@ def _measurement_prompt(dimension: str | None) -> str:
     )
 
 
+GEMINI_VISION_FALLBACK_MODEL = "gemini-3.7-flash"
+
+
+def measurement_models(settings: Settings) -> tuple[str, ...]:
+    configured = settings.gemini_measurement_model
+    if configured == GEMINI_VISION_FALLBACK_MODEL:
+        return (configured,)
+    return (configured, GEMINI_VISION_FALLBACK_MODEL)
+
+
 def _post_gemini_measurement(
     content: bytes, mime_type: str, settings: Settings, dimension: str | None = None
 ) -> dict[str, Any]:
@@ -2475,77 +2548,82 @@ def _post_gemini_measurement(
     ordered_keys = keys[start:] + keys[:start]
     last_error: Exception | None = None
 
-    for attempt, key in enumerate(ordered_keys):
-        try:
-            response = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_measurement_model}:generateContent",
-                # The key goes in the header the API documents for it, NOT in ``?key=`` — a query
-                # parameter is part of the prepared URL, which means it is inside the message of
-                # every requests exception this call can raise, and those messages were being
-                # returned to the caller and stored on the media row. It also lands in any proxy or
-                # access log between here and Google. Every other provider in this module already
-                # authenticates by header; this was the one that did not.
-                headers={"x-goog-api-key": key},
-                json=body,
-                timeout=90,
-            )
-        except requests.RequestException as exc:
-            last_error = exc
-            logger.info(
-                "Gemini key #%s network error, rotating: %s",
-                (start + attempt) % len(keys),
-                redact_secrets(str(exc)),
-            )
-            continue
+    for model_id in measurement_models(settings):
+        for attempt, key in enumerate(ordered_keys):
+            try:
+                response = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent",
+                    # The key goes in the header the API documents for it, NOT in ``?key=`` — a query
+                    # parameter is part of the prepared URL, which means it is inside the message of
+                    # every requests exception this call can raise, and those messages were being
+                    # returned to the caller and stored on the media row. It also lands in any proxy or
+                    # access log between here and Google. Every other provider in this module already
+                    # authenticates by header; this was the one that did not.
+                    headers={"x-goog-api-key": key},
+                    json=body,
+                    timeout=90,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                logger.info(
+                    "Gemini key #%s network error, rotating: %s",
+                    (start + attempt) % len(keys),
+                    redact_secrets(str(exc)),
+                )
+                continue
 
-        if response.status_code in _GEMINI_ROTATE_STATUSES:
-            # The provider's body stays in the log. The raised error carries the response so the
-            # caller can name the status and nothing else — see ``_fault``.
-            last_error = requests.HTTPError(
-                f"Gemini rejected the request (HTTP {response.status_code})", response=response
-            )
-            logger.info(
-                "Gemini key #%s returned HTTP %s, rotating: %s",
-                (start + attempt) % len(keys),
-                response.status_code,
-                redact_secrets(str(response.text)[:200]),
-            )
-            continue
+            if response.status_code == 404:
+                last_error = requests.HTTPError("Gemini model unavailable (HTTP 404)", response=response)
+                break
 
-        try:
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            last_error = exc
-            continue
+            if response.status_code in _GEMINI_ROTATE_STATUSES:
+                # The provider's body stays in the log. The raised error carries the response so the
+                # caller can name the status and nothing else — see ``_fault``.
+                last_error = requests.HTTPError(
+                    f"Gemini rejected the request (HTTP {response.status_code})", response=response
+                )
+                logger.info(
+                    "Gemini key #%s returned HTTP %s, rotating: %s",
+                    (start + attempt) % len(keys),
+                    response.status_code,
+                    redact_secrets(str(response.text)[:200]),
+                )
+                continue
 
-        payload = response.json()
-        text = (
-            payload.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-        parsed = _extract_json(text)
-        return {
-            "available": True,
-            "status": "COMPLETED",
-            "analysis": parsed,
-            "keysTried": attempt + 1,
-            "raw": payload,
-            # WHAT PRODUCED THE NUMBER, TRAVELLING WITH THE NUMBER. Until this, the response carried
-            # `valueInches` and nothing about where it came from — while `settings.gemini_measurement_
-            # model` was in hand two lines above the return — so both clients auto-filled a form field
-            # from a model's estimate and `records.merge_field_provenance` then stamped it with the
-            # name of whoever pressed Save. The record asserted a named human had measured it. See
-            # `services/measurement_provenance` for the whole argument and for the client half.
-            **_measurement_provenance(parsed, settings).payload(),
-        }
+            try:
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                last_error = exc
+                continue
+
+            payload = response.json()
+            text = (
+                payload.get("candidates", [{}])[0]
+                .get("content", {})
+                .get("parts", [{}])[0]
+                .get("text", "")
+            )
+            parsed = _extract_json(text)
+            return {
+                "available": True,
+                "status": "COMPLETED",
+                "analysis": parsed,
+                "keysTried": attempt + 1,
+                "raw": payload,
+                # WHAT PRODUCED THE NUMBER, TRAVELLING WITH THE NUMBER. Until this, the response carried
+                # `valueInches` and nothing about where it came from — while `settings.gemini_measurement_
+                # model` was in hand two lines above the return — so both clients auto-filled a form field
+                # from a model's estimate and `records.merge_field_provenance` then stamped it with the
+                # name of whoever pressed Save. The record asserted a named human had measured it. See
+                # `services/measurement_provenance` for the whole argument and for the client half.
+                **_measurement_provenance(parsed, settings, model_id).payload(),
+            }
 
     raise last_error or RuntimeError("All configured Gemini keys failed")
 
 
 def _measurement_provenance(
-    analysis: dict[str, Any] | None, settings: Settings
+    analysis: dict[str, Any] | None, settings: Settings, model_id: str | None = None
 ) -> MeasurementProvenance:
     """The provenance of whatever this endpoint just did, including when it failed.
 
@@ -2559,7 +2637,7 @@ def _measurement_provenance(
     return vision_model_provenance(
         analysis,
         provider=MEASUREMENT_PROVIDER,
-        model_id=settings.gemini_measurement_model,
+        model_id=model_id or settings.gemini_measurement_model,
     )
 
 

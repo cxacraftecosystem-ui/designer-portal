@@ -85,6 +85,7 @@ import requests
 from app.core.config import get_settings
 from app.services import managed_secrets
 from app.services.ai import redact_secrets
+from app.services.ai_providers import openai_sampling
 from app.services.artisan_identity import (
     AADHAAR_LENGTH,
     mask_aadhaar,
@@ -667,7 +668,7 @@ def _openai_ocr(content: bytes, mime_type: str, timeout: float) -> dict[str, Any
         },
         json={
             "model": get_settings().openai_chat_model,
-            "temperature": 0.0,
+            **openai_sampling(get_settings().openai_chat_model, 0.0),
             "response_format": {"type": "json_object"},
             "messages": [
                 {

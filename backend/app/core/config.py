@@ -446,7 +446,7 @@ class Settings(BaseSettings):
     openai_transcription_model: str = Field(default="whisper-1", alias="OPENAI_TRANSCRIPTION_MODEL")
     # Chat model used to refine a raw transcript into a clean interviewer/interviewee conversation
     # (and optionally translate it to English). Defaults to the cost-efficient gpt-4o-mini.
-    openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")
+    openai_chat_model: str = Field(default="gpt-5.6-terra", alias="OPENAI_CHAT_MODEL")
     # The deployment's Claude key: the app-level fallback for the text verbs and photo captions when
     # a designer has not brought their own (see services/user_ai_keys). Deliberately has no model
     # setting beside it — unlike the OpenAI and Gemini pairs above, the model for a Claude call comes
@@ -459,7 +459,7 @@ class Settings(BaseSettings):
     # Vision model for grid measurement. Default is a current "flash lite" model; override via env to
     # any exact id (e.g. a newer flash-lite). The old gemini-1.5-flash id now 404s, so this matters.
     gemini_measurement_model: str = Field(
-        default="gemini-2.5-flash-lite", alias="GEMINI_MEASUREMENT_MODEL"
+        default="gemini-3.8-flash", alias="GEMINI_MEASUREMENT_MODEL"
     )
     maptiler_api_key: str | None = Field(default=None, alias="NEXT_PUBLIC_MAPTILER_API_KEY")
     # WHETHER THE **WEB** PROCESS ALSO DRAINS THE MEDIA QUEUE. The drain itself is a separate

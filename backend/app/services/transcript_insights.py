@@ -139,6 +139,8 @@ class InsightsFailed(RuntimeError):
 KEY_REFUSED = "The AI provider didn't accept the key. An administrator can check it in Settings."
 REQUEST_REFUSED = "The AI provider turned this transcript down."
 MODEL_DECLINED = "The AI model declined to summarise this transcript."
+BILLING = "The AI provider's credit has run out. This resumes by itself once it is topped up."
+BILLING_HOLD_SECONDS = 900
 
 
 # --- Switch and sources -----------------------------------------------------------------------
@@ -351,6 +353,8 @@ async def _chat(
     if status == "REFUSED":
         raise InsightsFailed(MODEL_DECLINED, retry=False)
     if status == "FAILED":
+        if "credit has run out" in str(result.get("message") or ""):
+            raise InsightsFailed(BILLING, hold_seconds=BILLING_HOLD_SECONDS)
         if "busy" in str(result.get("message") or ""):
             raise InsightsFailed("The AI provider is busy. This will retry shortly.")
         # ``ai._fault`` names the provider's answer in these words; neither clears by itself.
