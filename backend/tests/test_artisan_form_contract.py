@@ -253,9 +253,11 @@ async def test_an_old_shape_edit_of_a_legacy_record_lands_as_before(stored_row):
 
 
 
+_COMMENT_OR_STRING = re.compile(r'"(?:\\.|[^"\\\n])*"|/\*.*?\*/|(?<![:"\'\\])//[^\n]*', re.DOTALL)
+
+
 def _strip_comments(source: str) -> str:
-    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    return re.sub(r"(?m)(?<![:\"'\\])//.*$", "", source)
+    return _COMMENT_OR_STRING.sub(lambda m: m.group(0) if m.group(0).startswith('"') else "", source)
 
 
 def _one(pattern: str) -> pathlib.Path:
