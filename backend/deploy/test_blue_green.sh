@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016  # the stub bodies are single-quoted on purpose: they expand when they run
-# Runs blue_green.sh against stubbed sudo, systemctl, nginx, curl and journalctl and fake release
-# venvs, so the release logic is proved without a box, root or the network. Checks runs it
-# ("Deploy scripts").
-#
-# The stubs keep the services' state as files. After every stop and every nginx reload the systemctl
-# stub asks "is the port nginx proxies to still served?" and records a gap when it is not, so the
-# zero-downtime claim is asserted, not assumed.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 script="$here/blue_green.sh"
@@ -65,8 +58,6 @@ exit 0'
   export PATH="$T/bin:$PATH"
 }
 
-# A built release, as the workflow's steps leave it: a venv whose python logs what it is asked, and
-# a .env. `prisma migrate` fails while $STATE/migrate_failures counts down.
 mkrel() {
   local b="$APP/releases/$1/backend"
   mkdir -p "$b/.venv/bin"
@@ -99,11 +90,8 @@ is_up() { [ -e "$STATE/active/$1" ]; }
 current_is() { [ "$(readlink -f "$APP/current")" = "$APP/releases/$1" ]; }
 no_gaps() { if [ -s "$STATE/gaps" ]; then cat "$STATE/gaps" >&2; return 1; fi; }
 
-# The command must fail. Not `!`: errexit ignores a negated command, so `! x` asserts nothing.
 fails() { if "$@"; then echo "expected to fail: $*" >&2; return 1; fi; }
 
-# Each test in its own subshell with errexit on, OUTSIDE any `if` (an `if` would switch errexit off
-# for everything it runs, and every assertion below would pass).
 check() {
   local rc
   set +e
@@ -123,7 +111,7 @@ t_legacy_conversion() {
   [ -f "$UNIT_DIR/fieldrepo-api@.service" ]
   grep -q -- '--port %i' "$UNIT_DIR/fieldrepo-api@.service"
   [ ! -e "$UNIT_DIR/fieldrepo.service" ] && [ ! -e "$UNIT_DIR/fieldrepo.service.d" ]
-  [ -d "$UNIT_DIR/fieldrepo-queue.service.d" ]                 # the queue's drop-ins stay
+  [ -d "$UNIT_DIR/fieldrepo-queue.service.d" ]
   current_is r2; [ -e "$APP/releases/r2/.released" ]
   [ "$(readlink -f "$APP/slot-8001")" = "$APP/releases/r2" ]
   grep -q 'python -m prisma migrate deploy (in .*/releases/r2/backend)' "$STATE/log"
@@ -136,7 +124,7 @@ t_second_release_alternates_and_never_gaps() {
   release r3
   [ "$(port_now)" = 8000 ]; is_up fieldrepo-api@8000; fails is_up fieldrepo-api@8001
   current_is r3
-  [ "$(readlink -f "$APP/slot-8001")" = "$APP/releases/r2" ]  # the previous release stays behind a slot
+  [ "$(readlink -f "$APP/slot-8001")" = "$APP/releases/r2" ]
   no_gaps
 }
 
@@ -155,7 +143,7 @@ t_migration_falls_back_to_stopping_the_old_one() {
   release r2
   [ "$(port_now)" = 8001 ]; is_up fieldrepo-api@8001; fails is_up fieldrepo
   grep -q 'stopping it to free its sessions' "$STATE/err"
-  [ -s "$STATE/gaps" ]                                          # the gap detector sees this path's downtime
+  [ -s "$STATE/gaps" ]
 }
 
 t_failed_migration_restarts_the_old_one() {
@@ -235,8 +223,6 @@ t_a_stale_candidate_is_stopped_first() {
   [ "$(port_now)" = 8001 ]
 }
 
-# The workflow's "Prune old releases" step, run as written (only APP redirected). An `rm` stub refuses
-# a *rootowned* path unless it runs under sudo, and an *undeletable* one always.
 prune_step() {
   local wf="$here/../../.github/workflows/deploy-backend.yml" real_rm
   real_rm="$(command -v rm)"
@@ -249,7 +235,6 @@ exec '"$real_rm"' "$@"'
   bash "$T/prune.sh"
 }
 
-# Five releases that went live, oldest first, `current` on the newest, and the oldest behind a slot.
 five_releases() {
   local i=0 r
   for r in "$@"; do
@@ -264,7 +249,7 @@ t_prune_keeps_three_current_and_the_slots() {
   setup
   five_releases a1 a2 a3 a4 a5
   prune_step
-  [ -d "$APP/releases/a1" ]                                   # behind slot-8000: the rollback target
+  [ -d "$APP/releases/a1" ]
   [ ! -e "$APP/releases/a2" ]
   [ -d "$APP/releases/a3" ] && [ -d "$APP/releases/a4" ] && [ -d "$APP/releases/a5" ]
 }
@@ -285,7 +270,6 @@ t_prune_warns_and_succeeds_when_it_cannot_delete() {
   grep -q '::warning::could not delete releases/a2-undeletable' "$T/out"
 }
 
-# The template the script installs is the one a new box's user_data writes, byte for byte.
 t_user_data_writes_the_same_unit() {
   local from_script from_user_data
   from_script="$(sed -n '/<<UNITFILE$/,/^UNITFILE$/p' "$script" | sed '1d;$d' | sed 's#\$APP#/home/ubuntu/app#g')"
