@@ -85,7 +85,7 @@ import requests
 from app.core.config import get_settings
 from app.services import managed_secrets
 from app.services.ai import redact_secrets
-from app.services.ai_providers import openai_sampling
+from app.services.ai_providers import openai_sampling, post_gemini
 from app.services.artisan_identity import (
     AADHAAR_LENGTH,
     mask_aadhaar,
@@ -640,8 +640,9 @@ def _gemini_ocr(content: bytes, mime_type: str, timeout: float) -> dict[str, Any
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0},
     }
     model = get_settings().gemini_measurement_model
-    response = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    model, response = post_gemini(
+        requests.post,
+        model,
         # Header, never ``?key=``: a query parameter is part of the prepared URL and therefore
         # inside the message of every exception requests can raise from this call.
         headers={"x-goog-api-key": keys[0]},

@@ -26,9 +26,11 @@ from app.services.ai_providers import (
     AiProvider,
     AiTask,
     ModelDeclined,
+    gemini_models,
     gemini_reply_text,
     openai_message_text,
     openai_sampling,
+    post_gemini,
 )
 from app.services.measurement_provenance import (
     MeasurementProvenance,
@@ -1124,19 +1126,17 @@ async def refine_transcript_text(
 ) -> dict[str, Any]:
     """Refine a raw transcript into a clean interviewer/interviewee conversation (Markdown), optionally
     translating it to English. Uses the configured chat model (gpt-4o-mini by default)."""
-    credential = None
-    if not await managed_secrets.get_secret("OPENAI_API_KEY"):
-        credential = await user_ai_keys.resolve(None, AiTask.TRANSLATE)
-        if credential is None:
-            return {
-                "available": False,
-                "status": "UNAVAILABLE",
-                "refined": None,
-                "message": (
-                    "Refinement isn't available right now. An administrator can turn it on in "
-                    "Settings."
-                ),
-            }
+    credential = await user_ai_keys.resolve(None, AiTask.TRANSLATE)
+    if credential is None:
+        return {
+            "available": False,
+            "status": "UNAVAILABLE",
+            "refined": None,
+            "message": (
+                "Refinement isn't available right now. An administrator can turn it on in "
+                "Settings."
+            ),
+        }
     if not text or not text.strip():
         return {
             "available": True,
@@ -1145,11 +1145,9 @@ async def refine_transcript_text(
             "message": "There is no transcript text to refine yet.",
         }
     try:
-        if credential is not None:
-            return await asyncio.to_thread(
-                _refine_keyed_sync, text, translate_to_english, credential, settings
-            )
-        return await asyncio.to_thread(_refine_sync, text, translate_to_english, settings)
+        return await asyncio.to_thread(
+            _refine_keyed_sync, text, translate_to_english, credential, settings
+        )
     except ModelDeclined:
         return {
             "available": True,
@@ -1295,8 +1293,9 @@ def _post_gemini_chat(
     of the prepared URL and therefore inside the message of every ``requests`` exception, which
     travels into logs and back to callers. Same rule as ``_post_gemini_caption``.
     """
-    response = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    model, response = post_gemini(
+        requests.post,
+        model,
         headers={"x-goog-api-key": api_key},
         json={
             "contents": [{"role": "user", "parts": [{"text": user}]}],
@@ -1306,7 +1305,7 @@ def _post_gemini_chat(
         timeout=VERB_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
-    return gemini_reply_text(response.json())
+    return gemini_reply_text(response.json()), model
 
 
 def _model_for(credential: AiCredential, settings: Settings) -> str:
@@ -1351,7 +1350,7 @@ def _chat_verb_dispatch(
             system=system, user=user, api_key=credential.api_key, model=model
         )
     if credential.provider is AiProvider.GEMINI:
-        text = _post_gemini_chat(
+        text, model = _post_gemini_chat(
             system, user, api_key=credential.api_key, model=model, temperature=temperature
         )
         provider = "gemini"
@@ -1823,60 +1822,64 @@ def _post_gemini_caption(
     start = _next_gemini_start(len(keys))
     ordered_keys = keys[start:] + keys[:start]
     last_error: Exception | None = None
-    for attempt, key in enumerate(ordered_keys):
-        try:
-            response = requests.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{caption_model}:generateContent",
-                headers={"x-goog-api-key": key},
-                json=body,
-                timeout=VERB_TIMEOUT_SECONDS,
+    for model_id in gemini_models(caption_model):
+        for attempt, key in enumerate(ordered_keys):
+            try:
+                response = requests.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"{model_id}:generateContent",
+                    headers={"x-goog-api-key": key},
+                    json=body,
+                    timeout=VERB_TIMEOUT_SECONDS,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                logger.info(
+                    "Gemini key #%s network error while captioning, rotating: %s",
+                    (start + attempt) % len(keys),
+                    redact_secrets(str(exc)),
+                )
+                continue
+            if response.status_code == 404:
+                last_error = requests.HTTPError("Gemini model unavailable (HTTP 404)", response=response)
+                break
+            if response.status_code in _GEMINI_ROTATE_STATUSES:
+                last_error = requests.HTTPError(
+                    f"Gemini rejected the request (HTTP {response.status_code})", response=response
+                )
+                logger.info(
+                    "Gemini key #%s returned HTTP %s while captioning, rotating",
+                    (start + attempt) % len(keys),
+                    response.status_code,
+                )
+                continue
+            try:
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                last_error = exc
+                continue
+            payload = response.json()
+            raw = (
+                payload.get("candidates", [{}])[0]
+                .get("content", {})
+                .get("parts", [{}])[0]
+                .get("text", "")
             )
-        except requests.RequestException as exc:
-            last_error = exc
-            logger.info(
-                "Gemini key #%s network error while captioning, rotating: %s",
-                (start + attempt) % len(keys),
-                redact_secrets(str(exc)),
-            )
-            continue
-        if response.status_code in _GEMINI_ROTATE_STATUSES:
-            last_error = requests.HTTPError(
-                f"Gemini rejected the request (HTTP {response.status_code})", response=response
-            )
-            logger.info(
-                "Gemini key #%s returned HTTP %s while captioning, rotating",
-                (start + attempt) % len(keys),
-                response.status_code,
-            )
-            continue
-        try:
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            last_error = exc
-            continue
-        payload = response.json()
-        raw = (
-            payload.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-        parsed = _extract_json(raw)
-        caption = str(parsed.get("caption") or parsed.get("rawText") or "").strip()
-        return {
-            "available": True,
-            "status": "COMPLETED" if caption else "EMPTY",
-            "text": caption,
-            "provider": CAPTION_PROVIDER,
-            "model": caption_model,
-            # SELF-REPORTED AND UNCALIBRATED, carried under the name that says so — the same
-            # discipline and the same key name `measurement_provenance` fixed for the grid reader,
-            # for its stated reason: a client shown "confidence: 80%" beside a caption will treat it
-            # as a measurement of correctness, and nothing here has ever calibrated it.
-            "selfReportedConfidence": self_reported_confidence(parsed),
-            "confidenceIsCalibrated": False,
-        }
+            parsed = _extract_json(raw)
+            caption = str(parsed.get("caption") or parsed.get("rawText") or "").strip()
+            return {
+                "available": True,
+                "status": "COMPLETED" if caption else "EMPTY",
+                "text": caption,
+                "provider": CAPTION_PROVIDER,
+                "model": model_id,
+                # SELF-REPORTED AND UNCALIBRATED, carried under the name that says so — the same
+                # discipline and the same key name `measurement_provenance` fixed for the grid reader,
+                # for its stated reason: a client shown "confidence: 80%" beside a caption will treat it
+                # as a measurement of correctness, and nothing here has ever calibrated it.
+                "selfReportedConfidence": self_reported_confidence(parsed),
+                "confidenceIsCalibrated": False,
+            }
     raise last_error or RuntimeError("All configured Gemini keys failed")
 
 
