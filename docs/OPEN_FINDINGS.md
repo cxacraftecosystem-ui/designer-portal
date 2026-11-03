@@ -2912,7 +2912,7 @@ still green. 25 pass restored; `tsc --noEmit` clean.
 the fortnight-of-process-steps incident. It never reached the wire. The property carried `= false`;
 `ApiClient.retrofit`'s `Json { … }` does not set `encodeDefaults`, so it stands at kotlinx's default of
 false and a property equal to its default is OMITTED — and `StageSaveIn.replaceCollections` on the
-server is `Field(default=True)` (`backend/app/schemas/design_workshops.py:198`). "Do not sweep" was
+server is `Field(default=True)` (`backend/app/schemas/design_workshops.py:60`). "Do not sweep" was
 therefore sent as an absent key, and an absent key up there is the strongest claim the protocol has.
 
 **Measured with the handset's own builder against the running API and a live Postgres**, a draft with
@@ -3400,7 +3400,7 @@ below; that is what to search for.* <!-- rotted -->
 
 ### [HIGH] CORRECTNESS — The server's OCR clips a card's 16-digit VID into a 12-digit "Aadhaar number" printed nowhere on the card (backend)
 
-**Where.** `backend/app/services/identity_ocr.py:311` <!-- rotted -->
+**Where.** `backend/app/services/identity_ocr.py:201` <!-- rotted -->
 
 
 
