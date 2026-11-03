@@ -813,7 +813,7 @@ function webSources(dir: string, found: string[] = []): string[] {
   return found;
 }
 
-test("the web has no transcript edit or refine control — a new one owes the same hold", () => {
+test("the web's one transcript refine control is held like the controls above", () => {
   /*
     `POST /media/{id}/transcript` and `/refine-transcript` are the handset's (MainActivity). The
     server refuses both to a post holder; were the web to grow either, it would have to be held like
@@ -824,11 +824,14 @@ test("the web has no transcript edit or refine control — a new one owes the sa
     for (const file of webSources(join(FRONTEND, tree))) {
       const source = readFileSync(file, "utf8");
       if (/refine-transcript/.test(source) || /\/media\/\$\{[^}]+\}\/transcript\b/.test(source)) {
-        offenders.push(file.slice(FRONTEND.length + 1));
+        offenders.push(file.slice(FRONTEND.length + 1).replace(/\\/g, "/"));
       }
     }
   }
-  expect(offenders).toEqual([]);
+  expect(offenders.sort()).toEqual(["components/media/TranscriptRefine.tsx", "lib/transcriptRefine.ts"]);
+  const block = read("components", "media", "TranscriptBlock.tsx");
+  expect(block).toContain("readOnly={props.readOnly || Boolean(props.readOnlyReason)}");
+  expect(read("components", "media", "TranscriptRefine.tsx")).toContain("if (readOnly || !mayRefine(user, media)) return null;");
 });
 
 test("every web call that changes a stored file comes from one of the held screens above", () => {

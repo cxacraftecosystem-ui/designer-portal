@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AudioLines, Loader2 } from "lucide-react";
 
 import { TranscriptInsights } from "@/components/media/TranscriptInsights";
+import { TranscriptRefine } from "@/components/media/TranscriptRefine";
 import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
 import { useAuth } from "@/components/AuthProvider";
 import { TranscriptViewer } from "@/components/transcript/TranscriptViewer";
@@ -57,10 +58,39 @@ type TranscriptBlockProps = {
  * turn store, or a deployment without it) draws the stored text and states below, unchanged.
  */
 export function TranscriptBlock(props: TranscriptBlockProps) {
-  const { media } = props;
+  const [updated, setUpdated] = useState<MediaFile | null>(null);
+  const media = updated && updated.id === props.media.id ? updated : props.media;
+  const inner = { ...props, media };
   const isAudio = media.mediaType === "AUDIO" || (media.mimeType ?? "").toLowerCase().startsWith("audio/");
-  if (!isAudio) return <LegacyTranscriptBlock {...props} />;
-  return <TranscriptViewer mediaId={media.id} audioUrl={media.url} fallback={<LegacyTranscriptBlock {...props} />} />;
+  const refine = (
+    <TranscriptRefine
+      media={media}
+      readOnly={props.readOnly || Boolean(props.readOnlyReason)}
+      onUpdated={(next) => {
+        setUpdated(next);
+        props.onUpdated?.(next);
+      }}
+    />
+  );
+  if (!isAudio) {
+    return (
+      <>
+        <LegacyTranscriptBlock {...inner} />
+        {refine}
+      </>
+    );
+  }
+  return (
+    <>
+      <TranscriptViewer
+        key={updated?.transcriptText ?? "stored"}
+        mediaId={media.id}
+        audioUrl={media.url}
+        fallback={<LegacyTranscriptBlock {...inner} />}
+      />
+      {refine}
+    </>
+  );
 }
 
 function LegacyTranscriptBlock({
