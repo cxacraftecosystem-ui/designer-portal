@@ -1999,6 +1999,30 @@ interface WorkshopRepositoryApi {
         @Query("includeDeleted") includeDeleted: Boolean? = null
     ): DwAiLayerListDto
 
+    @GET("design-workshops/{id}/ai-layers/decisions")
+    suspend fun designWorkshopAiLayerDecisions(@Path("id") id: String): DwAiDecisionHistoryDto
+
+    @GET("design-workshops/{id}/ai-layers/{layerId}")
+    suspend fun designWorkshopAiLayer(
+        @Path("id") id: String,
+        @Path("layerId") layerId: String
+    ): DwAiLayerReadDto
+
+    @POST("design-workshops/{id}/ai-layers")
+    suspend fun registerDesignWorkshopAiLayer(
+        @Path("id") id: String,
+        @Body body: DwAiLayerRegisterBody
+    ): DwAiLayerRegisterResultDto
+
+    @GET("design-workshops/{id}/transcripts")
+    suspend fun designWorkshopTranscripts(@Path("id") id: String): DwTranscriptListDto
+
+    @GET("design-workshops/ai-verb-allowance")
+    suspend fun designWorkshopAiVerbAllowance(): DwAiVerbAllowanceDto
+
+    @GET("design-workshops/{id}/market-analysis")
+    suspend fun designWorkshopMarketAnalysis(@Path("id") id: String): JsonObject
+
     // TWO WRITES BEHIND ONE CALL, and both come back: the layer gains `acceptedAt`/`acceptedById` (the
     // current state the report builder reads) and a decision row is appended (the history, which is
     // what survives a withdrawal). The audit being visible in the response is what stops a client

@@ -2148,6 +2148,28 @@ class WorkshopRepository(
         api.declineDesignWorkshopAiLayer(dwVerbWorkshopId(workshopId), layerId)
     }
 
+    suspend fun designWorkshopAiLayer(workshopId: String, layerId: String): DwAiLayerReadDto =
+        api.designWorkshopAiLayer(dwVerbWorkshopId(workshopId), layerId)
+
+    suspend fun designWorkshopAiLayerDecisions(workshopId: String): DwAiDecisionHistoryDto =
+        api.designWorkshopAiLayerDecisions(dwVerbWorkshopId(workshopId))
+
+    suspend fun registerDesignWorkshopAiLayer(workshopId: String, mediaId: String): DwAiLayerRegisterResultDto =
+        api.registerDesignWorkshopAiLayer(dwVerbWorkshopId(workshopId), DwAiLayerRegisterBody(sourceMediaId = mediaId))
+
+    suspend fun designWorkshopTranscripts(workshopId: String): DwTranscriptListDto =
+        api.designWorkshopTranscripts(dwVerbWorkshopId(workshopId))
+
+    suspend fun designWorkshopMarketAnalysis(workshopId: String): DwMarketFindings? =
+        runCatching { DwMarketAnalysis.fromPayload(api.designWorkshopMarketAnalysis(workshopId)) }
+            .getOrNull()
+
+    suspend fun refreshAiVerbAllowance(context: Context) {
+        val userId = cachedUser()?.id?.takeIf { it.isNotBlank() } ?: return
+        val dto = runCatching { api.designWorkshopAiVerbAllowance() }.getOrNull() ?: return
+        dwAiVerbAllowanceOf(dto, userId)?.let { DwAiVerbAllowanceStore.write(context, it) }
+    }
+
     // ── Who may open one design workshop ─────────────────────────────────────────────────────────
     //
     // THESE THREE THROW, unlike almost everything above them, and the exception is the point. The
@@ -8301,6 +8323,7 @@ class WorkshopRepository(
         // swipe-away) or belongs to yesterday. Detached and swallowing every failure, because a
         // number that is only an optimisation must never delay or fail the queued records beside it.
         AppScope.io.launch { runCatching { refreshDictationAllowance(context) } }
+        AppScope.io.launch { runCatching { refreshAiVerbAllowance(context) } }
         // AN INSPECTOR'S QUEUED CORRECTION SUGGESTIONS, on the same "the network just came back"
         // hook. Detached: each is checked against the report before it leaves, which costs a read
         // per workshop, and that must never delay the records queued beside them.

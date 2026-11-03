@@ -124,6 +124,7 @@ private fun MarketFindingsCard(
      */
     var survey by remember(workshopId) { mutableStateOf<SurveyRows?>(null) }
     var searched by remember(workshopId) { mutableStateOf(false) }
+    var saved by remember(workshopId) { mutableStateOf<DwMarketFindings?>(null) }
 
     LaunchedEffect(workshopId) {
         val draft = runCatching { WorkshopDraftStore.load(appContext, workshopId) }.getOrNull()
@@ -147,12 +148,24 @@ private fun MarketFindingsCard(
                     responses = bucket.collections["surveyResponse"].orEmpty().map { it.toMap() },
                     competitors = bucket.collections["competitorProduct"].orEmpty().map { it.toMap() },
                 )
+            } else {
+                saved = repository.designWorkshopMarketAnalysis(remoteId)
             }
         }
         searched = true
     }
 
     if (!searched) return
+    saved?.let { fromServer ->
+        if (survey == null && !fromServer.isEmpty) {
+            MarketFindingsBody(
+                findings = fromServer,
+                subtitle = DW_MARKET_FINDINGS_SAVED_SUBTITLE,
+                surveyMissing = false,
+            )
+            return
+        }
+    }
     val rowsFound = survey ?: SurveyRows(emptyList(), emptyList())
     val bands = rows["priceBand"].orEmpty()
     val swot = rows["swotPoint"].orEmpty()
@@ -171,16 +184,28 @@ private fun MarketFindingsCard(
         return
     }
 
+    MarketFindingsBody(
+        findings = findings,
+        subtitle = "From ${plural(rowsFound.responses.size, "survey response")} and ${plural(rowsFound.competitors.size, "competitor product")} in stage 8. Not saved to this stage.",
+        surveyMissing = rowsFound.isEmpty(),
+    )
+}
+
+internal const val DW_MARKET_FINDINGS_SAVED_SUBTITLE =
+    "From the survey and bands last saved on the server. Save this stage to check what is on screen."
+
+@Composable
+private fun MarketFindingsBody(findings: DwMarketFindings, subtitle: String, surveyMissing: Boolean) {
     FindingsCard(
         title = "What the survey says",
-        subtitle = "From ${plural(rowsFound.responses.size, "survey response")} and ${plural(rowsFound.competitors.size, "competitor product")} in stage 8. Not saved to this stage.",
+        subtitle = subtitle,
     ) {
         // CAUTIONS BEFORE FIGURES, ALWAYS. The server orders its payload the same way for the same
         // reason: a caution that has to be scrolled to is a caution that will not be read, and
         // "these prices all come from one respondent group" changes what every number below it means.
         findings.cautions.forEach { Advisory(it, MaterialTheme.field.warningContainer, MaterialTheme.field.onWarningContainer) }
 
-        if (rowsFound.isEmpty()) {
+        if (surveyMissing) {
             Advisory(
                 "Stage 8 isn't on this phone. Open it once online to run these checks.",
                 MaterialTheme.field.surface100, MaterialTheme.field.body,
