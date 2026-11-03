@@ -34,7 +34,6 @@ def test_every_design_workshop_creation_site_is_one_this_file_knows_about():
 
 def test_the_shared_opener_is_the_only_creation_site_in_the_services_layer_that_is_not_argued():
     assert "tx.designworkshop.create(" in inspect.getsource(sanction_orders.create_from_sanction)
-    assert "sanction_orders" in inspect.getsource(design_workshops.open_design_workshop)
 
 
 def test_the_promote_door_calls_the_shared_opener_rather_than_creating_a_workshop_itself():

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import pathlib
+import textwrap
 from types import SimpleNamespace
 from typing import Any
 
@@ -175,8 +177,14 @@ async def test_adding_an_address_never_writes_an_account_and_says_when_it_keeps_
 def test_the_sanction_register_audits_its_raise_only_after_the_commit():
     from app.services import sanction_orders
 
-    source = inspect.getsource(sanction_orders.create_from_sanction)
-    after_commit = source.index("PHASE 2: AFTER THE COMMIT")
+    source = textwrap.dedent(inspect.getsource(sanction_orders.create_from_sanction))
+    transactions = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.AsyncWith) and "db.tx(" in ast.unparse(node.items[0].context_expr)
+    ]
+    assert len(transactions) == 1
+    after_commit = "\n".join(source.splitlines()[transactions[0].end_lineno :])
     assert source.count("signin_role.audit_role_change(") == 1
-    assert source.index("signin_role.audit_role_change(") > after_commit
-    assert 'via="sanction-order"' in source[after_commit:]
+    assert "signin_role.audit_role_change(" in after_commit
+    assert 'via="sanction-order"' in after_commit

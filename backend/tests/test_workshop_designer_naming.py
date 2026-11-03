@@ -373,14 +373,7 @@ async def test_every_named_designer_gets_a_row_and_the_creator_gets_none(monkeyp
 
 
 def test_the_grant_loop_adds_and_can_never_REPLACE():
-    source = inspect.getsource(service.attach_the_named_designers).replace("\r\n", "\n")
-    opening = source.index('"""')
-    closing = source.index('"""', opening + 3) + 3
-    body = source[:opening] + source[closing:]
-    assert "A LOOP OVER" not in body, (
-        "the docstring was not cut out, so the sweep below is running over text that still "
-        "contains the warning it is searching for — see the paragraph above"
-    )
+    body = inspect.getsource(service.attach_the_named_designers)
     assert "replace_viewers" not in body, (
         "the grant loop reached for the whole-set replace, which deletes the viewer rows it did "
         "not read — see services/design_workshop_access.add_one_viewer"

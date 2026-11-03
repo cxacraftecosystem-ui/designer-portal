@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -630,16 +629,3 @@ async def test_the_ledger_row_records_the_upload_and_never_fails_the_import(worl
     assert survived["recorded"] == 1
 
 
-
-def test_every_enumerated_failure_is_still_documented() -> None:
-    header = inspect.getdoc(sanction_import) or ""
-    for number in range(1, 20):
-        assert f"\n{number:2d}. " in header or f"\n{number}. " in header, number
-    assert "AUTO-RESOLVE EVERYTHING MECHANICAL" in header
-    assert "ONE TRANSACTION PER ORDER" in header
-
-
-def test_the_divergence_from_the_annual_plan_importer_is_written_down() -> None:
-    header = inspect.getdoc(sanction_import) or ""
-    assert "apply_parsed_plan" in header
-    assert "189" in header

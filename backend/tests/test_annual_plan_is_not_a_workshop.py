@@ -21,8 +21,6 @@ ALLOWED_CLIENT_MODULES = {
 }
 
 ALLOWED_MENTION_MODULES = ALLOWED_CLIENT_MODULES | {
-    "services/annual_plan_xlsx.py",
-    "schemas/annual_plan.py",
     "api/routes/workshop_types.py",
     "services/search_index.py",
     "services/search_indexer.py",

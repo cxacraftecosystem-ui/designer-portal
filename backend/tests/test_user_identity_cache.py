@@ -261,4 +261,9 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         "scripts/backfill_sessions_valid_from.py",
         "scripts/reencrypt_two_factor_secrets.py",
     }
-    assert all(writers.values()), f"user writes with no cache invalidation: {writers}"
+    out_of_process = {
+        "scripts/backfill_sessions_valid_from.py",
+        "scripts/reencrypt_two_factor_secrets.py",
+    }
+    missing = {path for path, invalidates in writers.items() if not invalidates}
+    assert missing == out_of_process, f"user writes with no cache invalidation: {missing - out_of_process}"

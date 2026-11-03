@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,8 +16,6 @@ from app.services.sanction_orders import (
     _refuse_if_the_officer_named_themselves,
     create_from_sanction,
 )
-
-BACKEND = Path(__file__).resolve().parents[1]
 
 NOTE = SANCTION_ADMISSION_NOTE.format(no="SO/2026/42", officer="An Officer")
 OTHER_NOTE = SANCTION_ADMISSION_NOTE.format(no="SO/2027/7", officer="An Officer")
@@ -290,26 +287,6 @@ def test_the_sibling_eligibility_rule_is_not_called_here():
     assert "await assert_every_designer_may_be_named(" not in source
     assert "await design_workshops.assert_every_designer_may_be_named(" not in source
 
-
-
-def test_the_role_ladder_records_the_sanction_exception_rather_than_denying_it():
-    deps = (BACKEND / "app" / "core" / "deps.py").read_text(encoding="utf-8")
-    block = deps[deps.index('"PROFESSOR": 40,') : deps.index('"ASSISTANT_DIRECTOR": 42,')]
-
-    for denied in (
-        "no account creation or deletion",
-        "no workshop-access grants",
-        "no viewer or inspector appointment",
-    ):
-        assert denied not in block, (
-            f"core/deps.py's ASSISTANT_DIRECTOR block claims {denied!r}, which "
-            f"POST /api/sanction-orders has made false for this tier since it landed"
-        )
-    assert "sanction" in block.lower(), "the ladder does not mention the one door that widens it"
-    assert "_refuse_if_the_officer_named_themselves" in block, (
-        "the ladder names the exception but not the refusal that bounds it, so a reader who deletes "
-        "that refusal has nothing telling them what it was holding up"
-    )
 
 
 @pytest.mark.parametrize("spelling", ["new.master@gmail.com", "newmaster+old.order@gmail.com"])

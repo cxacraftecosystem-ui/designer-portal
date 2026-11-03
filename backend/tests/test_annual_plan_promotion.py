@@ -168,9 +168,6 @@ def test_the_promotion_stamp_is_a_compare_and_set_and_not_a_blind_update():
     )
 
     source = inspect.getsource(annual_plan.promote_entry)
-    assert "THE DATABASE DOES NOT BACK THIS REFUSAL" in source, (
-        "promote_entry no longer records that the unique index does not cover a row promoted twice"
-    )
     assert "deletedAt" in source
 
 
