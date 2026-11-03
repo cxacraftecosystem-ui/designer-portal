@@ -1,68 +1,3 @@
-"""THE PLATFORM ALLOW-LIST: the gate, the two distinct refusals, and the migration that must not
-lock anybody out.
-
-Seven things are pinned here, and four of them are ways somebody loses access to the product.
-
-**NO EXISTING ACCOUNT IS LOCKED OUT BY THE MIGRATION THAT INTRODUCES THE GATE.** An account of every
-one of the seven roles is created with NO allow-list row — the state of the database on the morning
-of the deploy — and then :func:`_grandfather` runs **the INSERT statements out of the migration file
-itself**, read off disk rather than retyped. Every one of those accounts then signs in. This is the
-non-negotiable: without those two statements the deploy refuses every user of the product at once,
-including the admins who would have to let them back in, and the failure arrives as a support queue
-rather than as a red test.
-
-**A PERSON WAITING ON AN ADMIN IS TOLD SO, AND IT IS NOT WHAT A MISTYPED PASSWORD SAYS.** 403 with a
-sentence that names the wait, against 401 "Invalid email or password". The two are asserted in the
-same test so that collapsing them cannot pass. This was a deliberate ruling by the product owner
-against the usual advice — the enumeration cost was weighed and accepted, because a person waiting
-on an administrator who is told their password is wrong resets a password that was never wrong and
-then telephones somebody who cannot help.
-
-**GOOGLE NO LONGER HANDS OUT ACCOUNTS.** Before this feature, a verified Google token for any
-address on earth created a `User` row and returned a bearer token. The test here asserts the
-refusal, asserts the pending row that replaced the account, and asserts NO user row appeared —
-because a self-provisioned account is not a request an admin can approve, it is a decision already
-taken.
-
-**THE MASTER ADMIN IS NEVER GATED.** With no row at all and with a SUSPENDED row, on both branches.
-This is the break-glass that replaces the argument the old designer-only gate rested on; if it ever
-goes, the first admin to fat-finger their own row takes the institution offline with them.
-
-**THE QUEUE STAYS WORKABLE.** One address is one row however many times it is tried; a rejected
-person does not re-queue themselves by trying again; and past the cap the request is refused with a
-message that says it was not recorded, rather than being dropped into a queue nobody reads.
-
-**THE GATE IS ON EVERY DOOR THAT TURNS A PASSWORD INTO A TOKEN, NOT JUST ON THE SIGN-IN PAGE.**
-``POST /api/datasets/token`` mints a thirty-day read credential over the whole repository from an
-admin's email and password, and it used to check the credential and the admin flag and nothing else.
-Suspension writes the roster status and never ``User.role``, so a suspended admin was refused at
-``/auth/login`` and could still mint there, renewably, for ever — a revoked person holding live data
-access. Section 8 pins both doors giving the same answer about the same account, and pins the
-break-glass opening at both.
-
-**BEING ADMITTED AS A DESIGNER IS BEING EMPANELLED — AND IT NEVER REVIVES A REVOCATION.** The two
-rosters are separate gates, so an account the allow-list admitted as a DESIGNER used to be refused by
-the empanelment gate with a sentence about an empanelment nobody had ever granted; section 9 pins
-that it now signs in and that the row created for it says it was derived rather than administered.
-The other half of that section is the guard on the rule the feature turns on: a SUSPENDED
-empanelment is a deliberate revocation and the allow-list must never bring it back, or every
-revocation an administrator has made comes undone one login at a time. Beside the two of them sits
-the control that stops the feature over-delivering: every OTHER rung of the ladder signs in without
-growing a roster row, because ``DesignerRoster`` is read as a statement that somebody is a
-practising designer and never as a record of who logged in.
-
-Postgres is required — every behaviour here is a row deciding an HTTP status — so the module skips
-itself when ``DATABASE_URL`` does not point at a local database, exactly as ``test_designer_roster``
-does.
-
-    docker compose up -d postgres minio
-    cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
-
-Nothing here reaches Google. ``verify_google_token`` is the only thing stubbed, because it is the
-only part of that path that leaves the process; the allow-list read, the refusal, the pending write
-and the provisioning all run exactly as they do in production.
-"""
-
 import os
 import re
 import uuid
@@ -90,18 +25,11 @@ pytestmark = [
 
 PASSWORD = "access-gate-test-password"
 
-#: The migration whose grandfathering is under test. Named once; if it is ever renamed, this module
-#: fails loudly at collection rather than quietly testing nothing.
 MIGRATION = (
     Path(__file__).resolve().parents[1]
     / "prisma" / "migrations" / "20260816090000_platform_access_roster" / "migration.sql"
 )
 
-# ASSERTED VERBATIM RATHER THAN IMPORTED, exactly as ``test_designer_roster`` asserts the suspension
-# sentence. These strings ARE the feature: the whole ruling is that a person waiting on an
-# administrator reads something different from a person who mistyped a password. Importing the
-# constants would make this file agree with whatever they are changed to — including changing both
-# of them to the same words, which is the one outcome it exists to prevent.
 PENDING_DETAIL = (
     "Your access request is awaiting administrator approval. This is not a password problem — an "
     "administrator has to approve this address before you can sign in."
@@ -118,8 +46,6 @@ NOT_RECORDED_DETAIL = (
 WRONG_CREDENTIAL_DETAIL = "Invalid email or password"
 DESIGNER_SUSPENDED_DETAIL = "Your designer access has been suspended. Contact the administrator."
 
-#: slug -> role. THE FIRST SEVEN ARE THE WHOLE LADDER and they are the grandfathering proof: every
-#: one of them is created without an allow-list row and must be able to sign in after the migration.
 ACCOUNTS: tuple[tuple[str, str], ...] = (
     ("master", "MASTER_ADMIN"),
     ("admin", "ADMIN"),
@@ -128,43 +54,21 @@ ACCOUNTS: tuple[tuple[str, str], ...] = (
     ("researcher", "RESEARCHER"),
     ("contributor", "FIELD_CONTRIBUTOR"),
     ("volunteer", "CROWDSOURCE_VOLUNTEER"),
-    # Accounts whose allow-list row the fixture then moves to a refusing state, one per refusal.
     ("pending", "RESEARCHER"),
     ("rejected", "RESEARCHER"),
     ("barred", "RESEARCHER"),
-    # A master admin whose row the fixture DELETES. The break-glass, tested as the state it will
-    # actually be found in: a row nobody wrote, or one an admin destroyed by accident.
     ("masterNoRow", "MASTER_ADMIN"),
-    # An empanelled designer whose designer roster row the fixture suspends. Their platform access
-    # is fine; the refusal must still be the empanelment's own sentence, not the platform one.
     ("designerSuspended", "DESIGNER"),
-    # ADMINS the fixture then bars, for the dataset-token door (section 8). ADMIN and not
-    # RESEARCHER, because a non-admin never reaches the gate on that endpoint — the rank check
-    # refuses them first — so a barred researcher there would pass while proving nothing. The hole
-    # this closes was specifically an admin: suspension writes the roster status and never the
-    # ``User.role``, so ``is_admin`` still says yes about somebody who cannot sign in.
     ("adminBarred", "ADMIN"),
     ("adminRejected", "ADMIN"),
-    # A MASTER admin whose row says SUSPENDED. The break-glass at the second door, which has to open
-    # for exactly the same account the sign-in door opens for.
     ("masterBarred", "MASTER_ADMIN"),
-    # A DESIGNER THE ALLOW-LIST ADMITS AND NOBODY EVER EMPANELLED — requirement 28's account, and
-    # the shape of the live failure that produced the requirement. The fixture deliberately creates
-    # NO ``DesignerRoster`` row for it anywhere; the sign-in is what has to create one. Appended at
-    # the END because the parametrisation above takes ``ACCOUNTS[:7]``, which is the seven-rung
-    # ladder and must stay exactly those seven.
     ("designerUnempanelled", "DESIGNER"),
-    # SECTION 10: an ADMIN, admitted, whose password an administrator chose (``mustChangePassword``),
-    # and a MASTER admin in the same state — refused as a deputy, exempt once ``MASTER_ADMIN_EMAIL``
-    # names it. The flag is set by :data:`FLAGGED` below.
     ("adminFlagged", "ADMIN"),
     ("masterFlagged", "MASTER_ADMIN"),
 )
 
-#: The accounts the fixture marks ``mustChangePassword`` after the grandfathering — section 10.
 FLAGGED: tuple[str, ...] = ("adminFlagged", "masterFlagged")
 
-#: The accounts whose access row is moved out of ACTIVE after the grandfathering, and to what.
 REFUSED: tuple[tuple[str, str], ...] = (
     ("pending", "PENDING"),
     ("rejected", "REJECTED"),
@@ -181,17 +85,7 @@ def anyio_backend():
 
 
 def _grandfather_statements() -> list[str]:
-    """The INSERT statements out of the migration file, and nothing else.
-
-    READ FROM THE FILE, NOT RETYPED. A copy of the grandfathering SQL living in this module would
-    prove that *a* query admits everybody, which is not the claim: the claim is that the query
-    Prisma will run on the production database admits everybody. The DDL is skipped because it has
-    already been applied — re-running it would fail on the existing type — and the INSERTs carry
-    ``ON CONFLICT DO NOTHING``, which is what makes replaying them here safe and idempotent.
-    """
     sql = MIGRATION.read_text(encoding="utf-8")
-    # Comment lines first: a `--` comment in this file contains semicolons and apostrophes, and a
-    # naive split on ';' would cut a statement in half in a way that still parses as valid SQL.
     body = "\n".join(line for line in sql.splitlines() if not line.strip().startswith("--"))
     statements = [s.strip() for s in body.split(";") if s.strip()]
     inserts = [s for s in statements if re.match(r"(?is)^insert\s+into", s)]
@@ -209,12 +103,6 @@ async def _grandfather() -> None:
 
 @pytest.fixture(scope="module")
 async def world():
-    """Seven roles with no allow-list row, then the migration's own SQL, then the refusal states.
-
-    The order is the point and mirrors the deploy: accounts first (they are what exists on the
-    morning of the migration), the migration's INSERTs second, and only then the states an admin's
-    later decisions would have left behind.
-    """
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -222,9 +110,6 @@ async def world():
     stamp = uuid.uuid4().hex[:8]
 
     def address(slug: str) -> str:
-        # Lower-cased, for ``normalise_email``'s reason: ``AccessRoster.email`` is unique on the
-        # lower-cased address and ``User.email`` is not lower-cased at all, so a mixed-case fixture
-        # address is a row that can never be matched — a person locked out by a capital letter.
         return f"access-{slug}-{stamp}@example.org".lower()
 
     people: dict[str, Any] = {}
@@ -237,13 +122,8 @@ async def world():
                 "role": role,
                 "passwordHash": hash_password(PASSWORD),
             })
-        # Both designers need an ACTIVE empanelment or the SECOND gate refuses them for a reason
-        # that has nothing to do with this module.
         for slug in ("designer", "designerSuspended"):
             await db.designerroster.create(data={"email": address(slug), "isActive": True})
-        # An empanelled address with NO account and NO allow-list row: the flow where an admin
-        # empanels somebody who has never opened the app. Created AFTER the grandfathering below
-        # would admit it, so the empanelment clause in the gate is what has to do the work.
 
         await _grandfather()
 
@@ -259,8 +139,6 @@ async def world():
             await db.user.update(
                 where={"id": people[slug].id}, data={"mustChangePassword": True}
             )
-        # Empanelled, no account, no allow-list row — created last so the grandfathering cannot
-        # have picked it up.
         await db.designerroster.create(data={"email": address("empanelled"), "isActive": True})
     finally:
         await db.disconnect()
@@ -275,24 +153,18 @@ def client(world):
 
 
 def _headers(world: dict[str, Any], slug: str) -> dict[str, str]:
-    """A bearer token minted directly, because the gate lives on the LOGIN path only. A helper that
-    signed in first would make every assertion below depend on the thing under test."""
     return {"Authorization": f"Bearer {create_access_token(subject=world['people'][slug].id)}"}
 
 
 def _login(
     client: Any, email: str, password: str = PASSWORD, headers: dict[str, str] | None = None
 ) -> Any:
-    # ``headers`` exists for exactly one caller: the CORS test, which sends an ``Origin`` so it can
-    # read what a browser would be ALLOWED to read off the refusal. Every other call leaves it None.
     return client.post(
         "/api/auth/login", json={"email": email, "password": password}, headers=headers
     )
 
 
 def _google(client: Any, monkeypatch: Any, email: str, name: str = "Google Person") -> Any:
-    """The Google branch with only the token verification replaced. Stubbing any deeper would test
-    the stub instead of the admission rule."""
     monkeypatch.setattr(
         auth_routes,
         "verify_google_token",
@@ -302,8 +174,6 @@ def _google(client: Any, monkeypatch: Any, email: str, name: str = "Google Perso
 
 
 def _rows(client: Any, world: dict[str, Any], term: str | None = None) -> dict[str, Any]:
-    """This run's allow-list rows, keyed by email. Narrowed by the run stamp so a database carrying
-    a hundred previous runs cannot push this one off the first page."""
     response = client.get(
         "/api/access/roster",
         params={"search": term or world["stamp"], "pageSize": 200},
@@ -314,10 +184,6 @@ def _rows(client: Any, world: dict[str, Any], term: str | None = None) -> dict[s
 
 
 def _empanelments(client: Any, world: dict[str, Any]) -> dict[str, Any]:
-    """This run's DESIGNER-roster rows, keyed by email — the OTHER table, read through its own
-    admin endpoint. Narrowed by the run stamp for ``_rows``'s reason: a database carrying a hundred
-    previous runs would otherwise push this run's rows off the first page and the absence of a row
-    would read as proof that nothing was created."""
     response = client.get(
         "/api/designers/roster",
         params={"search": world["stamp"], "pageSize": 200},
@@ -335,59 +201,24 @@ def _accounts(client: Any, world: dict[str, Any], term: str) -> dict[str, Any]:
     return {row["email"]: row for row in response.json()}
 
 
-# --------------------------------------------------------------------------------------
-# 1. The grandfathering — the non-negotiable
-# --------------------------------------------------------------------------------------
-
 
 @pytest.mark.parametrize("slug,role", ACCOUNTS[:7])
 async def test_every_existing_role_still_signs_in_after_the_migration(world, client, slug, role):
-    """**THE PROOF THAT THE DEPLOY DOES NOT LOCK THE INSTITUTION OUT.**
-
-    Each of these accounts was created with no allow-list row — the state of every account in the
-    product on the morning this feature ships — and admitted by the two INSERT statements read out
-    of the migration file. If either statement is ever dropped, narrowed or reordered so that it
-    misses a role, this parametrisation is the thing that says so, and it says so per role rather
-    than as one opaque failure.
-    """
     response = _login(client, world["address"](slug))
     assert response.status_code == 200, response.text
     assert response.json()["user"]["role"] == role
 
 
 async def test_the_grandfathered_row_carries_the_real_joining_date(world, client):
-    """THE DATE OF JOINING THE PLATFORM, backfilled from ``User.createdAt``.
-
-    A wholesale ``now()`` would have told an admin that every account in a two-year-old product
-    joined on the afternoon of the deploy — not merely useless but wrong, and unrecoverable once the
-    real dates are overwritten. ``createdAt`` on the row is the row's own age and is deliberately
-    NOT the same value.
-    """
     row = _rows(client, world)[world["address"]("researcher")]
     assert row["joinedAt"] is not None
     assert row["joinedAt"][:10] == world["people"]["researcher"].createdAt.isoformat()[:10]
     assert row["status"] == "ACTIVE"
-    # Nobody approved these; claiming an administrator did would be a fabricated audit trail.
     assert row["decidedById"] is None
 
 
-# --------------------------------------------------------------------------------------
-# 2. The two distinct refusals — the product owner's explicit ruling
-# --------------------------------------------------------------------------------------
-
 
 async def test_pending_and_wrong_password_are_different_answers(world, client):
-    """**THE RULING, PINNED IN ONE TEST SO THAT COLLAPSING THE TWO CANNOT PASS.**
-
-    A person awaiting approval is told exactly that, in words, with a 403. A person who mistyped is
-    told the credential is wrong, with a 401 — unchanged. The usual advice is to make these
-    identical so an attacker cannot enumerate addresses; that advice was weighed by the product
-    owner and overruled, because this product has no registration page and no password-reset email,
-    so "invalid email or password" leaves a waiting person with no next action that exists.
-
-    The wrong-credential arm is asserted on the SAME account, which is what makes this a statement
-    about the two answers rather than about two accounts.
-    """
     waiting = _login(client, world["address"]("pending"))
     assert waiting.status_code == 403, waiting.text
     assert waiting.json()["detail"] == PENDING_DETAIL
@@ -400,10 +231,6 @@ async def test_pending_and_wrong_password_are_different_answers(world, client):
 
 
 async def test_the_pending_refusal_leaks_nothing_beyond_the_wait(world, client):
-    """The agreed price is ONE BIT — "this address is awaiting approval". Not the person's name,
-    not their role, not whether a password was ever set, not a hint about any other account. The
-    sentence is a constant with no interpolation, and this asserts that nothing account-shaped has
-    crept into the response around it."""
     body = _login(client, world["address"]("pending")).json()
     assert set(body) == {"detail"}
     person = world["people"]["pending"]
@@ -413,16 +240,12 @@ async def test_the_pending_refusal_leaks_nothing_beyond_the_wait(world, client):
 
 
 async def test_a_rejected_person_is_told_they_were_rejected(world, client):
-    """Distinct from pending, because "still waiting" and "answered, no" are different facts and
-    only one of them is worth waiting for."""
     response = _login(client, world["address"]("rejected"))
     assert response.status_code == 403, response.text
     assert response.json()["detail"] == REJECTED_DETAIL
 
 
 async def test_a_barred_account_is_told_its_access_was_suspended(world, client):
-    """And NOT in the designer roster's words. An admin who bars a researcher must not see them
-    told that their "designer access" ended — a sentence about a role they never had."""
     response = _login(client, world["address"]("barred"))
     assert response.status_code == 403, response.text
     assert response.json()["detail"] == BARRED_DETAIL
@@ -430,24 +253,6 @@ async def test_a_barred_account_is_told_its_access_was_suspended(world, client):
 
 
 async def test_every_refusal_is_labelled_for_the_two_sign_in_screens(world, client, monkeypatch):
-    """**THE SENTENCE IS FOR THE PERSON; THE HEADER IS FOR THE SCREEN AROUND IT.**
-
-    Both clients draw different chrome around a refusal — a heading, and one line saying what to do
-    — and the Android card's heading before this feature was "Your access to this app has been
-    withdrawn", which is FALSE for four of the five refusals below. A person who is waiting to be
-    approved for the first time has had nothing withdrawn, and telling them so sends them to argue
-    with an administrator about an access they never had: the same class of wrong answer as
-    "invalid email or password", which is the answer this whole feature exists to stop giving.
-
-    THE CLIENTS MUST NOT MATCH ON THE PROSE. The sentences are English written for the reader and
-    they will be reworded; a client keying off them would silently stop distinguishing "awaiting
-    approval" from "suspended" the first time somebody fixed a comma, and the screen would go on
-    looking correct. So the status travels in a header, which carries nothing the sentence does not
-    already say in words — the leak is unchanged, and the next test pins that.
-
-    ``DESIGNER_SUSPENDED`` is its own value and not ``SUSPENDED`` because the two have different
-    remedies: one asks to be empanelled again, the other asks to be let back into the application.
-    """
     header = auth_routes.ACCESS_STATUS_HEADER
 
     waiting = _login(client, world["address"]("pending"))
@@ -462,14 +267,9 @@ async def test_every_refusal_is_labelled_for_the_two_sign_in_screens(world, clie
     empanelment = _login(client, world["address"]("designerSuspended"))
     assert empanelment.headers.get(header) == "DESIGNER_SUSPENDED", empanelment.headers
 
-    # A MISTYPED PASSWORD CARRIES NO LABEL AT ALL. The clients read a 401 as the credential being
-    # wrong and draw the plain field error; a label here would invite somebody to give it a panel,
-    # which is this feature's own mistake made backwards.
     mistyped = _login(client, world["address"]("pending"), password="not-the-password")
     assert header not in mistyped.headers, mistyped.headers
 
-    # And the capacity refusal, which is the one where waiting is actively the wrong advice: nobody
-    # will ever see this person, because nothing was written down.
     monkeypatch.setattr(access_roster, "pending_cap", lambda: 0)
     full = _google(client, monkeypatch, f"access-labelled-{world['stamp']}@example.org")
     assert full.status_code == 503, full.text
@@ -477,16 +277,6 @@ async def test_every_refusal_is_labelled_for_the_two_sign_in_screens(world, clie
 
 
 async def test_the_label_is_readable_by_a_browser_on_the_other_origin(world, client):
-    """THE HALF OF THE HEADER THAT IS INVISIBLE TO EVERY OTHER TEST IN THIS FILE.
-
-    The web app is served from a different origin from this API, and a cross-origin response only
-    exposes a handful of "simple" headers to JavaScript — anything else has to be named in
-    ``expose_headers`` on the CORS middleware. Without that one line the phone would read the label
-    and the browser would not: every server test green, the Android sign-in screen right, and the
-    web sign-in screen quietly falling back to neutral chrome with nothing anywhere naming the
-    cause. That is the worst shape a cross-origin bug takes, so it is pinned from the outside, by
-    sending an ``Origin`` and reading what the browser would be allowed to see.
-    """
     origin = "http://localhost:3000"
     response = _login(client, world["address"]("pending"), headers={"Origin": origin})
     exposed = response.headers.get("access-control-expose-headers", "")
@@ -497,32 +287,13 @@ async def test_the_label_is_readable_by_a_browser_on_the_other_origin(world, cli
 
 
 async def test_a_suspended_empanelment_still_answers_in_the_empanelments_words(world, client):
-    """THE SECOND GATE SURVIVED THE FIRST ONE ARRIVING.
-
-    This designer's platform access is perfectly fine — they were grandfathered like everybody
-    else — and it is their EMPANELMENT that an admin ended. The specific answer has to win, or an
-    admin revoking a designer's standing would be telling them the whole application is closed to
-    them, and the two decisions would have become one.
-    """
     response = _login(client, world["address"]("designerSuspended"))
     assert response.status_code == 403, response.text
     assert response.json()["detail"] == DESIGNER_SUSPENDED_DETAIL
 
 
-# --------------------------------------------------------------------------------------
-# 3. The master admin is never gated — the break-glass
-# --------------------------------------------------------------------------------------
-
 
 async def test_a_master_admin_with_no_allow_list_row_still_signs_in(world, client):
-    """**THE ONE EXEMPTION, AND THE REASON THE GATE COULD BE WIDENED AT ALL.**
-
-    The old designer-only gate was narrow on the argument that an admin locked out by a table only
-    an admin can edit is an outage with no in-product remedy. Widening it to everybody does not make
-    that argument wrong; it moves the weight onto this exemption. It lives in the GATE and not in a
-    row of the table the gate reads, because an exemption stored in that table is one bad UPDATE
-    away from the outage it was supposed to prevent — which is exactly the state this account is in.
-    """
     response = _login(client, world["address"]("masterNoRow"))
     assert response.status_code == 200, response.text
     assert response.json()["user"]["role"] == "MASTER_ADMIN"
@@ -532,14 +303,6 @@ async def test_a_master_admin_with_no_allow_list_row_still_signs_in(world, clien
 
 
 async def test_a_master_admin_is_not_gated_on_the_google_path_either(world, client, monkeypatch):
-    """The break-glass on the branch it will actually be used from: a fresh deploy, an operator with
-    no password on file, signing in with Google.
-
-    ``role_for_email`` is stubbed rather than the environment being rewritten, because it is a pure
-    read of ``MASTER_ADMIN_EMAIL`` and pointing it at a stamped test address is the same statement
-    as setting that variable — without touching the real master admin's account on a shared
-    development database.
-    """
     address = world["address"]("masterNoRow")
     monkeypatch.setattr(
         auth_routes, "role_for_email", lambda email: "MASTER_ADMIN" if email == address else "X"
@@ -550,9 +313,6 @@ async def test_a_master_admin_is_not_gated_on_the_google_path_either(world, clie
 
 
 async def test_a_master_admin_with_a_suspended_row_still_signs_in(world, client):
-    """The same outage in its other shape: the row exists and says no. An admin who bars the master
-    admin — by accident, or in anger on their way out — must not be able to end the institution's
-    only remedy."""
     row_id = _rows(client, world)[world["address"]("master")]["id"]
     suspended = client.delete(f"/api/access/roster/{row_id}", headers=_headers(world, "admin"))
     assert suspended.status_code == 200, suspended.text
@@ -563,21 +323,10 @@ async def test_a_master_admin_with_a_suspended_row_still_signs_in(world, client)
     assert response.json()["user"]["role"] == "MASTER_ADMIN"
 
 
-# --------------------------------------------------------------------------------------
-# 4. Google no longer hands out accounts
-# --------------------------------------------------------------------------------------
-
 
 async def test_an_unknown_google_address_gets_a_pending_row_and_no_account(
     world, client, monkeypatch
 ):
-    """**THE BIGGEST BEHAVIOURAL CHANGE IN THE FEATURE.**
-
-    Before this, a verified Google token for any address on earth reached ``db.user.create`` and
-    walked away with an account and a bearer token: the product's sign-up page was Google's. Three
-    things are asserted, and the third is the one that matters — a self-provisioned account is not
-    a request an admin can approve or reject, it is a decision already taken.
-    """
     stranger = f"access-stranger-{world['stamp']}@example.org"
     response = _google(client, monkeypatch, stranger, name="Definitely Not Stored")
     assert response.status_code == 403, response.text
@@ -593,9 +342,6 @@ async def test_an_unknown_google_address_gets_a_pending_row_and_no_account(
 
 
 async def test_nothing_the_caller_controls_is_stored_beyond_the_address(world, client, monkeypatch):
-    """The display name on a Google profile is chosen by whoever owns that account, and the admin's
-    pending queue is a list a human reads and acts on. A name lifted from it is a place to put
-    "IT Support — approve to restore your mailbox"."""
     stranger = f"access-noname-{world['stamp']}@example.org"
     _google(client, monkeypatch, stranger, name="APPROVE ME — urgent request from IT")
     row = _rows(client, world, term=stranger)[stranger]
@@ -606,15 +352,6 @@ async def test_nothing_the_caller_controls_is_stored_beyond_the_address(world, c
 async def test_an_empanelled_designer_with_no_account_is_still_provisioned(
     world, client, monkeypatch
 ):
-    """AN ADMIN'S APPROVAL MADE IN THE OLDER SCREEN STILL COUNTS.
-
-    ``DesignerRoster`` exists so an admin can empanel somebody before they have an account; the
-    account provisions itself at DESIGNER on first Google sign-in. If the allow-list refused them,
-    the admin would have done everything the product asked and produced a person the sign-in page
-    turns away — with no way to see why, because the roster screen shows their row, active,
-    admitting nobody. The admission is written to the allow-list on the way through, so the platform
-    roster stays the complete answer to "who may sign in".
-    """
     email = world["address"]("empanelled")
     response = _google(client, monkeypatch, email, name="Newly Empanelled")
     assert response.status_code == 200, response.text
@@ -629,13 +366,6 @@ async def test_an_empanelled_designer_with_no_account_is_still_provisioned(
 async def test_empanelling_somebody_who_is_waiting_answers_their_request(
     world, client, monkeypatch
 ):
-    """An admin who sees a pending designer and empanels them HAS approved them.
-
-    PENDING means nobody has said otherwise yet, so the empanelment IS the answer — and an admin who
-    works the queue from the designer roster screen (which is where a designer's request belongs)
-    must not find that the person is still refused because the approval was recorded in the other
-    table.
-    """
     email = f"access-late-empanel-{world['stamp']}@example.org"
     assert _google(client, monkeypatch, email).status_code == 403
     assert _rows(client, world, term=email)[email]["status"] == "PENDING"
@@ -652,13 +382,6 @@ async def test_empanelling_somebody_who_is_waiting_answers_their_request(
 
 
 async def test_an_empanelment_does_not_overturn_a_rejection(world, client, monkeypatch):
-    """THE OTHER HALF OF THE SAME CLAUSE, and the half that is a security property.
-
-    REJECTED and SUSPENDED are answers somebody actually gave about this person's access to the
-    application. A years-old empanelment row must not reinstate them, or the allow-list's decisions
-    become quietly conditional on a second table the deciding admin never looked at — and the
-    reinstatement would be invisible in both screens.
-    """
     email = f"access-rejected-empanel-{world['stamp']}@example.org"
     assert _google(client, monkeypatch, email).status_code == 403
     row_id = _rows(client, world, term=email)[email]["id"]
@@ -681,16 +404,8 @@ async def test_an_empanelment_does_not_overturn_a_rejection(world, client, monke
     )
 
 
-# --------------------------------------------------------------------------------------
-# 5. The queue stays workable
-# --------------------------------------------------------------------------------------
-
 
 async def test_one_address_hammering_the_form_is_one_row(world, client, monkeypatch):
-    """THE BOUND ON A WRITE NO SIGNED-IN USER MADE. Nothing in this codebase rate-limits the login
-    endpoint, so the dedupe is the bound: a repeat attempt is an UPDATE that bumps a counter, and an
-    admin reads the count as "this person is still trying" rather than scrolling past forty copies
-    of one address."""
     email = f"access-repeat-{world['stamp']}@example.org"
     for _ in range(3):
         assert _google(client, monkeypatch, email).status_code == 403
@@ -702,14 +417,6 @@ async def test_one_address_hammering_the_form_is_one_row(world, client, monkeypa
 
 
 async def test_a_rejected_person_trying_again_does_not_re_queue(world, client):
-    """**THE RULE THAT KEEPS THE QUEUE WORKABLE FOR THE ADMIN IT IS FOR.**
-
-    If a re-attempt reopened the request, an admin's decision would be unenforceable: the person
-    retries, the row returns to PENDING, and the queue they just cleared fills back up with the
-    entries they cleared it of. The attempt is still COUNTED — that is the signal an admin can act
-    on if somebody is genuinely trying to get a rejection reconsidered — and reopening it is an
-    admin's APPROVE, which is a decision rather than a stranger's persistence.
-    """
     email = world["address"]("rejected")
     before = _rows(client, world)[email]
     assert _login(client, email).status_code == 403
@@ -721,9 +428,6 @@ async def test_a_rejected_person_trying_again_does_not_re_queue(world, client):
 
 
 async def test_a_wrong_password_for_an_unknown_address_writes_nothing(world, client):
-    """THE PRECONDITION EVERY OTHER BOUND RESTS ON: a row is only ever created for a PROVEN
-    identity. The gate runs AFTER the credential, so a stranger cannot use this endpoint to write
-    arbitrary addresses into an admin's queue — nor to discover which addresses are waiting."""
     email = f"access-nobody-{world['stamp']}@example.org"
     response = _login(client, email, password="whatever-they-guessed")
     assert response.status_code == 401, response.text
@@ -734,16 +438,6 @@ async def test_a_wrong_password_for_an_unknown_address_writes_nothing(world, cli
 async def test_past_the_cap_the_request_is_refused_and_says_it_was_not_recorded(
     world, client, monkeypatch
 ):
-    """A CEILING WITH A DOCUMENTED BEHAVIOUR, and the behaviour is honesty.
-
-    Answering "you are awaiting approval" to somebody whose row was never created would be a lie
-    with no expiry: no administrator will ever see them and they would wait forever on a queue they
-    are not in. 503 rather than 403 because this one is not about the person — it is the product
-    having stopped being able to accept requests, which is a thing that should page somebody.
-
-    Driven by moving the cap rather than by writing five hundred rows, the same way the designer
-    directory's cap test moves ``DIRECTORY_TAKE``.
-    """
     monkeypatch.setattr(access_roster, "pending_cap", lambda: 0)
     email = f"access-overflow-{world['stamp']}@example.org"
     response = _google(client, monkeypatch, email)
@@ -751,23 +445,14 @@ async def test_past_the_cap_the_request_is_refused_and_says_it_was_not_recorded(
     assert response.json()["detail"] == NOT_RECORDED_DETAIL
     assert email not in _rows(client, world, term=email)
 
-    # AN EXISTING ROW IS UNAFFECTED BY THE CEILING. Somebody already in the queue must not start
-    # being told the queue is full — they are in it.
     already = world["address"]("pending")
     refused = _login(client, already)
     assert refused.status_code == 403, refused.text
     assert refused.json()["detail"] == PENDING_DETAIL
 
 
-# --------------------------------------------------------------------------------------
-# 6. The admin surface: the count that is the notification, and the decision
-# --------------------------------------------------------------------------------------
-
 
 async def test_the_pending_count_is_admin_only_and_counts_the_queue(world, client, monkeypatch):
-    """THE NOTIFICATION. There is no email sender and no push transport in this codebase, so
-    "notify the admins" is a number on the surfaces they already open. Gated with the roster
-    itself — the queue is a list of somebody's colleagues, applicants and former staff."""
     before = client.get("/api/access/roster/pending-count", headers=_headers(world, "admin"))
     assert before.status_code == 200, before.text
     assert isinstance(before.json()["pending"], int)
@@ -782,13 +467,6 @@ async def test_the_pending_count_is_admin_only_and_counts_the_queue(world, clien
 
 
 async def test_the_queue_is_a_filter_over_the_one_list(world, client, monkeypatch):
-    """``?status=PENDING`` is the queue the admin screens render. One list, one ordering, one
-    paging — a separate endpoint for the queue would be a second ordering over the same rows, which
-    is how a paged list starts repeating and skipping between pages.
-
-    A misspelled status is a 422 naming the alternatives, not an empty list: "nothing matched" and
-    "you typed it wrong" look identical on a screen and only one of them is the admin's fault.
-    """
     email = f"access-queued-{world['stamp']}@example.org"
     assert _google(client, monkeypatch, email).status_code == 403
 
@@ -816,13 +494,6 @@ async def test_the_queue_is_a_filter_over_the_one_list(world, client, monkeypatc
 
 
 async def test_approving_a_request_lets_the_person_in_and_keeps_their_role(world, client):
-    """The queue's whole purpose, end to end on one account.
-
-    THE SIGN-IN LIST RULE (2026-10-18, ``services/signin_role``): the approval lets the person in,
-    and the chosen role is the role a NEW account would be created with. This person already has an
-    account, so it keeps its role, and the answer says so and names Manage users, where a change of
-    role is an explicit act with an audit entry.
-    """
     email = world["address"]("pending")
     row_id = _rows(client, world)[email]["id"]
 
@@ -845,8 +516,6 @@ async def test_approving_a_request_lets_the_person_in_and_keeps_their_role(world
 
 
 async def test_approving_never_demotes_an_account(world, client):
-    """An admin approving a colleague at RESEARCHER must not knock a professor down to it: an
-    approval never changes an existing account (``services/signin_role``)."""
     email = world["address"]("professor")
     row_id = _rows(client, world)[email]["id"]
     decided = client.post(
@@ -859,8 +528,6 @@ async def test_approving_never_demotes_an_account(world, client):
 
 
 async def test_an_admin_cannot_approve_somebody_above_their_own_tier(world, client):
-    """One rule for handing out tiers, imported rather than copied. An admin who cannot create a
-    master admin through ``/users`` must not be able to mint one by approving a request."""
     row_id = _rows(client, world)[world["address"]("volunteer")]["id"]
     refused = client.post(
         f"/api/access/roster/{row_id}/decision",
@@ -871,9 +538,6 @@ async def test_an_admin_cannot_approve_somebody_above_their_own_tier(world, clie
 
 
 async def test_suspending_an_entry_keeps_the_record(world, client):
-    """DELETE NEVER REMOVES THE ROW. It would take the joining date, the attempt history and the
-    name of the approving admin with it — and, because the gate reads a missing row as PENDING, it
-    would silently put the person back in the queue they were removed from."""
     email = world["address"]("contributor")
     row_id = _rows(client, world)[email]["id"]
     suspended = client.delete(f"/api/access/roster/{row_id}", headers=_headers(world, "admin"))
@@ -888,9 +552,6 @@ async def test_suspending_an_entry_keeps_the_record(world, client):
 
 
 async def test_restoring_keeps_the_original_joining_date(world, client):
-    """Somebody who joined in 2024, lost access for a month and was let back in has still been here
-    since 2024. An admin reading a joining date of last Tuesday would draw the wrong conclusion
-    about every record that person created."""
     email = world["address"]("contributor")
     row = _rows(client, world)[email]
     assert row["status"] == "SUSPENDED", "the previous test suspends this account"
@@ -905,15 +566,8 @@ async def test_restoring_keeps_the_original_joining_date(world, client):
     assert _login(client, email).status_code == 200
 
 
-# --------------------------------------------------------------------------------------
-# 7. Every other path that mints an account has to admit it
-# --------------------------------------------------------------------------------------
-
 
 async def test_an_account_an_admin_creates_can_sign_in_immediately(world, client):
-    """AN ADMIN CREATING AN ACCOUNT IS AN ADMIN APPROVING IT. Otherwise the admin hands somebody a
-    password, watches them be told they are awaiting approval, and has to approve a request they
-    themselves caused — in a second screen, for a person they just typed in."""
     email = f"access-made-{world['stamp']}@example.org"
     created = client.post(
         "/api/users",
@@ -928,10 +582,6 @@ async def test_an_account_an_admin_creates_can_sign_in_immediately(world, client
 
 
 async def test_correcting_an_address_does_not_lock_the_account_out(world, client):
-    """THE ALLOW-LIST IS KEYED BY EMAIL, so an admin fixing a typo would otherwise be revoking
-    access: the new address has no row, and a missing row is a refusal. The row is MOVED rather than
-    duplicated, so the joining date follows the person instead of being stranded on an address
-    nobody uses."""
     old = f"access-typo-{world['stamp']}@example.org"
     new = f"access-fixed-{world['stamp']}@example.org"
     created = client.post(
@@ -956,45 +606,18 @@ async def test_correcting_an_address_does_not_lock_the_account_out(world, client
     assert old not in _rows(client, world, term=old), "the row is moved, not duplicated"
 
 
-# --------------------------------------------------------------------------------------
-# 8. The other door: the dataset token, which also turns a password into a token
-# --------------------------------------------------------------------------------------
-#
-# ``POST /api/datasets/token`` is the second place in this API where an email and a password come
-# in and a bearer token goes out. It checked the credential and the admin flag and then minted,
-# with no reference to the allow-list at all — so revoking somebody's access closed the sign-in
-# page and left this endpoint open, and the credential it issues is good for thirty days over
-# every record in the repository and can be renewed indefinitely from the same password.
-#
-# The four cases below are the four answers that endpoint has to give: barred, rejected, admitted,
-# and the one account no allow-list row may ever bar.
-
 
 def _mint(client: Any, email: str, password: str = PASSWORD) -> Any:
-    """Ask for a dataset token. The same two credentials ``_login`` sends, to the other door."""
     return client.post("/api/datasets/token", json={"email": email, "password": password})
 
 
 async def test_a_suspended_admin_cannot_mint_a_dataset_token(world, client):
-    """**THE SHIP-BLOCKER.** An admin an administrator has suspended is a revoked person, and a
-    revoked person must not be able to walk to a second endpoint and take a thirty-day read
-    credential over the entire repository out of it.
-
-    Their ``User.role`` is untouched by the suspension — that is the whole trap — so ``is_admin``
-    still says yes about them and the rank check this endpoint always had waves them through. Only
-    the allow-list knows.
-
-    The sign-in door is asserted in the same test, on the same account, because the claim is that
-    the two doors now agree: an answer that differs between them is the defect, not a detail.
-    """
     email = world["address"]("adminBarred")
 
     minted = _mint(client, email)
     assert minted.status_code == 403, minted.text
     assert minted.json()["detail"] == BARRED_DETAIL
     assert "accessToken" not in minted.json(), "a refusal must not carry the credential"
-    # The same header the two sign-in screens branch on, so a client refused here draws the same
-    # chrome it would draw on the login page rather than falling back to unclassified.
     assert minted.headers.get("X-Access-Status") == "SUSPENDED"
 
     signed_in = _login(client, email)
@@ -1003,9 +626,6 @@ async def test_a_suspended_admin_cannot_mint_a_dataset_token(world, client):
         "both doors must give a revoked admin the same answer; one open door revokes nothing"
     )
 
-    # AND THE ENDPOINT STILL DOES NOT SAY WHETHER AN ACCOUNT EXISTS. The gate runs after the
-    # password, so a caller without it reads exactly what they read for an address that was never
-    # registered — the refusal above is reachable only by somebody holding the credential.
     guessed = _mint(client, email, password="not-the-password")
     assert guessed.status_code == 401, guessed.text
     assert guessed.json()["detail"] == WRONG_CREDENTIAL_DETAIL
@@ -1015,12 +635,6 @@ async def test_a_suspended_admin_cannot_mint_a_dataset_token(world, client):
 
 
 async def test_a_rejected_admin_cannot_mint_a_dataset_token(world, client):
-    """The other refusing state, and it must read as its own sentence rather than the suspension's.
-
-    REJECTED and SUSPENDED are different decisions with different remedies — one was never let in,
-    one was let in and then barred — and this endpoint borrows the sign-in page's wording precisely
-    so an operator reading a cron job's log gets the same explanation the person would.
-    """
     email = world["address"]("adminRejected")
 
     minted = _mint(client, email)
@@ -1032,12 +646,6 @@ async def test_a_rejected_admin_cannot_mint_a_dataset_token(world, client):
 
 
 async def test_an_admitted_admin_still_gets_a_dataset_token(world, client):
-    """**THE CONTROL, AND IT IS NOT OPTIONAL.** A gate that refuses everybody passes all three of
-    the refusal tests above and breaks every nightly mirror in the estate. This is the case that
-    says the endpoint still does its job: an ACTIVE admin mints, and mints the narrow credential —
-    ``dataset:read`` and not a session token, which is the containment ``deps._user_from_bearer``
-    enforces everywhere else in the API.
-    """
     minted = _mint(client, world["address"]("admin"))
     assert minted.status_code == 200, minted.text
     body = minted.json()
@@ -1048,17 +656,6 @@ async def test_an_admitted_admin_still_gets_a_dataset_token(world, client):
 
 
 async def test_a_master_admin_with_a_suspended_row_still_mints(world, client):
-    """**THE BREAK-GLASS, AT THE SECOND DOOR.** The reason the allow-list could be widened from
-    designers to everybody is that one account is exempt in the GATE rather than by a row in the
-    table the gate reads. That exemption has to hold wherever the gate is asked, or adding the gate
-    to a new endpoint quietly narrows it — and the account whose row an outgoing admin barred is
-    exactly the one that needs to be able to take a copy of the data.
-
-    The exemption is one predicate, ``deps.is_break_glass_master``, shared by every door that asks
-    rather than copied to each — the sign-in gate, the dataset mint, the use of a dataset token, and
-    the design-workshop viewer picker and write. Copied, they would drift, and whichever drifted
-    would either lock the break-glass out or open it to somebody else.
-    """
     email = world["address"]("masterBarred")
     assert _rows(client, world)[email]["status"] == "SUSPENDED", (
         "the fixture must actually have barred this row, or this test proves nothing"
@@ -1069,34 +666,13 @@ async def test_a_master_admin_with_a_suspended_row_still_mints(world, client):
     assert minted.json()["accessToken"]
     assert minted.json()["account"]["role"] == "MASTER_ADMIN"
 
-    # And the exemption must not work by quietly writing the row it is exempt from — the same rule
-    # the sign-in break-glass tests pin, for the same reason: an exemption that repairs the table
-    # is an exemption an admin cannot see and cannot undo.
     assert _rows(client, world)[email]["status"] == "SUSPENDED"
 
-
-# --------------------------------------------------------------------------------------
-# 9. Requirement 28: an allow-listed designer is empanelled by default
-# --------------------------------------------------------------------------------------
 
 
 async def test_an_allow_listed_designer_with_no_empanelment_is_empanelled_on_the_spot(
     world, client
 ):
-    """**THE REQUIREMENT, AND THE LIVE FAILURE IT CAME FROM.**
-
-    Two independent gates, and passing one has never passed the other. The allow-list admits this
-    account and can promote it to DESIGNER through ``admitRole``; the empanelment gate then asks a
-    different table whether that designer is still recognised, finds nothing, and answers *"Your
-    designer access has been suspended"* — about an empanelment nobody ever granted, with
-    ``/admin/designers`` showing no row at all to explain it. That is exactly what
-    ``sandycraft3@gmail.com`` read in production, and the only remedy was for an administrator to
-    notice and empanel the same person a second time in a second screen.
-
-    Admitting somebody as a designer now IS empanelling them, which is what the admin doing it
-    already believed. The row is created between the platform gate and the empanelment gate in
-    ``auth.login``; see the comment there for why neither earlier nor later works.
-    """
     email = world["address"]("designerUnempanelled")
     assert email not in _empanelments(client, world), (
         "the fixture must NOT have empanelled this account, or this test is asserting nothing "
@@ -1109,34 +685,12 @@ async def test_an_allow_listed_designer_with_no_empanelment_is_empanelled_on_the
 
     row = _empanelments(client, world)[email]
     assert row["isActive"] is True
-    # DERIVED, AND THE ROW SAYS SO IN WORDS. ``addedById`` cannot carry that fact by itself: it is
-    # NULL here, and it is also NULL on a hand-made row whose creating admin was later deleted
-    # (the relation is ``onDelete: SetNull``). An admin reading the roster screen would see the two
-    # as identical; the note is the part that stays true.
     assert row["addedById"] is None, "nobody administered this; naming an admin would be a lie"
     assert "automatically" in (row["notes"] or ""), row["notes"]
-    # THE ORDERING INSIDE ``login``, pinned. ``ensure_empanelled`` leaves ``firstSeenAt`` NULL and
-    # ``mark_roster_seen`` stamps it two lines later, so a person who really did sign in carries a
-    # date. Stamping at creation instead would consume that write, and the column — which answers
-    # "did the invitation ever reach them" — would report every empanelment as accepted on the day
-    # it was granted, including the ones granted by an admin days before the person opened the app.
     assert row["firstSeenAt"] is not None
 
 
 async def test_the_allow_list_never_revives_a_suspended_empanelment(world, client):
-    """**THE REGRESSION GUARD FOR THE ONE RULE THAT MUST NOT BE GOT WRONG.**
-
-    This designer's platform access is fine and their empanelment was deliberately ended. Auto-
-    empanelment reads the allow-list, and the allow-list still admits them — so the tempting
-    implementation, an upsert on the unique ``email``, would take its update arm here and hand the
-    revoked person their standing back at the moment they next tried to sign in, with nothing on
-    either screen to say it happened. Every revocation any administrator has ever made would come
-    undone the same way, quietly, one login at a time.
-
-    Allow-listing grants an empanelment to somebody who never had one. It does not overturn a
-    withdrawal: those are two decisions, and only an admin may make the second, on the roster
-    screen where the act is visible.
-    """
     email = world["address"]("designerSuspended")
     before = _empanelments(client, world)[email]
     assert before["isActive"] is False, (
@@ -1146,21 +700,9 @@ async def test_the_allow_list_never_revives_a_suspended_empanelment(world, clien
     response = _login(client, email)
     assert response.status_code == 403, response.text
     assert response.json()["detail"] == DESIGNER_SUSPENDED_DETAIL
-    # THE SENTENCE IS FOR THE PERSON AND THE LABEL IS FOR THE SCREEN AROUND IT, and this refusal has
-    # to keep both of its own. ``DESIGNER_SUSPENDED`` rather than ``SUSPENDED`` because the two ask
-    # for different things — this person asks an admin to empanel them again, a barred one asks to
-    # be let back into the application — so a client drawing the platform's chrome here would send a
-    # designer off to argue about an access nobody withdrew. Asserted HERE, and not left to the
-    # labelling test in section 2, because a revival is not only a row quietly changing state: the
-    # login that revived it answers 200 and stops labelling anything at all, and this is the test
-    # whose job it is to notice that.
     assert response.headers.get(auth_routes.ACCESS_STATUS_HEADER) == "DESIGNER_SUSPENDED", (
         response.headers
     )
-    # AND THE REFUSAL STILL SAYS ONLY THAT ONE SENTENCE. A gate that started explaining itself —
-    # naming the row it declined to revive, or when the revocation was made, or who made it — hands
-    # anybody who can guess an address the administrator's own record of it, which is a far worse
-    # leak than the single bit this feature's owner weighed and agreed to pay.
     assert set(response.json()) == {"detail"}
 
     after = _empanelments(client, world)[email]
@@ -1168,34 +710,12 @@ async def test_the_allow_list_never_revives_a_suspended_empanelment(world, clien
         "an allow-listed designer's SUSPENDED empanelment was revived by signing in; that is the "
         "silent undoing of an administrator's revocation the create-only rule exists to prevent"
     )
-    # And not touched in any other way either. A row left active-but-edited, or one whose revocation
-    # date moved, is the same defect wearing a smaller hat: the roster screen reads the flag, the
-    # date and the note together as one account of what an administrator decided.
     assert after["revokedAt"] == before["revokedAt"]
     assert after["notes"] == before["notes"]
-    # A refused attempt is not an arrival. The stamp answers "did the invitation reach them", and
-    # writing it here would report the invitation as accepted on the very day they could not get in.
     assert after["firstSeenAt"] is None
 
 
 async def test_signing_in_at_any_other_role_puts_nobody_on_the_designer_roster(world, client):
-    """**THE CONTROL ON THE TWO TESTS ABOVE, AND THE WAY THIS FEATURE WOULD OVER-DELIVER.**
-
-    ``DesignerRoster`` is the list of people this institution recognises AS DESIGNERS, and three
-    separate parts of the product read it as an authority rather than as a log: the empanelment gate
-    refuses anybody it does not name, ``/admin/designers`` presents it as the roll of practising
-    designers, and the workshop pickers draw their candidates out of it. So a rule that empanelled
-    every ADMITTED account — the role test dropped as redundant once the allow-list is doing the
-    admitting, or ``access_roster.admits(access)`` read as "there is a row" — would satisfy every
-    other test in this section while adding the institution's professors, researchers, field
-    contributors and volunteers to that roll one sign-in at a time. Nothing on any screen would
-    explain how they got there, and nothing anywhere ever takes such a row off again.
-
-    Every rung of the ladder except the designer signs in here, and none of them may grow a row. The
-    designer beside them is asserted to HAVE one out of the same read, because a query pointed at
-    the wrong run — or at nothing — returns an empty page that satisfies every absence assertion
-    below it perfectly.
-    """
     others = [(slug, role) for slug, role in ACCOUNTS[:7] if role != "DESIGNER"]
     for slug, role in others:
         response = _login(client, world["address"](slug))
@@ -1215,19 +735,8 @@ async def test_signing_in_at_any_other_role_puts_nobody_on_the_designer_roster(w
         )
 
 
-# --------------------------------------------------------------------------------------
-# 10. The dataset token and a password somebody else chose (2026-10-09)
-# --------------------------------------------------------------------------------------
-#
-# ``POST /api/datasets/token`` turns an email and a password into a THIRTY-DAY read credential over
-# the whole repository, and it never looked at ``mustChangePassword``: a temporary password an
-# administrator typed for somebody — one that person had been told to replace — was enough to take
-# one. These two pin the refusal and the one account exempt from it.
-
 
 async def test_an_admin_holding_a_temporary_password_cannot_mint_a_dataset_token(world, client):
-    """403 with the remedy in the sentence, no credential in the body — and the SIGN-IN still works,
-    because the only way to replace the password is from inside a session."""
     email = world["address"]("adminFlagged")
 
     minted = _mint(client, email)
@@ -1241,15 +750,6 @@ async def test_an_admin_holding_a_temporary_password_cannot_mint_a_dataset_token
 
 
 async def test_only_the_configured_master_admin_mints_with_a_temporary_password(world, client):
-    """The exemption is the session gate's, ``deps.is_configured_master_admin``: the account at
-    ``MASTER_ADMIN_EMAIL`` is the deployment's recovery path and must not be shut out of a copy of
-    the data by a flag. A SECOND master admin holding a temporary password is refused like anybody
-    else — the owner's decision names the configured account, not the role — although the allow-list
-    still exempts it (``is_break_glass_master``), which is why it reaches this refusal at all.
-
-    ``MASTER_ADMIN_EMAIL`` is pointed at this run's own stamped account for one request, rather than
-    the real master admin's row being flagged on a shared development database.
-    """
     email = world["address"]("masterFlagged")
 
     deputy = _mint(client, email)

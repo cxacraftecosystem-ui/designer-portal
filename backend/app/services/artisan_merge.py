@@ -1,39 +1,3 @@
-"""Merge two records of one artisan, keep everything either held, and undo it within 30 days.
-
-AN ADMIN ACTION, NEVER AUTOMATIC. ``POST /artisan-duplicates/{id}/merge`` with a survivor and a side
-per field. One transaction (30 s) does, in order:
-
-1. lock both rows, check ``expectedUpdatedAt`` and the blockers;
-2. snapshot the record that will be deleted (``to_jsonb`` of the row, minus ``aadhaarNumber``,
-   which a merge refuses to touch while it is populated) and the survivor's columns;
-3. clear the deleted record's unique keys, then write the chosen values onto the survivor;
-4. re-point every row that names the deleted record (:data:`MERGE_REPOINT`) with raw ``UPDATE``
-   ``... RETURNING``, logging every moved key in ``ArtisanMerge.moves``. Where a unique key would
-   collide, the deleted record's row is deleted and snapshotted (the survivor's row wins);
-5. the Field Repository link (this portal only): the peer is asked BEFORE the transaction, and the
-   two calls are reversed if the transaction fails;
-6. a ``RecordRevision`` on the survivor naming the merge and the side taken for each field;
-7. hard-delete the merged row (its duplicate pairs cascade away).
-
-After the commit the survivor is re-scored.
-
-A MERGED ID KEEPS WORKING. :func:`resolve` follows ``ArtisanMerge.mergedId`` -> ``survivorId``
-(skipping undone merges, up to five hops): ``GET /artisans/{id}`` answers 404 ``artisan_merged`` with
-the survivor's id, and :func:`redirect_payload` / :func:`redirect_ids` rewrite a write that still
-names the old id (an offline queue, a stale picker), so it lands on the survivor instead of failing.
-
-UNDO puts the deleted row back with its own id from the snapshot, sets each survivor column back
-only where it still holds what the merge wrote (anything edited since is kept and reported), moves
-back only the logged rows still pointing at the survivor, re-inserts deleted collision rows whose
-key is still free, restores the design-workshop refs (bumping their versions) and reverses the
-Field Repository link move. After 30 days :func:`maybe_purge` clears the snapshot, the move log and
-the link note; the merge record and its redirect stay forever.
-
-``tests/test_artisan_merge_registry.py`` parses ``schema.prisma`` and fails when a table that points
-at Artisan, or carries ``recordType``/``recordId``, is in neither :data:`MERGE_REPOINT` nor
-:data:`NOT_REPOINTED`.
-"""
-
 from __future__ import annotations
 
 import json
@@ -65,16 +29,9 @@ RESOLVE_MAX_HOPS = 5
 
 DW_ARTISAN_ENTITIES = ("participant", "existingProduct")
 
-# ── The registry ──────────────────────────────────────────────────────────────────────────────
-
 
 @dataclass(frozen=True)
 class Repoint:
-    """One column that can name an artisan. ``key`` identifies a row apart from that column (text
-    columns); ``unique_with`` are the other columns of a unique key the column is part of;
-    ``where`` narrows a polymorphic table to artisan rows; ``name_column`` is a printed copy of the
-    artisan's name kept in step (its old value is logged)."""
-
     table: str
     column: str
     key: tuple[str, ...] = ("id",)
@@ -117,7 +74,6 @@ MERGE_REPOINT: tuple[Repoint, ...] = (
     Repoint("RecordAccessToken", "recordId", where="t.\"recordType\"::text = 'ARTISAN'"),
 )
 
-#: Handled by dedicated code in this module rather than by the generic repoint.
 SPECIAL_REPOINT = {
     "AssignedTask.artisanIds": "array of ids; replaced in place, de-duplicated, old list logged",
     "DwStageEntry.data.artisanRef": "participant and existingProduct entries; version bumped",
@@ -125,7 +81,6 @@ SPECIAL_REPOINT = {
     "ArtisanCard.artisanId": "moved to the survivor, the live one revoked (REPLACED); undo restores it",
 }
 
-#: Tables that name an artisan and are deliberately not re-pointed, and why.
 NOT_REPOINTED = {
     "CrossPortalAccessLog": "an access log is a fact about what happened to that id",
     "AadhaarLegalHold": "a hold on either record blocks the merge (aadhaar_legal_hold)",
@@ -139,8 +94,6 @@ NOT_REPOINTED = {
 def _q(name: str) -> str:
     return '"' + name.replace('"', "") + '"'
 
-
-# ── Fields ────────────────────────────────────────────────────────────────────────────────────
 
 AADHAAR_VERIFY_COLUMNS = (
     "aadhaarVerifyStatus",
@@ -234,7 +187,6 @@ def _other(letter: str) -> str:
 
 
 def default_choice(group: FieldGroup, survivor: str, a: dict[str, Any], b: dict[str, Any]) -> str:
-    """The side a field takes when the admin leaves it alone."""
     keep, other = _side(survivor, a, b), _side(_other(survivor), a, b)
     if group.locked:
         return survivor if not _group_empty(group, keep) else (
@@ -272,7 +224,6 @@ def _join_text(first: Any, second: Any) -> Any:
 
 
 def _deep_merge(keep: Any, other: Any) -> Any:
-    """Survivor keys win; keys only the other record has are added; nested dicts merge the same way."""
     if not isinstance(keep, dict):
         return keep if keep is not None else other
     if not isinstance(other, dict):
@@ -289,7 +240,6 @@ def _deep_merge(keep: Any, other: Any) -> Any:
 def plan_writes(
     survivor: str, choices: dict[str, str], a: dict[str, Any], b: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    """The columns to write onto the survivor, and the side each field took. Pure."""
     keep, other = _side(survivor, a, b), _side(_other(survivor), a, b)
     taken: dict[str, str] = {}
     writes: dict[str, Any] = {}
@@ -350,8 +300,6 @@ def validate_choices(
             )
 
 
-# ── Reading rows ──────────────────────────────────────────────────────────────────────────────
-
 
 def _jsonish(value: Any) -> Any:
     if isinstance(value, str):
@@ -396,12 +344,8 @@ def _same_instant(a: Any, b: Any) -> bool:
     return abs((pa - pb).total_seconds()) < 0.001
 
 
-# ── Redirects ─────────────────────────────────────────────────────────────────────────────────
-
 
 async def resolve(artisan_id: str | None, *, client: Any = None) -> str | None:
-    """The survivor a merged id now lives on, or None when ``artisan_id`` was never merged (or the
-    merge was undone). Follows a chain of up to five merges."""
     if not artisan_id:
         return None
     reader = client or db
@@ -417,7 +361,6 @@ async def resolve(artisan_id: str | None, *, client: Any = None) -> str | None:
 
 
 async def merged_among(ids: list[str], *, client: Any = None) -> set[str]:
-    """Which of ``ids`` were merged away (and not undone). One read."""
     wanted = sorted({i for i in ids if isinstance(i, str) and i})
     if not wanted:
         return set()
@@ -427,7 +370,6 @@ async def merged_among(ids: list[str], *, client: Any = None) -> set[str]:
 
 
 async def redirect_ids(ids: list[str] | None, *, client: Any = None) -> list[str] | None:
-    """``ids`` with every merged id replaced by its survivor, order kept, duplicates dropped."""
     if not ids:
         return ids
     merged = await merged_among(ids, client=client)
@@ -443,7 +385,6 @@ async def redirect_ids(ids: list[str] | None, *, client: Any = None) -> list[str
 
 
 async def redirect_payload(data: dict[str, Any] | None, *, client: Any = None) -> dict[str, Any] | None:
-    """Rewrite ``artisanId``, ``artisanIds`` and an artisan-tagged ``linkedRecordId`` in place."""
     if not isinstance(data, dict):
         return data
     if isinstance(data.get("artisanId"), str):
@@ -467,23 +408,18 @@ def merged_detail(survivor_id: str) -> dict[str, Any]:
     }
 
 
-# ── Blockers and warnings ─────────────────────────────────────────────────────────────────────
-
 
 def _interview_scope(row: Any) -> tuple[str | None, str | None]:
     return getattr(row, "workshopId", None), getattr(row, "designWorkshopId", None)
 
 
 async def _interview_plan(client: Any, merged_id: str, survivor_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """The new ``artisanSetKey`` of every interview the merged record sits in, and the collisions."""
     from app.api.routes.questionnaire import artisan_set_key
 
     links = await client.questionnaireinterviewartisan.find_many(where={"artisanId": merged_id})
     interview_ids = sorted({link.interviewId for link in links})
     if not interview_ids:
         return [], []
-    # A soft-deleted interview holds no key (audit H5) and must not be given one here; its restore
-    # recomputes the key from the links it then has.
     interviews = await client.questionnaireinterview.find_many(
         where={"id": {"in": interview_ids}, "deletedAt": None}, include={"artisans": True}
     )
@@ -576,8 +512,6 @@ async def warnings_for(client: Any, a_id: str, b_id: str) -> list[dict[str, Any]
         for row in rows
     ]
 
-
-# ── Preview ───────────────────────────────────────────────────────────────────────────────────
 
 
 async def related_counts(client: Any, artisan_id: str) -> dict[str, int]:
@@ -692,8 +626,6 @@ async def load_pair(pair_id: str, *, client: Any = None) -> Any:
 
 
 async def preview(pair: Any) -> dict[str, Any]:
-    """Everything the merge screen draws for a WITHIN pair (a CROSS_PORTAL pair is filled in by
-    the route, which owns the live Field Repository lookup)."""
     base = {
         "id": pair.id,
         "kind": str(getattr(pair.kind, "value", pair.kind)),
@@ -743,8 +675,6 @@ async def preview(pair: Any) -> dict[str, Any]:
         "crossPortal": {"a": link_of.get(a["id"]), "b": link_of.get(b["id"])},
     }
 
-
-# ── The merge ─────────────────────────────────────────────────────────────────────────────────
 
 
 async def _snapshot_collisions(tx: Any, spec: Repoint, merged: str, survivor: str) -> list[dict[str, Any]]:
@@ -811,16 +741,10 @@ async def _repoint_task_arrays(tx: Any, merged: str, survivor: str) -> list[dict
     return moved
 
 
-#: Why a merged-away artisan's live card was revoked (``ArtisanCard.revokedReason``).
 CARD_MERGED_REASON = "MERGED"
 
 
 async def _repoint_cards(tx: Any, merged: str, survivor: str) -> list[dict[str, Any]]:
-    """The merged record's QR cards move to the survivor, its live one revoked on the way.
-
-    A printed card of the merged-away artisan then resolves as REPLACED, naming the survivor,
-    instead of "unknown" — and the survivor keeps its own live card (one per artisan). Each moved
-    card is logged with whether it was live, so undo can hand it back as it was."""
     rows = await tx.query_raw(
         """WITH before AS (
                SELECT "id", "revokedAt" IS NULL AS live FROM "ArtisanCard" WHERE "artisanId" = $1 FOR UPDATE
@@ -863,7 +787,6 @@ async def _recompute_set_keys(tx: Any, interview_ids: list[str]) -> list[dict[st
         where={"id": {"in": sorted(set(interview_ids))}, "deletedAt": None},
         include={"artisans": True},
     )
-    # Two passes so a key can move between two interviews of the same merge without a transient clash.
     plans = []
     for interview in interviews:
         workshop_id, design_workshop_id = _interview_scope(interview)
@@ -925,7 +848,6 @@ async def merge(
         raise _http(409, {"code": "record_changed", "message": "One of these records no longer exists."})
     validate_choices(choices, survivor, current[a_id], current[b_id])
 
-    # The Field Repository first (step 5): a link the deleted record holds moves to the survivor.
     links = {
         link.artisanId: link
         for link in await db.crossportalartisanlink.find_many(where={"artisanId": {"in": [a_id, b_id]}})
@@ -973,10 +895,6 @@ async def merge(
 async def _peer_move_link(
     settings: Any, remote_id: str, from_id: str, to_id: str, matched_by: str, user: Any, *, compensating: bool = False
 ) -> str:
-    """Tell the Field Repository the link now names ``to_id``: link the new id, then unlink the old.
-
-    Returns "moved" or "withdrawn" (the artisan withdrew consent there). Raises 503 when the peer
-    cannot be reached, unless compensating (then it logs and carries on)."""
     from app.services import cross_portal
     from app.services.cross_portal_client import PeerUnavailable, peer_call
 
@@ -1034,7 +952,6 @@ async def _merge_tx(
 ) -> dict[str, Any]:
     now = datetime.now(UTC)
     async with db.tx(max_wait=TX_MAX_WAIT, timeout=TX_TIMEOUT) as tx:
-        # 1. Lock, check the precondition and the blockers.
         rows = await _rows(tx, [a_id, b_id], lock=True)
         if a_id not in rows or b_id not in rows:
             raise _http(409, {"code": "record_changed", "message": "One of these records no longer exists."})
@@ -1049,15 +966,12 @@ async def _merge_tx(
             raise _http(409, {"code": "merge_blocked", "blockers": blockers})
         keep, gone = (a, b) if survivor == "A" else (b, a)
 
-        # 2. Snapshot.
         writes, taken = plan_writes(survivor, choices, a, b)
         snapshot: dict[str, Any] = {
             "merged": {k: v for k, v in gone.items() if k != "aadhaarNumber"},
             "survivorBefore": {c: keep.get(c) for c in writes},
         }
 
-        # 3. Free the unique keys, then write the survivor. The last four go with the fingerprint:
-        # the pair CHECK holds them to "both or neither" (migration 20261022090000).
         legacy = '"aadhaarNumber" = NULL, ' if aadhaar_fingerprint.LEGACY_COLUMN_PRESENT else ""
         await tx.execute_raw(
             'UPDATE "Artisan" SET "aadhaarFingerprint" = NULL, "aadhaarLast4" = NULL, '
@@ -1070,7 +984,6 @@ async def _merge_tx(
         snapshot["survivorAfter"] = {c: after.get(c) for c in writes}
         survivor_name = after.get("name") or keep.get("name") or ""
 
-        # 4. Re-point.
         moves: dict[str, Any] = {"repoint": {}, "deleted": {}}
         for spec in MERGE_REPOINT:
             label = f"{spec.table}.{spec.column}"
@@ -1087,7 +1000,6 @@ async def _merge_tx(
         touched_interviews += [d["interviewId"] for d in moves["deleted"].get("QuestionnaireInterviewArtisan.artisanId", [])]
         moves["interviewKeys"] = await _recompute_set_keys(tx, touched_interviews)
 
-        # 5. The local half of the link move.
         if cross is not None:
             if cross["mode"] == "moved":
                 await tx.execute_raw(
@@ -1096,7 +1008,6 @@ async def _merge_tx(
             else:
                 await tx.execute_raw('DELETE FROM "CrossPortalArtisanLink" WHERE "artisanId" = $1', gone_id)
 
-        # 6. The merge record, and the revision on the survivor.
         merge_data: dict[str, Any] = {
             "survivorId": keep_id,
             "mergedId": gone_id,
@@ -1119,7 +1030,6 @@ async def _merge_tx(
             }
         )
 
-        # 7. Delete the merged record.
         await tx.execute_raw('DELETE FROM "Artisan" WHERE "id" = $1', gone_id)
 
     return {
@@ -1132,8 +1042,6 @@ async def _merge_tx(
         "survivorId": keep_id,
     }
 
-
-# ── Undo ──────────────────────────────────────────────────────────────────────────────────────
 
 
 def _values_equal(a: Any, b: Any) -> bool:
@@ -1175,9 +1083,6 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
             current = (await _rows(tx, [keep_id], lock=True))[keep_id]
             before = snapshot.get("survivorBefore") or {}
             after = snapshot.get("survivorAfter") or {}
-            # A FIELD GOES BACK WHOLE OR NOT AT ALL. A group's columns travel together (the
-            # fingerprint and its last four are "both or neither" in the database), so one edited
-            # column keeps the survivor's current value for every column of its group.
             group_of = {c: g.key for g in FIELD_GROUPS for c in g.columns}
             edited = {
                 group_of.get(col, col)
@@ -1189,7 +1094,6 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
                 col: before.get(col) for col in after if group_of.get(col, col) not in edited
             }
             await _write_survivor(tx, keep_id, revert)
-            # The restored record's identity keys must be free.
             fp, pc = merged_row.get("aadhaarFingerprint"), merged_row.get("pehchanCardNumber")
             clauses = []
             if fp:
@@ -1200,12 +1104,10 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
                 holder = await tx.artisan.find_first(where={"OR": clauses})
                 if holder is not None:
                     raise _http(409, {"code": "merge_undo_conflict", "message": "Another record now holds this Aadhaar or Pehchan number."})
-            # 1. The deleted row, with its own id.
             await tx.execute_raw(
                 'INSERT INTO "Artisan" SELECT * FROM jsonb_populate_record(NULL::"Artisan", $1::jsonb)',
                 json.dumps(merged_row, default=str),
             )
-            # 3. Move back what still points at the survivor; re-insert collision rows.
             by_label = {f"{s.table}.{s.column}": s for s in MERGE_REPOINT}
             for label, moved in (moves.get("repoint") or {}).items():
                 spec = by_label.get(label)
@@ -1231,7 +1133,6 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
                     task["from"],
                     task["to"],
                 )
-            # 4. Design-workshop refs back, versions bumped.
             entry_ids = [e["id"] for e in moves.get("stageEntries") or []]
             if entry_ids:
                 await tx.execute_raw(
@@ -1243,7 +1144,6 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
                     keep_id,
                     entry_ids,
                 )
-            # 4b. The QR cards back, a card the merge revoked made live again.
             for card in moves.get("cards") or []:
                 await tx.execute_raw(
                     """UPDATE "ArtisanCard"
@@ -1260,7 +1160,6 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
             interviews += [m["key"]["interviewId"] for m in (moves.get("repoint") or {}).get("QuestionnaireInterviewArtisan.artisanId", [])]
             interviews += [d["interviewId"] for d in (moves.get("deleted") or {}).get("QuestionnaireInterviewArtisan.artisanId", [])]
             await _recompute_set_keys(tx, interviews)
-            # 5. The link.
             if cross:
                 link = cross.get("link") or {}
                 if cross.get("mode") == "moved":
@@ -1282,7 +1181,6 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
                             "lastRefreshedAt": _parse_ts(link.get("lastRefreshedAt")),
                         }
                     )
-            # 6. Revisions on both records, and the merge marked undone.
             for record_id in (keep_id, gone_id):
                 await tx.recordrevision.create(
                     data={
@@ -1344,8 +1242,6 @@ async def _move_back(tx: Any, spec: Repoint, moved: list[dict[str, Any]], keep_i
         )
 
 
-# ── Listing, purge ────────────────────────────────────────────────────────────────────────────
-
 
 def merge_payload(record: Any) -> dict[str, Any]:
     return {
@@ -1381,7 +1277,6 @@ _next_purge: datetime | None = None
 
 
 async def purge(*, now: datetime | None = None) -> int:
-    """Clear the snapshot, the move log and the link note of every merge past its undo window."""
     now = now or datetime.now(UTC)
     return await db.execute_raw(
         """UPDATE "ArtisanMerge"
@@ -1392,7 +1287,6 @@ async def purge(*, now: datetime | None = None) -> int:
 
 
 async def maybe_purge(settings: Any, *, now: datetime | None = None) -> int | None:
-    """At most once a day per process, from the queue worker."""
     global _next_purge
     now = now or datetime.now(UTC)
     if _next_purge is not None and now < _next_purge:

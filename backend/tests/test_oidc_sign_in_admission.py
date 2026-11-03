@@ -1,20 +1,3 @@
-"""Microsoft and Yahoo sign-in through ``POST /auth/login``: admission, linking and refusals.
-
-What a PROVED Microsoft or Yahoo identity may do is exactly what a proved Google identity may do —
-the same allow-list gate, before any write, and the same account found under the same address —
-with one deliberate difference: no Gmail-spelling fold to FIND an account, because neither provider
-runs Gmail or promises anything about another spelling of the address it verified. Every case below
-goes through the real route with real signed tokens (``oidc_fake_idp``); only the provider's two
-HTTP answers are replaced.
-
-Postgres is required, and the module follows the sync pattern ``tests/conftest.py`` describes: one
-``asyncio.run`` seeds every row before the ``TestClient`` starts, the tests are sync and drive the
-client, and nothing here awaits ``db``.
-
-    docker compose up -d postgres minio          # from the REPOSITORY ROOT, not from backend/
-    cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -95,8 +78,6 @@ def world():
                 address("local"): "RESEARCHER",
                 address("google"): "RESEARCHER",
                 address("unverified"): "RESEARCHER",
-                # The allow-list holds the mailbox's canonical spelling; the password account sits
-                # under the dotted one an administrator typed.
                 f"oidcfold{tag}@gmail.com": "RESEARCHER",
             }
             for email, role in admitted.items():
@@ -202,7 +183,6 @@ def test_a_password_account_is_signed_in_to_and_keeps_what_its_provisioner_gave_
     assert user["id"] == world["local"]
     assert user["authProvider"] == "LOCAL"
     assert user["name"] == "Name An Administrator Typed"
-    # The password still works: a second way in, not a conversion.
     password = client.post("/api/auth/login", json={"email": world["address"]("local"), "password": PASSWORD})
     assert password.status_code == 200, password.text
 
@@ -217,9 +197,6 @@ def test_a_google_account_keeps_its_provider_and_its_avatar(world, client, monke
 
 
 def test_no_gmail_spelling_is_folded_to_find_an_account(world, client, monkeypatch):
-    """The allow-list admits the mailbox (its rule for every sign-in path), but the account a
-    Microsoft identity signs in to is the one at the literal address it verified — never the
-    password account an administrator filed under another spelling."""
     response = _microsoft(client, monkeypatch, world["gmail_undotted"])
     assert response.status_code == 200, response.text
     user = response.json()["user"]

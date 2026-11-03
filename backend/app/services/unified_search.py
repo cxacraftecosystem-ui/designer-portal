@@ -1,16 +1,3 @@
-"""One search across both portals: the rules ``GET /search/unified`` and the peer routes share.
-
-* :func:`account_scope` turns an account into the permission half of a ``search_query.Scope``:
-  design-workshop data for professor and above, or for the workshops visible to the account, and
-  the DW types reported in ``typesRefused`` when the account can see none.
-* :func:`ask_peer` asks the other portal over the signed channel and never raises: a slow, missing
-  or untrusted answer is ``remote.status = "unavailable"`` and this portal's results still return.
-* :func:`merge` interleaves local and remote items per group by reciprocal rank (peer items carry no
-  score, so both sides are scored by their position), local first on a tie.
-
-docs/SEARCH.md carries the contract.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -32,10 +19,8 @@ PORTAL_LABEL = "Designer portal"
 PEER_PORTAL = "fieldRepository"
 PEER_LABEL = "Field Repository"
 
-#: Types this portal indexes. The vocabulary is shared; clusters, design workshops and reports are ours.
 LOCAL_TYPES: tuple[str, ...] = cross_portal.SEARCH_TYPES
 
-#: Types that exist only as design-workshop data.
 DW_TYPES: frozenset[str] = frozenset({"designWorkshops", "reports"})
 
 LABELS: dict[str, str] = {
@@ -61,8 +46,6 @@ STATUS_FILTERED_OUT = "filteredOut"
 
 
 def parse_types(raw: list[str] | None) -> list[str] | None:
-    """Repeatable or comma-separated names, in vocabulary order. ``None`` means every type.
-    Unknown names raise ``ValueError`` naming them."""
     if not raw:
         return None
     asked = {part.strip() for value in raw for part in str(value).split(",") if part.strip()}
@@ -79,8 +62,6 @@ async def visible_design_workshops(user: Any) -> list[str]:
 
 
 async def account_scope(user: Any | None, types: list[str] | None) -> tuple[Scope, list[str]]:
-    """The permission scope for one account (``None`` is the floor: ``ALL`` only) and the asked
-    types it may not read at all."""
     wanted = [t for t in (types or list(LOCAL_TYPES)) if t in LOCAL_TYPES]
     if user is None:
         refused = [t for t in wanted if t in DW_TYPES] if types else []
@@ -109,7 +90,6 @@ async def ask_peer(
     page: int,
     filters: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
-    """``(status, peer body)``. Never raises."""
     body = {
         "q": q,
         "types": types or list(cross_portal.SEARCH_TYPES),
@@ -190,7 +170,6 @@ def merge(
     *,
     limit: int,
 ) -> list[dict[str, Any]]:
-    """Groups in vocabulary order, empty ones left out, each holding at most ``limit`` items."""
     remote_by_type: dict[str, dict[str, Any]] = {}
     for group in remote_groups or []:
         if isinstance(group, dict) and group.get("type") in cross_portal.SEARCH_TYPES:

@@ -1,11 +1,3 @@
-"""An in-memory stand-in for the reads and the one write the consent gate makes against the ledger.
-
-``dictation_consent`` talks to the ``Consent`` ledger only through ``query_raw`` / ``execute_raw``
-(``app/transcription/ledger.py``) plus two Prisma lookups (the interview, the workshop), so this fake
-answers exactly those and fails the test on any other statement. ``rows`` is the current answer per
-subject type and id, as ``consent_current_v`` would give it.
-"""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -19,11 +11,9 @@ class LedgerDb:
         self.participants: dict[str, list[str]] = {}
         self.interviews: dict[str, Any] = {}
         self.workshops: dict[str, Any] = {}
-        #: Artisans linked to a design workshop (``Artisan.designWorkshopId``), per workshop.
         self.workshop_artisans: dict[str, list[str]] = {}
         self.media: dict[str, Any] = {}
         self.layers: dict[str, Any] = {}
-        #: Set to make every ledger read raise, as a database that cannot be reached does.
         self.broken = False
         self.appended: list[tuple[Any, ...]] = []
         self.questionnaireinterview = SimpleNamespace(find_unique=self._interview)

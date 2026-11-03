@@ -1,17 +1,3 @@
-"""THE NOTICES AND THE DELIVERY OF 2026-10-18, OVER A DATABASE.
-
-Designers hear that a report was approved, handed on, or that they were given a workshop (A4);
-owners, admins and requesters hear about access requests, decisions and comments (A5); inspectors
-and the approving authority hear about hand-ins, one at a time or in a daily digest (C2); "Approve
-and hand on" e-mails the office an expiring link at the addresses an administrator set (C4); the
-inspection badge counts what is waiting (A4).
-
-THE SHAPE IS ``test_email_db.py``'s: seed in a private ``asyncio.run`` -> drive the ``TestClient`` ->
-read back in another private ``asyncio.run`` once the client is closed. Mail is switched on for the
-module by replacing ``get_settings`` in the two mail modules; SES, the report renderer and S3 are
-stubbed.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -138,7 +124,6 @@ def test_designers_officials_and_access_hear_what_happened(
     people, workshops = world["people"], world["workshops"]
 
     with TestClient(app) as client:
-        # ── preferences: partial saves, and who sees the hand-in choice ──────────────────────
         first = client.get("/api/preferences/notifications", headers=_as(people, "quiet")).json()
         assert first == {
             "available": True,
@@ -153,7 +138,6 @@ def test_designers_officials_and_access_hear_what_happened(
         )
         assert saved.status_code == 200, saved.text
         assert saved.json()["emailWorkshopUpdates"] is False and saved.json()["emailReviewNotes"] is True
-        # An older client that sends only the first switch changes only that one.
         older = client.put(
             "/api/preferences/notifications", json={"emailReviewNotes": False}, headers=_as(people, "quiet")
         ).json()
@@ -167,7 +151,6 @@ def test_designers_officials_and_access_hear_what_happened(
         )
         assert refused.status_code == 422
 
-        # ── A4: the inspection badge ───────────────────────────────────────────────────────
         count = client.get("/api/design-workshop-inspections/awaiting-count", headers=_as(people, "inspector"))
         assert count.status_code == 200, count.text
         assert count.json() == {"awaiting": 2}
@@ -176,7 +159,6 @@ def test_designers_officials_and_access_hear_what_happened(
             == 403
         )
 
-        # ── A4: approval reaches the designer who did not opt out ─────────────────────────────
         read = client.get(f"/api/design-workshop-approvals/{workshops['approve']}", headers=_as(people, "ministry"))
         assert read.status_code == 200, read.text
         assert read.json()["delivery"]["configured"] is False
@@ -187,7 +169,6 @@ def test_designers_officials_and_access_hear_what_happened(
         )
         assert approved.status_code == 200, approved.text
 
-        # ── C2: a hand-in reaches each inspector by their own choice ──────────────────────────
         handed = client.patch(
             f"/api/design-workshops/{workshops['handin']}",
             json={"status": "PRE_SUBMISSION"},
@@ -195,7 +176,6 @@ def test_designers_officials_and_access_hear_what_happened(
         )
         assert handed.status_code == 200, handed.text
 
-        # ── A4: being added to a workshop's team ───────────────────────────────────────────
         team = client.put(
             f"/api/design-workshops/{workshops['team']}/viewers",
             json={"userIds": [people["joiner"].id]},
@@ -203,7 +183,6 @@ def test_designers_officials_and_access_hear_what_happened(
         )
         assert team.status_code == 200, team.text
 
-        # ── A5: a workshop access request, then its decision ───────────────────────────────
         asked = client.post(
             "/api/design-workshop-access/requests",
             json={"workshopId": workshops["approve"], "note": "Asked by Rekha"},
@@ -220,7 +199,6 @@ def test_designers_officials_and_access_hear_what_happened(
         )
         assert decided.status_code == 200, decided.text
 
-        # ── A5: data access, and a comment on the owner's record ───────────────────────────
         request = client.post(
             "/api/data-access/requests",
             json={"ownerId": people["owner"].id, "tier": "COMMENT"},
@@ -267,7 +245,6 @@ def test_designers_officials_and_access_hear_what_happened(
     (comment_notice,) = by_kind(mailer.RECORD_COMMENT, "owner")
     assert comment_notice.params["body"] == "Is the dye natural?"
 
-    # The digest: held rows from before the last 09:00 IST fold into one message, once.
     async def digest() -> tuple[int, int, list[Any]]:
         tomorrow = datetime.now(UTC) + timedelta(days=1, hours=1)
         first = await email_outbox.flush_digests(now=tomorrow, force=True)

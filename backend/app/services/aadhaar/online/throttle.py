@@ -1,12 +1,3 @@
-"""OTP rate limits: per caller and per Aadhaar number / VID, without storing the number.
-
-UIDAI blocks an Aadhaar for 30 minutes after more than five unsubmitted OTPs in 30 minutes (error
-953) and refuses a second OTP inside 30 seconds (952). This throttle sits in front of that, so one
-account cannot exhaust a resident's allowance and a resident cannot be flooded with codes through
-this server. The number is reduced to an HMAC under ``AADHAAR_THROTTLE_SALT`` before it touches the
-database; the table (``AadhaarOtpThrottle``) holds that hash, the caller's id and a timestamp.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -24,7 +15,6 @@ def uid_hash(uid: str, salt: bytes) -> str:
 async def admit(
     user_id: str, hashed_uid: str, *, per_user: int, per_uid: int, window_minutes: int
 ) -> None:
-    """Record one OTP request, or refuse it (429) when a limit is reached."""
     now = datetime.now(UTC)
     since = now - timedelta(minutes=window_minutes)
     await db.aadhaarotpthrottle.delete_many(where={"createdAt": {"lt": since}})

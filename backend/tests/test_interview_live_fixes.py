@@ -1,15 +1,3 @@
-"""Interview fixes from the 21 Oct 2026 audit (AUDIT_DR_2026-10-21.md), against a database.
-
-* **H4** a second researcher adding to a shared interview re-sends the first one's answers word for
-  word; that is no longer refused. Changing somebody else's answer is still refused, now with a code
-  and the question ids, and the fold's scalar fill is rolled back with it.
-* **H5** deleting an interview is a SOFT delete by a content admin: it disappears from every read,
-  keeps its answers, frees its artisan set, and a content admin restores it (409 when another live
-  interview took the set meanwhile).
-
-Needs a LOCAL Postgres (``checks.yml``'s Backend integration tests job provides one); skips otherwise.
-"""
-
 import os
 import uuid
 from typing import Any
@@ -64,8 +52,6 @@ async def env():
                 }
             )
         rows["people"] = people
-        # Unparented global questions: ``QuestionnaireSection`` is unique on code and sortOrder and
-        # shared with the seed, and nothing under test reads the section.
         rows["questions"] = [
             await db.questionnairequestion.create(
                 data={
@@ -118,8 +104,6 @@ def _answers(body: dict[str, Any]) -> dict[str, str]:
     return {r["questionId"]: r["answerText"] for r in body.get("responses") or []}
 
 
-# ── H4 ───────────────────────────────────────────────────────────────────────────────────────
-
 
 def test_a_second_researcher_can_add_to_a_shared_interview_and_cannot_overwrite_it(env):
     q1, q2 = (q.id for q in env["questions"])
@@ -127,13 +111,11 @@ def test_a_second_researcher_can_add_to_a_shared_interview_and_cannot_overwrite_
     assert first.status_code == 201, first.text
     interview_id = first.json()["id"]
 
-    # The second researcher's client re-sends the first answer unchanged, and adds its own.
     added = _create(env, "second", 0, [(0, "Twelve"), (1, "My mother")])
     assert added.status_code == 201, added.text
     assert added.json()["id"] == interview_id
     assert _answers(added.json()) == {q1: "Twelve", q2: "My mother"}
 
-    # Changing the first researcher's answer is refused, named, and takes the fold's fill with it.
     refused = _create(env, "second", 0, [(0, "Thirteen")], language="Hindi")
     assert refused.status_code == 403, refused.text
     detail = refused.json()["detail"]
@@ -146,7 +128,6 @@ def test_a_second_researcher_can_add_to_a_shared_interview_and_cannot_overwrite_
     assert stored["language"] in (None, "")
     assert _answers(stored)[q1] == "Twelve"
 
-    # The same rule on PATCH: an identical answer passes, a changed one is refused by code.
     same = env["client"].patch(
         f"/api/questionnaire/interviews/{interview_id}",
         json={"responses": [{"questionId": q1, "answerText": "Twelve"}]},
@@ -154,8 +135,6 @@ def test_a_second_researcher_can_add_to_a_shared_interview_and_cannot_overwrite_
     )
     assert same.status_code == 200, same.text
 
-
-# ── H5 ───────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_an_interview_is_soft_deleted_by_an_admin_and_restored_whole(env):
@@ -188,7 +167,6 @@ def test_an_interview_is_soft_deleted_by_an_admin_and_restored_whole(env):
     row = next(r for r in trash if r["id"] == old_id)
     assert row["deletedAt"] and row["deletedByName"] == env["people"]["admin"].name
 
-    # The set is free: a new interview for the same artisan is a new row, not a fold into the trash.
     fresh = _create(env, "second", 1, [(0, "Nine")])
     assert fresh.status_code == 201, fresh.text
     assert fresh.json()["id"] != old_id

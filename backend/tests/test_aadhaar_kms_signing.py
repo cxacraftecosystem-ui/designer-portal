@@ -1,13 +1,3 @@
-"""The AUA request signature made by an AWS KMS key (Blocker B4), against a mocked KMS.
-
-The fake below answers the four KMS calls the signer makes from a local RSA key, the way KMS would:
-``describe_key``, ``get_public_key`` (DER SubjectPublicKeyInfo), and ``sign`` over a DIGEST with
-RSASSA_PKCS1_V1_5_SHA_256. What is pinned: the signature ``xmldsig.sign_enveloped`` writes with
-the KMS signer verifies under the AUA certificate exactly as a PFX-signed one does; only a digest
-reaches KMS; the boot check refuses the wrong key kind, a disabled key and a certificate for some
-other key; and the settings ask for the certificate instead of the PFX when the KMS key is named.
-"""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -70,7 +60,6 @@ def test_an_enveloped_signature_made_in_kms_verifies_under_the_aua_certificate(a
     xmldsig.sign_enveloped(root, signer, aua.certificate)
     verified = xmldsig.verify_enveloped(etree.fromstring(etree.tostring(root)), [aua.certificate])
     assert verified.certificate == aua.certificate
-    # Only the 32-byte digest of SignedInfo went to KMS, never the document.
     assert kms.sign_calls == [{"len": 32, "type": "DIGEST", "alg": "RSASSA_PKCS1_V1_5_SHA_256"}]
 
 
@@ -94,8 +83,6 @@ def test_the_boot_check_refuses_a_certificate_for_another_key(aua) -> None:
 
 
 def test_the_public_key_is_fetched_from_kms_once_and_then_kept(aua) -> None:
-    """GetPublicKey is a KMS round trip (and a billed request). The boot check fetches the public
-    half; every later signature and ``key_size`` read reuses it."""
     kms = FakeKms(aua)
     signer = KmsRsaSigner(KEY_ID, kms)
     check(signer, aua.certificate)
@@ -106,7 +93,7 @@ def test_the_public_key_is_fetched_from_kms_once_and_then_kept(aua) -> None:
         assert signer.key_size == 2048
     assert signer.public_key() is signer.public_key()
     assert kms.public_key_calls == 1
-    assert len(kms.sign_calls) == 4  # the boot check's probe, then one per request
+    assert len(kms.sign_calls) == 4
 
 
 def test_only_pkcs1_v15_is_signed(aua) -> None:

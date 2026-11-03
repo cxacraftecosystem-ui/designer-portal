@@ -1,9 +1,3 @@
-"""The coverage metric has one vocabulary in both portals: ``workshops``, ``artisans`` and ``all``.
-
-``records`` was this portal's name for ``all``. Saved links still carry it, so the route accepts it
-and always answers ``all``. Pure: no database.
-"""
-
 from __future__ import annotations
 
 import pytest

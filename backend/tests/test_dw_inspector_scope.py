@@ -1,61 +1,3 @@
-"""**THE FIFTH SCOPE, OVER A REAL DATABASE: what an inspection row buys, and everything it does not.**
-
-The companion to ``test_dw_inspector_scope_gate``, and the division between the two is deliberate
-rather than a filing accident. That module replaces ``db`` with a tripwire and asserts the things
-that are true of the SOURCE — which doors exist, that every inspector-reachable route is a GET, that
-the read-only loader has no ``for_edit`` parameter — so it runs in CI, where there is no Postgres.
-This module asserts the things that are only true of a DATABASE: what a row does, what its absence
-does, and which of the two scopes can see the other. Four docstrings in the feature point here by
-name for exactly those claims.
-
-WHAT IS PINNED HERE, AND WHY EACH IS A WAY THE SCOPE COULD SHIP LOOKING FINISHED WHILE BEING WRONG.
-
-**THE ZERO STATE IS THE FIRST THING ASSERTED, BECAUSE IT IS THE ONE NOBODY WRITES.** An INSPECTOR
-with no inspection row must see an empty list and a 404 on every workshop in the repository. Every
-other test here can pass against an implementation whose scope clause is missing entirely — a list
-that answers "all workshops" satisfies "the assigned inspector finds their workshop" perfectly well.
-Only the zero state tells those two apart, which is why it is first and why it is asserted on both
-surfaces rather than one.
-
-**THE THREE WRITE DOORS THE GATE MODULE CANNOT REACH.** ``DELETE /{id}``, ``POST /{id}/report`` and
-``POST /{id}/exports`` all call ``load_workshop_or_404`` BEFORE they gate — or, for the report, do
-not gate at all, because it is open to anyone who may READ the workshop through that loader. So they
-cannot be refused from the request alone, and the gate module says so in terms and defers them here.
-They are refused by a database fact: an inspector holds no ``DesignWorkshopViewer`` row and is not
-the creator, so the loader answers 404. **That is the whole read-only property for those three, and
-it is invisible without a database.**
-
-**THE TWO SCOPES CANNOT SEE EACH OTHER, ASSERTED IN BOTH DIRECTIONS OVER REAL ROWS.** An inspection
-row must not make a workshop appear on the DESIGNER's surface (``GET /design-workshops``, whose
-clause is ``visible_to_clause`` — creator OR viewer), and a viewer row must not admit anybody to the
-inspection surface. The gate module proves the two PREDICATES are different expressions; this proves
-the two TABLES stay strangers when both hold rows for the same workshop, which is the property that
-actually protects the artisan's recordings.
-
-**THE REFUSAL THAT EXISTS NOWHERE ELSE IN THE CODEBASE.** An account already on the workshop — its
-creator, or a co-designer holding a viewer row — cannot be assigned as its inspector. An independent
-review by somebody who worked on the thing is not a review. Today the two role sets are disjoint so
-this is nearly unreachable through the API, and "nearly" is why it is tested: a DESIGNER holding a
-viewer row who is later PROMOTED to INSPECTOR walks straight into it, role changes are not
-hypothetical, and nothing else in the codebase would notice.
-
-**AND THE ADMINISTRATION IS ADMIN-ONLY, INCLUDING AGAINST THE INSPECTOR THEMSELVES.** The inspected
-must not choose the inspector; neither may the inspector choose themselves, or quietly take a
-colleague off the panel.
-
-Postgres is required — the behaviour under test is the presence or absence of a row in
-``DesignWorkshopInspector`` deciding an HTTP status — so the module skips itself when
-``DATABASE_URL`` does not point at a local database, exactly as ``test_design_workshop_viewers``
-does. It ALSO skips until the INSPECTOR tier has reached ``deps.ROLE_RANK`` and the ``UserRole``
-enum, which is a second lane's work: without the enum value no fixture account can be created at
-all, and a module that failed on its first line would read as this feature being broken.
-
-    docker compose up -d postgres minio          # from the REPOSITORY ROOT, not from backend/
-    cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
-
-Current as of 2026-08-27.
-"""
-
 import os
 import uuid
 from typing import Any
@@ -75,10 +17,6 @@ pytestmark = [
         not _LOCAL,
         reason="needs a LOCAL database; refuses to run against a remote DATABASE_URL",
     ),
-    # THE SECOND SKIP, AND IT IS NOT BELT-AND-BRACES. The tier's rank and its `UserRole` enum value
-    # land in another lane's migration; until both are deployed, `db.user.create(role="INSPECTOR")`
-    # fails inside the driver on an enum value Postgres has never heard of. Skipping reads as "not
-    # yet", where a hard failure on the fixture would read as "this feature is broken".
     pytest.mark.skipif(
         "INSPECTOR" not in ROLE_RANK,
         reason="the INSPECTOR tier has not reached deps.ROLE_RANK yet; see the other lane",
@@ -88,62 +26,22 @@ pytestmark = [
 
 PASSWORD = "inspector-test-password"
 
-#: The first stage of the registry. Named rather than discovered so a registry reshuffle fails
-#: loudly here instead of quietly testing nothing.
 STAGE_1 = "WORKSHOP_SETUP"
 
-#: slug -> (role, display name).
-#:
-#: ``creator`` IS AN ADMIN because only admins may START a design workshop
-#: (``can_create_design_workshops``), and every workshop in this module is made through the real
-#: ``POST /design-workshops``. The sibling viewers module records what that costs in full: the
-#: creator is now an account ``is_admin`` admits everywhere, so the ``createdById`` clause cannot be
-#: isolated by a black-box test any more. Nothing this module exists for runs through the creator.
-#:
-#: **THREE INSPECTORS, AND THE THIRD IS THE POINT OF THE MODULE.** ``inspector`` is assigned;
-#: ``elsewhere`` is assigned to a DIFFERENT workshop; ``idle`` is never assigned to anything and
-#: never will be. Two would not be enough: with only an assigned and an unassigned account, an
-#: implementation whose scope clause reads "any workshop, for any inspector" is caught, but one
-#: whose clause reads "any workshop this inspector was assigned OR any workshop with an inspection
-#: on it at all" is not. ``elsewhere`` catches that second one.
 ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("admin", "ADMIN", "Inspection Admin"),
     ("creator", "ADMIN", "Workshop Creator"),
     ("inspector", "INSPECTOR", "Assigned Inspector"),
     ("elsewhere", "INSPECTOR", "Inspector On Another Workshop"),
-    # THE ZERO-STATE ACCOUNT. Never assigned anything, in any test, ever. If a test in this module
-    # ever assigns it, the first two assertions in the file stop meaning anything.
     ("idle", "INSPECTOR", "Unassigned Inspector"),
     ("colleague", "DESIGNER", "Co-designer On The Workshop"),
     ("outsider", "DESIGNER", "Unrelated Designer"),
-    # THE ONE ACCOUNT A RANK LADDER WOULD ADMIT TO THE INSPECTION SURFACE. PROFESSOR sits at 40,
-    # ABOVE INSPECTOR's 37, so every "this tier and above" spelling of the rule lets them in and the
-    # SET does not. A researcher cannot prove that distinction — they are refused by ladder and set
-    # alike, so a test with only a researcher in it passes just as well against the wrong rule.
     ("professor", "PROFESSOR", "Senior Professor"),
-    # An INSPECTOR the platform allow-list has SUSPENDED: eligible by role, refused by the door.
-    # Their address is on its own domain so the picker's exact-set arithmetic is not disturbed.
     ("barred", "INSPECTOR", "Suspended Inspector"),
-    # ------------------------------------------------------------------------------------------
-    # THE TWO ACCOUNTS THAT REACH THE "ALREADY ON THIS WORKSHOP" REFUSAL, one arm each.
-    #
-    # Both are INSPECTOR so they PASS the role check, which is the only way to reach the arm at
-    # all: `_assert_every_id_may_inspect` refuses a wrong role with a `continue`, so an ordinary
-    # ADMIN creator or DESIGNER co-designer is caught by that branch first and the arm under test
-    # never runs. A test written with those accounts goes green on the wrong refusal and stays green
-    # if the arm is deleted outright.
-    #
-    # WHY THEY ARE FIXTURE ACCOUNTS RATHER THAN A PROMOTION INSIDE A TEST. Changing a role mid-test
-    # means calling `db` from the test's own event loop, and the Prisma client is shared with the
-    # running app and bound to the TestClient's loop — `db.disconnect()` there would drop the
-    # connection the app is serving every other test on. The sibling viewers module states the rule
-    # and never breaks it: the database is touched in the fixture, before the client starts, or not
-    # at all.
     ("selfinspector", "INSPECTOR", "Inspector Who Made One"),
     ("workedonit", "INSPECTOR", "Inspector Who Worked On One"),
 )
 
-#: The one account that gets an ``AccessRoster`` row, and the status on it.
 BARRED_SLUG = "barred"
 
 
@@ -154,23 +52,11 @@ def anyio_backend():
 
 @pytest.fixture(scope="module")
 async def world():
-    """Every account the module needs, created before the app starts.
-
-    Made here rather than inside a test because the Prisma client is shared with the running app and
-    bound to the TestClient's event loop; touching it from a test's own loop is the kind of
-    cross-loop use that fails intermittently rather than honestly.
-
-    Every address carries a per-run stamp so the module passes on the second run of the suite as
-    well as the first.
-    """
     from fastapi.testclient import TestClient
 
     from app.main import app
 
     stamp = uuid.uuid4().hex[:8]
-    # A SECOND per-run token, and it lives only in TITLES. The search test needs a term that matches
-    # this run's workshops and cannot match a workshop left behind by an earlier run — otherwise a
-    # scope clause that had been dropped entirely could still return "some rows" and look right.
     title_token = f"Pattachitra{uuid.uuid4().hex[:8]}"
 
     def address(slug: str) -> str:
@@ -188,13 +74,6 @@ async def world():
                 "passwordHash": hash_password(PASSWORD),
             })
         await db.accessroster.create(data={"email": address(BARRED_SLUG), "status": "SUSPENDED"})
-        # THE DESIGNERS NEED AN EMPANELMENT, and this is not incidental bookkeeping.
-        # ``design_workshop_viewers`` refuses a DESIGNER who is not on the ACTIVE designer roster
-        # with a 422, so without these rows every ``_grant_viewer`` call in this module would fail —
-        # and the tests that compare the two scopes would be comparing an inspection against nothing
-        # at all, passing for entirely the wrong reason. The INSPECTORS deliberately get no row: an
-        # inspector is not empanelled to run anything, and requiring one would refuse every
-        # inspector there will ever be. That asymmetry IS the difference between the two rosters.
         for slug, role, _name in ACCOUNTS:
             if role == "DESIGNER":
                 await db.designerroster.create(data={
@@ -205,16 +84,6 @@ async def world():
                     "addedById": people["admin"].id,
                 })
 
-        # THE TWO WORKSHOPS THAT REACH THE "ALREADY ON THIS WORKSHOP" REFUSAL, built here with
-        # Prisma rather than through the API, because neither state is reachable through it.
-        #
-        # `POST /design-workshops` is admin-only, so an INSPECTOR can never be a `createdById` by
-        # any route — and `PUT /{id}/viewers` refuses a non-DESIGNER, so an INSPECTOR can never be
-        # given a viewer row either. Both states are nonetheless one admin action away in the real
-        # world: they are what a DESIGNER's or an ADMIN's account BECOMES the day somebody promotes
-        # them to the inspection tier. That promotion is the whole reason the refusal exists, and
-        # writing the rows directly is the only honest way to put an account into the state a
-        # promotion would leave it in.
         self_made = await db.designworkshop.create(data={
             "title": f"Ikat, made by its own inspector {stamp}",
             "createdById": people["selfinspector"].id,
@@ -249,25 +118,10 @@ def client(world):
 
 
 def _headers(world: dict[str, Any], slug: str) -> dict[str, str]:
-    """A bearer token for one of the fixture's accounts.
-
-    Minted directly rather than obtained by signing in, because what is under test is the inspection
-    rules and not the sign-in gate. The barred inspector in particular CANNOT sign in by design, and
-    their ineligibility for an inspection row is the thing being asserted.
-    """
     return {"Authorization": f"Bearer {create_access_token(world['people'][slug].id)}"}
 
 
 def _make_workshop(world: dict[str, Any], title: str) -> str:
-    """A fresh workshop owned by ``creator``, made through the API the way workshops are made.
-
-    A real ``POST /design-workshops`` rather than a Prisma insert, so the create gate is exercised on
-    the way past: if the rule about who may start a workshop moves again, this module fails loudly on
-    its first line instead of quietly testing a row nothing could make.
-
-    One per test that touches an inspection set. Sharing a single workshop would make the module
-    order-dependent, and the failure mode of that is a suite that passes alone and fails in CI.
-    """
     response = world["client"].post(
         "/api/design-workshops", json={"title": title}, headers=_headers(world, "creator")
     )
@@ -276,7 +130,6 @@ def _make_workshop(world: dict[str, Any], title: str) -> str:
 
 
 def _assign(world: dict[str, Any], workshop_id: str, slugs: list[str], *, as_slug: str = "admin"):
-    """PUT the whole inspection set. There is no add route and no remove route — see the service."""
     return world["client"].put(
         f"/api/design-workshop-inspections/{workshop_id}/inspectors",
         json={"userIds": [world["people"][s].id for s in slugs]},
@@ -285,7 +138,6 @@ def _assign(world: dict[str, Any], workshop_id: str, slugs: list[str], *, as_slu
 
 
 def _grant_viewer(world: dict[str, Any], workshop_id: str, slugs: list[str]):
-    """Put a DESIGNER on the workshop the ordinary way, so the two scopes can be compared."""
     return world["client"].put(
         f"/api/design-workshops/{workshop_id}/viewers",
         json={"userIds": [world["people"][s].id for s in slugs]},
@@ -293,23 +145,8 @@ def _grant_viewer(world: dict[str, Any], workshop_id: str, slugs: list[str]):
     )
 
 
-# ------------------------------------------------------------------------------------------
-# 1. THE ZERO STATE. Asserted first because every other test here passes without a scope clause.
-# ------------------------------------------------------------------------------------------
-
 
 async def test_an_inspector_with_no_scope_row_sees_an_empty_list(world, client):
-    """**THE ASSERTION THE WHOLE SCOPE RESTS ON.** No row, nothing to see.
-
-    A workshop exists and is under inspection by somebody else while this runs, so an empty answer
-    here cannot be an empty database. That is what makes it an assertion about the clause rather than
-    about the fixture: ``inspectable_by_clause`` has ONE source and no ``createdById`` arm, no rank
-    fallback and no "all workshops" branch, so an inspector nobody has assigned anything sees exactly
-    nothing.
-
-    ``idle`` is used here and NOWHERE ELSE in this module. If a later test assigns it, this stops
-    meaning anything and the file has quietly lost its most important assertion.
-    """
     workshop_id = _make_workshop(world, "Ikat, inspected by somebody else")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -321,15 +158,6 @@ async def test_an_inspector_with_no_scope_row_sees_an_empty_list(world, client):
 
 
 async def test_an_inspector_with_no_scope_row_cannot_open_a_workshop(world, client):
-    """The other half of the zero state, and it must be a 404 rather than a 403.
-
-    A 403 would confirm the id exists to exactly the people this is turning away, which for a
-    research data set keyed by cuid is a small but free leak. The detail string is the same "Record
-    not found" a designer and a stranger get, so no refusal here can be told from any other.
-
-    THE LIST AND THE DETAIL ARE BOTH ASSERTED because a scope honoured by only one of them is worse
-    than no scope: it tells its holder simultaneously that a workshop exists and that it does not.
-    """
     workshop_id = _make_workshop(world, "Ikat, closed to the unassigned")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -341,12 +169,6 @@ async def test_an_inspector_with_no_scope_row_cannot_open_a_workshop(world, clie
 
 
 async def test_an_inspector_assigned_elsewhere_is_refused_this_workshop(world, client):
-    """The scope is per WORKSHOP, not per TIER — the distinction ``idle`` alone cannot prove.
-
-    ``elsewhere`` holds a real inspection row, so an implementation that admits "any inspector who is
-    inspecting anything" passes both tests above and fails this one. That is the only reason this
-    account exists.
-    """
     theirs = _make_workshop(world, "Ikat, theirs")
     mine = _make_workshop(world, "Ikat, not theirs")
     assert _assign(world, theirs, ["elsewhere"]).status_code == 200
@@ -363,18 +185,8 @@ async def test_an_inspector_assigned_elsewhere_is_refused_this_workshop(world, c
     assert mine not in ids
 
 
-# ------------------------------------------------------------------------------------------
-# 2. WHAT THE ROW DOES BUY — a read, and a read that the list honours
-# ------------------------------------------------------------------------------------------
-
 
 async def test_an_assigned_inspector_opens_the_workshop_and_is_told_it_is_read_only(world, client):
-    """The positive case, and the ``readOnly`` flag that stops a client offering a Save button.
-
-    Said on the wire rather than inferred from the URL, because both clients will eventually render
-    this payload through the same screen as the designer's read, and a screen that cannot tell the
-    two apart offers a Save the API answers 404 to. One boolean is cheaper than the bug report.
-    """
     workshop_id = _make_workshop(world, "Ikat, under inspection")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -385,18 +197,11 @@ async def test_an_assigned_inspector_opens_the_workshop_and_is_told_it_is_read_o
     payload = response.json()
     assert payload["id"] == workshop_id
     assert payload["readOnly"] is True
-    # The inspection is of the WORK, so the stages and their completeness must actually be there —
-    # a scope that admits somebody to an empty payload has not let them inspect anything.
     assert "stages" in payload
     assert "completeness" in payload
 
 
 async def test_the_inspection_list_honours_the_scope(world, client):
-    """The list is half the feature; a scope it does not honour is a scope its holder cannot use.
-
-    Nothing in either client navigates to a design workshop by typed id, so a workshop absent from
-    every list an inspector can reach is a workshop they cannot open at all.
-    """
     workshop_id = _make_workshop(world, "Ikat, listed for its inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -406,17 +211,6 @@ async def test_the_inspection_list_honours_the_scope(world, client):
 
 
 async def test_the_scope_survives_a_search(world, client):
-    """**BOTH CLAUSES WANT ``where["OR"]`` AND THE LATER ASSIGNMENT SILENTLY WINS.**
-
-    This is the bug this repository has shipped more than once: the scope written to that key after
-    the search box has taken it, or the reverse. One direction makes the search stop narrowing; the
-    other makes the scope vanish the moment somebody types — a workshop nobody assigned appearing
-    the instant an inspector uses the search box.
-
-    Both are asserted in one test, because the fix is one line and a test covering only one direction
-    passes against half of it: the assigned workshop must still be FOUND, and the unassigned one
-    sharing the same search term must still be ABSENT.
-    """
     marker = world["title_token"]
     mine = _make_workshop(world, f"{marker} mine to inspect")
     theirs = _make_workshop(world, f"{marker} not mine")
@@ -435,13 +229,6 @@ async def test_the_scope_survives_a_search(world, client):
 
 
 async def test_a_soft_deleted_workshop_is_gone_from_the_inspection_surface(world, client):
-    """Deleted is a 404 here with no 409 arm, and it is absent from the list.
-
-    The designer's loader answers 409 to an EDITOR holding unsent stages, so an admin can be asked to
-    restore it. An inspector has nothing pending and no restore button, so the honest answer is that
-    there is nothing to inspect. The row survives the soft delete — it is the workshop that is gone,
-    not the inspection — so a restore brings the inspection back with it.
-    """
     workshop_id = _make_workshop(world, "Ikat, soft deleted")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     assert (
@@ -459,8 +246,6 @@ async def test_a_soft_deleted_workshop_is_gone_from_the_inspection_surface(world
     listed = client.get("/api/design-workshop-inspections", headers=_headers(world, "inspector"))
     assert workshop_id not in [item["id"] for item in listed.json()["items"]]
 
-    # THE ROW IS STILL THERE, which is what makes a restore whole. Asked of the admin's roster
-    # route rather than of Prisma, so the assertion is about the product and not about a table.
     roster = client.get(
         f"/api/design-workshop-inspections/{workshop_id}/inspectors",
         headers=_headers(world, "admin"),
@@ -471,16 +256,8 @@ async def test_a_soft_deleted_workshop_is_gone_from_the_inspection_surface(world
     ]
 
 
-# ------------------------------------------------------------------------------------------
-# 3. READ-ONLY: the three doors the gate module cannot reach, because a DATABASE decides them
-# ------------------------------------------------------------------------------------------
-
 
 async def test_an_inspector_cannot_delete_the_workshop_they_inspect(world, client):
-    """``DELETE /{id}`` gates on the role first since 2026-10-20 (content admins only), so an
-    inspector is refused with a 403 that names no workshop. An inspector destroying the record they
-    were asked to examine is the single worst thing this scope could be made to authorise.
-    """
     workshop_id = _make_workshop(world, "Ikat, undeletable by its inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -489,7 +266,6 @@ async def test_an_inspector_cannot_delete_the_workshop_they_inspect(world, clien
     )
     assert response.status_code == 403, response.text
 
-    # AND IT IS STILL THERE. A refusal that had actually deleted the row would pass the line above.
     assert (
         client.get(
             f"/api/design-workshop-inspections/{workshop_id}", headers=_headers(world, "inspector")
@@ -499,13 +275,6 @@ async def test_an_inspector_cannot_delete_the_workshop_they_inspect(world, clien
 
 
 async def test_an_inspector_cannot_generate_the_report(world, client):
-    """``POST /{id}/report`` has NO role gate at all — it is open to whoever may READ through the
-    designer's loader — so this refusal is made entirely of the absence of a viewer row.
-
-    That makes it the most fragile of the three and the one most worth pinning: widen
-    ``load_workshop_or_404`` by one clause and an inspector is signing ministry documents. The report
-    is the designer's signed output; an inspector examines it, they do not issue it.
-    """
     workshop_id = _make_workshop(world, "Ikat, unreportable by its inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -518,12 +287,6 @@ async def test_an_inspector_cannot_generate_the_report(world, client):
 
 
 async def test_an_inspector_cannot_write_the_export_ledger(world, client):
-    """``POST /{id}/exports`` stands behind ``load_workshop_or_404(for_edit=True)`` ALONE.
-
-    No ``_require_designer`` in front of it, which is precisely why the read-only property here has
-    to come from the loader refusing an account with no viewer row. An inspection that could write
-    the export ledger would be recording that the inspector had issued a report.
-    """
     workshop_id = _make_workshop(world, "Ikat, no ledger row from an inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -541,13 +304,6 @@ async def test_an_inspector_cannot_write_the_export_ledger(world, client):
 
 
 async def test_an_inspector_cannot_save_a_stage(world, client):
-    """The 22-stage fortnight, refused over a real database as well as at the gate.
-
-    The gate module already proves this is decided from the ROLE before any lookup. It is repeated
-    here against a workshop the inspector genuinely holds a row for, because "refused for an account
-    with no scope" and "refused for the account whose scope this is" are different claims, and only
-    the second one is about this feature.
-    """
     workshop_id = _make_workshop(world, "Ikat, unwritable by its inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -560,11 +316,6 @@ async def test_an_inspector_cannot_save_a_stage(world, client):
 
 
 async def test_an_inspector_cannot_regrant_access_to_anybody(world, client):
-    """Not viewers, and not other inspectors. **NEITHER MAY THEY CHOOSE THEMSELVES.**
-
-    An inspector who could put a colleague on the panel — or take one off it — is choosing who
-    examines the work, which is the authority this tier is defined by NOT having.
-    """
     workshop_id = _make_workshop(world, "Ikat, no onward grants")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -580,20 +331,6 @@ async def test_an_inspector_cannot_regrant_access_to_anybody(world, client):
 
 
 async def test_the_inspection_payload_carries_no_transcripts(world, client):
-    """**THE ARTISAN'S RECORDED VOICE IS NOT IN THIS GRANT'S GIFT**, and the key is absent entirely.
-
-    The designer's read fills ``transcripts`` from ``owned_or_granted_where``, which admits an
-    account below PROFESSOR only for media it uploaded, media whose owner granted it a
-    ``DataAccessGrant``, or media tagged to a workshop it holds through ``DesignWorkshopViewer`` /
-    ``createdById``. An inspector holds none of those.
-
-    ABSENT RATHER THAN EMPTY, and the difference is the assertion. An empty list would mean this
-    route is on the media path and today happens to return nothing — so the next person widening
-    that predicate widens this surface without noticing. A missing key means the route never asks.
-
-    Whether an inspector SHOULD see the workshop's photographs is an owner's decision that has not
-    been made. This test is what keeps it from being made by accident.
-    """
     workshop_id = _make_workshop(world, "Ikat, no recordings for the inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -603,8 +340,6 @@ async def test_the_inspection_payload_carries_no_transcripts(world, client):
     assert response.status_code == 200, response.text
     assert "transcripts" not in response.json()
 
-    # THE CONTROL: the designer's read of the same workshop DOES carry the key, so the assertion
-    # above is about this route and not about a key that no longer exists anywhere.
     assert _grant_viewer(world, workshop_id, ["colleague"]).status_code == 200
     designer_read = client.get(
         f"/api/design-workshops/{workshop_id}", headers=_headers(world, "colleague")
@@ -613,19 +348,8 @@ async def test_the_inspection_payload_carries_no_transcripts(world, client):
     assert "transcripts" in designer_read.json()
 
 
-# ------------------------------------------------------------------------------------------
-# 4. THE TWO SCOPES ARE STRANGERS, over real rows in both tables
-# ------------------------------------------------------------------------------------------
-
 
 async def test_an_inspection_row_is_invisible_on_the_designer_surface(world, client):
-    """An inspection must not admit anybody to ``/design-workshops``, list or detail.
-
-    That surface's clause is ``visible_to_clause`` — created-by-me OR a viewer row — and an inspector
-    holds neither. If this ever goes green the wrong way, the inspection has become a viewer grant,
-    and a viewer grant carries STAGE WRITES because ``load_workshop_or_404(for_edit=True)`` performs
-    no role check at all.
-    """
     workshop_id = _make_workshop(world, "Ikat, inspection only")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -640,16 +364,8 @@ async def test_an_inspection_row_is_invisible_on_the_designer_surface(world, cli
 
 
 async def test_a_viewer_row_is_invisible_on_the_inspection_surface(world, client):
-    """The other direction. A co-designer holding a real viewer grant is refused the whole prefix.
-
-    403 and not 404, and deliberately so: this is the surface refusing a TIER rather than a scope
-    hiding a row, and the sentence names the door they actually want. A designer told only
-    "forbidden" on a read surface reasonably concludes the deployment is broken.
-    """
     workshop_id = _make_workshop(world, "Ikat, viewer is not an inspector")
     assert _grant_viewer(world, workshop_id, ["colleague"]).status_code == 200
-    # The colleague can genuinely read it the ordinary way — so the refusal below is about the
-    # surface and not about them having no access to this workshop at all.
     assert (
         client.get(
             f"/api/design-workshops/{workshop_id}", headers=_headers(world, "colleague")
@@ -666,18 +382,12 @@ async def test_a_viewer_row_is_invisible_on_the_inspection_surface(world, client
 
 @pytest.mark.parametrize("slug", ["colleague", "professor"])
 async def test_the_inspection_surface_refuses_a_role_that_can_hold_no_inspection(world, client, slug):
-    """PROFESSOR is in the parametrisation because rank 40 is ABOVE INSPECTOR's 37: every "this tier
-    and above" spelling of the rule admits them, and the SET does not."""
     response = client.get("/api/design-workshop-inspections", headers=_headers(world, slug))
     assert response.status_code == 403, response.text
     assert "for inspectors" in response.json()["detail"]
 
 
 async def test_an_admin_with_no_inspection_sees_an_empty_list_and_not_everything(world, client):
-    """**ADMINS WERE REFUSED HERE UNTIL 2026-10-09.** They may now be appointed to inspect a
-    workshop, so the surface is theirs — scoped by THEIR OWN rows, never by "everything, because they
-    are an admin". This admin inspects nothing while workshops under inspection exist in this very
-    module, so an empty list is the rows deciding and not an empty table."""
     workshop_id = _make_workshop(world, "Ikat, inspected by somebody else")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -690,26 +400,15 @@ async def test_an_admin_with_no_inspection_sees_an_empty_list_and_not_everything
     assert detail.status_code == 404, "an admin with no inspection row read the workshop by rank"
 
 
-# ------------------------------------------------------------------------------------------
-# 5. WHO MAY ASSIGN ONE, AND THE HONEST REFUSAL WHEN THEY MAY NOT
-# ------------------------------------------------------------------------------------------
-
 
 @pytest.mark.parametrize("slug", ["colleague", "inspector", "professor"])
 async def test_only_an_admin_assigns_an_inspection(world, client, slug):
-    """THE INSPECTED MUST NOT CHOOSE THE INSPECTOR, and neither may the inspector.
-
-    ``colleague`` is a co-designer on the workshop — the account with the strongest claim to a say
-    and the one that must most certainly not have one. There is deliberately no "suggest an
-    inspector" route either: a suggestion an admin rubber-stamps is the same thing wearing a queue.
-    """
     workshop_id = _make_workshop(world, f"Ikat, admin only {slug}")
     assert _grant_viewer(world, workshop_id, ["colleague"]).status_code == 200
 
     response = _assign(world, workshop_id, ["elsewhere"], as_slug=slug)
     assert response.status_code == 403, response.text
 
-    # AND NOTHING WAS WRITTEN. A 403 raised after the write would pass the line above.
     roster = client.get(
         f"/api/design-workshop-inspections/{workshop_id}/inspectors",
         headers=_headers(world, "admin"),
@@ -718,17 +417,6 @@ async def test_only_an_admin_assigns_an_inspection(world, client, slug):
 
 
 async def test_the_workshops_creator_may_inspect_it_when_they_wrote_none_of_it(world, client):
-    """**CREATING A WORKSHOP IS NOT AUTHORING IT** — the owner's ruling of 2026-10-09, and the
-    opposite of what this test asserted before it.
-
-    This refused the creator outright, on the ground that naming them asked somebody to inspect their
-    own work. But the creator of a design workshop is whoever OPENED it — an administrator, or the
-    officer whose sanction order did — and opening one is an administrative act that writes none of
-    its fieldwork. So authorship is a viewer row or written stages (``services/design_workshop_posts``)
-    and ``selfinspector``, who made this workshop and wrote nothing in it, may inspect it. Holding
-    the row then costs them the write the creator column gave them — asserted in
-    ``test_admin_serve_as`` — which is what keeps the inspection independent.
-    """
     response = _assign(world, world["self_made_workshop"], ["selfinspector"])
     assert response.status_code == 200, response.text
     assert [row["userId"] for row in response.json()["inspectors"]] == [
@@ -737,21 +425,6 @@ async def test_the_workshops_creator_may_inspect_it_when_they_wrote_none_of_it(w
 
 
 async def test_a_co_designer_on_the_workshop_cannot_inspect_it(world, client):
-    """The same refusal through the other arm: a ``DesignWorkshopViewer`` row for this workshop.
-
-    **THIS IS THE ONE THAT IS NOT HYPOTHETICAL.** Today ``INSPECTION_ROLES`` and
-    ``DESIGN_WORKSHOP_ROLES`` are disjoint, so the role check catches an ordinary designer first —
-    and that is exactly why the viewer arm has to be asserted with an account that PASSES the role
-    check. A DESIGNER holding a viewer row who is later PROMOTED to INSPECTOR is one admin action
-    away, and nothing else in the codebase would notice.
-
-    So the fixture builds the account in the state a promotion would leave it in: ``workedonit`` is
-    an INSPECTOR holding a real ``DesignWorkshopViewer`` row on ``worked_on_workshop``. It passes the
-    role check and is caught by the viewer arm, which is the only ordering that tests anything.
-
-    409 AND NOT 422 SINCE 2026-10-09: nothing is wrong with the account, it is how the workshop is
-    staffed that is in the way, and the sentence names the rule.
-    """
     response = _assign(world, world["worked_on_workshop"], ["workedonit"])
     assert response.status_code == 409, response.text
     detail = response.json()["detail"]
@@ -762,11 +435,6 @@ async def test_a_co_designer_on_the_workshop_cannot_inspect_it(world, client):
 
 
 async def test_a_designer_cannot_be_assigned_an_inspection(world, client):
-    """Wrong ROLE, refused by name — and the sentence says what the account IS.
-
-    ``outsider`` is not on this workshop, so the only thing wrong with them is the tier. That keeps
-    this test about the role rule rather than about the already-on-the-workshop rule beside it.
-    """
     workshop_id = _make_workshop(world, "Ikat, wrong tier")
 
     response = _assign(world, workshop_id, ["outsider"])
@@ -777,12 +445,6 @@ async def test_a_designer_cannot_be_assigned_an_inspection(world, client):
 
 
 async def test_a_barred_inspector_is_refused(world, client):
-    """An account the platform allow-list has SUSPENDED cannot sign in at all.
-
-    An inspection row for them would leave the admin screen saying somebody is inspecting while they
-    are shown a refusal at the door — a screen stating something false, which is the defect this
-    rule was added to the sibling module to end.
-    """
     workshop_id = _make_workshop(world, "Ikat, barred inspector")
 
     response = _assign(world, workshop_id, ["barred"])
@@ -791,11 +453,6 @@ async def test_a_barred_inspector_is_refused(world, client):
 
 
 async def test_an_unknown_id_refuses_the_whole_call(world, client):
-    """One bad id refuses everything, and the good half is NOT applied.
-
-    An admin who named two inspectors and is shown one has been told nothing about which failed or
-    why, and a partially applied access change is the worst of both — it looks like it worked.
-    """
     workshop_id = _make_workshop(world, "Ikat, one bad id")
 
     response = client.put(
@@ -813,19 +470,8 @@ async def test_an_unknown_id_refuses_the_whole_call(world, client):
     assert roster.json()["inspectors"] == [], "the good half of a refused call was applied anyway"
 
 
-# ------------------------------------------------------------------------------------------
-# 6. THE ROSTER'S OWN MECHANICS
-# ------------------------------------------------------------------------------------------
-
 
 async def test_re_saving_an_unchanged_set_does_not_restamp_the_assignment(world, client):
-    """Idempotent by construction: only the difference is written.
-
-    ``assignedAt`` is the only answer anybody has to "how long has this workshop been under
-    inspection", so a re-save that restamped it would erase the one fact the row carries. A
-    read-then-delete-then-recreate implementation passes every other test in this file and fails
-    this one.
-    """
     workshop_id = _make_workshop(world, "Ikat, saved twice")
 
     first = _assign(world, workshop_id, ["inspector"])
@@ -839,12 +485,6 @@ async def test_re_saving_an_unchanged_set_does_not_restamp_the_assignment(world,
 
 
 async def test_removing_an_inspector_ends_their_access_immediately(world, client):
-    """The row IS the grant, so DELETING it is the revocation. There is no status column.
-
-    Sending the set without somebody is how they come off; there is no remove route. The access must
-    end with the row rather than at some later expiry, which is what "the row is the grant" means
-    when it is true rather than merely written down.
-    """
     workshop_id = _make_workshop(world, "Ikat, inspection ended")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     assert (
@@ -865,11 +505,6 @@ async def test_removing_an_inspector_ends_their_access_immediately(world, client
 
 
 async def test_the_roster_names_the_person_it_assigns(world, client):
-    """Name, email and role travel WITH the row rather than being joined against a directory.
-
-    An inspector whose account has since been suspended is precisely the row an admin most needs to
-    see and act on, and a join against the eligible list would render it as a bare cuid.
-    """
     workshop_id = _make_workshop(world, "Ikat, named inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
 
@@ -886,14 +521,6 @@ async def test_the_roster_names_the_person_it_assigns(world, client):
 
 
 async def test_the_picker_offers_inspectors_and_excludes_the_barred(world, client):
-    """Eligibility is a SET of one role, narrowed by the platform allow-list read as a CUT LIST.
-
-    Searched by this run's own stamp so the assertion cannot depend on how many rows the shared table
-    happens to hold — the exact failure mode the sibling module's picker test shipped with.
-
-    ``truncated`` must be present and False here: a client that shows a cut list without saying so is
-    this repository's most repeated bug class, and the key going missing is how that starts.
-    """
     response = client.get(
         "/api/design-workshop-inspections/eligible-inspectors",
         params={"search": world["stamp"]},
@@ -908,24 +535,14 @@ async def test_the_picker_offers_inspectors_and_excludes_the_barred(world, clien
     assert people["inspector"].id in offered
     assert people["idle"].id in offered
     assert people["elsewhere"].id in offered
-    # The set is a SET: a designer below the tier and a professor above it are both absent.
     assert people["outsider"].id not in offered
     assert people["professor"].id not in offered
-    # AN ADMINISTRATOR IS OFFERED SINCE 2026-10-09 — they may be appointed — EXCEPT THE ONE ASKING,
-    # because nobody appoints themselves and a picker must not offer what the write refuses.
     assert people["creator"].id in offered
     assert people["admin"].id not in offered, "the picker offered the caller to themselves"
-    # Barred by the allow-list: eligible by role, unable to sign in, so never offered.
     assert people["barred"].id not in offered
 
 
 async def test_the_literal_picker_path_is_not_swallowed_by_the_workshop_id_route(world, client):
-    """``/eligible-inspectors`` must not be matched as a workshop id.
-
-    FastAPI matches in declaration order and ``GET /{workshop_id}/inspectors`` would fit this path
-    perfectly well, answering 404 "Record not found". That is the trap that once left the admin's
-    designer picker empty on a server where the route existed and worked.
-    """
     response = client.get(
         "/api/design-workshop-inspections/eligible-inspectors", headers=_headers(world, "admin")
     )
@@ -933,29 +550,8 @@ async def test_the_literal_picker_path_is_not_swallowed_by_the_workshop_id_route
     assert "users" in response.json()
 
 
-# ------------------------------------------------------------------------------------------
-# 6. THE FIRST WRITE THIS SCOPE HAS EVER HAD: a note, and never the report
-#
-# Added 2026-09-13 with the pre-submission loop. Everything below is a fact about a DATABASE — a row
-# written or not written, a status moved or not moved — which is why it is here and not in the gate
-# module. What the gate module asserts instead is that these are the ONLY two write doors on the
-# router and that neither can reach a `DwStageEntry`.
-#
-# **THE STATUS PRECONDITION IS THE ONE THAT WOULD OTHERWISE BE A 500.** The inspection scope is a
-# row plus a soft-delete test and carries no status term, so an officer holding a row on a workshop
-# nobody has handed in reaches the write with `submissionRound == 0` — and the CHECK constraint
-# refuses the INSERT. The parametrised case below asserts a 422 AND that no row was written, which
-# is the difference between "refused before the database" and "refused by the database".
-# ------------------------------------------------------------------------------------------
-
 
 def _hand_in(world: dict[str, Any], workshop_id: str, *, as_slug: str = "creator"):
-    """Hand the report in for inspection — the designer's own forward act, through the API.
-
-    PATCH rather than a Prisma update, so the transition graph is exercised on the way past: if
-    `IN_PROGRESS -> PRE_SUBMISSION` is ever refused, every test below fails on its first line rather
-    than on an assertion about feedback.
-    """
     return world["client"].patch(
         f"/api/design-workshops/{workshop_id}",
         json={"status": "PRE_SUBMISSION"},
@@ -988,7 +584,6 @@ def _send_back(world: dict[str, Any], workshop_id: str, slug: str, **body):
 
 
 def _register(world: dict[str, Any], workshop_id: str, slug: str = "inspector") -> list[dict]:
-    """The suggestions as the officer's own detail read carries them."""
     response = world["client"].get(
         f"/api/design-workshop-inspections/{workshop_id}", headers=_headers(world, slug)
     )
@@ -997,17 +592,6 @@ def _register(world: dict[str, Any], workshop_id: str, slug: str = "inspector") 
 
 
 async def test_an_assigned_inspector_files_a_correction_suggestion_and_it_reads_back(world, client):
-    """**THE FEATURE, END TO END: an inspection is now a read AND A NOTE.**
-
-    Until this landed an inspector could record nothing at all, which made the tier a viewer with
-    extra steps. The 201 carries the whole register rather than the one row just written, because
-    the officer is looking at a list of suggestions and a client that had to re-read the workshop to
-    redraw its own screen would disagree with itself for as long as that took.
-
-    `actorName` IS THE ASSERTION THAT CATCHES A MISSING `include={"actor": True}`. The payload
-    builder reads the name off the row and returns None rather than raising when the relation was
-    not fetched — quiet, and quiet in the direction where every correction is attributed to nobody.
-    """
     workshop_id = _make_workshop(world, "Ikat, with a note from its inspector")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     assert _hand_in(world, workshop_id).status_code == 200
@@ -1020,7 +604,6 @@ async def test_an_assigned_inspector_files_a_correction_suggestion_and_it_reads_
     assert body["readOnly"] is True
     assert body["mayRecordFeedback"] is True
     assert body["inspectionFeedbackTruncated"] is False
-    # THE STATUS DOES NOT MOVE. Filing a suggestion and sending the report back are two acts.
     assert body["status"] == "PRE_SUBMISSION"
     assert body["submissionRound"] == 1
     [row] = body["inspectionFeedback"]
@@ -1035,11 +618,6 @@ async def test_an_assigned_inspector_files_a_correction_suggestion_and_it_reads_
 
 
 async def test_an_inspector_without_a_row_is_404_on_both_write_doors(world, client):
-    """404 AND NEVER 403, exactly as every read on this router answers.
-
-    A 403 would confirm the id exists to precisely the people being turned away, and the two write
-    doors must not become the one place an unassigned officer can enumerate the repository.
-    """
     workshop_id = _make_workshop(world, "Ikat, closed to an unassigned officer")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     assert _hand_in(world, workshop_id).status_code == 200
@@ -1053,12 +631,6 @@ async def test_an_inspector_without_a_row_is_404_on_both_write_doors(world, clie
 async def test_a_suggestion_on_a_report_nobody_handed_in_is_refused_and_writes_no_row(
     world, client, status_token
 ):
-    """**A 422 WITH A SENTENCE, NOT A 500 FROM A CHECK CONSTRAINT.**
-
-    `submissionRound` is 0 for every one of these, so without the status guard the INSERT is refused
-    by Postgres, the driver raises, and an officer who did nothing wrong is told the server is
-    broken. The row count before and after is what separates "refused" from "refused after writing".
-    """
     workshop_id = _make_workshop(world, f"Ikat, not yet handed in ({status_token})")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     if status_token != "DRAFT":
@@ -1076,12 +648,6 @@ async def test_a_suggestion_on_a_report_nobody_handed_in_is_refused_and_writes_n
 
 
 async def test_a_send_back_moves_the_status_writes_the_row_and_names_the_officer(world, client):
-    """THE DECISION: one suggestion marked `sentBack`, the status moved, the cache filled.
-
-    The ReviewLog row it also writes has no reader anywhere in this repository — a pre-existing
-    defect this wave adds a writer to rather than creating — so what is asserted here is the half a
-    designer can actually see.
-    """
     workshop_id = _make_workshop(world, "Ikat, sent back to its designers")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     assert _hand_in(world, workshop_id).status_code == 200
@@ -1102,11 +668,6 @@ async def test_a_send_back_moves_the_status_writes_the_row_and_names_the_officer
 
 
 async def test_a_second_officer_sending_back_files_a_row_and_does_not_move_the_status(world, client):
-    """Two officers reading one report at the same time is the ordinary case.
-
-    Refusing the second would lose their correction to a race, and the transition is a no-op —
-    NEEDS_REVISION to NEEDS_REVISION — so nothing moves and the register gains a sentence.
-    """
     workshop_id = _make_workshop(world, "Ikat, sent back twice")
     assert _assign(world, workshop_id, ["inspector", "elsewhere"]).status_code == 200
     assert _hand_in(world, workshop_id).status_code == 200
@@ -1122,11 +683,6 @@ async def test_a_second_officer_sending_back_files_a_row_and_does_not_move_the_s
 
 
 async def test_a_blank_note_is_refused_on_both_write_doors(world, client):
-    """A send-back with no sentence tells a designer only that a fortnight of work is wrong.
-
-    Whitespace is the case the wire model's ``min_length=1`` does not catch, which is why the plan
-    strips and refuses it with ``review.py``'s own sentence.
-    """
     workshop_id = _make_workshop(world, "Ikat, refused a blank note")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     assert _hand_in(world, workshop_id).status_code == 200
@@ -1139,20 +695,6 @@ async def test_a_blank_note_is_refused_on_both_write_doors(world, client):
 
 
 async def test_a_designers_edit_is_the_resubmission_and_a_replay_is_not(world, client):
-    """**THE LOOP CLOSES HERE, AND SO DOES THE TRAP.**
-
-    A designer answering an officer does not press a button: they fix the stage, and the save is the
-    resubmission. The second half is the one that would have shipped broken — the planner appends an
-    update for EVERY row the payload names, so a byte-identical replay of that same body looks
-    exactly like an edit unless the plan is asked what actually MOVED. A replay that spent a round
-    would tell every officer the report had been handed back in and would mis-number every
-    suggestion filed afterwards.
-
-    THE EDITOR IS A DESIGNER HOLDING A VIEWER ROW, never the creator: a design workshop's
-    `createdById` is the ADMIN who opened it, so a `createdById == user.id` test — the shape
-    `records.resubmit_status` uses for the six record types — would mean a designer's corrections
-    never resubmitted and an admin's typo fix always did.
-    """
     workshop_id = _make_workshop(world, "Ikat, corrected and handed back in")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     assert _grant_viewer(world, workshop_id, ["colleague"]).status_code == 200
@@ -1176,13 +718,10 @@ async def test_a_designers_edit_is_the_resubmission_and_a_replay_is_not(world, c
     ).json()
     assert detail["status"] == "PRE_SUBMISSION", "the edit did not hand the report back in"
     assert detail["submissionRound"] == 2
-    # THE CACHE IS CLEARED: a report waiting for a decision must not name an officer who has not
-    # taken one. The register is untouched, which is what makes that safe.
     assert detail["reviewNotes"] is None
     assert detail["reviewedById"] is None
     assert len(detail["inspectionFeedback"]) == 1
 
-    # ── AND NOW THE REPLAY, WHICH MUST COST NOTHING ──────────────────────────────────────────────
     assert _send_back(world, workshop_id, "inspector", note="And the date.").status_code == 200
     replay = client.put(
         f"/api/design-workshops/{workshop_id}/stages/{STAGE_1}",
@@ -1199,7 +738,6 @@ async def test_a_designers_edit_is_the_resubmission_and_a_replay_is_not(world, c
     )
     assert after["submissionRound"] == 2, "the replay spent a submission round"
 
-    # One real change, and it resubmits.
     changed = client.put(
         f"/api/design-workshops/{workshop_id}/stages/{STAGE_1}",
         json={
@@ -1218,13 +756,6 @@ async def test_a_designers_edit_is_the_resubmission_and_a_replay_is_not(world, c
 
 
 async def test_the_designers_own_read_carries_the_register_and_refuses_the_box(world, client):
-    """Both detail reads carry the same rows in the same shape, and say who may add to them.
-
-    `mayRecordFeedback` is False here and True on the inspection route. It is a SECOND key beside
-    `readOnly` rather than a reuse of it: `readOnly` is about the workshop's CONTENT and fails closed
-    on the handset, so flipping it to enable a feedback box would offer a Save button on every stage
-    form that this API answers 404 to.
-    """
     workshop_id = _make_workshop(world, "Ikat, read by its designer")
     assert _assign(world, workshop_id, ["inspector"]).status_code == 200
     assert _hand_in(world, workshop_id).status_code == 200
@@ -1241,16 +772,6 @@ async def test_the_designers_own_read_carries_the_register_and_refuses_the_box(w
 
 
 def test_no_route_anywhere_updates_or_deletes_a_correction_suggestion():
-    """**APPEND-ONLY, ENFORCED BY THE ABSENCE OF ROUTES.**
-
-    An officer who changes their mind files another suggestion; a correction the designer has already
-    acted on is not editable out of the record afterwards. There is no `resolvedAt` either —
-    resolution is the report entering its next submission round.
-
-    Needs no database, and is here rather than in the gate module because it is about THIS feature's
-    surface. It walks the whole application router, not one prefix, because the second place such a
-    route would be added is the designer's own.
-    """
     from app.api.router import api_router
 
     for route in api_router.routes:

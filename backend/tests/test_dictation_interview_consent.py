@@ -1,14 +1,3 @@
-"""H3 (audit 21 Oct 2026): an instant transcript asks the interview's own artisans, not only the
-workshop's linked ones.
-
-``POST /design-workshops/{id}/dictate`` used to ask ``workshop_verdict``, which covers only artisans
-whose ``Artisan.designWorkshopId`` is that workshop. An interviewed artisan who refused but is not
-linked to the workshop was still sent to the provider. The route now asks ``dictation_verdict`` with
-the interview's id and the artisans picked on the form.
-
-No database and no provider: ``dictation_consent.db`` is ``consent_store_fakes.LedgerDb``.
-"""
-
 from __future__ import annotations
 
 import inspect

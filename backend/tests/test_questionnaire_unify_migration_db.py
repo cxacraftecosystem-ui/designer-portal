@@ -1,10 +1,3 @@
-"""Designer-portal's half of the questionnaire unification's additive migration (U0), on a real,
-migrated Postgres: the shared tables exist with the shared package's columns, today's "attach a form
-to a design workshop" is mirrored into bindings, the start sheet's form resolves through them and a
-design workshop kind's default, new global questions get a lineage and a frozen code, and the
-section override keeps its three states. Nothing here is switched on; the forms work as before.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -67,11 +60,9 @@ def test_attaching_a_form_binds_it_and_the_form_resolves(monkeypatch) -> None:
             assert [(b["designWorkshopId"], b["isPrimary"]) for b in bound] == [(f"dw1{tag}", False)]
             out = await bindings.resolve_for_workshop(design_workshop_id=f"dw1{tag}", client=client)
             assert (out["questionnaireId"], out["reason"]) == (f"f{tag}", "ONLY_BINDING")
-            # Moving the attachment moves the binding.
             await client.execute_raw('UPDATE "Questionnaire" SET "designWorkshopId" = $2 WHERE "id" = $1', f"f{tag}", f"dw2{tag}")
             bound = await client.query_raw('SELECT "designWorkshopId" FROM "QuestionnaireBinding" WHERE "questionnaireId" = $1', f"f{tag}")
             assert [b["designWorkshopId"] for b in bound] == [f"dw2{tag}"]
-            # Unbound workshop: the design workshop kind's default form.
             admin = type("U", (), {"id": f"u{tag}", "role": "ADMIN"})()
             await bindings.set_type_default(f"f{tag}", admin, design_workshop_kind=f"BASELINE{tag}", client=client)
             out = await bindings.resolve_for_workshop(design_workshop_id=f"dw1{tag}", client=client)

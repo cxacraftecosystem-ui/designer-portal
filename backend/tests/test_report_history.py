@@ -1,36 +1,3 @@
-"""The report history endpoint: every file ever generated, and the timestamps a diff is built on.
-
-A report submitted to a ministry is revised three or four times, and nothing in the system could
-answer a reviewer's "did you update the cost sheet before you resubmitted?". Most of what that
-question needs was already being recorded — ``DwReportExport`` carries the checksum, the size, the
-page count, the template, the registry version and the timestamp for every file the SERVER renders.
-
-(What the PHONE contributes is thinner than the column list suggests, and the fixture below reflects
-that rather than an idealised row: ``ReportScreen.kt`` sends only the format, template, file name,
-timestamp and warnings — no checksum, no size, no page count — and sends it inside a ``runCatching``
-that swallows a failure, so an export made with genuinely no network is never recorded at all. Both
-are gaps on that surface, not in this endpoint, and the screen says "No checksum recorded" rather
-than implying a file it cannot identify.)
-
-Two facts this endpoint adds, neither of which was reachable by any client:
-
-  WHO generated a file. ``GET /{id}/exports`` returns ten fields and ``generatedById`` is not one of
-  them, so "who resubmitted this" had no answer even though the column has always been populated.
-
-  WHEN each stage row was last written. ``entry_rows`` returns the rows without their timestamps and
-  with ``deletedAt: None`` in the filter, so a client could see the data as it stands and nothing at
-  all about when it got that way — and a row DELETED between two exports, which is precisely the
-  change a diff must not miss, was invisible by construction.
-
-This endpoint is read-only and additive: it answers with facts already stored and writes nothing.
-The last test in this file is a tripwire that keeps it that way, because an export row that can be
-rewritten is worse than no record — the checksum is what makes it evidence.
-
-NOTHING HERE TOUCHES A DATABASE. The real router runs with ``db`` replaced by delegates that answer
-the reads the route makes — the workshop, its viewer grants, its exports and its stage rows — and
-refuse every write.
-"""
-
 import asyncio
 import sys
 from datetime import UTC, datetime
@@ -54,10 +21,6 @@ OWNER_ID = "designer-1"
 def _at(day: int, hour: int = 9) -> datetime:
     return datetime(2026, 3, day, hour, 0, 0, tzinfo=UTC)
 
-
-# --------------------------------------------------------------------------------------------
-# The fixture: one workshop, four exports, a handful of stage rows.
-# --------------------------------------------------------------------------------------------
 
 
 def _workshop(**overrides: Any) -> SimpleNamespace:
@@ -107,9 +70,6 @@ def _entry(
     deleted: datetime | None = None,
     data: dict[str, Any] | None = None,
 ) -> SimpleNamespace:
-    # Real registry keys, not invented ones: `workshop_completeness` scores through the registry,
-    # so a made-up entity would be silently ignored and the completeness assertions below would
-    # pass against a payload that never scored anything.
     return SimpleNamespace(
         id=id,
         stageKey=stage_key,
@@ -126,13 +86,9 @@ DESIGNER = SimpleNamespace(name="Meera Joshi")
 FIELD_OFFICER = SimpleNamespace(name="Anil Kumar")
 
 EXPORTS = [
-    # Deliberately NOT in generated order — the route must sort, and a fixture already sorted
-    # would let a route that forgot to pass its way through.
     _export("exp-2", _at(6), by=DESIGNER),
     _export("exp-4", _at(12), on_device=True, checksum="d" * 64, by=FIELD_OFFICER),
     _export("exp-1", _at(2), by=DESIGNER),
-    # The account that generated it has since been deleted: `generatedBy` is SetNull, so both the
-    # relation and the id are gone and the honest answer is that nobody is named.
     _export("exp-3", _at(9), checksum="c" * 64, by=None, generated_by_id=None),
 ]
 
@@ -146,35 +102,18 @@ ENTRIES = [
            data={"name": "Dabu printing"}),
     _entry("row-setup", SETUP_STAGE, "workshopSetup", created=_at(1), updated=_at(1),
            data={"workshopTitle": "Bagru revival"}),
-    # Deleted between export 2 and export 4. `entry_rows` filters this row out entirely, which is
-    # why the diff cannot be built on it: a removed row is a change.
     _entry("row-step-gone", PROCESS_STAGE, "processStep", created=_at(1), updated=_at(7),
            deleted=_at(7), data={"name": "Struck out"}),
 ]
 
 
 class _Reads:
-    """A delegate that answers `find_many` the way Prisma does — and refuses every write.
-
-    It honours `order` and `take` rather than echoing the fixture back, so "newest first" and the
-    caps are assertions about the route rather than about the order this file happens to list its
-    rows in.
-    """
-
     def __init__(self, rows: list[SimpleNamespace]) -> None:
         self.rows = rows
         self.queries: list[dict[str, Any]] = []
         self.counts: list[dict[str, Any]] = []
 
     async def count(self, where: dict[str, Any] | None = None) -> int:
-        """The generation-number anchor: how many files sort BELOW the oldest one being returned.
-
-        Honours the `generatedAt: {lt: ...}` clause rather than returning `len(self.rows)`, because
-        the whole point of the count is that it is taken over rows the window does NOT contain — a
-        delegate that ignored the filter would let a route counting the entire table pass, and that
-        route is wrong for the reason argued at the call site (an export appended by another device
-        between the two queries would shift every number on the screen).
-        """
         self.counts.append({"where": where})
         clause = ((where or {}).get("generatedAt") or {}).get("lt")
         if clause is None:
@@ -220,7 +159,6 @@ _APP = _build_app()
 
 @pytest.fixture
 def history(monkeypatch: pytest.MonkeyPatch):
-    """The real route, wired to read-only delegates, called as the workshop's own designer."""
     exports = _Reads(EXPORTS)
     entries = _Reads(ENTRIES)
     workshops = SimpleNamespace(
@@ -232,10 +170,6 @@ def history(monkeypatch: pytest.MonkeyPatch):
         designworkshop=workshops,
         dwreportexport=exports,
         dwstageentry=entries,
-        # `load_workshop_or_404` admits a third party: anybody holding a `DesignWorkshopViewer`
-        # row. This fixture grants none, so the stranger below is a genuine stranger — and the
-        # endpoint inherits the grant behaviour for free precisely because it reuses that helper
-        # rather than restating who may read a workshop.
         designworkshopviewer=SimpleNamespace(find_unique=_no_grant),
     )
     real_db = core_db.db
@@ -269,7 +203,7 @@ def _answer_with(row: Any):
 
 
 async def _no_grant(where: dict[str, Any], include: dict[str, Any] | None = None) -> None:
-    """Nobody has been let into this workshop besides its creator."""
+    pass
 
 
 def _refuse(message: str):
@@ -279,14 +213,8 @@ def _refuse(message: str):
     return refuse
 
 
-# --------------------------------------------------------------------------------------------
-# The history
-# --------------------------------------------------------------------------------------------
-
 
 def test_every_export_comes_back_newest_first_with_the_facts_that_identify_the_file(history) -> None:
-    """The four facts a reviewer holding a printed report needs: when, which template, who, and the
-    checksum — which is the only one of them that proves the file in their hand is this row."""
     response = history.get()
 
     assert response.status_code == 200, response.text
@@ -299,8 +227,6 @@ def test_every_export_comes_back_newest_first_with_the_facts_that_identify_the_f
     assert newest["fileSizeBytes"] == 2_400_000
     assert newest["templateId"] == "dch-standard"
     assert newest["schemaVersion"] == "reg-v1"
-    # A phone produced this one with no network. An on-device export exists on exactly one device
-    # until somebody copies it off, so the distinction is a fact about the archive, not trivia.
     assert newest["generatedOnDevice"] is True
     assert newest["generatedByName"] == "Anil Kumar"
 
@@ -308,37 +234,16 @@ def test_every_export_comes_back_newest_first_with_the_facts_that_identify_the_f
 def test_the_generation_number_counts_from_the_first_file_ever_and_not_from_the_window(
     history, monkeypatch
 ) -> None:
-    """WHAT A DESIGNER QUOTES INTO A COVERING EMAIL HAS TO BE THE RECORD'S OWN NUMBER.
-
-    The browser used to derive "Generation N" itself, by re-sorting the returned window oldest-first
-    and indexing into it (`reportDiff.inGenerationOrder`). That is exactly right until the export cap
-    bites, and wrong by the number of files cut from that moment on — the query is `generatedAt desc`
-    with `take = limit + 1`, so the hundred that survive are the NEWEST hundred and the numbering
-    started again at 1 on whichever file happened to be oldest in the window. A workshop that
-    regenerates on every edit passes a hundred exports, and from then on the diff header read
-    "generation 3 → generation 7" about two files the repository itself would call 47 and 51 — and it
-    read something different again the next time anybody generated a report.
-
-    So the cap is squeezed to two here, which leaves exp-4 and exp-3 on the wire out of four stored
-    files. Numbering the window would call them 2 and 1. The record calls them 4 and 3.
-    """
     monkeypatch.setattr(route_module, "_HISTORY_EXPORT_LIMIT", 2)
     body = history.get().json()
 
     assert body["exportsTruncated"] is True
     assert [(e["id"], e["generation"]) for e in body["exports"]] == [("exp-4", 4), ("exp-3", 3)]
-    # And the anchor was asked for over the files the caller cannot see, not over the whole table:
-    # a whole-table count gives the same answer here and a different one the moment another device
-    # appends an export between the two queries.
     assert history.exports.counts, "the route must count the files below the window"
     assert history.exports.counts[-1]["where"]["generatedAt"]["lt"] == _at(9)
 
 
 def test_the_generation_numbers_are_one_based_and_oldest_first_when_nothing_is_cut(history) -> None:
-    """The uncapped case the truncated one above must not have broken: four stored files number 1
-    through 4 from the oldest, and the list itself stays newest-first, so the newest card carries the
-    highest number. A workshop with no exports at all asks for no anchor — there is nothing to
-    number, and a count query to establish that is a query for nothing."""
     body = history.get().json()
 
     assert [(e["id"], e["generation"]) for e in body["exports"]] == [
@@ -354,8 +259,6 @@ def test_the_generation_numbers_are_one_based_and_oldest_first_when_nothing_is_c
 
 
 def test_an_export_whose_author_has_been_deleted_names_nobody_rather_than_guessing(history) -> None:
-    """`generatedBy` is SetNull. The honest answer is that the account is gone — not the workshop's
-    owner, who is the tempting default and would put a name against a file they never made."""
     body = history.get().json()
     orphan = next(e for e in body["exports"] if e["id"] == "exp-3")
 
@@ -363,14 +266,8 @@ def test_an_export_whose_author_has_been_deleted_names_nobody_rather_than_guessi
     assert orphan["generatedByName"] is None
 
 
-# --------------------------------------------------------------------------------------------
-# The timeline the diff is built on
-# --------------------------------------------------------------------------------------------
-
 
 def test_the_timeline_carries_the_timestamps_no_other_endpoint_exposes(history) -> None:
-    """`GET /{id}` returns the data and no timestamps at all, so a client can see what a stage says
-    and nothing about when it came to say it. Without `updatedAt` there is no diff."""
     body = history.get().json()
     step = next(e for e in body["entries"] if e["id"] == "row-step-a")
 
@@ -381,87 +278,48 @@ def test_the_timeline_carries_the_timestamps_no_other_endpoint_exposes(history) 
 
 
 def test_a_deleted_row_is_in_the_timeline_because_deleting_a_cost_line_is_a_change(history) -> None:
-    """THE REASON THIS ENDPOINT EXISTS RATHER THAN A FLAG ON `/stages`. `entry_rows` filters
-    `deletedAt: None`, so a cost line removed between generation two and generation four leaves no
-    trace in any existing payload — and a diff built on those payloads would report the cost sheet
-    as unchanged on exactly the revision where a line was struck out."""
     body = history.get().json()
     dropped = next((e for e in body["entries"] if e["id"] == "row-step-gone"), None)
 
     assert dropped is not None, "a soft-deleted row must survive into the timeline"
     assert dropped["deletedAt"].startswith("2026-03-07")
 
-    # And the route must not have asked the database to hide it.
     for query in history.entries.queries:
         assert (query["where"] or {}).get("deletedAt") is None
 
 
 def test_the_current_scores_travel_with_the_history_and_exclude_deleted_rows(history) -> None:
-    """WHY THE SCORES ARE HERE AT ALL: without them the screen has to call `GET /{id}` purely to
-    reach `completeness`, which returns every field of every stage row plus the transcript
-    annexure — hundreds of kilobytes over a metered rural connection, to print a percentage.
-
-    AND WHY THE DELETED ROW IS EXCLUDED: it belongs in the timeline, because its removal is a
-    change between two files, and nowhere near a count of what the workshop currently holds. Three
-    `processStep` rows exist, one of them struck out, so the count is 2 — if the deleted row leaked
-    into the score this reads 3, and the screen would report a row the report does not print.
-    """
     body = history.get().json()
     stage = body["completeness"][PROCESS_STAGE]
 
     assert stage["collectionCounts"]["processStep"] == 2
     assert len([e for e in body["entries"] if e["entityKey"] == "processStep"]) == 3
-    # Every stage the registry declares is scored, not only the two this workshop has touched —
-    # the client walks the registry to draw the list and a missing key would read as 0%.
     assert len(body["completeness"]) == 22
 
 
 def test_the_workshop_header_carries_its_own_last_write(history) -> None:
-    """The cover page's craft, cluster and dates live on the workshop row, not in any stage entry.
-    Without this the diff would call a workshop unchanged when its title had been rewritten."""
     body = history.get().json()
 
     assert body["workshopUpdatedAt"].startswith("2026-03-12")
 
 
 def test_the_server_states_its_own_clock(history) -> None:
-    """"Edited since the last export" is a comparison between a server-written `updatedAt` and now.
-    Read `now` from a field laptop whose clock is a day out and the answer is a day of invented or
-    hidden edits, so the server says what time it thinks it is and the client compares against that."""
     body = history.get().json()
 
     assert body["serverTime"], "the client cannot honestly date 'since' without the server's clock"
 
 
 def test_a_capped_timeline_says_so_rather_than_stopping_quietly(history, monkeypatch) -> None:
-    """A list that silently stops is indistinguishable from a workshop with nothing in it — the
-    single most repeated bug class in this repository. Two rows past a cap of two must set the flag."""
     monkeypatch.setattr(route_module, "_HISTORY_ENTRY_LIMIT", 2)
     body = history.get().json()
 
     assert len(body["entries"]) == 2
     assert body["entriesTruncated"] is True
-    # AND THE SCORES GO WITH IT. A percentage computed over the rows that happened to fit is not a
-    # slightly-wrong percentage, it is a wrong one that looks exactly like a right one — so it is
-    # withheld, and the screen draws nothing for a stage it has no score for.
     assert body["completeness"] == {}
 
 
-# --------------------------------------------------------------------------------------------
-# Refusal
-# --------------------------------------------------------------------------------------------
-
 
 def test_a_stranger_gets_the_same_404_the_workshop_itself_gives(history) -> None:
-    """PERMISSIONS ARE PAIRS. The history names who generated every file and when every stage was
-    touched — a fuller account of somebody's fieldwork than the workshop page itself — so it is
-    gated by the same `load_workshop_or_404` as every other read. 404 and not 403: answering 403
-    would confirm the id exists to somebody entitled to know nothing about it.
-
-    The owner's 200 is asserted FIRST and in this same test on purpose. A refusal test that only
-    asserts 404 passes just as happily against a route that does not exist, which is the shape of
-    test that proves nothing — it would have gone green throughout the writing of this endpoint.
-    """
     assert history.get().status_code == 200, "the owner must be served, or the 404 below proves nothing"
 
     _CURRENT["user"] = SimpleNamespace(
@@ -475,15 +333,9 @@ def test_a_stranger_gets_the_same_404_the_workshop_itself_gives(history) -> None
 
 
 def test_a_workshop_that_does_not_exist_is_a_404_not_an_empty_history(history) -> None:
-    """An empty history is a real state — a workshop nobody has generated a report from yet — so a
-    missing workshop must not be served as one. As above, the served case is asserted alongside it
-    so the test cannot pass against a route that is simply absent."""
     assert history.get().status_code == 200
     assert history.get("no-such-workshop").status_code == 404
 
 
 def test_reading_the_history_writes_nothing(history) -> None:
-    """NEVER MUTATE AN EXPORT RECORD. The delegates raise on create/update/delete, so this passes
-    only while the route is genuinely read-only — an export row whose size or checksum can be
-    rewritten later is not evidence of anything."""
     assert history.get().status_code == 200

@@ -10,37 +10,6 @@ from app.services import access_roster
 
 
 async def upsert_admin(email: str, name: str, password: str, role: str) -> None:
-    """Create or refresh a seeded administrator, and ADMIT IT TO THE PLATFORM ALLOW-LIST.
-
-    THE ADMISSION IS NOT OPTIONAL FOR THE NON-MASTER ADMIN. Since the allow-list arrived, an account
-    written straight into the `User` table cannot sign in: `auth.assert_access_admits` fails closed
-    on a missing row, deliberately, and the two paths that admit somebody (an admin using `/users`,
-    and a Google sign-in for an already-admitted address) are both HTTP paths this script does not
-    take. Seeding the row and not the admission produces exactly the account that wastes an
-    afternoon — correct in the user table, refused at the login screen with a message about waiting
-    for an administrator who is the person reading it.
-
-    The master admin is exempt from the gate in code and would work without this; the row is written
-    for it anyway so the admin screen shows the whole institution rather than everyone-but-one.
-
-    ── EVERY PASSWORD THIS WRITES IS TEMPORARY, AND IT WRITES ONLY TWO KINDS (2026-10-09) ────────
-
-    ``ADMIN_PASSWORD`` sits in a ``.env`` file on a box several people can open, and the same value
-    is written to both accounts, so it is a shared secret in exactly the sense an administrator's
-    typed password is. So every password written here stamps ``passwordSetAt`` (without it the
-    account reads as "has never had a password") and ``mustChangePassword`` — the first sign-in sends
-    the person to choose their own, and the API refuses everything else until they do (the master
-    admin is exempt from that server refusal as the break-glass, and is still asked by the screens).
-    Rewriting an EXISTING account's password also stamps ``sessionsValidFrom``: a reset ends the
-    sessions the old password opened, as a link redemption and a provisioner's reset do.
-
-    AND IT REFUSES TO TOUCH AN EXISTING ACCOUNT THAT IS NOT THE MASTER ADMIN. Re-running this script
-    used to overwrite the ``ADMIN_EMAIL`` account's password AND ROLE with whatever the ``.env`` said
-    — on a production box that is a live colleague's credentials replaced, and their tier reset, as a
-    side effect of somebody repairing the break-glass. The master admin is the one account this
-    script exists to recover, so it alone is reset; any other existing account is left exactly as it
-    is and the operator is pointed at the doors that reset a password with a record of who did it.
-    """
     is_master_admin = role == "MASTER_ADMIN"
     existing = await db.user.find_unique(where={"email": email})
     if existing and not is_master_admin:
@@ -51,10 +20,6 @@ async def upsert_admin(email: str, name: str, password: str, role: str) -> None:
         )
         return
     password_hash = hash_password(password)
-    # AFTER bcrypt, immediately before the write: a stamp taken first falls in an earlier wall second
-    # than a sign-in still racing the reset with the old password, whose token would then post-date
-    # it. (A new password also retires every token minted with the old one, by its fingerprint —
-    # ``deps._user_from_bearer``.)
     now = datetime.now(UTC)
     if existing:
         await db.user.update(
@@ -69,10 +34,6 @@ async def upsert_admin(email: str, name: str, password: str, role: str) -> None:
                 "canManageQuestionnaire": True,
             },
         )
-        # This script normally runs as its own process, where the invalidation is a no-op and the
-        # running API only picks the change up when its TTL expires (seconds). It is here anyway
-        # because `upsert_admin` is importable, and the day something calls it in-process a role
-        # rewrite that the identity cache never heard about is precisely the bug worth not having.
         invalidate_cached_user(existing.id)
         print(f"Updated {role.lower()} user: {email}")
     else:

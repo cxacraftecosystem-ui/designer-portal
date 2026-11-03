@@ -1,37 +1,3 @@
-"""THE E-MAIL OUTBOX: queueing a message, draining the queue, and the send log.
-
-A request never talks to SES. It writes one ``EmailMessage`` row (:func:`enqueue`) and answers;
-the queue worker — ``app/worker.py``'s ``fieldrepo-queue.service``, the same process and the same
-loop that drains the media queue — calls :func:`process_next_email_jobs` on every pass, which
-claims due rows with a compare-and-set, renders them, hands them to :mod:`app.services.mailer`,
-and records what happened on the row. That row IS the send log: status, attempts, ``sentAt``,
-SES's message id, or the error code that stopped it.
-
-RETRIES. A transient refusal (throttling, an SES fault, the network) puts the row back to QUEUED
-with ``runAfter`` pushed out 1, 2, 4, 8 … minutes (capped at an hour) until ``maxAttempts`` is
-spent; a permanent one (a rejected message, an unverified sender) fails it at once. A worker that
-dies holding a row leaves it SENDING; :func:`recover_stale` hands it back after
-:data:`STALE_SENDING_AFTER` — a message may then go twice, which for a notice is the right side to
-err on and for a password link is harmless (the first redemption spends both copies).
-
-SECRETS. ``params`` holds only what may be kept. The set-password link travels Fernet-sealed in
-``sealed`` (``managed_secrets.encrypt``) and is cleared when the row reaches SENT or FAILED. Log
-lines carry the row id, the kind and the recipient's ACCOUNT id — never an address, never a body,
-never a link.
-
-RESERVED ADDRESSES. A row addressed to a reserved domain (``example.com``, ``*.test`` …) is never
-handed to SES: it ends SKIPPED with ``mailer.RESERVED_ADDRESS_REASON``.
-
-IN-APP. Every notice goes through :func:`app.services.notifications.notify`, which writes the
-person's in-app activity list as well as calling :func:`enqueue` — so a notice is never lost to mail
-being off. New notices go through ``notify`` too; :func:`enqueue` alone is for a password link.
-
-PREFERENCES. A notification e-mail (:data:`mailer.REVIEW_SUGGESTION`, :data:`mailer.REVIEW_SENT_BACK`)
-is queued only for somebody whose ``UserPreference.emailReviewNotes`` is not false — opt-out, so
-an account that never saved a preference is e-mailed. A password link an administrator chose to
-e-mail is not a notification and is not governed by it.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -50,17 +16,12 @@ QUEUED = "QUEUED"
 SENDING = "SENDING"
 SENT = "SENT"
 FAILED = "FAILED"
-#: Never handed to SES: the address is on a reserved domain that takes no mail
-#: (``mailer.is_reserved_email``). Final, like FAILED, with ``mailer.RESERVED_ADDRESS_REASON``.
 SKIPPED = "SKIPPED"
-#: A hand-in notice for somebody who chose the daily digest: kept, never sent on its own, and folded
-#: into one HAND_IN_DIGEST message by :func:`flush_digests` (which marks it DIGESTED).
 HELD = "HELD"
 DIGESTED = "DIGESTED"
 
 STALE_SENDING_AFTER = timedelta(minutes=15)
 MAX_BACKOFF_MINUTES = 60
-#: Stored error text is clipped: it is an SES error code plus a short sentence, never a body.
 MAX_ERROR_LENGTH = 300
 
 
@@ -71,14 +32,12 @@ def _value(record: Any, key: str) -> Any:
 
 
 async def wants_review_notes(user_id: str) -> bool:
-    """The opt-out. No preference row (never saved one) reads as yes."""
     row = await db.userpreference.find_unique(where={"userId": user_id})
     if row is None:
         return True
     return bool(getattr(row, "emailReviewNotes", True))
 
 
-#: Each preference column and the kinds it governs. Opt-out: a missing row or column reads as yes.
 PREFERENCE_FOR_KIND: dict[str, str] = {
     **dict.fromkeys(mailer.WORKSHOP_UPDATES, "emailWorkshopUpdates"),
     **dict.fromkeys(mailer.ACCESS_NOTICES, "emailAccessNotices"),
@@ -86,7 +45,6 @@ PREFERENCE_FOR_KIND: dict[str, str] = {
     mailer.REVIEW_SENT_BACK: "emailReviewNotes",
 }
 
-#: How an official hears of a hand-in.
 HAND_IN_EACH = "EACH"
 HAND_IN_DAILY = "DAILY"
 HAND_IN_OFF = "OFF"
@@ -94,7 +52,6 @@ HAND_IN_MODES = (HAND_IN_EACH, HAND_IN_DAILY, HAND_IN_OFF)
 
 
 async def wants(user_id: str, kind: str) -> bool:
-    """Whether this person's preferences let a notice of ``kind`` be queued for them."""
     column = PREFERENCE_FOR_KIND.get(kind)
     if column is None:
         return True
@@ -103,7 +60,6 @@ async def wants(user_id: str, kind: str) -> bool:
 
 
 def wants_by(row: Any | None, kind: str) -> bool:
-    """:func:`wants`, answered from a preference row already in hand (``None``: the person has none)."""
     column = PREFERENCE_FOR_KIND.get(kind)
     if column is None or row is None:
         return True
@@ -111,10 +67,6 @@ def wants_by(row: Any | None, kind: str) -> bool:
 
 
 async def preferences_of(user_ids: list[str]) -> dict[str, Any]:
-    """``{user id: preference row}`` for many people in ONE read; a person with no row is absent.
-
-    For a notice that fans out: asking :func:`wants` person by person was a read per recipient.
-    """
     ids = sorted({str(uid) for uid in user_ids if uid})
     if not ids:
         return {}
@@ -123,7 +75,6 @@ async def preferences_of(user_ids: list[str]) -> dict[str, Any]:
 
 
 def hand_in_mode(row: Any) -> str:
-    """EACH, DAILY or OFF off a preference row; anything unrecognised (or no row) is EACH."""
     value = str(getattr(row, "emailHandInNotices", "") or "").strip().upper() if row is not None else ""
     return value if value in HAND_IN_MODES else HAND_IN_EACH
 
@@ -139,11 +90,6 @@ async def enqueue(
     topic: str | None = None,
     hold: bool = False,
 ) -> Any | None:
-    """Queue one message. Returns the row, or ``None`` when mail is not configured.
-
-    ``topic`` names what the message is about for the screens that show whether it went
-    (``sanction:<id>``, ``remind:<id>``, ``delivery:<id>``). ``hold`` keeps it for the daily digest.
-    """
     settings = settings or get_settings()
     if not mailer.mail_configured(settings):
         return None
@@ -170,7 +116,6 @@ async def enqueue(
 
 
 async def recover_stale(now: datetime | None = None) -> int:
-    """Hand back rows a dead worker left SENDING. Exhausted ones fail instead (and lose the seal)."""
     cutoff = (now or datetime.now(UTC)) - STALE_SENDING_AFTER
     stale = await db.emailmessage.find_many(
         where={"status": SENDING, "lockedAt": {"lt": cutoff}}, take=100
@@ -245,12 +190,10 @@ def _expired(params: dict[str, Any]) -> bool:
 
 
 async def _send_one(row: Any, settings: Settings) -> str:
-    """Render and send one claimed row; returns the status it was left in."""
     attempts = int(row.attempts or 0) + 1
     params = dict(row.params or {}) if isinstance(row.params, dict) else {}
     domain = mailer.reserved_email_domain(row.toAddress)
     if domain is not None:
-        # A seeded or test account: SES would bounce it, and bounces cost the sender reputation.
         await _finish(row.id, SKIPPED, error=mailer.RESERVED_ADDRESS_REASON)
         logger.info(
             "mail: skipped %s message %s for account %s (reserved domain %s)",
@@ -306,7 +249,6 @@ async def process_next_email_jobs(
     *,
     recover: bool = True,
 ) -> dict[str, int]:
-    """Drain one batch of due messages. Does nothing at all when mail is not configured."""
     settings = settings or get_settings()
     tally = {"processed": 0, "sent": 0, "retrying": 0, "failed": 0, "skipped": 0}
     if not mailer.mail_configured(settings):
@@ -315,7 +257,7 @@ async def process_next_email_jobs(
         await recover_stale()
     try:
         await flush_digests(settings=settings)
-    except Exception:  # a digest that cannot be gathered must not stop the drain
+    except Exception:
         logger.exception("mail: could not gather the daily digests")
     rows = await db.emailmessage.find_many(
         where={"status": QUEUED, "runAfter": {"lte": datetime.now(UTC)}},
@@ -328,7 +270,7 @@ async def process_next_email_jobs(
         tally["processed"] += 1
         try:
             outcome = await _send_one(row, settings)
-        except Exception:  # one bad row must not stop the batch; it is retried
+        except Exception:
             logger.exception("mail: message %s could not be processed", row.id)
             await _retry_later(row, int(row.attempts or 0) + 1, "Unexpected error while sending.")
             outcome = QUEUED
@@ -343,14 +285,8 @@ async def process_next_email_jobs(
     return tally
 
 
-# --------------------------------------------------------------------------------------
-# Notifications
-# --------------------------------------------------------------------------------------
-
 
 async def workshop_designers(record: Any) -> list[Any]:
-    """The accounts that work on a workshop: its designer-access (viewer) rows, plus its creator
-    when the creator is a designer. An administrator who only staged it is not one of them."""
     workshop_id = str(_value(record, "id"))
     rows = await db.designworkshopviewer.find_many(
         where={"designWorkshopId": workshop_id}, include={"user": True}
@@ -388,14 +324,6 @@ async def notify_review_note(
     sent_back: bool,
     settings: Settings | None = None,
 ) -> int:
-    """Tell a workshop's designers that an inspector filed a suggestion or sent it back: in-app
-    always, and by e-mail where mail is on and they have not opted out (``emailReviewNotes``).
-
-    Goes through :func:`app.services.notifications.notify`, so the notice lands in each designer's
-    activity list even when mail is off. NEVER RAISES. The suggestion or the send-back has already
-    been written; failing to tell anybody must not turn the inspector's 201 into an error. Returns
-    how many E-MAILS were queued (the in-app rows are not counted).
-    """
     from app.services.notifications import notify
 
     settings = settings or get_settings()
@@ -427,34 +355,18 @@ async def notify_review_note(
             )
             if delivery.emailed:
                 queued += 1
-    except Exception:  # see the docstring: the decision stands either way
+    except Exception:
         logger.exception("mail: could not queue review notices for workshop %s", _value(record, "id"))
     return queued
 
 async def notify_password_event(
     user: Any, kind: str, *, by: str = "self", to_address: str | None = None
 ) -> bool:
-    """Queue a PASSWORD_ADDED / PASSWORD_CHANGED security notice to the account's own address.
-
-    Always sent (no opt-out): the account's owner is the one person who can tell a change they made
-    from one they did not, and this is how they hear about the second. No password and no link ride
-    in it. ``by`` is "self" or "administrator" (a temporary password set for them).
-
-    ``to_address`` sends the same notice somewhere other than the address the account holds now:
-    the address it held BEFORE an administrator changed it in the same request (security review N4),
-    so the person who owned the account hears of it at the inbox they still read.
-
-    Also written to the account's in-app list (:func:`app.services.notifications.notify`), mail or
-    no mail. NEVER RAISES. The password has already been written; failing to queue a notice about
-    it must not turn the change into an error. Returns whether an e-mail was queued.
-    """
     if kind not in mailer.PASSWORD_NOTICES:
         raise ValueError(f"Not a password notice: {kind!r}")
     from app.services.notifications import notify
 
     params = {"recipientName": _value(user, "name"), "at": datetime.now(UTC).isoformat(), "by": by}
-    # In-app too, once: the copy sent to a previous address (``to_address``) is the same event for
-    # the same account, so it writes no second row.
     delivery = await notify(
         user,
         kind,
@@ -469,17 +381,6 @@ async def notify_password_event(
     return delivery.emailed
 
 
-# --------------------------------------------------------------------------------------
-# The notices of 2026-10-18: designers, access, officials, and the daily digest
-#
-# EVERY FUNCTION BELOW NEVER RAISES (except send_setup_reminders, whose caller answers with its
-# tally) and is a no-op when mail is off. Each is called AFTER the act it reports has been written;
-# failing to queue a notice must not turn that act into an error. Each respects the recipient's own
-# preference (``wants`` / ``hand_in_mode``) and never e-mails the person who did the act.
-# --------------------------------------------------------------------------------------
-
-#: The most people one notice fans out to. A larger audience is a configuration problem, and the
-#: queue must not be flooded by one click.
 MAX_FANOUT = 25
 
 
@@ -502,7 +403,6 @@ async def _queue_for(
             continue
         seen.add(person_id)
         audience.append(person)
-    # Everybody's preference in one read, where it was one read per recipient.
     preferences = await preferences_of(list(seen)) if PREFERENCE_FOR_KIND.get(kind) else {}
     for person in audience:
         person_id = _value(person, "id")
@@ -529,7 +429,6 @@ async def notify_workshop_designers(
     extra: dict[str, Any] | None = None,
     settings: Settings | None = None,
 ) -> int:
-    """REPORT_APPROVED / REPORT_HANDED_ON to the workshop's designers. Returns how many were queued."""
     settings = settings or get_settings()
     if not mailer.mail_configured(settings):
         return 0
@@ -556,8 +455,6 @@ async def notify_workshop_assigned(
     sanction_order_no: str | None = None,
     settings: Settings | None = None,
 ) -> int:
-    """WORKSHOP_ASSIGNED to accounts newly given a workshop: an existing account named on a sanction
-    order, or one added to its designer team."""
     settings = settings or get_settings()
     if not mailer.mail_configured(settings) or not user_ids:
         return 0
@@ -577,7 +474,6 @@ async def notify_workshop_assigned(
         return 0
 
 
-#: How soon one designer may be reminded again about the same order.
 REMINDER_COOLDOWN = timedelta(hours=1)
 
 
@@ -590,11 +486,6 @@ async def send_setup_reminders(
     actor: Any,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
-    """"Remind designers": one SETUP_REMINDER to each designer the order names.
-
-    Returns ``{queued, recent, optedOut, noAddress, lastRemindedAt}``. A designer reminded about this
-    order within :data:`REMINDER_COOLDOWN` is skipped (``recent``), so a second press is harmless.
-    """
     settings = settings or get_settings()
     topic = f"remind:{_value(order, 'id')}"
     tally: dict[str, Any] = {"queued": 0, "recent": 0, "optedOut": 0, "noAddress": 0}
@@ -604,7 +495,6 @@ async def send_setup_reminders(
     since = datetime.now(UTC) - REMINDER_COOLDOWN
     recent_rows = await db.emailmessage.find_many(where={"topic": topic, "createdAt": {"gte": since}})
     recently = {row.recipientId for row in recent_rows}
-    # Every designer's preference in one read, where it was one read per designer.
     preferences = (
         await preferences_of([_value(person, "id") for person in designers[:MAX_FANOUT]])
         if PREFERENCE_FOR_KIND.get(mailer.SETUP_REMINDER)
@@ -644,16 +534,12 @@ async def send_setup_reminders(
 
 
 async def last_topic_moment(topic: str) -> str | None:
-    """When the newest message about ``topic`` was queued, as ISO text, or ``None``."""
     row = await db.emailmessage.find_first(where={"topic": topic}, order={"createdAt": "desc"})
     moment = getattr(row, "createdAt", None) if row is not None else None
     return moment.isoformat() if moment else None
 
 
 def delivery_status(row: Any) -> dict[str, Any] | None:
-    """What a screen says about one outbox row: ``{id, status, at, error}``. ``status`` is QUEUED
-    (still going out, retries included), SENT or FAILED — a SKIPPED row (a reserved address) reads
-    as FAILED, with its reason. ``None`` for no row."""
     if row is None:
         return None
     state = str(_value(row, "status") or "")
@@ -671,7 +557,6 @@ def delivery_status(row: Any) -> dict[str, Any] | None:
 
 
 async def latest_by_recipient(topic: str, recipient_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """``{recipient id: delivery_status}`` for the newest message about ``topic`` to each person."""
     if not recipient_ids:
         return {}
     rows = await db.emailmessage.find_many(
@@ -689,7 +574,6 @@ async def latest_by_recipient(topic: str, recipient_ids: list[str]) -> dict[str,
 
 
 async def latest_by_topics(topics: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
-    """``{topic: {recipient id: delivery_status}}`` for a page of topics, in one query."""
     if not topics:
         return {}
     rows = await db.emailmessage.find_many(
@@ -716,7 +600,6 @@ async def _admin_accounts() -> list[Any]:
 async def notify_workshop_access_requested(
     workshop: Any, requester: Any, note: str | None, *, settings: Settings | None = None
 ) -> int:
-    """ACCESS_REQUESTED to the administrators who decide workshop access requests."""
     settings = settings or get_settings()
     if not mailer.mail_configured(settings):
         return 0
@@ -751,7 +634,6 @@ async def notify_access_decided(
     note: str | None = None,
     settings: Settings | None = None,
 ) -> int:
-    """ACCESS_DECIDED to the person who asked. ``scope`` is ``workshop`` or ``data``."""
     settings = settings or get_settings()
     if not mailer.mail_configured(settings) or decision not in ("GRANTED", "DENIED"):
         return 0
@@ -779,7 +661,6 @@ async def notify_access_decided(
 async def notify_data_access_requested(
     owner_id: str, requester: Any, *, tier: str | None, note: str | None, settings: Settings | None = None
 ) -> int:
-    """ACCESS_REQUESTED to the owner of the data a researcher asked to see."""
     settings = settings or get_settings()
     if not mailer.mail_configured(settings):
         return 0
@@ -811,7 +692,6 @@ async def notify_record_comment(
     body: str,
     settings: Settings | None = None,
 ) -> int:
-    """RECORD_COMMENT to a record's creator when somebody else comments on it."""
     settings = settings or get_settings()
     if not mailer.mail_configured(settings) or not owner_id:
         return 0
@@ -835,9 +715,6 @@ async def notify_record_comment(
 
 
 async def hand_in_audience(workshop_id: str) -> list[tuple[Any, bool]]:
-    """``[(account, is_approver)]``: the workshop's assigned inspectors, then the approving authority
-    (every Ministry Admin and master admin whom rule 7 does not bar from deciding THIS workshop).
-    An account in both is listed once, as an inspector."""
     from app.services import design_workshop_posts as posts
     from app.services.concurrency import gather_reads
     from app.services.design_workshop_inspectors import inspector_accounts
@@ -851,7 +728,6 @@ async def hand_in_audience(workshop_id: str) -> list[tuple[Any, bool]]:
         people.setdefault(person.id, (person, False))
     candidates = [person for person in approvers if person.id not in people]
     if candidates:
-        # Rule 7, batched: the same predicate as ``posts.decision_refusal``, two reads for everyone.
         ids = [person.id for person in candidates]
         held, authored = await gather_reads(
             posts.supervisory_posts_among(workshop_id, ids),
@@ -869,8 +745,6 @@ async def hand_in_audience(workshop_id: str) -> list[tuple[Any, bool]]:
 async def notify_handed_in(
     record: Any, *, actor: Any, resubmission: bool, settings: Settings | None = None
 ) -> int:
-    """REPORT_HANDED_IN to the assigned inspectors and the approving authority, each by their own
-    choice: one e-mail now (EACH), held for the daily digest (DAILY), or nothing (OFF)."""
     settings = settings or get_settings()
     if not mailer.mail_configured(settings):
         return 0
@@ -883,7 +757,6 @@ async def notify_handed_in(
             for person, approver in (await hand_in_audience(workshop_id))[: MAX_FANOUT * 2]
             if person.email and person.id != actor_id
         ]
-        # Every recipient's choice in one read, where it was one read per recipient.
         preferences = await preferences_of([person.id for person, _ in audience])
         for person, approver in audience:
             mode = hand_in_mode(preferences.get(str(person.id)))
@@ -913,15 +786,12 @@ async def notify_handed_in(
     return queued
 
 
-#: The daily digest goes out at this India-time hour, gathering what was held before it.
 DIGEST_HOUR_IST = 9
-#: The drain asks at most this often whether a digest is due.
 DIGEST_CHECK_EVERY = timedelta(minutes=10)
 _last_digest_check: datetime | None = None
 
 
 def digest_cutoff(now: datetime) -> datetime:
-    """The most recent DIGEST_HOUR_IST boundary at or before ``now``, in UTC."""
     local = now.astimezone(mailer.IST)
     boundary = local.replace(hour=DIGEST_HOUR_IST, minute=0, second=0, microsecond=0)
     if boundary > local:
@@ -932,11 +802,6 @@ def digest_cutoff(now: datetime) -> datetime:
 async def flush_digests(
     *, now: datetime | None = None, settings: Settings | None = None, force: bool = False
 ) -> int:
-    """Fold each person's HELD hand-in notices from before the last 09:00 IST into one digest.
-
-    Idempotent: a held row is claimed (HELD -> DIGESTED) with a compare-and-set before its digest is
-    queued, so two workers cannot send one digest twice. Returns how many digests were queued.
-    """
     global _last_digest_check
     settings = settings or get_settings()
     if not mailer.mail_configured(settings):
@@ -955,8 +820,6 @@ async def flush_digests(
         if created is not None and created >= cutoff:
             continue
         due.setdefault(str(row.toAddress), []).append(row)
-    # A person who switched to OFF since a row was held is not sent it: the row is set aside
-    # (DIGESTED) with no digest. One read for every recipient's current choice.
     recipient_ids = {str(row.recipientId) for rows in due.values() for row in rows if row.recipientId}
     modes: dict[str, str] = {}
     if recipient_ids:

@@ -1,18 +1,3 @@
-"""The pure halves of the three-way sign-in and of the password link.
-
-NO DATABASE. Everything asserted here is a function of its arguments — the two normalisations, the
-token construction, the fingerprint — which is deliberate: those are the parts that decide whether a
-person can sign in at all, and a test that needs Postgres is a test that skips on the machine of
-whoever is about to change them.
-
-The database halves (`resolve_identifier`, `resolve_profile_keys`, the routes) are exercised by the
-suite's own live-database modules; what cannot be covered there and is covered here is the pair of
-normalisations, because their SECOND implementation is SQL inside
-``20260830170000_auth_identity_and_password_links`` and nothing can compare the two automatically.
-The table at :func:`test_normalisation_matches_the_migrations_sql` is that comparison, done by hand,
-with the SQL quoted beside each row.
-"""
-
 import base64
 import io
 import json
@@ -23,28 +8,18 @@ import pytest
 
 from app.services import credential_links, identity
 
-# ==================================================================================================
-# The two normalisations
-# ==================================================================================================
-
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        # The owner's instruction: "their phone number without the country code".
         ("9876543210", "9876543210"),
         ("+91 98765 43210", "9876543210"),
         ("098765 43210", "9876543210"),
         ("+91-98765-43210", "9876543210"),
-        # A stored value with a country code normalises to the SAME key as one without, which is the
-        # whole point: a designer types the ten digits they would read out loud either way.
         ("00919876543210", "9876543210"),
-        # Too short to be a telephone number. Claiming a key here would let one profile own the
-        # string "42" for the whole installation.
         ("42", None),
         ("", None),
         (None, None),
-        # Exactly at the floor: six digits is claimed, five is not.
         ("123456", "123456"),
         ("12345", None),
     ],
@@ -60,8 +35,6 @@ def test_normalise_phone(raw, expected):
         ("emp 2026 0042", "EMP20260042"),
         ("EMP-2026-0042", "EMP20260042"),
         ("DES/2024/0142", "DES20240142"),
-        # No length floor, unlike the phone: an institution's numbering scheme is not this module's
-        # to second-guess, and there is no short string a person types by accident here.
         ("7", "7"),
         ("   ", None),
         ("", None),
@@ -73,18 +46,6 @@ def test_normalise_empanelment_no(raw, expected):
 
 
 def test_normalisation_matches_the_migrations_sql():
-    """THE SQL IN THE MIGRATION AND THE PYTHON HERE ARE ONE RULE WRITTEN TWICE.
-
-    There is no way to share them — the rows that already existed had to be normalised by Postgres —
-    so this test is the place the pair is compared. Each assertion below is the SQL expression
-    applied by hand to the same input:
-
-        phone:        right(regexp_replace(phone, '[^0-9]', '', 'g'), 10)  when longer than 10
-                      nullif(regexp_replace(phone, '[^0-9]', '', 'g'), '') otherwise
-        empanelment:  nullif(upper(regexp_replace(empanelmentNo, '[^A-Za-z0-9]', '', 'g')), '')
-
-    If you change one, change the other, and change this table.
-    """
     assert identity.normalise_phone("+91 (98765) 43210") == "9876543210"
     assert identity.normalise_empanelment_no("emp/2026/0042") == "EMP20260042"
 
@@ -94,8 +55,6 @@ def test_normalisation_matches_the_migrations_sql():
     [
         ("a@b.example", True),
         ("A.Sharma@Example.org", True),
-        # Neither of the two numbers can contain an @, which is why the @ settles the question
-        # without being validation.
         ("9876543210", False),
         ("EMP/2026/0042", False),
         ("", False),
@@ -106,19 +65,9 @@ def test_looks_like_email(raw, expected):
     assert identity.looks_like_email(raw) is expected
 
 
-# ==================================================================================================
-# The token — the construction ported from cxa-cms
-# ==================================================================================================
-
 
 @pytest.fixture(autouse=True)
 def _signing_secret(monkeypatch):
-    """A real secret, so ``get_settings().jwt_secret`` is signing with something.
-
-    The app refuses to boot on a placeholder (``verify_jwt_configuration``), so anything this test
-    signs with has to look like a real key or the assertions would be about a configuration the
-    product does not permit.
-    """
     from app.core.config import get_settings
 
     settings = get_settings()
@@ -147,10 +96,6 @@ def test_a_freshly_minted_token_verifies():
 
 
 def test_a_tampered_body_is_refused_as_malformed():
-    """A FORGED SIGNATURE AND A MANGLED ONE ARE ONE ANSWER, deliberately.
-
-    Separating them would tell somebody probing the endpoint which half of their guess was wrong.
-    """
     token = _mint()
     body, signature = token.split(".", 1)
     decoded = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
@@ -160,16 +105,11 @@ def test_a_tampered_body_is_refused_as_malformed():
 
 
 def test_two_separators_are_refused():
-    """A token with two dots would let the body be chosen after the signature was computed over a
-    prefix of it."""
     token = _mint()
     assert credential_links.verify_token(f"{token}.extra").reason == credential_links.MALFORMED
 
 
 def test_an_expired_token_says_so_rather_than_malformed():
-    """The expiry is INSIDE the signed payload, so it can be reported honestly to somebody holding a
-    link this installation really did issue — which is a different next action from "ask for a link
-    that works"."""
     token = _mint(expires_at=datetime.now(UTC) - timedelta(minutes=1))
     assert credential_links.verify_token(token).reason == credential_links.EXPIRED
 
@@ -187,11 +127,6 @@ def test_nothing_at_all_is_missing_not_malformed(raw):
 
 
 def test_the_fingerprint_changes_when_the_password_changes():
-    """THE SINGLE-USE GUARANTEE, and the whole reason cxa-cms needs no table for it.
-
-    Setting a password changes the hash, so every token minted before it stops describing the
-    account — immediately, with nothing having to remember.
-    """
     before = credential_links.credential_fingerprint("$2b$12$one")
     after = credential_links.credential_fingerprint("$2b$12$two")
     assert before != after
@@ -200,8 +135,6 @@ def test_the_fingerprint_changes_when_the_password_changes():
 
 
 def test_an_account_with_no_password_digests_a_sentinel():
-    """So an INVITATION is bound to "still has no password" — and stops verifying the moment one is
-    set, exactly like a reset link does."""
     assert credential_links.credential_fingerprint(None) == credential_links.credential_fingerprint(
         None
     )
@@ -211,50 +144,28 @@ def test_an_account_with_no_password_digests_a_sentinel():
 
 
 def test_the_invitation_lifetime_is_longer_than_the_reset_lifetime():
-    """cxa-cms's two numbers and its reasoning: an invitation is passed on by hand and read after a
-    conference; a reset answers "I am locked out NOW" and a link that outlives that conversation is
-    a spare key under the mat."""
     assert credential_links.ttl_hours(credential_links.INVITE) > credential_links.ttl_hours(
         credential_links.RESET
     )
 
 
 def test_the_link_carries_the_token_and_nothing_else_does():
-    """PORTED FROM cxa-cms's CANONICAL ROUTE: a credential appearing twice in one answer is a
-    credential in two places to keep out of logs. `DeliveredLink` has no `token` field at all."""
     assert not hasattr(credential_links.DeliveredLink, "token")
     token = _mint()
     assert token.split(".", 1)[0] in credential_links.link_for(token)
 
 
 def test_two_links_for_one_account_in_the_same_second_are_two_different_tokens():
-    """THE REGRESSION. Measured 2026-08-30, before the nonce existed.
-
-    Every other claim in the payload is a function of the ACCOUNT — the id, the purpose, the
-    fingerprint of the current password, and an expiry stamped in whole seconds — so two links
-    issued for one account inside one second were byte-for-byte identical. The visible half was a
-    500: `PasswordResetToken.tokenHash` is unique and the second insert violated it. The invisible
-    half is worse and is why this is a nonce rather than a retry — two issues that produce one
-    token are ONE CREDENTIAL, so revoking the row an admin thinks they just issued would leave the
-    other row live and the link in the wrong chat window would go on working.
-
-    cxa-cms mints the same deterministic shape and never noticed, because it keeps no rows and has
-    nothing that must be one-to-one with a link.
-    """
     expires = datetime.now(UTC) + timedelta(hours=2)
     first = _mint(expires_at=expires)
     second = _mint(expires_at=expires)
     assert first != second
     assert credential_links.token_digest(first) != credential_links.token_digest(second)
-    # BOTH STILL VERIFY. Uniqueness must not have been bought with a claim the verifier rejects.
     assert credential_links.verify_token(first).ok
     assert credential_links.verify_token(second).ok
 
 
 def test_a_token_with_no_nonce_is_refused():
-    """A token minted by a build that predates the nonce is refused rather than read with the wrong
-    meaning — the same rule the `v` claim exists for. It has to be forged here with the real signing
-    key, because the signature is checked first and a shape check is only reachable behind it."""
     body = base64.urlsafe_b64encode(
         json.dumps(
             {
@@ -272,24 +183,14 @@ def test_a_token_with_no_nonce_is_refused():
     assert credential_links.verify_token(token).reason == credential_links.MALFORMED
 
 def test_the_stored_digest_is_not_the_token():
-    """A table of live credentials is worth stealing; a table of digests is not."""
     token = _mint()
     digest = credential_links.token_digest(token)
     assert token not in digest
     assert len(digest) == 64
 
 
-# ==================================================================================================
-# The per-account guessing budget
-# ==================================================================================================
-
 
 def test_the_account_budget_is_spent_and_refunded():
-    """CHARGE THE ATTEMPT, REFUND EVERYTHING THAT WAS NOT A WRONG PASSWORD.
-
-    The middleware beside it takes the same shape for the same reason: check-then-charge lets a
-    hundred parallel guesses all pass the check before any of them is counted.
-    """
     from app.scale.rate_limit import (
         account_credential_attempt,
         account_credential_refund,
@@ -313,12 +214,6 @@ def test_the_account_budget_closes_after_enough_failures():
 
 
 def test_one_account_is_one_bucket_however_it_was_addressed():
-    """THE PROPERTY THE THREE IDENTIFIER SPACES WOULD OTHERWISE HAVE DESTROYED.
-
-    The budget is keyed on the RESOLVED account id, so guessing at one person by email, by phone and
-    by empanelment number spends one budget rather than three. Two different accounts are two
-    buckets, which is what this asserts from the other side.
-    """
     from app.scale.rate_limit import account_credential_attempt, reset_account_credential_budget
 
     reset_account_credential_budget()
@@ -326,10 +221,6 @@ def test_one_account_is_one_bucket_however_it_was_addressed():
         pass
     assert account_credential_attempt("acct-b")[0] is True
 
-
-# ==================================================================================================
-# Which kind of link, and who may ask for one (2026-10-09)
-# ==================================================================================================
 
 
 def _account(**fields):
@@ -346,8 +237,6 @@ def _account(**fields):
     return SimpleNamespace(**base)
 
 
-#: Before and after ``credential_links.FIRST_LOGIN_TRACKED_SINCE`` (2026-08-30 17:00 UTC), when
-#: ``firstLoginAt`` began to be written.
 _BEFORE_THE_STAMP = datetime(2026, 7, 1, tzinfo=UTC)
 _AFTER_THE_STAMP = datetime(2026, 10, 1, tzinfo=UTC)
 
@@ -355,27 +244,19 @@ _AFTER_THE_STAMP = datetime(2026, 10, 1, tzinfo=UTC)
 @pytest.mark.parametrize(
     ("fields", "expected"),
     [
-        # No password at all: an invitation, as it always was — however old the account.
         ({"passwordHash": None, "firstLoginAt": None}, credential_links.INVITE),
         (
             {"passwordHash": None, "firstLoginAt": None, "createdAt": _BEFORE_THE_STAMP},
             credential_links.INVITE,
         ),
-        # A password a provisioner typed, never used: STILL an invitation. The old rule ("INVITE
-        # while the hash is NULL") gave this account a two-hour link that died before lunch.
         ({"firstLoginAt": None, "createdAt": _AFTER_THE_STAMP}, credential_links.INVITE),
         (
             {"firstLoginAt": None, "createdAt": credential_links.FIRST_LOGIN_TRACKED_SINCE},
             credential_links.INVITE,
         ),
-        # A hand-built row with no zone is read as the UTC every stored stamp is.
         ({"firstLoginAt": None, "createdAt": datetime(2026, 9, 1)}, credential_links.INVITE),  # noqa: DTZ001
-        # BUT A NULL firstLoginAt ON AN ACCOUNT FROM BEFORE THE STAMP IS NO EVIDENCE OF ANYTHING —
-        # it was in use all summer and has never been signed in since — so it is a reset, two hours,
-        # not a three-day key to a live account. And no creation date at all is no evidence either.
         ({"firstLoginAt": None, "createdAt": _BEFORE_THE_STAMP}, credential_links.RESET),
         ({"firstLoginAt": None}, credential_links.RESET),
-        # Somebody has signed in: the account is live, and a three-day key to it is too long.
         ({}, credential_links.RESET),
         ({"createdAt": _AFTER_THE_STAMP}, credential_links.RESET),
     ],
@@ -389,8 +270,6 @@ def _actor(role: str, user_id: str = "acct-actor"):
 
 
 def test_nobody_may_reset_their_own_credentials_through_a_provisioning_door():
-    """``POST /auth/change-password`` asks for the current password and spends a guessing budget; a
-    link or a PATCH to oneself would skip both. Refused for every tier, the master admin included."""
     from fastapi import HTTPException
 
     from app.services.account_provisioning import (
@@ -409,18 +288,14 @@ def test_nobody_may_reset_their_own_credentials_through_a_provisioning_door():
 @pytest.mark.parametrize(
     ("actor_role", "target_role", "allowed"),
     [
-        # THE TAKEOVER THIS CLOSED: an admin minting a link for the master admin, or for a peer.
         ("ADMIN", "MASTER_ADMIN", False),
         ("ADMIN", "ADMIN", False),
-        # Master admins are peers who cannot manage each other.
         ("MASTER_ADMIN", "MASTER_ADMIN", False),
         ("MASTER_ADMIN", "ADMIN", True),
-        # A ministry admin provisions strictly below itself, and never an admin.
         ("MINISTRY_ADMIN", "ADMIN", False),
         ("MINISTRY_ADMIN", "MINISTRY_ADMIN", False),
         ("MINISTRY_ADMIN", "REGIONAL_DIRECTOR", True),
         ("MINISTRY_ADMIN", "DESIGNER", True),
-        # The tiers that may promote people and may not provision them.
         ("REGIONAL_DIRECTOR", "DESIGNER", False),
         ("ASSISTANT_DIRECTOR", "DESIGNER", False),
         ("PROFESSOR", "RESEARCHER", False),
@@ -443,17 +318,12 @@ def test_a_password_link_is_authorised_on_the_target(actor_role, target_role, al
 @pytest.mark.parametrize(
     ("issuer_role", "target_role", "still"),
     [
-        # Nobody issued it, or the issuer is gone: there is no reach to have outgrown.
         (None, "ADMIN", True),
-        # A master admin always may, as the owner ruled — even a link for a fellow master admin.
         ("MASTER_ADMIN", "MASTER_ADMIN", True),
         ("MINISTRY_ADMIN", "RESEARCHER", True),
-        # THE PROMOTION: the invitee is now at or above the ministry admin who invited them.
         ("MINISTRY_ADMIN", "MINISTRY_ADMIN", False),
         ("MINISTRY_ADMIN", "ADMIN", False),
         ("ADMIN", "MASTER_ADMIN", False),
-        # A sanction officer's first-sign-in link: officers manage nobody by any other door, and
-        # the rank comparison is the whole question here.
         ("ASSISTANT_DIRECTOR", "DESIGNER", True),
         ("ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR", False),
     ],
@@ -473,15 +343,12 @@ def test_a_link_is_redeemable_while_its_issuer_could_still_manage_the_account(
         (None, None, True),
         ("acct-issuer", "MASTER_ADMIN", True),
         ("acct-issuer", "MINISTRY_ADMIN", False),
-        # An id with no row behind it reads as nobody: the foreign key nulls it on delete anyway.
         ("acct-gone", None, True),
     ],
 )
 async def test_a_link_whose_issuer_was_outranked_reads_as_withdrawn(
     monkeypatch, issued_by, issuer_role, ok
 ):
-    """``auth._link_verdict``, which both the check and the redemption read: the account the link is
-    for has been promoted to ADMIN, and the link was issued by ``issuer_role``."""
     from types import SimpleNamespace
 
     from app.api.routes import auth as auth_routes
@@ -510,28 +377,19 @@ async def test_a_link_whose_issuer_was_outranked_reads_as_withdrawn(
 @pytest.mark.parametrize(
     ("fields", "holds"),
     [
-        # The flag on a password: the secret somebody else typed is still the one it signs in with.
         ({"mustChangePassword": True}, True),
-        # No flag: the owner chose it, or a provisioner said it was final.
         ({"mustChangePassword": False}, False),
         ({}, False),
-        # A flag with no password behind it holds nothing, so there is nothing to carry upward.
         ({"mustChangePassword": True, "passwordHash": None}, False),
     ],
 )
 def test_a_temporary_password_is_the_flag_on_an_account_that_has_one(fields, holds):
-    """Rule 5's question, asked by both doors that raise a role — ``PATCH /api/users/{id}`` and the
-    access screen's approval — through one predicate, so the two cannot come to mean two things."""
     from app.services.account_provisioning import holds_a_temporary_password
 
     assert holds_a_temporary_password(_account(**fields)) is holds
 
 
 async def test_the_access_approval_never_writes_an_existing_account(monkeypatch):
-    """The sign-in list rule (2026-10-18, ``services/signin_role``): ``routes/access._role_kept`` only
-    reads. Approving an address at a higher role than its account holds writes nothing to the account
-    and withdraws no link — the change is made on Manage users, which audits it — and the answer names
-    Manage users."""
     from types import SimpleNamespace
 
     from app.api.routes import access as access_routes
@@ -560,9 +418,6 @@ async def test_the_access_approval_never_writes_an_existing_account(monkeypatch)
 
 
 def test_the_master_admins_mailbox_is_every_spelling_of_it_and_its_account_only_one(monkeypatch):
-    """Nobody but a master admin creates or moves an account onto ANY spelling of the configured
-    master's mailbox (``is_master_email``); the account that carries the role, cannot be deleted and
-    is protected is the one at the configured address itself (``is_master_address``)."""
     from app.core.config import get_settings
     from app.services.account_provisioning import is_master_address, is_master_email
 
@@ -586,8 +441,6 @@ def test_the_master_admins_mailbox_is_every_spelling_of_it_and_its_account_only_
 
 
 def test_only_an_admin_may_move_a_capability_flag():
-    """A ministry admin provisions accounts and grants nothing: a flag that would CHANGE is a 403,
-    while an echo of the value the account already holds grants nothing and is let through."""
     from fastapi import HTTPException
 
     from app.services.account_provisioning import assert_may_grant
@@ -604,14 +457,8 @@ def test_only_an_admin_may_move_a_capability_flag():
     assert_may_grant(_actor("ADMIN"), {"canReview": True, "canDownloadDataset": True})
 
 
-# ==================================================================================================
-# One password ceiling, and a sign-in that cannot 500 on a long one
-# ==================================================================================================
-
 
 def test_every_password_field_shares_one_ceiling():
-    """A temporary password an administrator can set must be one the change-password form can take
-    back as ``currentPassword``; 256 on the admin forms and 200 on the others broke that."""
     from pydantic import ValidationError
 
     from app.core.security import MAX_PASSWORD_LENGTH
@@ -647,10 +494,6 @@ def test_the_password_is_kept_exactly_as_typed_and_the_flag_defaults_on():
 
 
 def test_the_users_audit_line_can_name_every_field_a_patch_accepts():
-    """``update_user``'s audit line picks a changed field's name from ``AUDITED_FIELDS``, a tuple of
-    literals, so every word it prints about a password is one the module wrote. A field the PATCH
-    accepts and the tuple lacks would vanish from that line without a sound; and the order is the
-    one ``sorted`` gave the line when it joined the request's keys, so it reads as it always did."""
     from app.api.routes import users
     from app.schemas.users import UserUpdate
 
@@ -660,22 +503,16 @@ def test_the_users_audit_line_can_name_every_field_a_patch_accepts():
 @pytest.mark.parametrize(
     ("found", "expected"),
     [
-        # Nobody under another spelling: a new Google account, as before.
         ([], None),
-        # A Google account under another spelling is not folded in — LOCAL only, as ruled.
         (["GOOGLE"], None),
-        # Exactly one password account on the mailbox: that is the account signed in to.
         (["LOCAL"], 0),
         (["GOOGLE", "LOCAL"], 1),
-        # The sweep could not answer: fall back to the old behaviour rather than lock people out.
         (None, None),
     ],
 )
 async def test_google_signs_in_to_the_one_password_account_on_its_mailbox(
     monkeypatch, found, expected
 ):
-    """D4, the matching rule alone. The database half — the fold over real rows — is
-    ``tests/test_account_provisioning.py``; this pins which of the candidates is chosen."""
     from types import SimpleNamespace
 
     from app.api.routes import auth as auth_routes
@@ -719,14 +556,6 @@ async def test_two_password_accounts_on_one_mailbox_refuse_the_google_sign_in(mo
 async def test_the_seed_script_resets_only_the_master_admin_and_every_password_it_writes_is_temporary(
     monkeypatch, capsys
 ):
-    """``scripts/seed_admin.py``'s decision of 2026-10-09, pinned without a database.
-
-    Its password comes from ``ADMIN_PASSWORD`` in a ``.env`` several people can open, so every hash it
-    writes is stamped ``passwordSetAt`` and ``mustChangePassword``; resetting an EXISTING master admin
-    also ends that account's sessions. And it refuses to touch any other existing account: re-running
-    it used to overwrite a live colleague's password and role as a side effect of repairing the
-    break-glass.
-    """
     from types import SimpleNamespace
 
     from scripts import seed_admin
@@ -776,10 +605,6 @@ async def test_the_seed_script_resets_only_the_master_admin_and_every_password_i
 
 
 def test_a_password_too_long_to_check_is_simply_wrong():
-    """Anything over the 4096-byte cap passlib enforced (``security.MAX_CHECKED_PASSWORD_BYTES``
-    since bcrypt replaced passlib on 2026-10-09) is never checked at all, and the sign-in and
-    dataset-token bodies are unbounded on purpose. A megabyte pasted at the front door must be a
-    wrong password, not a 500 — and not a check of its first 72 bytes."""
     from app.core.security import hash_password, verify_password
 
     stored = hash_password("the-real-one")
@@ -787,31 +612,19 @@ def test_a_password_too_long_to_check_is_simply_wrong():
     assert verify_password("the-real-one", stored) is True
 
 
-# ==================================================================================================
-# The master admin's mailbox, a bar that stays where it was, and one account per mailbox (2026-10-09)
-# ==================================================================================================
-
 
 @pytest.mark.parametrize(
     ("role", "password_hash", "promoted"),
     [
-        # A password account somebody else set up at the master's address: never promoted.
         ("DESIGNER", "$2b$12$somebody.elses.password.hash", False),
         ("ADMIN", "$2b$12$somebody.elses.password.hash", False),
-        # Already the master admin, seeded with a password or not: the master signing in again.
         ("MASTER_ADMIN", "$2b$12$the.masters.own.password.hash", True),
-        # No password at all: only a Google sign-in on this very mailbox made it.
         ("RESEARCHER", None, True),
     ],
 )
 async def test_the_masters_google_sign_in_promotes_no_account_somebody_else_holds_a_password_to(
     monkeypatch, caplog, role, password_hash, promoted
 ):
-    """R4's defence in depth, without a database. The master's first Google sign-in used to write
-    MASTER_ADMIN onto whatever account sat at the literal address — with the password whoever made it
-    chose still on it. Now an account that is not already a master admin and holds a password is
-    refused (409, naming ``scripts/seed_admin.py``), logged at ERROR, and NOTHING is written to it,
-    not even the avatar."""
     import logging
     from types import SimpleNamespace
 
@@ -885,17 +698,12 @@ async def test_the_masters_google_sign_in_promotes_no_account_somebody_else_hold
 @pytest.mark.parametrize(
     ("typed", "expected"),
     [
-        # An administrator's spelling on the allow-list is the record, and survives a sign-in.
         ("Nighat Sofi", "Nighat Sofi"),
-        # No spelling typed: Google's display name, as it always was.
         (None, "tahgin Sofi"),
         ("   ", "tahgin Sofi"),
     ],
 )
 async def test_a_google_sign_in_keeps_the_name_an_administrator_typed(monkeypatch, typed, expected):
-    """A password-less account is renamed on every Google sign-in. It used to be renamed to the
-    Google profile's display name, which undid a correction an officer had made to match a ministry
-    sheet; the allow-list's ``fullName`` now wins, on the existing account and on a new one."""
     from types import SimpleNamespace
 
     from app.api.routes import auth as auth_routes
@@ -950,9 +758,6 @@ def _roster_row(email: str, status: str, **columns):
 
 
 async def _follow(monkeypatch, rows, *, racing=None):
-    """Drive ``access_roster.follow_email_change`` over fake rows. ``rows`` is what ``access_row``
-    answers per address; ``racing`` is a row a sign-in writes at the new mailbox just before the
-    create, which the create then collides with. Answers (the move, the creates, the updates)."""
     from types import SimpleNamespace
 
     from prisma.errors import UniqueViolationError
@@ -991,10 +796,6 @@ async def _follow(monkeypatch, rows, *, racing=None):
 
 
 async def test_a_barred_row_is_created_at_a_fresh_mailbox_and_the_old_one_stays_barred(monkeypatch):
-    """SEC1. The barred row used to MOVE to the new mailbox, leaving the old one with no row: a
-    Google sign-in there was a stranger's, queued PENDING, and an approval let the barred person back
-    in. Now the bar is CREATED at the new mailbox — status, who decided and when, the tier and the
-    name — and the old row is not written at all."""
     from datetime import UTC, datetime
 
     from app.services import access_roster
@@ -1026,9 +827,6 @@ async def test_a_barred_row_is_created_at_a_fresh_mailbox_and_the_old_one_stays_
 
 
 async def test_a_row_a_sign_in_writes_in_the_race_takes_the_bar_instead(monkeypatch):
-    """The create collides with a row a refused Google sign-in queued at the new mailbox a moment
-    earlier. That row is the one the gate reads, so it takes the bar — the arm a destination that was
-    already there goes through — and the old row is still untouched."""
     from app.services import access_roster
 
     old = _roster_row("barredperson@gmail.com", "REJECTED", decidedById=None)
@@ -1049,9 +847,6 @@ async def test_a_row_a_sign_in_writes_in_the_race_takes_the_bar_instead(monkeypa
 async def test_one_account_per_mailbox_is_asked_of_gmail_alone_and_never_of_the_account_moving(
     monkeypatch,
 ):
-    """SEC1/F3. ``email_in_use`` asks the literal address first and, only on a Gmail domain, every
-    spelling of the mailbox — the account being moved excluded, and a lookup that could not finish
-    refused (503) rather than read as "free"."""
     from types import SimpleNamespace
 
     from fastapi import HTTPException
@@ -1093,10 +888,8 @@ async def test_one_account_per_mailbox_is_asked_of_gmail_alone_and_never_of_the_
 @pytest.mark.parametrize(
     ("actor_role", "role", "refused"),
     [
-        # A ministry admin, whatever the account's role: the move would end an active empanelment.
         ("MINISTRY_ADMIN", "PROFESSOR", True),
         ("MINISTRY_ADMIN", "RESEARCHER", True),
-        # An admin's move carries the ending onto it, as documented.
         ("ADMIN", "PROFESSOR", False),
         ("MASTER_ADMIN", "RESEARCHER", False),
     ],
@@ -1104,8 +897,6 @@ async def test_one_account_per_mailbox_is_asked_of_gmail_alone_and_never_of_the_
 async def test_only_an_admin_carries_an_ended_empanelment_onto_an_active_one(
     monkeypatch, actor_role, role, refused
 ):
-    """SEC1/F3. ``follow_email_change`` carries an ended empanelment to the new mailbox whatever the
-    account's role, and carrying it ENDS an active empanelment there. Ending one is an admin's act."""
     from fastapi import HTTPException
 
     from app.services import account_provisioning as provisioning
@@ -1129,7 +920,6 @@ async def test_only_an_admin_carries_an_ended_empanelment_onto_an_active_one(
             actor, "ended@example.org", new_email, role=role
         )
 
-    # Onto an address with no active empanelment nothing active is ended, so nobody is refused.
     assert await move("nobody@example.org") == (None, False)
     if not refused:
         assert await move("empanelled@example.org") == (None, False)
@@ -1142,18 +932,10 @@ async def test_only_an_admin_carries_an_ended_empanelment_onto_an_active_one(
     )
 
 
-# ==================================================================================================
-# What a credential leaves behind in a log or on a terminal (2026-10-09)
-# ==================================================================================================
-
-#: Stands in for a set-password link's token — the shape ``credential_links.mint_token`` makes, and
-#: distinctive, so finding it in a line is unambiguous.
 LINK_TOKEN = "eyJzdWIiOiJhY2N0LTA0NTEifQ.Link-Token-Signature-0451"
 
 
 def _uvicorn_access_record(path: str, query: bytes) -> logging.LogRecord:
-    """The record uvicorn's access logger makes for one request: its own helpers build the arguments,
-    in the order and under the format string ``httptools_impl`` and ``h11_impl`` pass to ``info``."""
     from uvicorn.protocols.utils import get_client_addr, get_path_with_query_string
 
     scope = {
@@ -1176,7 +958,6 @@ def _uvicorn_access_record(path: str, query: bytes) -> logging.LogRecord:
 
 
 def _access_formatter() -> logging.Formatter:
-    """uvicorn's access formatter, with the format uvicorn ships: the line as production writes it."""
     from uvicorn.config import LOGGING_CONFIG
     from uvicorn.logging import AccessFormatter
 
@@ -1184,9 +965,6 @@ def _access_formatter() -> logging.Formatter:
 
 
 def test_the_access_line_for_a_link_check_never_carries_the_token():
-    """THE FINDING: both clients checked a link with ``GET /api/auth/set-password?token=…`` — the
-    handset still does — and uvicorn's access log wrote that line, token and all, into the
-    service's journal."""
     from app.main import AccessLogRedaction
 
     record = _uvicorn_access_record("/api/auth/set-password", f"token={LINK_TOKEN}".encode())
@@ -1201,7 +979,6 @@ def test_the_access_line_for_a_link_check_never_carries_the_token():
 @pytest.mark.parametrize(
     ("path", "query", "logged"),
     [
-        # Every name on the list, in any letter case: the value goes, the name and its place stay.
         ("/api/auth/set-password", b"Token=abc", "/api/auth/set-password?Token=[redacted]"),
         (
             "/api/x",
@@ -1209,15 +986,12 @@ def test_the_access_line_for_a_link_check_never_carries_the_token():
             "/api/x?page=2&access_token=[redacted]&ID_TOKEN=[redacted]&refresh_token=[redacted]"
             "&code=[redacted]&key=[redacted]&Password=[redacted]&secret=[redacted]",
         ),
-        # A name Starlette decodes to "token" is the token to the route, so it is to the log too.
         ("/api/auth/set-password", b"%74oken=abc", "/api/auth/set-password?%74oken=[redacted]"),
-        # Exact names: a parameter that merely contains one keeps its value.
         (
             "/api/artisans",
             b"pageKey=7&tokenCount=3&monkey=1",
             "/api/artisans?pageKey=7&tokenCount=3&monkey=1",
         ),
-        # Nothing to hide: an empty value, a bare name, ordinary parameters, no query at all.
         ("/api/auth/set-password", b"token=&token", "/api/auth/set-password?token=&token"),
         ("/api/artisans", b"page=2&pageSize=50", "/api/artisans?page=2&pageSize=50"),
         ("/api/auth/set-password", b"", "/api/auth/set-password"),
@@ -1242,7 +1016,6 @@ def test_only_a_credentials_value_leaves_the_access_line(path, query, logged):
     ],
 )
 def test_a_record_of_any_other_shape_passes_the_filter_untouched(args):
-    """Not uvicorn's access line, so not the filter's to touch: passed on exactly as it came."""
     from app.main import AccessLogRedaction
 
     record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 0, "%s", None, None)
@@ -1252,8 +1025,6 @@ def test_a_record_of_any_other_shape_passes_the_filter_untouched(args):
 
 
 def test_the_filter_never_raises_over_a_line_it_cannot_read(monkeypatch):
-    """The filter runs inside the call that starts uvicorn's response, so an exception there would
-    fail the request the line describes. Whatever goes wrong, the line passes on as it came."""
     import app.main
 
     def _unreadable(_path):
@@ -1267,9 +1038,6 @@ def test_the_filter_never_raises_over_a_line_it_cannot_read(monkeypatch):
 
 
 def test_importing_the_application_puts_the_filter_on_uvicorns_access_logger():
-    """WHAT PRODUCTION RUNS: uvicorn imports ``app.main``, then logs through the logger it looks up by
-    name. A filter that worked only where somebody remembered to attach it would leave the finding
-    open, so the line goes through that logger here, into uvicorn's own formatter."""
     import app.main
 
     access = logging.getLogger("uvicorn.access")
@@ -1282,7 +1050,6 @@ def test_importing_the_application_puts_the_filter_on_uvicorns_access_logger():
     access.addHandler(handler)
     access.setLevel(logging.INFO)
     try:
-        # The call uvicorn makes, argument for argument.
         access.info(
             '%s - "%s %s HTTP/%s" %d',
             "203.0.113.7:51234",
@@ -1299,9 +1066,6 @@ def test_importing_the_application_puts_the_filter_on_uvicorns_access_logger():
 
 
 def test_a_refused_google_credential_is_never_written_to_the_log(monkeypatch, caplog):
-    """google-auth's messages quote what they refuse: ``decode_header`` raises exactly what
-    ``verify_oauth2_token`` raises for a token with the wrong number of segments, the whole credential
-    inside it. The line names the audience and the exception's class, and nothing that was sent."""
     from types import SimpleNamespace
 
     from fastapi import HTTPException
@@ -1336,8 +1100,6 @@ def test_a_refused_google_credential_is_never_written_to_the_log(monkeypatch, ca
     ]
 
 
-#: What an operator typed where a value goes. Distinctive, so an assertion that it never comes back
-#: cannot pass by accident; shaped like the password it most often is.
 TYPED = "Typed-On-The-Command-Line-0451"
 
 
@@ -1351,20 +1113,13 @@ def _provision_argv(*extra: str, role: str = "RESEARCHER") -> list[str]:
 @pytest.mark.parametrize(
     "argv",
     [
-        # An abbreviation two options share, carrying a value: argparse quoted the whole argument.
         _provision_argv(f"--a={TYPED}"),
-        # A choice the option does not offer: argparse quoted the value back with the choices.
         _provision_argv(role=TYPED),
-        # A value given to a flag that takes none.
         _provision_argv(f"--apply={TYPED}"),
-        # The shape the script first guarded against: a password passed as an argument.
         _provision_argv("--password", TYPED),
     ],
 )
 async def test_the_provisioning_script_never_repeats_what_was_typed(argv):
-    """``scripts/provision_account.py`` reads its password from ``PROVISION_PASSWORD`` only, and
-    argparse quotes a typed value back in most of its complaints; until 2026-10-09 the script caught
-    only the unrecognised argument. Refused before anything connects, so no database is needed."""
     from scripts import provision_account
 
     out, err = io.StringIO(), io.StringIO()
@@ -1385,8 +1140,6 @@ async def test_the_provisioning_script_never_repeats_what_was_typed(argv):
     ],
 )
 async def test_the_provisioning_script_still_names_the_option_at_fault(argv, complaint):
-    """A complaint that names nothing but the script's own options is repeated word for word: it is
-    the one that tells an operator what to fix, and it quotes nothing they typed."""
     from scripts import provision_account
 
     out, err = io.StringIO(), io.StringIO()
@@ -1395,17 +1148,6 @@ async def test_the_provisioning_script_still_names_the_option_at_fault(argv, com
     assert err.getvalue().endswith(f"error: {complaint}\n")
 
 
-# ==================================================================================================
-# The link check with the token off the request line (2026-10-09)
-# ==================================================================================================
-#
-# ``POST /api/auth/set-password/check`` takes ``{"token": …}`` and must answer exactly what
-# ``GET /api/auth/set-password?token=…`` answers: the web now asks the POST and falls back to the
-# GET only when an older API has no POST, and the handsets in the field go on asking the GET.
-# Nothing below needs a database: every verdict either comes from a stand-in for
-# ``describe_token`` or is decided by ``verify_token`` before any row is read.
-
-#: Every answer a link check can give, as ``credential_links.describe_token`` hands it back.
 LINK_VERDICTS = [
     credential_links.TokenVerdict(True, None, "acct-0451", credential_links.INVITE),
     credential_links.TokenVerdict(True, None, "acct-0451", credential_links.RESET),
@@ -1425,8 +1167,6 @@ LINK_VERDICTS = [
 
 @pytest.mark.parametrize("verdict", LINK_VERDICTS, ids=lambda v: v.reason or v.purpose)
 async def test_the_body_check_answers_exactly_what_the_query_check_answers(monkeypatch, verdict):
-    """THE CONTRACT: one question, one answer, two transports. Both doors hand the raw token to the
-    same verdict and reduce it the same way, so no answer can come to differ between them."""
     from app.api.routes import auth as auth_routes
     from app.schemas.auth import PasswordLinkCheckRequest
 
@@ -1443,13 +1183,10 @@ async def test_the_body_check_answers_exactly_what_the_query_check_answers(monke
     )
     assert by_body == by_query
     assert by_body == {"valid": verdict.ok, "reason": verdict.reason, "purpose": verdict.purpose}
-    # The token reached the verdict exactly as it was sent, through either door.
     assert asked == [LINK_TOKEN, LINK_TOKEN]
 
 
 def _link_check_client():
-    """The whole application — every middleware, the router, the validation — with no lifespan, so
-    no database is opened. Only tokens ``verify_token`` refuses before reading a row are sent."""
     import httpx
 
     from app.main import create_app
@@ -1466,9 +1203,7 @@ def _link_check_client():
         "   ",
         "not-a-link",
         "a.b.c",
-        # Signed with some other secret: the shape of a real token, refused at the signature.
         LINK_TOKEN,
-        # Past ``MAX_TOKEN_LENGTH``: "malformed" through both doors, and never a 422 through one.
         "x" * (credential_links.MAX_TOKEN_LENGTH + 1),
     ],
     ids=["empty", "blank", "no-separator", "two-separators", "forged", "over-long"],
@@ -1487,8 +1222,6 @@ async def test_both_doors_give_one_answer_over_http(token):
     "body", [{}, {"token": None}, {"token": ""}], ids=["absent", "null", "empty"]
 )
 async def test_a_body_with_no_token_is_missing_as_a_query_with_none_is(body):
-    """No token at all is "missing" through the GET (``token`` defaults to the empty string), so it
-    is "missing" through the POST too — never a 422 the GET would not give."""
     async with _link_check_client() as client:
         by_query = await client.get("/api/auth/set-password")
         by_body = await client.post("/api/auth/set-password/check", json=body)
@@ -1501,8 +1234,6 @@ async def test_a_body_with_no_token_is_missing_as_a_query_with_none_is(body):
 
 
 def test_the_rate_limiter_treats_both_doors_alike():
-    """"Limited as the GET is": neither path is exempt, and neither is on the credential budget, so
-    both are charged to the same general per-network allowance whenever the limiter is on."""
     from app.scale import rate_limit
 
     for path in ("/api/auth/set-password", "/api/auth/set-password/check"):
@@ -1511,8 +1242,6 @@ def test_the_rate_limiter_treats_both_doors_alike():
 
 
 async def test_neither_door_writes_the_token_to_a_log(monkeypatch, caplog):
-    """The one line a check can write is ``_link_verdict``'s refusal of a link whose issuer was
-    outranked. It is made to fire here, through both doors, and it names account ids only."""
     from types import SimpleNamespace
 
     from app.api.routes import auth as auth_routes
@@ -1534,8 +1263,6 @@ async def test_neither_door_writes_the_token_to_a_log(monkeypatch, caplog):
 
     monkeypatch.setattr(auth_routes.credential_links, "describe_token", _describe)
     monkeypatch.setattr(auth_routes, "db", SimpleNamespace(user=_Users()))
-    # Every logger at DEBUG, the route's own included whatever level it was given: a token written
-    # anywhere during either check fails this.
     with (
         caplog.at_level(logging.DEBUG),
         caplog.at_level(logging.DEBUG, logger=auth_routes.logger.name),

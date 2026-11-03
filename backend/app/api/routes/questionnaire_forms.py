@@ -1,55 +1,3 @@
-"""HTTP surface for custom questionnaires: the .xlsx pro-forma, the upload, and answering.
-
-Mounted at ``/api/questionnaires`` — PLURAL, and deliberately not under the existing
-``/api/questionnaire`` (singular), which is the ONE global artisan questionnaire every researcher
-answers. The two are different objects with the same word for a name, and a client that had to tell
-``/questionnaire/sections`` from ``/questionnaires/{id}/sections`` by counting characters would get
-it wrong. See the block comment above ``model Questionnaire`` in schema.prisma for why they are
-separate all the way down.
-
-The loop a designer walks:
-
-    GET  /questionnaires/pro-forma            download a blank workbook
-    POST /questionnaires/upload               upload the filled-in one  -> a questionnaire
-    GET  /questionnaires                      list (the attach-to-a-workshop dropdown reads this)
-    GET  /questionnaires/{id}                 read the form, its sittings and its answers
-    GET  /questionnaires/{id}/xlsx            download it back, with question ids and answers
-    GET  /questionnaires/{id}/question-set.xlsx   download the QUESTIONS ALONE, to send to somebody
-    POST /questionnaires/{id}/upload          re-upload an edited copy  -> an EDIT, under the rule
-    POST /questionnaires/{id}/reuse           copy it for ANOTHER workshop, questions only
-    PATCH /questionnaires/{id}                rename, attach to a workshop, deactivate
-    POST /questionnaires/{id}/entries         start a sitting
-    PUT  /questionnaires/{id}/entries/{eid}/answers   record answers
-
-THERE ARE TWO DOWNLOADS AND THEY HAVE TWO DIFFERENT GATES, WHICH IS THE POINT RATHER THAN AN
-INCONSISTENCY. ``/xlsx`` is a LOSSLESS copy of the questionnaire — every sitting, every respondent's
-name, every answer — so it is fieldwork and it is gated like fieldwork. ``/question-set.xlsx`` is the
-INSTRUMENT and nothing else, so it is gated exactly as READING the form is: any designer. Sharing a
-questionnaire with a colleague was impossible before the second one existed, and the only workaround
-was to widen the first gate, which would have moved a leak rather than closing it.
-
-REUSE IS A COPY, AND THAT IS THE ANSWER TO "ONE QUESTIONNAIRE, SEVERAL WORKSHOPS".
-``Questionnaire.designWorkshopId`` is a single nullable column, so a questionnaire is at exactly one
-workshop or at none. ``POST /questionnaires/{id}/reuse`` does not widen that — it writes a SECOND
-questionnaire carrying the same questions and no fieldwork at all. Making the column a join table
-instead would have put workshop A's named respondents in workshop B's ministry annexure, because a
-SITTING has no workshop and ``report_items`` selects on ``designWorkshopId`` alone; the full argument
-is in ``reuse_questionnaire``. The cost of the copy is divergence between the two instruments, and it
-is the cost the feature accepts on purpose.
-
-WHO DELETES WHAT (owner, 2026-10-20, amended 2026-10-22). A FORM and everything inside it (its
-sections, its questions, a re-upload that drops questions) is edited and deleted by its AUTHOR
-(``ownerId``) or a content admin (``deps.CONTENT_ADMIN_ROLES``); everyone else gets 403
-(``_require_owner``). A SITTING (``DELETE /questionnaires/{id}/entries/{entry_id}``) stays a content
-admin's alone. Both are SOFT deletes (``deletedAt``): every read here filters them out,
-``GET /questionnaires?deletedOnly=true`` lists deleted forms (a content admin sees every one, an author
-their own), ``GET /questionnaires/{id}/deleted-entries`` lists deleted sittings for a content admin,
-and ``POST .../restore`` puts one back whole (a form: its author or a content admin). The one DELETE in this file removes a
-single QUESTION, and even that only really deletes when nobody has answered it — otherwise it
-retires. The database agrees with both: see the ``ON DELETE RESTRICT`` on
-``QuestionnaireFormAnswer.questionId``.
-"""
-
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -139,130 +87,22 @@ from app.services.xlsx_report import xlsx_response
 
 router = APIRouter(prefix="/questionnaires", tags=["questionnaires"])
 
-# A questionnaire is a page of typing, not a media file. The ceiling is generous enough for a
-# thousand-question instrument with answers in it and low enough that this endpoint cannot be used
-# to push a hundred megabytes through a synchronous parser.
-#
-# AND AS OF 2026-09-03 THAT SECOND CLAUSE IS TRUE, WHICH IT WAS NOT WHEN IT WAS WRITTEN (finding
-# A30-10). The ceiling was compared against ``len(content)`` AFTER ``await file.read()`` had already
-# put the whole body in the heap of this single-worker process, so a hundred-megabyte POST was
-# refused only once it had been paid for in full — the constant named a limit that nothing enforced
-# until it was too late to matter. ``_read_upload`` now delegates to ``services/uploads``, which
-# refuses on the declared Content-Length before a byte is read and counts what actually arrives.
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 _XLSX_SUFFIXES = (".xlsx", ".xlsm", ".xltx")
 
 
-# EACH PATCH'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null`` through
-# for, so emptying a box on the questionnaire editor actually empties the column instead of answering
-# 200 and keeping the old text. Four models, four different lists, for the reason ``clean_data``'s
-# ``clearable`` docstring gives: the set is per MODEL and a global one would trade a silent no-op on
-# one table for a constraint violation on another.
-#
-# MODULE CONSTANTS RATHER THAN TUPLES WRITTEN INLINE AT THE CALL, matching the four record routes.
-# That is what lets ``tests/test_record_patch_clearing`` derive each expected list from
-# ``schema.prisma`` and compare it with what the ROUTE declares. A test that retyped these names
-# would agree with itself and would never notice a newly nullable column nobody wired up — which is
-# exactly how ``description`` here, and ``phone`` on the artisan route, became a 200 that did nothing.
-#
-# Every one of these is only sound because its PATCH dumps with ``exclude_unset=True``; see the note
-# at each call site.
-
-#: ``Questionnaire``. ``sourceFilename`` is nullable too but ``QuestionnaireUpdate`` does not accept
-#: it — the uploader names the file, not an editor — and ``title``/``isActive`` are NOT NULL.
-#:
-#: ``designWorkshopId`` USED TO BE NAMED HERE AND DELIBERATELY IS NOT ANY MORE. When the six record
-#: models gained a ``designWorkshopId`` of their own (2026-08-28), the name went into the GLOBAL
-#: :data:`app.services.records.CLEARABLE_KEYS` so that every one of those routes clears it by the
-#: same rule. ``clearable`` ADDS to that set and can never subtract from it, so repeating the name
-#: here changed nothing about behaviour — and ``test_record_patch_clearing`` refuses the repetition
-#: by name, because a route tuple that lists a column the global set already owns is dead weight the
-#: next reader would take for the mechanism. Detaching a questionnaire from its workshop still
-#: works, and ``test_a_questionnaire_patch_detaches_the_workshop_it_was_filed_under`` still drives
-#: it; the null now arrives through the global door instead of this one.
-#:
-#: ``kind`` IS HERE BECAUSE "NOT STATED" IS A REAL STATE AND HAS TO BE REACHABLE. The picker on both
-#: clients carries a blank row, and choosing it sends ``kind: null``; without the name in this tuple
-#: ``clean_data`` would drop that null and the PATCH would answer 200 having changed nothing, leaving
-#: a designer who had un-set a kind looking at the kind they thought they had removed — and leaving
-#: the report still filing the form under a stage the designer no longer claims it belongs to.
-#: ``test_record_patch_clearing`` derives this list from ``schema.prisma`` and would have failed on
-#: the omission, which is the point of deriving it.
 _QUESTIONNAIRE_CLEARABLE_COLUMNS = ("description", "kind")
 
-#: ``QuestionnaireFormQuestion``. ``retiredAt`` and ``supersededById`` are nullable as well, but they
-#: belong to the retirement machinery — written by the supersede branch in ``update_question``, never
-#: by an editor — and ``CustomQuestionUpdate`` cannot reach either.
 _QUESTION_CLEARABLE_COLUMNS = ("helpText",)
 
-#: ``QuestionnaireFormEntry``, and here the PII case is the whole point: ``respondentName`` is the
-#: person interviewed and ``notes`` is what was written down about them during the sitting. ``title``
-#: is NOT NULL.
 _ENTRY_CLEARABLE_COLUMNS = ("respondentName", "notes")
 
-#: ``QuestionnaireFormSection`` — EMPTY, and empty on purpose rather than by omission. The model has
-#: no nullable column at all, so there is nothing an explicit null could legitimately clear. It is
-#: still declared, and still passed, so that the completeness test reads a route's answer for this
-#: model instead of a silence it would have to interpret.
 _SECTION_CLEARABLE_COLUMNS: tuple[str, ...] = ()
 
 
-# --- Access -------------------------------------------------------------------------------------
-#
-# Two levels, matching design_workshops.py rather than inventing a third scheme:
-#   * running a design workshop at all  -> may read questionnaires and record answers,
-#   * owning this questionnaire (or admin) -> may change its questions.
-# The split is what lets a designer hand a colleague a form to fill in without also handing them
-# the ability to reword it halfway through the fieldwork.
-#
-# NEITHER OF THOSE TWO SAYS ANYTHING ABOUT THE WORKSHOP a questionnaire is attached to, and that is
-# the gap that let any designer post their form into a stranger's report annexure. That gap has TWO
-# doors and both are now gated by a third question, asked of design_workshops.py's own helper:
-#   * ATTACHING a form to a workshop        -> ``_require_attachable_workshop``
-#   * WRITING sittings and answers to a form ALREADY attached to one
-#                                           -> ``_require_recordable_questionnaire``
-# Closing only the first left the second wide open — the id of an attached form is enough to inject
-# an interview into somebody else's ministry submission — so if a third door ever appears (a route
-# that writes anything a workshop's report prints), it asks the same question through the same
-# helper rather than growing a fourth rule here.
-#
-# ONE MORE QUESTION SINCE 2026-10-09, AND IT IS NOT A RIGHTS RULE: whoever inspects or supervises the
-# workshop a form is attached to changes nothing on it (``_refuse_its_workshops_holder``). Owning the
-# form or being an admin does not answer it, so every owner-gated edit and the sitting PATCH ask it
-# beside their own check; the two doors above reach it through the loader, which asks it for them.
-
 
 def _require_designer(user: Any) -> None:
-    """The designer set in front of every route in this file. NOT a rank floor — read the message.
-
-    ── WHY THE SENTENCE BELOW NAMES ROLES INSTEAD OF A THRESHOLD ────────────────────────────────
-
-    It used to read *"Building a questionnaire requires Designer access or above."* and that was
-    false in the one case where anybody reads a 403: ``can_run_design_workshops`` is the SET
-    ``deps.DESIGN_WORKSHOP_ROLES`` and not a floor over ``ROLE_RANK``, so a PROFESSOR — rank 40,
-    ABOVE Designer's 35 — is refused by it and was then told they lacked a rank they exceed.
-    Measured on this build, 2026-08-30: ``POST /api/questionnaires`` as a PROFESSOR answered
-    ``403 {"detail":"Building a questionnaire requires Designer access or above."}``. A professor
-    reading that has no move available: they cannot be promoted to a tier they already outrank, and
-    nothing on any screen says the gate is a set.
-
-    So the refusal NAMES THE ROLES and NAMES WHO TO ASK. Naming the roles is what makes the
-    non-monotonic rule legible — a reader can see their own role is simply not on the list, rather
-    than concluding the app is broken — and naming the administrator is what turns the sentence into
-    something actionable, because a role change is exactly what an admin can make.
-
-    **IT NAMED THREE ROLES UNTIL 2026-10-09, AND THE SET HAD HELD SIX SINCE 2026-09-14** — the
-    Assistant Director, Regional Director and Ministry Admin posts joined it — so every account it
-    refused was told a smaller set than the one that admits. It also offered a second remedy, "add
-    you to the design workshop this questionnaire belongs to", which cannot work for anybody this
-    refusal reaches: the role is asked before any workshop is, and the viewers write refuses a row to
-    a role outside the set. The sentence now names the six labels and the one remedy that exists.
-
-    IT DOES NOT APOLOGISE AND IT DOES NOT EXPLAIN THE LADDER. UI copy in this repository is terse by
-    house rule; the whole argument for why a professor is outside the set lives in
-    ``deps.can_run_design_workshops`` and is not repeated at the person being refused.
-    """
     if not can_run_design_workshops(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -275,8 +115,6 @@ def _require_designer(user: Any) -> None:
 
 
 async def _require_questionnaire(questionnaire_id: str, user: Any) -> Any:
-    """The live questionnaire, or 404. A soft-deleted one is not found here by anybody; only the
-    restore route reads it, by its own lookup."""
     _require_designer(user)
     record = await require_record(db.questionnaire, questionnaire_id)
     if record.deletedAt is not None:
@@ -285,7 +123,6 @@ async def _require_questionnaire(questionnaire_id: str, user: Any) -> Any:
 
 
 async def _deleted_by_names(rows: list[Any]) -> dict[str, str]:
-    """``deletedById`` -> the account's name, for the trash listings. One read, however many rows."""
     ids = sorted({row.deletedById for row in rows if getattr(row, "deletedById", None)})
     if not ids:
         return {}
@@ -294,69 +131,21 @@ async def _deleted_by_names(rows: list[Any]) -> dict[str, str]:
 
 
 async def _works_on_this_questionnaires_workshop(record: Any, user: Any) -> bool:
-    """Whether `user` is on the design workshop this questionnaire is attached to.
-
-    THE HOLE THIS CLOSES. `DesignWorkshopViewer` lets an admin put a second designer on a workshop,
-    and a grant admits them to the workshop AND to writing its stages. But a questionnaire is owned
-    by whoever uploaded it and scoped on `ownerId` alone, so the co-designer opened the workshop,
-    saw stage 7 tell them a survey questionnaire exists, and found nothing in the questionnaire list
-    — the two halves of one piece of fieldwork disagreeing about who is working on it.
-
-    IT ADMITS THE SITTINGS TOO, and that is deliberate rather than an oversight about sensitive
-    data. A sitting carries a respondent's name and answers — but so does stage 8's `surveyResponse`
-    collection, which a granted co-designer can already read AND EDIT through the stage form. Hiding
-    the questionnaire's copy of the same interview while showing the stage's copy would protect
-    nothing and would only make the questionnaire look empty. The grant is the decision; this
-    follows it.
-
-    An unattached questionnaire (`designWorkshopId` is null) is untouched by this and stays the
-    owner's alone.
-
-    A DELETED WORKSHOP ADMITS NOBODY, BY EITHER CLAUSE. The grant branch used to answer before the
-    workshop row was ever read, so a viewer row outlived the workshop it was about: after a soft
-    delete the colleague was 404'd from the workshop, 404'd from its stages and shown nothing in any
-    list — `_visible_questionnaire_where` carries `deletedAt: None` on both of its grant clauses —
-    while `GET /questionnaires/{id}` still handed over every sitting and `/xlsx` still served the
-    lossless workbook of respondents' names and answers. The creator branch below already asked, so
-    the two halves of this one helper disagreed and the GRANTED colleague outlived the designer who
-    CREATED the workshop. Reading the row first is what makes the two agree, and it makes this
-    function agree with `load_workshop_or_404`, which refuses a deleted workshop to everyone but an
-    admin.
-
-    Ordered creator-then-grant for the same reason `load_workshop_or_404` is: the creator is a field
-    comparison on a row already in hand, and the grant is a second (indexed, primary-key) lookup that
-    only the co-designer path has to pay for.
-    """
     workshop_id = getattr(record, "designWorkshopId", None)
     if not workshop_id:
         return False
     workshop = await db.designworkshop.find_unique(where={"id": workshop_id})
     if workshop is None or workshop.deletedAt is not None:
         return False
-    # The workshop's own creator, who holds no grant row because they never needed one.
     if workshop.createdById == user.id:
         return True
     return await has_viewer_grant(workshop_id, user.id)
 
 
-#: The row filter for "questionnaires this designer may see", now owned by the service.
-#:
-#: MOVED, NOT CHANGED (2026-09-03). The clause and every word of its argument are verbatim in
-#: ``services/questionnaire_forms.visible_questionnaire_where``; this name stays because three call
-#: sites below read it and because a private helper that quietly became public reads, in a diff, like
-#: a widening. What moved it is a second surface with the identical question:
-#: ``REFERENCE_MODELS["Questionnaire"]`` narrows stage 7's instrument picker, and
-#: ``services/design_workshops`` cannot import this module — this module imports IT — so the choice
-#: was to move the rule or to keep a second copy of it. Two copies of a visibility rule disagree
-#: eventually, and the one that wins is the wider one.
-#:
-#: The attach-to-workshop dropdown in ``list_attachable_questionnaires`` still composes its own,
-#: narrower clause by hand, and its comment says why. That was not moved and must not be merged in.
 _visible_questionnaire_where = visible_questionnaire_where
 
 
 def _require_owner(record: Any, user: Any) -> None:
-    # The one author rule of both portals (owner, 22 Oct 2026): app/questionnaire/authoring.py.
     if not questionnaire_authoring.may_change_form(user, record):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -365,114 +154,14 @@ def _require_owner(record: Any, user: Any) -> None:
 
 
 async def _refuse_its_workshops_holder(record: Any, user: Any) -> None:
-    """403 naming the post for the inspector or a director of the workshop this form is attached to.
-
-    THE SECOND QUESTION EVERY EDIT OF A FORM ASKS, after ``_require_owner`` (2026-10-09). An attached
-    form's sittings print in the workshop's report annexure, so the form is that workshop's content
-    as surely as a record filed under it is, and whoever inspects or supervises the workshop changes
-    none of it — not as its owner, not as an admin: no rename, no deactivation, no detach or move, no
-    re-upload, no section or question, no sitting's own fields. The record forms ask the same thing
-    in the same words (``services/record_design_workshop``). A form attached to nothing asks nothing.
-
-    Kept separate from ``_require_owner`` rather than folded into it: that one is a pure check on the
-    row in hand, and this one reads who serves on the workshop.
-    """
     await assert_may_write_a_record_filed_under(getattr(record, "designWorkshopId", None), user)
 
 
 async def _require_attachable_workshop(workshop_id: str, user: Any) -> None:
-    """The workshop a questionnaire is about to be pointed at — or a 404, as if it did not exist.
-
-    ATTACHING IS A WRITE TO SOMEBODY ELSE'S RECORD, WHICH IS WHY THIS IS NOT ``require_record``.
-    All three routes that set ``Questionnaire.designWorkshopId`` (upload, create, patch) used to ask
-    only whether a workshop ROW EXISTS: ``require_record(db.designworkshop, id)`` is a bare
-    ``find_unique`` — no creator test, no ``DesignWorkshopViewer`` test, no admin test, not even a
-    ``deletedAt`` filter. ``_require_designer`` above admits EVERY designer account, and
-    ``_require_owner`` on the PATCH is ownership of the QUESTIONNAIRE, not of the workshop being
-    named. So one ordinary call — ``POST /api/questionnaires`` with
-    ``{"designWorkshopId": "<a workshop the caller is 404'd from>"}`` — returned 201, and the door
-    swung both ways:
-
-    * ``report_items`` (services/questionnaire_forms.py:292) selects on
-      ``{"designWorkshopId": ..., "isActive": True}`` with NO permission filter, on the stated
-      ground that "the attachment is what puts the questionnaire inside the workshop's own access
-      boundary" — an assumption only this function makes true. ``QUESTIONNAIRE_ANNEXURE`` is in
-      ALL SIX report templates (report_templates.py:354, 367, 400, 431, 448, 479 — that is every
-      entry of ``TEMPLATES``, counted 2026-08-15), so a stranger's sittings — respondent names,
-      interviewer notes, every recorded answer — printed as an annexure of another designer's
-      fieldwork in the .docx submitted to a ministry under that designer's name.
-      ``questionnaire_warnings`` fires only for an attached form with NO answers, so an ANSWERED
-      one went in silently, warning neither party.
-    * ``_works_on_this_questionnaires_workshop`` above then admits everybody on the target workshop
-      to the attached form, so the attacker's own respondents' names and answers were pushed into a
-      stranger's access boundary as well, readable through ``GET /questionnaires/{id}`` and
-      downloadable through ``/xlsx``. A mistyped or stale workshop id produced all of this by
-      accident.
-
-    ``load_workshop_or_404(..., for_edit=True)`` is deliberately the SAME helper ``save_stage_data``
-    and ``save_custom_sections`` use, and not a private near-copy of it. Attaching a questionnaire
-    changes what that workshop's report SAYS, so it has to be exactly as hard as editing one of its
-    stages — creator, admin, or grant-holder — and it must refuse a soft-deleted workshop (409)
-    instead of quietly filling the annexure of a record nobody can open. If a fourth attachment
-    route is ever added, it calls this; do not reach for ``require_record`` again because it is one
-    line shorter.
-
-    404 rather than 403, inherited from the helper and for the helper's reason: a 403 would confirm
-    that the id exists to precisely the caller being turned away.
-
-    DETACHING NEEDS NO CHECK, and none of the three callers makes one. Sending
-    ``designWorkshopId: null`` only ever removes a pointer; demanding rights over the workshop in
-    order to let go of it would strand a questionnaire on a workshop whose grant was withdrawn, with
-    its owner unable to take their own form back. The one exception is not a rights check and does
-    not live here: every edit of an attached form, a detach or a move off it included, refuses the
-    workshop's inspector and its two directors (``_refuse_its_workshops_holder``, 2026-10-09),
-    asking about their post and nothing else — so that owner still takes their form back.
-    """
     await load_workshop_or_404(workshop_id, user, for_edit=True)
 
 
 async def _require_recordable_questionnaire(record: Any, user: Any) -> None:
-    """The other half of ``_require_attachable_workshop``: WRITING to a form already attached.
-
-    THE ATTACH FIX CLOSED ONE OF TWO DOORS AND THIS IS THE SECOND ONE. Stopping a designer POINTING
-    a questionnaire at a stranger's workshop does nothing about a designer who already holds the id
-    of a form that is attached to one: ``POST /questionnaires/{id}/entries`` and
-    ``PUT /questionnaires/{id}/entries/{eid}/answers`` were gated by ``_require_questionnaire``
-    alone — role plus "the row exists" — so any DESIGNER account could add a sitting, with a
-    respondent's NAME on it, and a full set of answers, to another team's instrument. Those
-    sittings print: ``report_items`` selects on ``designWorkshopId`` with no permission filter and
-    ``QUESTIONNAIRE_ANNEXURE`` is in all six templates, so the fabricated interview goes into the
-    .docx another designer submits to a ministry under their own name. Exactly the consequence the
-    attach hole had, reached from the other side.
-
-    IT IS THE SAME CHECK, DELIBERATELY, and ``load_workshop_or_404(..., for_edit=True)`` is called
-    through the same helper the attach path uses rather than a second predicate written here.
-    Adding a sitting changes what that workshop's report SAYS, which is the argument
-    ``_require_attachable_workshop`` makes for attaching and ``save_stage_data`` makes for a stage
-    write; three ways of saying the same thing would be three things to keep in step. So: the
-    workshop's creator, an admin, or the holder of a ``DesignWorkshopViewer`` grant — and a
-    REVOKED grant now takes effect on writes exactly as it already does on reads
-    (``_works_on_this_questionnaires_workshop``), which was the point of the finding.
-
-    AN UNATTACHED QUESTIONNAIRE IS UNTOUCHED AND THAT IS NOT AN OVERSIGHT. ``create_entry``'s rule
-    — "a form only its author may answer is a form nobody uses" — is the product working as
-    designed: a designer hands a colleague a form, the colleague fills it in, and
-    ``read_questionnaire`` already shows that colleague their OWN sittings and nobody else's
-    (``only_entries_of``). Narrowing writes to the owner here would make that ``only_entries_of``
-    branch unreachable for the very people it exists for. The workshop is what introduces a second
-    party with a stake in the answers, so the workshop is what the gate asks about.
-
-    NO OWNER BYPASS, for ``_require_attachable_workshop``'s reason: owning the FORM has never said
-    anything about the workshop it points at. An owner who has lost their grant is not stranded —
-    detaching asks nothing about their rights over the workshop (that helper's last paragraph), so
-    they can take their own questionnaire back and keep recording. Adding the owner test here
-    (``record.ownerId == user.id``) would reopen the hole for precisely the revoked account.
-
-    404/409 rather than 403, inherited from the helper: a 403 would confirm the workshop id exists
-    to the caller being turned away, and a soft-deleted workshop gets the one sentence that names
-    the way out ("Restore it before editing") instead of silently collecting sittings for a record
-    nobody can open.
-    """
     workshop_id = getattr(record, "designWorkshopId", None)
     if not workshop_id:
         return
@@ -480,15 +169,6 @@ async def _require_recordable_questionnaire(record: Any, user: Any) -> None:
 
 
 def _kind_or_422(value: str | None) -> str | None:
-    """``coerce_kind`` with its ``ValueError`` turned into the 422 the rest of this API answers.
-
-    The JSON routes get this for free — ``QuestionnaireCreate``/``QuestionnaireUpdate`` carry a
-    pydantic validator, and pydantic renders a raised ``ValueError`` as a 422 naming the field. The
-    UPLOAD route takes multipart ``Form`` fields, which have no model behind them, so without this
-    an unknown token would travel straight into the column and the report would later try to file the
-    questionnaire under a stage that does not exist. One helper rather than a try/except at the call
-    site, so a second multipart door added later cannot forget the check.
-    """
     try:
         return coerce_kind(value)
     except ValueError as exc:
@@ -498,31 +178,6 @@ def _kind_or_422(value: str | None) -> str | None:
 
 
 async def _read_upload(file: UploadFile, request: Request | None = None) -> bytes:
-    """The uploaded bytes, or a 4xx a designer can act on rather than a 500 from openpyxl.
-
-    THE CAP USED TO BE CHECKED AFTER THE BODY WAS ALREADY IN MEMORY (2026-09-03, finding A30-10).
-    ``await file.read()`` ran first and ``len(content) > MAX_UPLOAD_BYTES`` second, which is a
-    ceiling that costs exactly what it was supposed to prevent: the process holds the whole upload,
-    and only then answers 413. On one uvicorn worker serving a fleet, a handful of concurrent
-    oversized POSTs is the memory of the box, and nothing about the route said no earlier — this is
-    the same shape ``data_browser``'s conversion bound was fixed for, one door along.
-
-    THE ORDER IS THE WHOLE FIX, AND IT IS THREE REFUSALS FROM CHEAPEST TO DEAREST. The extension is
-    a string on the multipart part, so a .docx is turned away without touching the body at all. The
-    declared ``Content-Length`` costs a header lookup, and turns away an honest large workbook
-    before it is uploaded. Only then is the body read, and ``read_upload_bounded`` counts it as it
-    arrives so a request that UNDERSTATES its length is stopped mid-read rather than after it.
-
-    DELEGATED RATHER THAN WRITTEN HERE, because this is the second door with this shape and there
-    will be a third: the bound belongs beside the other upload rules in ``services/uploads``, where
-    one fix reaches every route. What stays here is what is specific to this door — that the file
-    must be a workbook, and that an empty one is a designer who attached the wrong thing rather than
-    an error the parser should be asked to explain.
-
-    ``request`` IS OPTIONAL AND THE BOUND DOES NOT DEPEND ON IT. Without it only the header
-    pre-check is skipped; the mid-read count still holds, which is the refusal that cannot be lied
-    to. Every caller in this file passes one.
-    """
     name = (file.filename or "").lower()
     if name and not name.endswith(_XLSX_SUFFIXES):
         raise HTTPException(
@@ -544,28 +199,12 @@ async def _read_upload(file: UploadFile, request: Request | None = None) -> byte
 
 
 def _xlsx_response(payload: bytes, filename: str) -> Response:
-    """The download header, now owned by ``services/xlsx_report`` beside ``XLSX_MIME`` itself.
-
-    KEPT AS A ONE-LINE DELEGATE RATHER THAN DELETED, so the five call sites below read exactly as
-    they did and the diff that moved it stays a move. The body went public when a THIRD .xlsx
-    download appeared — the artisan pro-forma on ``/design-workshop-oversight`` — because the
-    alternative was that new router either restating a 73-character MIME string nobody proof-reads
-    or reaching into THIS route module for a private name.
-    """
     return xlsx_response(payload, filename)
 
-
-# --- The pro-forma ------------------------------------------------------------------------------
 
 
 @router.get("/pro-forma")
 async def download_pro_forma(current_user: Any = Depends(get_current_user)) -> Response:
-    """The blank .xlsx a designer builds their questionnaire in.
-
-    Generated on every request rather than cached: it is a few kilobytes of openpyxl, and a stale
-    cached copy whose columns no longer match the parser is a designer typing forty questions into
-    headings the app no longer recognises.
-    """
     _require_designer(current_user)
     return _xlsx_response(build_pro_forma(), PRO_FORMA_FILENAME)
 
@@ -574,24 +213,7 @@ async def download_pro_forma(current_user: Any = Depends(get_current_user)) -> R
 async def download_questionnaire(
     questionnaire_id: str, current_user: Any = Depends(get_current_user)
 ) -> Response:
-    """This questionnaire as the same workbook — question ids filled in, answers in their columns.
-
-    The download half of edit-in-Excel. The ids are what make re-uploading this file an EDIT of
-    these questions rather than a second copy of them, which is why the Question ID column is greyed
-    and the instructions sheet says not to touch it.
-
-    OWNER-GATED, unlike reading the form, and it is the workbook's CONTENTS that draw the line
-    rather than the fact that it is a file: ``export_payload`` is deliberately lossless — every
-    sitting, every respondent's name, every answer and every retired question — because the round
-    trip has to be. That is the whole answer set of somebody else's fieldwork in one download, and
-    the same data ``read_questionnaire`` now narrows per sitting. Re-upload has always been the
-    owner's alone; this is the door beside it.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
-    # Exactly the rule `read_questionnaire` applies to the sittings, and it has to be exactly that
-    # rule: this workbook IS the sittings, losslessly. Letting a co-designer read the answers on the
-    # page and refusing them the download of the same answers would be a distinction the data cannot
-    # support, and one they would route around by copying the page.
     if not (
         record.ownerId == current_user.id
         or is_content_admin(current_user)
@@ -619,36 +241,6 @@ async def download_questionnaire(
 async def download_question_set(
     questionnaire_id: str, current_user: Any = Depends(get_current_user)
 ) -> Response:
-    """This questionnaire's QUESTIONS ALONE — the artefact a designer sends to another designer.
-
-    ================================================================================================
-    WHY THIS IS A SECOND ROUTE AND NOT A QUERY PARAMETER ON ``/xlsx``
-    ================================================================================================
-
-    Because the two files have different gates, and a parameter that changes a gate is a gate one
-    typo away from opening. ``?questionsOnly=true`` would have put the whole decision inside a
-    boolean that defaults, and the wrong default on this particular boolean hands a stranger every
-    respondent's name in the questionnaire. Two paths, two permission blocks, no shared default.
-
-    ================================================================================================
-    WHY ANY DESIGNER MAY TAKE IT, WHICH IS A WIDER GATE THAN ``/xlsx`` AND DELIBERATELY SO
-    ================================================================================================
-
-    ``read_questionnaire`` above already hands the QUESTIONS of any questionnaire to any designer —
-    that is the stated rule ("the form is open to any designer and its sittings are not"), and it is
-    what lets a designer hand a colleague a form to fill in. This file is exactly that openly
-    readable half, written into a spreadsheet. Refusing the file while serving the same content as
-    JSON would protect nothing and would be routed around by copy-and-paste within the hour.
-
-    The SITTINGS are what ``/xlsx`` is gated on, and this endpoint cannot reach one:
-    ``export_question_set_payload`` is built on ``load_question_set``, which never issues the entry
-    or answer queries at all. So the difference between the two endpoints is not a filter that could
-    be forgotten — it is two different reads of the database.
-
-    ``_require_designer`` rather than ``get_current_user`` alone, because a questionnaire is a
-    designer's instrument and a researcher who is not running design workshops has no use for one;
-    that is the same floor every other route in this file stands on.
-    """
     await _require_questionnaire(questionnaire_id, current_user)
     payload = await export_question_set_payload(questionnaire_id)
     if payload is None:
@@ -658,18 +250,11 @@ async def download_question_set(
         description=payload["description"],
         sections=payload["sections"],
         source_title=payload["source_title"],
-        # WHO exported it and WHEN, on the Details sheet. Not decoration: the file's whole purpose is
-        # to travel between people, and a spreadsheet in a shared drive with no idea where it came
-        # from is one a designer re-uploads twice or attributes to the wrong colleague. The NAME is
-        # the exporter's own, which they are entitled to disclose about themselves; nothing here
-        # names anybody who was interviewed.
         shared_by=getattr(current_user, "name", None) or None,
         exported_on=datetime.now(UTC).date().isoformat(),
     )
     return _xlsx_response(workbook, question_set_filename(payload["title"]))
 
-
-# --- Upload -------------------------------------------------------------------------------------
 
 
 @router.post("/bundles/import", status_code=status.HTTP_201_CREATED)
@@ -678,11 +263,6 @@ async def import_questionnaire_bundle(
     response: Response,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Open a handoff bundle (``.dpwq`` or ``.frwq``, or designer-portal Android's v1 file; UNIFY
-    A10): a new form of your own, sections and questions only, written where the forms live. The
-    body is the bundle file (multipart ``file``) or its JSON. Importing the same bundle again returns
-    the first copy with 200 rather than 201; a bundle from a newer build is ``BUNDLE_VERSION``. The
-    same rules as Field Repository (``app/questionnaire/library``)."""
     from app.questionnaire import library
 
     _require_designer(current_user)
@@ -710,9 +290,6 @@ async def download_questionnaire_bundle(
     questionnaire_id: str,
     current_user: Any = Depends(get_current_user),
 ) -> Response:
-    """This form as a handoff bundle (``.dpwq``; UNIFY A10): gzipped JSON in
-    ``shared/questionnaire-bundle.json``'s shape with no ids, owner or answers in it, for another
-    researcher to open on any client of either portal. Its live sections and questions only."""
     import secrets as _secrets
 
     from app.questionnaire import library
@@ -756,25 +333,6 @@ async def upload_questionnaire(
     kind: str | None = Form(default=None),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Create a questionnaire from a filled-in pro-forma.
-
-    ``title`` and ``designWorkshopId`` are FORM FIELDS on the same multipart body as the file, not
-    query parameters — matching ``design_workshops.dictate``, the repo's other multipart endpoint
-    with a scalar alongside the upload. Left as bare defaults they would have been read as query
-    parameters instead, and a client that appended them to the body would have had them silently
-    ignored: an untitled questionnaire attached to nothing, with a 201 saying it went fine.
-
-    ``request`` IS NOT A PARAMETER ANY CLIENT SENDS. FastAPI fills it from the connection, so it
-    changes nothing about this route's contract — no query string, no form field, no header a
-    fielded 0.0.7 handset or a cached web bundle has to learn. It is here only so ``_read_upload``
-    can read the declared ``Content-Length`` and refuse an oversized workbook before reading it.
-
-    The response carries ``report.problems``: every row the parser could not read and every
-    assumption it had to make, with its Excel row number. THAT LIST IS THE FEATURE. A designer who
-    uploads forty questions and is shown thirty-eight, with no way to find out which two are missing
-    or why, does not trust the import again — and the likeliest causes (a merged cell, a formula
-    Excel never calculated, "maybe" in the Required column) are all invisible from the result.
-    """
     _require_designer(current_user)
     content = await _read_upload(file, request)
     try:
@@ -785,20 +343,12 @@ async def upload_questionnaire(
         ) from exc
 
     if designWorkshopId:
-        # Rights over the WORKSHOP, not merely its existence — see _require_attachable_workshop.
-        # The multipart door is the same door: a form field named designWorkshopId attaches the
-        # questionnaire just as completely as the JSON one on POST/PATCH below does.
         await _require_attachable_workshop(designWorkshopId, current_user)
     questionnaire_id, report = await create_from_parsed(
         parsed,
         owner_id=current_user.id,
         title=title,
         design_workshop_id=designWorkshopId,
-        # VALIDATED HERE AND NOT BY A PYDANTIC MODEL, because this route takes multipart form fields
-        # rather than a JSON body and so has no model to hang a validator on. ``coerce_kind`` raises
-        # ``ValueError``; the wrapper turns it into the 422 a bad enum gets everywhere else in this
-        # API, rather than letting an unknown token reach the column and be filed under a stage that
-        # does not exist. An empty field — the picker untouched — is "not stated", not an error.
         kind=_kind_or_422(kind),
         source_filename=file.filename,
         user=current_user,
@@ -816,21 +366,9 @@ async def reupload_questionnaire(
     title: str | None = Form(default=None),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Re-upload an edited workbook over an existing questionnaire.
-
-    Runs the edit-after-answers rule (services/questionnaire_forms.py). The response's
-    ``report.details`` names every question that was superseded or retired and says why in a
-    sentence meant to be shown verbatim — a designer whose six reworded questions came back as six
-    NEW questions needs to be told that happened and that their answers are safe, not left to work
-    it out from a question count.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
-    # Before the workbook is read, so a holder of the workshop the form is attached to is not made
-    # to pay for an upload that was always going to be refused.
     await _refuse_its_workshops_holder(record, current_user)
-    # ``request`` is filled by FastAPI from the connection and is not part of this route's contract
-    # — see ``upload_questionnaire``. It buys the Content-Length refusal before the read.
     content = await _read_upload(file, request)
     try:
         parsed = parse_questionnaire_workbook(content, filename=file.filename)
@@ -839,9 +377,6 @@ async def reupload_questionnaire(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
 
-    # A Questionnaire ID on the Details sheet that names a DIFFERENT questionnaire means the
-    # designer picked the wrong file out of their downloads folder. Applying it would retire this
-    # questionnaire's entire question set as "absent from the upload" in one press.
     if parsed.questionnaireId and parsed.questionnaireId != questionnaire_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -857,10 +392,6 @@ async def reupload_questionnaire(
             parsed,
             user_id=current_user.id,
             title=title,
-            # ONE REMOVAL RULE ON EVERY PATH (owner, 21 Oct 2026, amended 22 Oct; audit M2): a
-            # question left out of the file is retired or deleted for whoever may remove one on
-            # DELETE .../questions — the form's author or a content admin, which `_require_owner`
-            # above has already established for this caller.
             may_remove=True,
         )
     except QuestionnaireEditError as exc:
@@ -871,16 +402,10 @@ async def reupload_questionnaire(
         await db.questionnaire.update(
             where={"id": questionnaire_id}, data={"sourceFilename": file.filename}
         )
-    # RETIRED QUESTIONS INCLUDED, unlike the create path, which has none. This is the one response
-    # whose report can say "superseded 1, retired 1" — and a form that then omitted both of them
-    # would leave a client unable to show the designer the questions it just told them about, or to
-    # find the answers still hanging off them.
     await _reconcile_codes(questionnaire_id)
     form = await load_form(questionnaire_id, include_retired=True)
     return public_encode({"questionnaire": form, "report": report})
 
-
-# --- List, read, update -------------------------------------------------------------------------
 
 
 @router.get("")
@@ -895,17 +420,6 @@ async def list_questionnaires(
     deletedOnly: bool = False,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Questionnaires this designer may use, newest first.
-
-    Scoped exactly as design workshops are: a non-admin sees their own, an explicit ``mineOnly``
-    narrows an admin's view without changing anybody else's. ``designWorkshopId`` is what the
-    workshop screen passes to show only the forms attached to it.
-
-    ``deletedOnly`` is THE TRASH, newest deletion first. A content admin sees every deleted form;
-    anyone else sees only the forms they authored, because those are the ones they may restore
-    (owner, 22 Oct 2026). It ignores ``activeOnly``: a form retired before it was deleted is still
-    one its author or an admin may restore.
-    """
     _require_designer(current_user)
     where: dict[str, Any] = {"deletedAt": {"not": None} if deletedOnly else None}
     if deletedOnly and not is_content_admin(current_user):
@@ -913,16 +427,9 @@ async def list_questionnaires(
     if activeOnly and not deletedOnly:
         where["isActive"] = True
     if designWorkshopId:
-        # One workshop (the workshop screen), or several from the library's filter: repeated or
-        # comma-separated, the shared filters' spelling.
         chosen = [w.strip() for value in request.query_params.getlist("designWorkshopId") or [designWorkshopId]
                   for w in value.split(",") if w.strip()]
         where["designWorkshopId"] = chosen[0] if len(chosen) == 1 else {"in": chosen}
-    # THE SHARED FILTERS (owner, 31 Oct 2026; ``app/questionnaire/filters.py``): the free text
-    # (``search`` or ``q``) finds a form by its title, description, sections, questions and the
-    # sessions held on it; kind, artisans, researchers, workshops, dates, source, transcript and
-    # language keep the forms with a live session that matches. ``designWorkshopId`` keeps its own
-    # meaning above (the forms attached to that workshop), so it is not passed on.
     library_filters = shared_filters.parse(request.query_params).without("designWorkshopId")
     if search and not library_filters.q:
         library_filters = shared_filters.Filters(**{**library_filters.__dict__, "q": search.strip()[: shared_filters.MAX_TEXT]})
@@ -930,42 +437,17 @@ async def list_questionnaires(
     if matching is not None:
         where.setdefault("AND", []).append({"id": {"in": sorted(matching)}})
     if mineOnly or (deletedOnly and not is_content_admin(current_user)):
-        # An explicit "mine" means MINE — the ones this designer uploaded — and must not quietly
-        # include a colleague's form that happens to hang off a shared workshop.
         where["ownerId"] = current_user.id
     elif not is_content_admin(current_user):
-        # Own forms, plus the forms attached to a design workshop this designer works on. AND-composed
-        # because `where["OR"]` above already belongs to the search box.
         where.setdefault("AND", []).append(_visible_questionnaire_where(current_user))
 
     clean_page, clean_size, skip = normalize_pagination(page, pageSize)
-    # Count and page together — the shape ``records.count_and_page`` exists for, spelled out here
-    # because this read needs ``include=`` and that helper takes ``relations``. Neither reads the
-    # other, so awaiting them in turn spent a cross-region round trip on the total alone.
     total, rows = await gather_reads(
         db.questionnaire.count(where=where),
         db.questionnaire.find_many(
             where=where,
             skip=skip,
             take=clean_size,
-            # ── THE PUBLISHED DEFAULT SORTS FIRST, AND THAT IS A BUG FIX RATHER THAN A PREFERENCE ──
-            #
-            # This was ``{"createdAt": "desc"}`` alone, and the standard instrument is by definition
-            # the OLDEST row a designer can see: an administrator seeds it once, and every form the
-            # designer builds afterwards is newer. So the one row published to everybody sorted LAST
-            # — below every draft they had made themselves — and a designer with more than a page of
-            # questionnaires never reached it. The `isShared` badge this list already draws was
-            # therefore a badge on a page nobody opens, which is the same defect Android's own list
-            # comment describes for a grant-holder's row ("the one row a grant exists to reveal is
-            # the one row a single page cannot reach").
-            #
-            # A SORT AND NOT A FILTER, deliberately. A "standard forms" filter would be a control a
-            # designer has to know to press before the feature exists for them; this puts the form in
-            # front of them without asking them to look for it, and costs nothing when there is no
-            # shared form at all — every row has ``isShared = false`` and the order is what it was.
-            #
-            # STILL TOTAL, so paging is still stable: ``with_id_tiebreak`` appends ``id`` to whatever
-            # it is given, and a list is what it takes when the ordering has more than one clause.
             order=with_id_tiebreak(
                 [{"deletedAt": "desc"}]
                 if deletedOnly
@@ -985,22 +467,13 @@ async def list_questionnaires(
             "designWorkshopId": row.designWorkshopId,
             "designWorkshopTitle": getattr(row.designWorkshop, "title", None),
             "isActive": row.isActive,
-            # See the same key on `/options`: a designer's list can now contain a form they did not
-            # upload, and a row that cannot say why reads as somebody else's work leaking in.
             "isShared": row.isShared,
-            # THE KIND, AND ITS LABEL BESIDE IT. The token is what a client filters and PATCHes on;
-            # the label is what it prints. Both are sent because the alternative is each client
-            # carrying its own translation of a server vocabulary, which is how the two of them come
-            # to word one value differently — and the owner asked for identical wording. The clients
-            # DO still carry the list (they have to draw a picker before any row exists to label),
-            # and `tests/test_questionnaire_kinds.py` holds those copies to the server's.
             "kind": row.kind,
             "kindLabel": label_for(row.kind),
             "version": row.version,
             "sourceFilename": row.sourceFilename,
             "createdAt": row.createdAt,
             "updatedAt": row.updatedAt,
-            # Null on every live row; set only in the trash.
             "deletedAt": row.deletedAt,
             "deletedByName": deleters.get(row.deletedById or ""),
         }
@@ -1014,28 +487,9 @@ async def questionnaire_options(
     designWorkshopId: str | None = None,
     current_user: Any = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
-    """The attach-to-a-workshop dropdown: id + label, nothing else, no paging.
-
-    Its own endpoint rather than a page-size-500 call to the list, because a dropdown that silently
-    stops at page one is a designer who cannot find the questionnaire they uploaded this morning.
-    """
     _require_designer(current_user)
     where: dict[str, Any] = {"isActive": True, "deletedAt": None}
     if not is_content_admin(current_user):
-        # OWN FORMS **OR THE PUBLISHED DEFAULT**, and this used to be `ownerId` alone.
-        #
-        # That single equality is the other half of the defect the fourth clause of
-        # `_visible_questionnaire_where` closes: even once a designer could SEE the shared
-        # instrument in their list, the dropdown that attaches a questionnaire to a workshop was
-        # still built from `ownerId == me`, so the one control whose whole job is offering could not
-        # offer it. The owner's words are "designers can directly select and utilize it" — the list
-        # is the seeing half and this is the selecting half, and shipping one without the other
-        # would have looked like the feature working right up to the moment it was used.
-        #
-        # Written out here rather than calling `_visible_questionnaire_where`: this dropdown is
-        # deliberately NARROWER than the list. It offers what a designer may ATTACH, and a
-        # colleague's form that happens to hang off a shared workshop is not that — reattaching it
-        # would take it out of the workshop its author put it in.
         where["OR"] = [{"ownerId": current_user.id}, {"isShared": True}]
     rows = await db.questionnaire.find_many(where=where, order={"title": "asc"}, take=500)
     return [
@@ -1044,21 +498,9 @@ async def questionnaire_options(
             "title": row.title,
             "version": row.version,
             "designWorkshopId": row.designWorkshopId,
-            # So a client can label the row "Standard form" rather than leaving a designer to wonder
-            # why a questionnaire they never uploaded is in their list. Also what stops a shared form
-            # being drawn as though it were the designer's own to edit — the PATCH still refuses
-            # anybody but its owner or an admin, and a control that offers an edit it cannot perform
-            # is worse than one that says whose form this is.
             "isShared": row.isShared,
-            # So the attach dropdown on the design-workshop screen can say WHICH of the several forms
-            # now attachable to one workshop this row is. That screen is the whole reason the kind
-            # exists: a designer running a workshop interview and a market survey at one cluster sees
-            # two rows here, and before this key the only thing telling them apart was whatever the
-            # designer happened to type into the title.
             "kind": row.kind,
             "kindLabel": label_for(row.kind),
-            # So the dropdown can mark "already attached to another workshop" rather than letting a
-            # designer reattach one mid-fieldwork and wonder where it went.
             "attachedElsewhere": bool(
                 row.designWorkshopId
                 and designWorkshopId
@@ -1075,22 +517,6 @@ async def read_questionnaire(
     includeRetired: bool = False,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """The form, its sittings and its answers.
-
-    ``includeRetired`` is what the EDITOR passes and the answer screen does not: a retired question
-    has to stay visible where its recorded answers are read, and must never be offered for a new
-    answer. ``question.hasAnswers`` on every question is what lets a client grey out the rewording
-    box BEFORE the designer types into it.
-
-    THE FORM IS OPEN TO ANY DESIGNER AND ITS SITTINGS ARE NOT. Reading the questions has to stay
-    open or a colleague handed the form cannot fill it in — that is the rule the route table in
-    frontend/lib/permissions.ts states and the reason ``_require_owner`` is not applied here. The
-    ``entries`` array is a different thing wearing the same payload: each sitting carries the
-    respondent's NAME, the interviewer's notes and every recorded answer. Any designer holding
-    the id — from a shared link, a browser history entry, a report annexure — got all of it, while
-    their own list view showed ``total: 0`` for the same questionnaire, so the app said it did
-    not exist and the API handed it over.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     entitled = await _sees_every_sitting(record, current_user)
     mine_only = None if entitled else current_user.id
@@ -1100,8 +526,6 @@ async def read_questionnaire(
     if form is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     if await shims_dr.form_is_unified(questionnaire_id):
-        # QUESTIONNAIRE_V2 on and the form in the shared tables: its sittings are sessions now
-        # (UNIFY 4.5), read back in the old shape so an old build's screen still fills in.
         entries = await shims_dr.entries_for_form(questionnaire_id)
         form["entries"] = [e for e in entries if mine_only is None or e.get("createdById") == mine_only]
     return public_encode(form)
@@ -1113,80 +537,10 @@ async def reuse_questionnaire_route(
     payload: QuestionnaireReuse,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Use this questionnaire again, as a template, at another design workshop.
-
-    The owner's request in their own words: questionnaires "would usually be scoped to the workshops,
-    but the designers would have the permission to use the same questionnaire later on for a
-    different workshop as well in case they want to reuse the same template."
-
-    ================================================================================================
-    IT COPIES. THE COPY CARRIES QUESTIONS AND NO FIELDWORK.
-    ================================================================================================
-
-    A new ``Questionnaire`` row, a new section tree, a new question tree — and ZERO
-    ``QuestionnaireFormEntry`` and ZERO ``QuestionnaireFormAnswer``. ``reuse_questionnaire`` reads the
-    source through ``load_question_set``, which never issues the entry or answer queries at all, so
-    the rows it feeds cannot contain an answer; see that function for the full argument, including
-    why one questionnaire pointing at MANY workshops was rejected (a sitting has no workshop, and
-    ``report_items`` selects on ``designWorkshopId`` alone, so it would print workshop A's named
-    respondents in workshop B's ministry annexure).
-
-    ================================================================================================
-    A PATH ROUTE ON THE SOURCE, NOT A ``copyOf`` PARAMETER ON ``POST ""``
-    ================================================================================================
-
-    For the reason ``/question-set.xlsx`` is a second route rather than ``?questionsOnly=true`` on
-    ``/xlsx``: a parameter that changes what an endpoint DOES is one typo away from doing the other
-    thing. ``POST ""`` creates an empty questionnaire and this one clones an existing designer's
-    instrument into the caller's ownership; sharing a body between the two would put that difference
-    inside an optional field's default.
-
-    ================================================================================================
-    THE GATES, IN ORDER, AND WHY EACH IS THE ONE IT IS
-    ================================================================================================
-
-    1. ``_require_questionnaire`` — Designer or above, and the source row exists.
-    2. **NOT** ``_require_owner``. This is the one mutating route in this module that does not demand
-       ownership of the questionnaire it names, and that is deliberate: the INSTRUMENT already leaves
-       this system for any designer through ``GET /{id}/question-set.xlsx``, whose docstring states
-       the rule ("this file is exactly the openly readable half"). Refusing here would refuse in JSON
-       precisely what the .xlsx door hands over — and be routed around by downloading that file and
-       uploading it, which produces the same row with NO provenance recorded at all.
-    3. ``_require_attachable_workshop`` when a target workshop is named — the SAME helper the three
-       existing attachment routes call, because this is a fourth attachment route and that helper's
-       own docstring says so ("If a fourth attachment route is ever added, it calls this"). Workshop
-       creator, admin, or viewer grant; 404 for a workshop the caller cannot see, 409 for a
-       soft-deleted one. Asked BEFORE anything is written, so a refusal leaves no orphan row.
-    4. **No workshop check at all when no target is named.** An unattached copy is nobody's business
-       but its owner's: ``_visible_questionnaire_where`` shows it under ``ownerId = me`` and nothing
-       else, and ``report_items`` cannot reach a row with a NULL ``designWorkshopId``.
-
-    A DEACTIVATED SOURCE IS STILL REUSABLE, and that is not an oversight. ``isActive: false`` is this
-    API's stand-in for a delete — the form is out of use, its recorded answers preserved — and a
-    retired instrument is exactly the thing a designer wants to lift for a new round. Refusing would
-    force them to reactivate it first, which puts it back in every list and every dropdown for
-    everyone, to make a copy.
-
-    THE RESPONSE IS THE UPLOAD RESPONSE'S SHAPE — ``{"questionnaire": ..., "report": {...}}`` — so
-    ``QFormUploadReport`` types it on the client and the existing ``UploadReport`` panel renders it.
-    ``report.provenance`` carries ``action: "reused"``, the source id, ``answersSkipped: 0`` and a
-    sentence written to be shown VERBATIM.
-
-    It carries ONE KEY MORE than the upload response: ``sourceQuestionnaireId``, at the top level.
-    The upload path has no single source to name — a workbook is a file, and the id it claims to have
-    come from is untrusted text inside it — whereas this path copied a row it had already read and
-    authorised. ``QFormReuseResult`` is therefore ``QFormUploadResult`` plus that key rather than an
-    alias of it, so a client cannot read the id off an upload where it does not exist.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     if payload.designWorkshopId:
         await _require_attachable_workshop(payload.designWorkshopId, current_user)
 
-    # THE TRI-STATE ON ``description``, unpacked here rather than inside the service. ``exclude_unset``
-    # is what tells "carry the source's description across" (key absent) apart from "start it empty"
-    # (key sent as null), and the service reads an EMPTY STRING as the second of those — the same
-    # convention ``renameQuestionnaire`` on the detail page already relies on, where a null would be
-    # dropped by ``clean_data`` and an empty string genuinely clears the column.
     sent = payload.model_dump(exclude_unset=True)
     description: str | None = None
     if "description" in sent:
@@ -1198,11 +552,6 @@ async def reuse_questionnaire_route(
         design_workshop_id=payload.designWorkshopId,
         title=payload.title,
         description=description,
-        # The same unset/null/value tri-state ``description`` gets two lines up, and read the same
-        # way: a key the client did not send leaves the service on its inherit sentinel, so the copy
-        # keeps the source's kind. Spelled with ``model_fields_set`` rather than a truthiness test
-        # because an explicit ``null`` — "copy it, but I have not decided what this one is" — is a
-        # different instruction from silence and must reach the service as one.
         **(
             {"kind": payload.kind}
             if "kind" in payload.model_fields_set
@@ -1210,13 +559,8 @@ async def reuse_questionnaire_route(
         ),
     )
     if made is None:
-        # ``_require_questionnaire`` already read the row, so this is the source disappearing between
-        # the two reads rather than a bad id. Still 404 rather than a 500 out of a None unpack.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     new_id, report = made
-    # ``include_retired`` is left at its default because a copy HAS no retired question — nothing was
-    # copied that could be retired. Passing True would be a claim about the payload that is not
-    # false, only meaningless, and the next reader would go looking for the retirement it implies.
     await _reconcile_codes(new_id)
     form = await load_form(new_id)
     return public_encode(
@@ -1228,50 +572,10 @@ async def reuse_questionnaire_route(
 async def create_questionnaire(
     payload: QuestionnaireCreate, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """Start a questionnaire by hand. The .xlsx upload is the other door into the same tables.
-
-    ── ALL OF IT OR NONE OF IT (D2) ──────────────────────────────────────────
-
-    This wrote the ``Questionnaire`` row, then each section, then each question, on SEPARATE awaits
-    with no transaction around them. A failure part way — a dropped connection, a statement timeout
-    against the cross-region database ``services/records.py`` describes, a constraint violation on
-    one section code — left the row and everything written before the failure COMMITTED while the
-    client got a 500. The designer sees "it failed", presses the button again, and now owns two
-    questionnaires: one truncated, one whole, with nothing on any screen able to say which is which.
-    A half-written instrument is worse than none, because it is indistinguishable from a complete
-    one — the identical argument ``reuse_questionnaire`` makes at length, and this is the same tree
-    of tables written by a third door.
-
-    THE PATTERN IS ``reuse_questionnaire``'s, DELIBERATELY, DOWN TO THE BOUNDS. One ``db.tx()``,
-    ``create_many`` for the sections, one read-back keyed on ``@@unique([questionnaireId, code])``
-    for their ids, and ``create_many`` for every question — four statements whatever the size of the
-    instrument, instead of one per row. Batching is not a micro-optimisation here: it is what keeps
-    the transaction short enough to be an honest transaction rather than a lock held open across a
-    thousand sequential round trips to a database in another region.
-
-    WHY THE WORKSHOP CHECK STAYS OUTSIDE THE TRANSACTION. It is a read that decides whether to write
-    at all, and it already refuses BEFORE anything exists — the comment below has said so since the
-    attach hole was closed. Pulling it inside would buy nothing and would hold the transaction open
-    across an extra round trip.
-
-    THE WEB CLIENT SENDS NO SECTIONS AT ALL (``QFormCreateBody`` is ``{title, description?,
-    designWorkshopId?}``), so on that path the loop never ran and this defect could not be triggered
-    from the browser — measured 2026-08-30 while reproducing the reported create failure. It is
-    fixed anyway: the API is public, the Android create body is the same shape only by convention,
-    and "unreachable from today's client" is the state every reachable defect was in the day before
-    somebody added a field.
-    """
     _require_designer(current_user)
     if payload.designWorkshopId:
-        # Checked BEFORE the row is created, so a refused attachment leaves nothing behind. Creating
-        # the questionnaire first and attaching second would hand back a 404 with an orphan
-        # questionnaire already written, which reads to the designer as "it failed" and is not.
         await _require_attachable_workshop(payload.designWorkshopId, current_user)
 
-    # The codes are derived BEFORE the transaction opens, because deriving one is pure string work
-    # over a set this loop owns — ``derive_section_code`` mutates ``codes`` itself, which is what
-    # makes two sections with the same title land on ``X`` and ``X_2`` rather than colliding on the
-    # ``@@unique([questionnaireId, code])`` the read-back below depends on.
     codes: set[str] = set()
     section_data: list[dict[str, Any]] = []
     questions_by_code: dict[str, list[Any]] = {}
@@ -1299,8 +603,6 @@ async def create_questionnaire(
                 "description": payload.description,
                 "ownerId": current_user.id,
                 "designWorkshopId": payload.designWorkshopId,
-                # Validated into a token (or None) by ``QuestionnaireCreate``; see
-                # ``app/services/questionnaire_kinds.py`` for what it decides in the report.
                 "kind": payload.kind,
             }
         )
@@ -1335,54 +637,17 @@ async def update_questionnaire(
     payload: QuestionnaireUpdate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Rename, re-describe, attach to a workshop, or deactivate.
-
-    ``isActive: false`` is what this API has INSTEAD of a delete — see the module docstring.
-
-    Nothing at all for the inspector or a director of the workshop the form is attached to, whatever
-    the body carries — a rename, a deactivation, a detach or a move alike
-    (``_refuse_its_workshops_holder``, 2026-10-09).
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
-    # BEFORE THE ATTACH CHECK, so a holder moving the form is told about their post rather than
-    # about the destination.
     await _refuse_its_workshops_holder(record, current_user)
-    # ``Questionnaire``'s own nullable scalars; the list and the reasoning for what is left out of it
-    # are at ``_QUESTIONNAIRE_CLEARABLE_COLUMNS`` above. ``designWorkshopId`` used to be the only one
-    # named here, and it was named by hand — put back into ``data`` after ``clean_data`` had dropped it —
-    # on the claim that it was "the one field here that is meaningfully NULLABLE". It was not:
-    # ``description`` is ``String?`` too, so emptying the description box answered 200 and left the
-    # old description in the database and in every render of the form. Both go through ``clearable``
-    # now, which is the mechanism the rest of the write paths use, so there is one rule to keep in
-    # step instead of two. Valid only because this dump is ``exclude_unset=True``.
     data = clean_data(
         payload.model_dump(exclude_unset=True),
         title_case=False,
         clearable=_QUESTIONNAIRE_CLEARABLE_COLUMNS,
     )
     if data.get("designWorkshopId"):
-        # `_require_owner` above answered a DIFFERENT question — who owns this QUESTIONNAIRE —
-        # and owning the form has never said anything about the workshop it is being pointed at.
-        # The truthiness test is the detach case (`None`) passing through unchecked, on purpose;
-        # see the helper.
         await _require_attachable_workshop(data["designWorkshopId"], current_user)
     if "isShared" in data and not is_content_admin(current_user):
-        # ── PUBLISHING IS AN ADMIN'S ACT, AND `_require_owner` ABOVE IS NOT THAT CHECK ───────────
-        #
-        # That helper admits the form's OWNER, which is every designer for their own forms. Ticking
-        # this flag does not change the owner's form — it changes what every OTHER designer in the
-        # country sees in their list and their attach dropdown, which is a repository-wide act and
-        # not an edit to a record. Left on `_require_owner` alone, any designer could publish their
-        # own draft to the whole fleet by PATCHing one boolean.
-        #
-        # KEYED ON PRESENCE and not on the value: sending `isShared: false` to UNPUBLISH is the same
-        # act in reverse and needs the same authority, and a designer must not be able to withdraw
-        # the standard instrument from everybody either.
-        #
-        # 403 and not 404, which is the opposite of `_require_attachable_workshop`'s rule and is
-        # right here: this caller already holds the questionnaire and is reading it on screen, so
-        # there is nothing left to conceal — what they need told is that the CONTROL is not theirs.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -1397,8 +662,6 @@ async def update_questionnaire(
     await _reconcile_codes(questionnaire_id)
     return public_encode(await load_form(questionnaire_id, include_retired=True))
 
-
-# --- Sections and questions, one at a time -------------------------------------------------------
 
 
 @router.post("/{questionnaire_id}/sections", status_code=status.HTTP_201_CREATED)
@@ -1418,9 +681,6 @@ async def create_section(
     code = (payload.code or "").strip()
     if not code or code.lower() in codes:
         code = derive_section_code(payload.title, codes)
-    # ONE TRANSACTION, TWO STATEMENTS (audit M4, 21 Oct 2026): the section and every question in it
-    # land together or not at all, as ``POST /questionnaires`` has since D2. A failure part way used
-    # to leave a section holding the first few of its questions.
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
         Tx = unified_forms.tables(tx, T.unified)
         made = await Tx.sections.create(
@@ -1456,11 +716,6 @@ async def update_section(
     payload: CustomSectionUpdate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """A section's title and position may change even when its questions have been answered.
-
-    A heading is not what an answer answers — that is the whole distinction the rule turns on. Only
-    the QUESTION's wording is frozen by an answer.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
@@ -1468,15 +723,6 @@ async def update_section(
     section = await require_record(T.sections, section_id)
     if section.questionnaireId != questionnaire_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
-    # AN EMPTY ``clearable``, AND THAT IS THE MEASURED ANSWER RATHER THAN AN OVERSIGHT.
-    # ``model QuestionnaireFormSection`` has no nullable column at all — id, questionnaireId, code,
-    # title, sortOrder, isActive, createdAt, updatedAt are every one of them NOT NULL — so there is
-    # nothing on this model an explicit null could legitimately clear. The three sibling PATCHes in
-    # this module each name their own; this one names none because it has none.
-    #
-    # Passed EXPLICITLY, as ``_SECTION_CLEARABLE_COLUMNS``, rather than left off the call: an omitted
-    # argument and a deliberately empty one look identical from here, and the completeness test needs
-    # this route to have stated an answer for this model rather than said nothing.
     data = clean_data(
         payload.model_dump(exclude_unset=True),
         title_case=False,
@@ -1484,8 +730,6 @@ async def update_section(
     )
     if "title" in data:
         data["title"] = data["title"].strip()
-    # TAKING A SECTION OUT IS A REMOVAL, and removals belong to whoever may edit the form: its author
-    # or a content admin (owner, 22 Oct 2026), which `_require_owner` above already checked.
     if data:
         await T.sections.update(where={"id": section_id}, data=data)
     await _reconcile_codes(questionnaire_id)
@@ -1529,14 +773,6 @@ async def update_question(
     payload: CustomQuestionUpdate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Edit one question — under the same rule the re-upload path uses, via ``guard_question_edit``.
-
-    Rewording a question that has answers does NOT fail and does NOT overwrite. It supersedes: the
-    original wording keeps its answers, the new wording is added in the same place, and the response
-    carries ``action: "superseded"`` with both ids so the editor can say what happened. Stating this
-    once, in the service, is what keeps the single-question editor and the spreadsheet re-upload
-    from drifting into two different answers to the same question.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
@@ -1571,11 +807,6 @@ async def update_question(
             }
         )
 
-    # ``helpText`` is the only nullable column ``CustomQuestionUpdate`` can reach; the list and what
-    # is left out of it are at ``_QUESTION_CLEARABLE_COLUMNS`` above, including why the retirement
-    # machinery's columns stay out. It used to be put back by hand after ``clean_data`` had dropped it; it goes
-    # through ``clearable`` now so this route uses the same mechanism as its siblings instead of a
-    # second one that has to be remembered. Valid only because this dump is ``exclude_unset=True``.
     data = clean_data(
         payload.model_dump(exclude_unset=True),
         title_case=False,
@@ -1608,15 +839,6 @@ async def remove_question(
     question_id: str,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Remove a question — really deleted if nobody answered it, RETIRED if somebody did.
-
-    Returns 200 with the action taken rather than 204, precisely because the two outcomes are
-    different and the designer has to be told which one happened. A retired question stops being
-    asked and keeps its answers; a client that assumed 204-means-gone would show a question the
-    designer just deleted still sitting in the list, with no explanation.
-
-    The form's author or a content admin (owner, 22 Oct 2026), as for every edit of the form.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
@@ -1641,23 +863,6 @@ async def remove_question(
                 "questionnaire": await load_form(questionnaire_id, include_retired=True),
             }
         )
-    # THE BLANK ANSWER ROWS GO FIRST, AND WITHOUT THEM THIS ENDPOINT 500s.
-    #
-    # `guard_question_edit` decides retire-vs-delete on whether any answer has actual TEXT — a row
-    # saved as "" or " " is null-ish to a person and does not freeze a question nobody answered.
-    # That judgement is right and stays. But the ROW still exists, and
-    # `QuestionnaireFormAnswer.questionId` is `onDelete: Restrict`, so Postgres refuses the delete
-    # and the designer gets a bare "Something went wrong on the server" with a
-    # ForeignKeyViolationError in the log.
-    #
-    # It is the ordinary path, not an edge case: the app writes exactly these rows when somebody
-    # opens a sitting, tabs through it and saves — which is what a designer does the first time they
-    # look at their own form. Then they tidy up a question they mistyped, and the app breaks.
-    #
-    # Deleting the blank rows loses no fieldwork: they assert nothing, which is the same reason the
-    # guard does not count them. Anything with text took the retire branch above and never reaches
-    # here, so this cannot remove a recorded answer.
-    # Together or not at all: the blank rows and the question are one removal.
     if T.unified:
         await T.questions.delete(where={"id": question_id})
     else:
@@ -1674,8 +879,6 @@ async def remove_question(
 
 
 async def _reconcile_codes(questionnaire_id: str) -> None:
-    """The cross-portal question codes, on whichever tables hold this form (UNIFY U5: the instrument
-    tables once it is unified; the old form tables are then read-only legacy)."""
     if await unified_forms.form_unified(questionnaire_id):
         await cross_portal_codes.reconcile_question_codes(db, questionnaire_id=questionnaire_id)
     else:
@@ -1683,17 +886,10 @@ async def _reconcile_codes(questionnaire_id: str) -> None:
 
 
 async def _tables(questionnaire_id: str, client: Any = None) -> Any:
-    """``sections`` and ``questions`` for this form: the instrument tables once it is unified."""
     return unified_forms.tables(client if client is not None else db, await unified_forms.form_unified(questionnaire_id))
 
 
 async def _question_in(questionnaire_id: str, question_id: str) -> Any:
-    """A question, checked to belong to THIS questionnaire.
-
-    Without the check, a valid question id from somebody else's form would be edited through this
-    questionnaire's ownership guard — the id is in the path and the ownership was checked on the
-    questionnaire, not on the question.
-    """
     T = await _tables(questionnaire_id)
     question = await require_record(T.questions, question_id)
     section = await require_record(T.sections, question.sectionId)
@@ -1702,8 +898,6 @@ async def _question_in(questionnaire_id: str, question_id: str) -> Any:
     return question
 
 
-# --- Sittings and answers -------------------------------------------------------------------------
-
 
 @router.post("/{questionnaire_id}/entries", status_code=status.HTTP_201_CREATED)
 async def create_entry(
@@ -1711,17 +905,6 @@ async def create_entry(
     payload: QuestionnaireEntryCreate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Start a sitting: one filled-in copy of this questionnaire.
-
-    Not owner-gated, and that stays. Recording answers is the whole point of attaching a
-    questionnaire to a workshop, and a form only its author may answer is a form nobody uses.
-
-    WHAT IT IS GATED ON IS THE WORKSHOP, once the form is attached to one — see
-    ``_require_recordable_questionnaire``. "Not owner-gated" had been read as "not gated", so any
-    designer holding the id could push a sitting, respondent's name and all, into another team's
-    report annexure. The two sentences are not in tension: the owner still does not have to be the
-    one answering, the workshop's team does.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     await _require_recordable_questionnaire(record, current_user)
     if not record.isActive:
@@ -1730,8 +913,6 @@ async def create_entry(
             detail="This questionnaire has been deactivated, so no new answers can be recorded against it.",
         )
     if await shims_dr.form_is_unified(questionnaire_id):
-        # A sitting is a session on this form now (UNIFY 4.5): the respondent is a guest, the typed
-        # title is kept as legacyTitle. The same response shape, never a new error code.
         return await shims_dr.create_entry(questionnaire_id, payload, current_user)
     entry = await db.questionnaireformentry.create(
         data={
@@ -1753,15 +934,6 @@ async def update_entry(
     payload: QuestionnaireEntryUpdate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Rename a sitting, or correct the respondent's name and the notes taken during it.
-
-    ``rewriting=True`` because these three fields are the sitting's IDENTITY. Without the check
-    it carries, any designer could PATCH any sitting of any questionnaire — the route needs only
-    the entry id, which ``GET /questionnaires/{id}`` hands out — and overwrite ``respondentName``,
-    which is the name of the person interviewed. That is one designer relabelling whose testimony
-    a recorded answer belongs to, on a research instrument whose report goes to a ministry, and
-    nothing in the document would show it had happened.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     if await shims_dr.form_is_unified(questionnaire_id):
         await _refuse_its_workshops_holder(record, current_user)
@@ -1769,18 +941,7 @@ async def update_entry(
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=True
     )
-    # The sitting prints in the annexure of the workshop its form is attached to, so its own fields
-    # are that workshop's content: not for its inspector or its two directors (2026-10-09). Starting a
-    # sitting and recording answers already ask, through ``_require_recordable_questionnaire``.
     await _refuse_its_workshops_holder(record, current_user)
-    # ``QuestionnaireFormEntry``'s own nullable scalars — the list is at
-    # ``_ENTRY_CLEARABLE_COLUMNS`` above — and on this route the PII case is the whole point:
-    # ``respondentName`` is the name of the person interviewed and ``notes`` is what was written down
-    # about them during the sitting. A researcher told to retract either had no way to do it — the
-    # null was stripped, the PATCH answered 200, and the name stayed on the row and in the
-    # questionnaire annexure. ``title`` is NOT NULL (and stripped below), ``source`` and
-    # ``createdById`` are NOT NULL and not on the schema. Valid only because this dump is
-    # ``exclude_unset=True``.
     data = clean_data(
         payload.model_dump(exclude_unset=True),
         title_case=False,
@@ -1794,13 +955,9 @@ async def update_entry(
 
 
 async def _sees_every_sitting(record: Any, user: Any) -> bool:
-    """May this account read every sitting of this form, or only its own? One answer for the read
-    and for the answers PUT, so the second cannot hand back what the first withholds (audit M6)."""
     return (
         record.ownerId == user.id
         or is_content_admin(user)
-        # A co-designer on the workshop this form belongs to. See the helper for why the sittings
-        # come with it rather than being withheld.
         or await _works_on_this_questionnaires_workshop(record, user)
     )
 
@@ -1812,31 +969,13 @@ async def record_answers(
     payload: CustomAnswerBatch,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Record answers against one sitting. Idempotent — re-sending an unchanged section writes nothing.
-
-    PUT rather than POST because sending the same section twice must not produce two sets of
-    answers; ``@@unique([entryId, questionId])`` makes that true at the database as well.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
-    # The workshop gate, before a single answer row is touched. ``rewriting=False`` below decides
-    # who may write to a SITTING; this decides who may write to this QUESTIONNAIRE at all, and the
-    # two are different questions — the permissive answer to the first was being read as an answer
-    # to the second, which is how a stranger's answers reached another workshop's annexure.
     await _require_recordable_questionnaire(record, current_user)
     if await shims_dr.form_is_unified(questionnaire_id):
-        # Per-item answers on the sitting's session, create-only; a locked item is reported in the
-        # old ``rejected`` list, never as a 403 for the batch (UNIFY 4.5).
         return public_encode(await shims_dr.record_answers(questionnaire_id, entry_id, payload, current_user))
-    # ``rewriting=False``: recording answers against somebody else's sitting is DELIBERATE — two
-    # people filling in different sections of one interview is the ordinary case, and a sitting
-    # only its starter may answer is a sitting nobody finishes. The authorship rule that belongs
-    # here is per ANSWER and lives in ``save_answers``: an answer that already has text may only
-    # be changed by whoever recorded it, or an admin.
     entry = await _entry_in(
         questionnaire_id, entry_id, user=current_user, questionnaire=record, rewriting=False
     )
-    # AN EMPTY BATCH IS REFUSED (audit M6). It wrote nothing and answered with every answer of the
-    # sitting, so it was a read of somebody else's sitting that ``GET /{id}`` withholds.
     if not payload.answers:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="There are no answers to save."
@@ -1850,8 +989,6 @@ async def record_answers(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     where: dict[str, Any] = {"entryId": entry.id}
-    # The same narrowing as the read: a sitting that is not the caller's, on a form whose sittings
-    # they may not all see, answers with the caller's own rows only.
     if entry.createdById != current_user.id and not await _sees_every_sitting(
         record, current_user
     ):
@@ -1866,12 +1003,6 @@ async def delete_entry(
     entry_id: str,
     current_user: Any = Depends(get_current_user),
 ) -> Response:
-    """Delete one sitting. Content admins only (``deps.CONTENT_ADMIN_ROLES``).
-
-    A SOFT delete (owner, 2026-10-20): ``deletedAt`` is set and the sitting and its answers stay,
-    so a content admin can put it back with ``POST .../entries/{entry_id}/restore``. Whoever holds a
-    post on the form's workshop is refused, as on every other write here.
-    """
     assert_can_delete(current_user)
     record = await _require_questionnaire(questionnaire_id, current_user)
     if await shims_dr.form_is_unified(questionnaire_id):
@@ -1894,7 +1025,6 @@ async def list_deleted_entries(
     questionnaire_id: str,
     current_user: Any = Depends(require_content_admin),
 ) -> list[dict[str, Any]]:
-    """The sittings deleted from one live questionnaire, newest deletion first. Content admins only."""
     await _require_questionnaire(questionnaire_id, current_user)
     if await shims_dr.form_is_unified(questionnaire_id):
         return public_encode(await shims_dr.entries_for_form(questionnaire_id, deleted=True))
@@ -1927,11 +1057,6 @@ async def restore_entry(
     entry_id: str,
     current_user: Any = Depends(require_content_admin),
 ) -> dict[str, Any]:
-    """Undo a sitting's soft delete. Content admins only; idempotent on a live sitting.
-
-    The questionnaire must itself be live (a 404 otherwise: restore the form first), and whoever
-    holds a post on its workshop is refused, as on the delete.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     if await shims_dr.form_is_unified(questionnaire_id):
         await _refuse_its_workshops_holder(record, current_user)
@@ -1951,13 +1076,6 @@ async def delete_questionnaire(
     questionnaire_id: str,
     current_user: Any = Depends(get_current_user),
 ) -> Response:
-    """Delete a questionnaire. Its author or a content admin (owner, 22 Oct 2026).
-
-    A SOFT delete (owner, 2026-10-20), as a design workshop's is: only ``deletedAt`` and
-    ``deletedById`` are written. Its sections, questions, sittings and answers stay exactly as they
-    were, every read here stops finding it, and ``POST /questionnaires/{id}/restore`` brings it back
-    whole. Nothing cascades either way.
-    """
     record = await _require_questionnaire(questionnaire_id, current_user)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
@@ -1973,12 +1091,6 @@ async def restore_questionnaire(
     questionnaire_id: str,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Undo a questionnaire's soft delete. Its author or a content admin (owner, 22 Oct 2026).
-
-    The pair is cleared together, as ``restore_design_workshop`` clears its own. Idempotent on a
-    live form, so a double-clicked Restore answers 200. Whoever holds a post on the form's workshop
-    is refused, as on the delete. Sittings deleted one by one stay deleted: each has its own restore.
-    """
     record = await require_record(db.questionnaire, questionnaire_id)
     _require_owner(record, current_user)
     await _refuse_its_workshops_holder(record, current_user)
@@ -1994,14 +1106,6 @@ async def set_default_questionnaire(
     payload: QuestionnaireDefaultUpdate,
     current_user: Any = Depends(require_admin),
 ) -> dict[str, Any]:
-    """Admin only (UNIFY B32; set on the web alone, ministry/admin authoring): the global default.
-
-    NOT AN EDIT TO THE FORM, so not its author's: it decides where every session lands that has no
-    form bound to its workshop or the workshop's kind (``questionnaire.bindings.resolve``). One
-    default at a time, held by the partial unique index ``Questionnaire_isDefault_key``: the old one
-    is cleared first, in the same transaction. Clearing touches this form only, never another's
-    default. A deleted or retired form cannot become the default.
-    """
     record = await require_record(db.questionnaire, questionnaire_id)
     if payload.isDefault and (record.deletedAt is not None or not record.isActive):
         raise HTTPException(
@@ -2025,19 +1129,6 @@ async def _entry_in(
     questionnaire: Any,
     rewriting: bool,
 ) -> Any:
-    """The sitting, if it belongs to this questionnaire and this caller may do that to it.
-
-    ``rewriting`` HAS NO DEFAULT, and that is the point of the signature. Every entry-scoped
-    route has to state which of the two it is, because the permissive answer is the one that
-    shipped: ``update_entry`` checked that the caller was A designer and that the sitting was in
-    the named questionnaire, and nothing else — so Designer B could rewrite Designer A's sitting,
-    including the respondent's name. A future route that forgets to decide fails here rather than
-    inheriting the wrong half.
-
-    Rewriting a sitting belongs to the person who ran it, the designer who owns the form, or an
-    admin. The questionnaire owner is included because the form is theirs and a sitting recorded
-    by a colleague on their instrument is still their fieldwork to correct.
-    """
     entry = await require_record(db.questionnaireformentry, entry_id)
     if entry.deletedAt is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")

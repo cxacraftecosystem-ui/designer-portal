@@ -1,10 +1,3 @@
-"""The two invariants report_model exists to enforce: the single door, and relative sizes.
-
-Every assertion here corresponds to a way a generated report has broken or could break. If one
-of these fails, some caller has started building blocks by hand instead of through the
-constructors, which is exactly the drift the module's docstring warns about.
-"""
-
 import pytest
 
 from app.services.report_model import (
@@ -24,13 +17,8 @@ from app.services.report_model import (
     split_by_script,
 )
 
-# --------------------------------------------------------------------------------------
-# clean_text: the single door
-# --------------------------------------------------------------------------------------
-
 
 def test_clean_text_drops_lone_surrogate():
-    """A phone that cut an emoji in half produces one of these; XML admits no such codepoint."""
     assert clean_text("ab" + chr(0xD83D) + "cd") == "abcd"
 
 
@@ -44,17 +32,14 @@ def test_clean_text_normalises_line_endings():
 
 
 def test_clean_text_keeps_astral_plane():
-    """Emoji above the BMP are legal XML and appear in real field notes."""
     assert clean_text("thread \U0001F9F5") == "thread \U0001F9F5"
 
 
 def test_clean_text_none_is_empty_not_the_word_none():
-    """An unfilled optional field must leave a blank cell, never print "None"."""
     assert clean_text(None) == ""
 
 
 def test_clean_text_bool_reads_as_yes_no():
-    """bool is an int subclass; str() would put "True" into a government report."""
     assert clean_text(True) == "Yes"
     assert clean_text(False) == "No"
 
@@ -64,10 +49,6 @@ def test_clean_text_numbers_stringify():
     assert clean_text(3.5) == "3.5"
 
 
-# --------------------------------------------------------------------------------------
-# Script detection: the reason craft names are not boxes
-# --------------------------------------------------------------------------------------
-
 
 def test_split_by_script_separates_latin_from_indic():
     spans = split_by_script("Ikat (ସମ୍ବଲପୁରୀ) weave")
@@ -76,8 +57,6 @@ def test_split_by_script_separates_latin_from_indic():
 
 
 def test_split_by_script_keeps_indic_digits_with_their_script():
-    """Devanagari digits are category Nd but live in the Devanagari block; handing them to a
-    neighbouring Latin run prints them as tofu."""
     spans = split_by_script("कपड़ा ०१२ cloth")
     assert spans[0][1] is Script.DEVANAGARI
     assert "०१२" in spans[0][0]
@@ -112,10 +91,6 @@ def test_runs_of_blank_is_no_runs():
     assert runs_of(None) == ()
 
 
-# --------------------------------------------------------------------------------------
-# Relative sizing
-# --------------------------------------------------------------------------------------
-
 
 def test_table_column_widths_must_sum_to_100():
     with pytest.raises(ValueError, match="sum to 100"):
@@ -130,13 +105,8 @@ def test_table_column_widths_accept_rounding_slack():
 
 
 def test_table_with_no_columns_is_allowed():
-    """A stage whose collection is empty renders an empty table rather than raising."""
     TableBlock(columns=(), rows=())
 
-
-# --------------------------------------------------------------------------------------
-# ImageRef geometry
-# --------------------------------------------------------------------------------------
 
 
 def test_image_rotation_swaps_display_dimensions():
@@ -146,15 +116,9 @@ def test_image_rotation_swaps_display_dimensions():
 
 
 def test_image_aspect_never_zero_or_raising():
-    """An unknown-size photo must still occupy a sane box; a zero would divide-by-zero in
-    both renderers' fit calculations."""
     assert ImageRef("x").aspect == pytest.approx(4 / 3)
     assert ImageRef("x", width_px=0, height_px=100).aspect == pytest.approx(4 / 3)
 
-
-# --------------------------------------------------------------------------------------
-# DocumentBuilder
-# --------------------------------------------------------------------------------------
 
 
 def _builder() -> DocumentBuilder:
@@ -190,7 +154,6 @@ def test_unnumbered_heading_has_no_number():
 
 
 def test_para_skips_blank_values():
-    """An optional Standard-tier field left empty must not leave a blank line in the report."""
     b = _builder()
     b.para("")
     b.para("   ")
@@ -235,8 +198,6 @@ def test_build_freezes_and_collects_images():
     b.add(ImageGridBlock(images=((shared, "a"), (ImageRef("other", 10, 10), "b"))))
     doc = b.build()
     assert isinstance(doc.blocks, tuple)
-    # Deduplicated by source, in first-use order: a photo reused in an annexure must not be
-    # embedded twice.
     assert [i.source for i in doc.images] == ["same", "other"]
 
 

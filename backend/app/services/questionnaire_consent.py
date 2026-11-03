@@ -1,26 +1,3 @@
-"""Designer-portal's consent gate for the shared questionnaire package (UNIFY_2026-10-21.md 2.3 rule 7).
-
-The package asks ``ports.consent_gate`` the questions documentation-portal's ``services/consent_gate``
-answers (``verdict``, ``verdict_details``, ``verdict_detail``, ``current_states``, ``ALLOW``,
-``TRANSCRIPT_STATUS_FOR``). This module answers them for this portal with the same rule, the shared
-ledger's ``decide`` (``app/transcription/ledger.py``, byte-identical in both portals), over:
-
-1. the recording's own current ``RECORDING`` row (a refusal there always refuses);
-2. the take's ANSWERED and PRESENT artisans (``QuestionnaireRecordingSubject``); for a file that is
-   no take, its own artisan and its interview's participants;
-3. **the design workshop's dictation consent** (the port's extra on this portal, C4): the newest
-   ``WORKSHOP`` row for the session's design workshop (``dictation_consent.current_row``, which falls
-   back to the cached ``DesignWorkshop.dictationConsent`` columns before the ledger migration ran).
-
-OPT-OUT (owner, 19 and 22 Oct 2026): no answer on record counts as agreeing, so only a REFUSED row
-stops an outside send. Recording, uploading, filing, typing answers and review never consult this
-module; only a send (speech-to-text, an AI draft) does. A guest respondent has no ledger subject
-type, so a guest never refuses on their own; the artisans and the workshop of the same take still do.
-
-This fixes DR audit H3 for questionnaire takes: the gate is per subject and per workshop, not per
-workshop alone.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -52,7 +29,6 @@ def decide(recording: Any, subjects: Iterable[Any]) -> Verdict:
 async def current_states(
     subject_type: str, subject_ids: list[str], *, purpose: str = PURPOSE, client: Any = None
 ) -> dict[str, dict[str, Any]]:
-    """The newest ledger row per subject, keyed by subject id."""
     ids = list(dict.fromkeys(str(i) for i in subject_ids if i))
     if not ids:
         return {}
@@ -60,7 +36,6 @@ async def current_states(
 
 
 async def _subjects_many(media_ids: list[str], client: Any) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Per media id: the artisans it is about, and the design workshops that name it. Three reads."""
     db = _db(client)
     artisans: dict[str, list[str]] = {}
     workshops: dict[str, list[str]] = {m: [] for m in media_ids}
@@ -108,7 +83,6 @@ async def _workshop_rows(workshop_ids: list[str], client: Any) -> dict[str, dict
 
 
 async def verdict_details(media_ids: Iterable[str], *, client: Any = None) -> dict[str, dict[str, Any]]:
-    """``{"verdict", "source"}`` per media id, in a handful of reads whatever the number of files."""
     ids = list(dict.fromkeys(str(i) for i in media_ids if i))
     if not ids:
         return {}
@@ -135,13 +109,11 @@ async def verdict_detail(media_id: str, *, client: Any = None) -> dict[str, Any]
 
 
 async def verdict(media: Any, *, client: Any = None) -> Verdict:
-    """ALLOW or REFUSED for one media file (a row, a dict or its id)."""
     media_id = media if isinstance(media, str) else str(getattr(media, "id", None) or media["id"])
     return (await verdict_detail(media_id, client=client))["verdict"]
 
 
 async def artisans_verdict(artisan_ids: Iterable[str], *, design_workshop_id: str | None = None, client: Any = None) -> Verdict:
-    """Text about people that is no one recording: one refusal (an artisan's or the workshop's) refuses."""
     ids = list(dict.fromkeys(str(i) for i in artisan_ids if i))
     states = await current_states(ledger.ARTISAN, ids, client=client)
     rows: list[Any] = [states.get(a) for a in ids]
@@ -151,7 +123,6 @@ async def artisans_verdict(artisan_ids: Iterable[str], *, design_workshop_id: st
 
 
 async def interview_verdict(interview_id: str, *, client: Any = None) -> Verdict:
-    """:func:`artisans_verdict` over a session's participants and its design workshop."""
     db = _db(client)
     rows = await db.query_raw('SELECT "artisanId" FROM "QuestionnaireInterviewArtisan" WHERE "interviewId" = $1', interview_id)
     session = await db.query_raw('SELECT "designWorkshopId" FROM "QuestionnaireInterview" WHERE "id" = $1', interview_id)

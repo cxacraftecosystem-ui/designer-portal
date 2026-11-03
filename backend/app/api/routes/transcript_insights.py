@@ -1,26 +1,3 @@
-"""Interview summaries, key quotes and translations: read, edit, regenerate.
-
-Every route answers 404 ``{"detail": "Not found"}`` while the AI capability flag is off, and the
-clients hide the section on a 404.
-
-WHO MAY READ IS WHO MAY READ THE TRANSCRIPT. A summary, a quote and a translation are copies of the
-transcript, so a media row is encoded for the viewer through ``records.public_encode`` and, when
-``transcriptText`` does not survive that encoding (``_MEDIA_TAKEABLE_KEYS``), the insight does not
-travel either: 404 for one item, left out of a batch.
-
-Editing and regenerating follow ``POST /media/{id}/transcript``: the uploader or an admin, and not a
-person who inspects or supervises a workshop the recording belongs to.
-
-Regenerate checks the artisan's consent and the requester's daily AI allowance before it queues;
-the allowance is spent by the worker when the run reaches a provider, and the worker checks consent
-again at send time.
-
-INCLUDED IN ``api/router.py`` BEFORE ``media.router``. ``GET /media/insights`` would otherwise be
-matched by ``GET /media/{media_id}``.
-
-Nothing here generates. Regenerate queues a job and returns 202; the worker does the work.
-"""
-
 from datetime import UTC, datetime
 from typing import Any
 
@@ -48,8 +25,6 @@ _NOT_FOUND = "Not found"
 
 
 def require_enabled(_user: Any = Depends(get_current_user)) -> None:
-    """404 while the switch is off — AFTER authentication, so a caller with no session is refused
-    as on every other route rather than told whether the feature exists."""
     if not insights.enabled():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND)
 
@@ -61,12 +36,6 @@ def may_edit(user: Any, media: Any) -> bool:
 
 
 async def readable_media_ids(rows: list[Any], viewer: Any) -> set[str]:
-    """The ids among ``rows`` whose transcript ``viewer`` may read.
-
-    Decided by the one encoder every media read leaves by, so this cannot drift from what
-    ``GET /media/{id}`` hands the same viewer: whatever ``_MEDIA_TAKEABLE_KEYS`` drops from a row,
-    its insight is dropped with it. One entitlement read for the whole list.
-    """
     if not rows:
         return set()
     media_urls, media_workshops = await media_url_scope(viewer)
@@ -100,8 +69,6 @@ async def _require_edit(user: Any, media: Any) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the uploader or an admin can change this summary.",
         )
-    # The transcript's own rule (2026-10-09): whoever inspects or supervises a workshop this
-    # recording belongs to reads its transcript and does not rewrite it, or anything copied from it.
     await design_workshop_posts.refuse_a_holders_media_write(media, user)
 
 
@@ -117,14 +84,6 @@ async def list_insights(
     includeTranslation: bool = Query(False),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """``{"items": {mediaId: view}}`` for up to 50 media ids, translation text left out. Ids that do
-    not exist, or whose transcript this caller may not read, are left out.
-
-    ``includeTranslation=true`` keeps the translation, so each item is exactly what
-    ``GET /{media_id}/insights`` answers for that id, and the answer carries
-    ``"translationIncluded": true`` so a client can tell this server from one that ignored the
-    parameter. The handset asks this way for every transcript card on a screen at once, where it used
-    to read each card's insight on its own (and again on every poll)."""
     wanted = list(dict.fromkeys(part.strip() for part in ids.split(",") if part.strip()))
     if len(wanted) > BATCH_MAX:
         raise HTTPException(
@@ -167,8 +126,6 @@ async def patch_insight(
     payload: TranscriptInsightPatch,
     current_user: Any = Depends(get_current_user),
 ) -> Any:
-    """Edit the current summary. Stamps ``editedAt``/``editedById`` from the server; the frozen
-    machine output in ``generated`` is never touched."""
     media = await _readable_media_or_404(media_id, current_user)
     await _require_edit(current_user, media)
     row = await insights.current_insight(media_id)
@@ -190,8 +147,6 @@ async def patch_insight(
         if text and row.translationStatus == insights.FAILED:
             data["translationStatus"] = insights.COMPLETED
             data["translationNote"] = None
-    # Conditional on the version still being current, so a regeneration landing between the read
-    # above and this write is a conflict rather than an edit on a superseded row.
     updated = await db.transcriptinsight.update_many(
         where={"id": row.id, "version": payload.version, "supersededAt": None}, data=data
     )
@@ -211,7 +166,6 @@ async def regenerate_insight(
     payload: TranscriptInsightRegenerate,
     current_user: Any = Depends(get_current_user),
 ) -> Any:
-    """Queue a new version. The run uses the caller's own AI key when they have one."""
     media = await _readable_media_or_404(media_id, current_user)
     await _require_edit(current_user, media)
     primary, _original = insights.select_sources(media)
@@ -223,20 +177,16 @@ async def regenerate_insight(
     active = await insights.active_job(media_id)
     row = await insights.current_insight(media_id)
     edited = row is not None and row.editedAt is not None
-    # An active automatic job skips an edited summary, so on an edited one it is no answer to this
-    # ask: the job is claimed for the caller instead. Any other active job already is the answer.
     if active is not None and not (edited and getattr(active, "requestedById", None) is None):
         return await _view(media, current_user)
     if edited and not payload.discardEdits:
         return _conflict("Regenerating replaces your edits.", "EDITS_WOULD_BE_REPLACED")
-    # A refusal answers 409 with its sentence; a consent store that cannot be read answers 503.
     await require_send(dictation_consent.transcription_verdict(
         media, send=dictation_consent.INSIGHTS, resolve_from_stages=True
     ))
     spent = ai_verb_cap.cap_refusal(await ai_verb_cap.load_allowance(current_user.id))
     if spent is not None:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=spent)
-    # A claimed job runs on the caller's key and allowance, as a queued Regenerate would.
     if active is None or not await insights.claim_for_requester(active.id, current_user.id):
         await insights.enqueue(media_id, requested_by_id=current_user.id)
     return await _view(media, current_user)

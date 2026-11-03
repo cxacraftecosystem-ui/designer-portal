@@ -1,72 +1,3 @@
-"""THE NAME AN ADMINISTRATOR TYPED REACHES BOTH ROSTERS, AND NOTHING ELSE EVER REACHES EITHER.
-
-The reported failure, in the words it arrived in: *"the names of the designers did not go through,
-even though they have been added"*. ``/admin/designers`` was listing bare email addresses for
-fifteen people whose names were sitting, correctly typed, one screen away on ``/admin/access``. The
-roster read as though those designers were half-registered, and the only repair an administrator
-had was to retype — on a second screen — a name they had already given the product once.
-
-**THE CAUSE WAS A GOOD RULE APPLIED ONE TABLE TOO WIDELY.** ``ensure_empanelled`` left ``fullName``
-NULL on purpose, because the column records what an ADMINISTRATOR typed and a display name lifted
-off a Google profile is chosen by whoever owns that account. That argument is right, and it does not
-reach ``AccessRoster.fullName``: that column is admin-typed under the same rule, on the neighbouring
-screen, and is never written from a login attempt. So the rule stayed and the source changed.
-
-**FIVE THINGS ARE PINNED HERE, AND THE THIRD IS THE ONE THAT KEEPS THE OTHER FOUR HONEST.**
-
-1. **THE NAME IS CARRIED AT CREATION**, so a designer admitted with a name recorded appears on the
-   roster screen as that name from the first moment, with no second visit needed.
-
-2. **IT IS CARRIED ACROSS A GMAIL DOT.** An admin types ``priya.k@gmail.com`` on the allow-list; the
-   empanelment is created under the mailbox, ``priyak@gmail.com``. They are one person. A lookup
-   that could not see across the dot would answer "no name" while the admin is looking at the name —
-   which is the same class of failure as the sign-in refusal this whole family of functions exists
-   to close, and it would look identical from the roster screen.
-
-3. **A NAME IS NEVER OVERWRITTEN, AND A GOOGLE DISPLAY NAME NEVER ARRIVES AT ALL.** These are the
-   two ways a "helpful" name-carrying feature does harm. The first would let an edit on one screen
-   silently rewrite a colleague's work on another; the second would put a string the account holder
-   controls onto a screen an administrator reads as a record of institutional decisions. Section 3
-   asserts both, and asserts the second by giving the account a Google display name and checking it
-   is nowhere.
-
-4. **A BLANK IS NOT A NAME.** NULL and ``""`` are the same fact to the roster screen — both fall
-   back to the email address — so a whitespace-only allow-list value must not be copied across as
-   though something had been recorded. A row reported as named while the screen still shows an
-   address is worse than the original complaint, because it looks fixed.
-
-5. **A SUSPENDED EMPANELMENT IS NAMED TOO, AND STAYS SUSPENDED.** The reader who most needs a row to
-   say who it was about is the administrator reading back an empanelment that ENDED. A name is not a
-   standing: section 5 asserts ``isActive`` and ``revokedAt`` come out of the write untouched, which
-   is what makes it safe for ``adopt_allow_list_name`` to ignore them.
-
-``scripts/backfill_roster_names.py`` applies the same repair to rows that already exist, through the
-same two functions, so there is one implementation of every rule above.
-
-── HOW EVERY TEST HERE REACHES THE DATABASE, AND THE CI FAILURE THAT DECIDED IT ────────────────────
-
-Every test is SYNC. Its database work is one coroutine handed to :func:`_in_a_private_loop`, which
-runs it under ``asyncio.run`` between a blind ``db.connect()`` and a ``db.disconnect()`` in a
-``finally`` — the shape ``conftest.py`` names under "HOW A DATABASE-BACKED MODULE IS SUPPOSED TO
-REACH THE DATABASE". There is no ``TestClient`` here, and that was never what made a loop safe.
-
-UNTIL 2026-10-09 THE TESTS WERE ASYNC, and ``stamp`` was an async fixture that awaited
-``db.connect()``. On every CI run from 2026-10-01 on — PR #24's run 37916529287 among them — all 17
-failed with ``RuntimeError: <asyncio.locks.Event ...> is bound to a different event loop``, raised
-inside the Prisma client's httpx pool: the fixture had connected on one loop, and the test's first
-query reused the keep-alive connection ``connect()`` had opened there from another. Two async
-plugins were live: pytest-asyncio (``asyncio_mode = "auto"``) runs every async test on its own loop,
-and an async fixture in a ``pytest.mark.anyio`` module goes to whichever plugin pytest registered
-LAST. On CI that is decided by an unsorted directory listing, and it flipped between runner images
-with no commit: ``plugins: anyio-4.14.2, asyncio-1.4.0`` on the last green main run (2026-09-21),
-``plugins: asyncio-1.4.0, anyio-4.14.2`` on every red one. ``conftest.py`` records the measurement
-and the local reproduction (``python -m pytest -p asyncio -p anyio``).
-
-This shape leaves neither plugin anything to decide — no async fixture to take, no async test to run
-— and ``asyncio.run`` makes a loop nothing else shares and closes it, with the connection it opened,
-before the next test starts. ``stamp`` stays FUNCTION-scoped for its own reason, given on it below.
-"""
-
 import asyncio
 import os
 import uuid
@@ -93,26 +24,12 @@ pytestmark = [
     ),
 ]
 
-#: What an administrator typed on the designer roster itself. Section 3 asserts this exact string
-#: survives an allow-list edit, rather than merely asserting "a name is present" — a code path that
-#: overwrote it with the allow-list's copy would leave a name present and would still be the bug.
 ROSTER_OWN_NAME = "Dr S. Raghavan (roster screen, typed by hand)"
 
-#: The name on the allow-list row. Deliberately different from :data:`ROSTER_OWN_NAME` so that every
-#: assertion below can tell WHICH screen a value came from, rather than merely that one arrived.
 ACCESS_NAME = "Sowmya Raghavan"
 
 
 def _in_a_private_loop[T](work: Callable[[], Awaitable[T]]) -> T:
-    """Run one test's database work with ``db`` connected, in an event loop of its own.
-
-    ``asyncio.run`` creates the loop and closes it on the way out, and the connection is opened and
-    closed inside it, so nothing the work touched — the query engine, the httpx pool in front of it,
-    the events its streams wait on — can be reached from any other loop afterwards. The connect is
-    BLIND and the disconnect UNCONDITIONAL, which is right here and only here: no other loop holds
-    ``db`` while this one runs, and the next test's ``asyncio.run`` connects afresh.
-    """
-
     async def connected() -> T:
         await db.connect()
         try:
@@ -125,29 +42,10 @@ def _in_a_private_loop[T](work: Callable[[], Awaitable[T]]) -> T:
 
 @pytest.fixture
 def stamp() -> str:
-    """A fresh suffix per test, and nothing else — the test opens its own connection.
-
-    FUNCTION-SCOPED RATHER THAN MODULE-SCOPED, unlike the fixture in
-    ``test_designer_empanelment_auto.py``, because almost every test here WRITES to the two rosters
-    and then asserts on the state of a specific row. Sharing one set of addresses across tests would
-    make the order they run in part of what is being asserted, and the way that fails is a suite
-    that is green until somebody adds a test in the middle of it.
-
-    It used to be async and hold a connection open for the test, which is the shape the module
-    docstring records failing: a fixture's connection lives on the fixture's loop, and nothing
-    guaranteed that was the test's.
-    """
     return uuid.uuid4().hex[:8]
 
 
 async def _admit(email: str, *, full_name: str | None) -> Any:
-    """An ACTIVE allow-list row admitting this address as a DESIGNER.
-
-    Written straight into the table rather than through ``POST /api/access/roster`` for the reason
-    that endpoint's own tests give: it now empanels an admitted designer itself, so it would create
-    the roster row before the test began — and in several tests below the ABSENCE of that row, or
-    its particular contents, is the state under test.
-    """
     return await db.accessroster.create(
         data={
             "email": email,
@@ -164,13 +62,8 @@ async def _roster_row(email: str) -> Any:
     return await db.designerroster.find_first(where={"email": email})
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════
-# 1. The name is carried at creation
-# ══════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_an_empanelment_is_created_carrying_the_allow_lists_name(stamp):
-    """THE HEADLINE FIX. Fifteen live rows looked like this and showed a bare address."""
     email = f"names-carried-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -190,14 +83,6 @@ def test_an_empanelment_is_created_carrying_the_allow_lists_name(stamp):
 
 
 def test_no_name_on_the_allow_list_leaves_the_column_null_rather_than_empty(stamp):
-    """THE HONEST ANSWER IS NULL, AND IT IS NOT THE EMPTY STRING.
-
-    Both render identically on the roster screen, so this looks like pedantry until somebody writes
-    a query for "rows still needing a name" — ``fullName IS NULL`` is the natural way to write it,
-    and an empty string makes those rows invisible to it. ``scripts/backfill_roster_names.py``
-    treats the two identically for exactly this reason; the WRITE path should still not create the
-    ambiguity in the first place.
-    """
     email = f"names-none-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -212,13 +97,6 @@ def test_no_name_on_the_allow_list_leaves_the_column_null_rather_than_empty(stam
 
 
 def test_an_empanelment_with_no_allow_list_row_at_all_is_still_created(stamp):
-    """THE NAME LOOKUP MUST NOT BE ABLE TO REFUSE THE EMPANELMENT.
-
-    ``ensure_empanelled`` is called from ``auth.login``. Somebody signing in as a DESIGNER whose
-    allow-list row is missing — the master admin, or any path a future change opens — must be
-    empanelled exactly as before; a name is decoration, and decoration that can throw would turn a
-    cosmetic feature into a sign-in outage.
-    """
     email = f"names-noaccess-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -231,18 +109,8 @@ def test_an_empanelment_with_no_allow_list_row_at_all_is_still_created(stamp):
     _in_a_private_loop(scenario)
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════
-# 2. Across a Gmail dot
-# ══════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_the_name_is_found_across_a_gmail_dot(stamp):
-    """The allow-list holds the DOTTED spelling; the empanelment is written under the MAILBOX.
-
-    This is the live pairing, not a hypothetical: ``tanyavanvari.nift@gmail.com`` was admitted under
-    that spelling and empanelled as ``tanyavanvarinift@gmail.com``, and the production backfill
-    reported the two as one person. A ``find_unique`` on either string answers None about the other.
-    """
     dotted = f"names.dot.{stamp}@gmail.com"
     mailbox = f"namesdot{stamp}@gmail.com"
 
@@ -251,9 +119,6 @@ def test_the_name_is_found_across_a_gmail_dot(stamp):
 
         assert await ensure_empanelled(dotted) is True
 
-        # Created under the mailbox, which is ``canonical_email``'s job and is asserted here because
-        # the name lookup has to survive that translation rather than depend on the spelling that
-        # arrived.
         assert await _roster_row(dotted) is None
         row = await _roster_row(mailbox)
         assert row is not None
@@ -263,13 +128,6 @@ def test_the_name_is_found_across_a_gmail_dot(stamp):
 
 
 def test_the_canonical_spelling_wins_when_both_rows_carry_a_name(stamp):
-    """DETERMINISM WHEN THE ALLOW-LIST HOLDS THE SAME MAILBOX TWICE.
-
-    ``AccessRoster.email`` is unique and two spellings are two different strings, so this state is
-    reachable and exists on the live table. Whichever name is chosen is defensible; choosing a
-    DIFFERENT one on different days is not, because it would make a roster screen that changes
-    under a table nobody has touched.
-    """
     dotted = f"names.tie.{stamp}@gmail.com"
     mailbox = f"namestie{stamp}@gmail.com"
 
@@ -285,15 +143,6 @@ def test_the_canonical_spelling_wins_when_both_rows_carry_a_name(stamp):
 
 
 def test_a_row_without_a_name_never_shadows_one_that_has_a_name(stamp):
-    """A NAMELESS ROW MUST NOT WIN THE TIE JUST BY BEING THE CANONICAL SPELLING.
-
-    Sorting the matches by spelling BEFORE discarding the nameless ones would do exactly that, and
-    the result is the original complaint — a bare address on the roster — arriving through the very
-    code written to prevent it, with a name sitting on the other allow-list row.
-
-    Asked from the DOTTED side, which is the direction ``email_match_keys`` can travel; the test
-    below is about the direction it cannot.
-    """
     dotted = f"names.shadow.{stamp}@gmail.com"
     mailbox = f"namesshadow{stamp}@gmail.com"
 
@@ -307,27 +156,6 @@ def test_a_row_without_a_name_never_shadows_one_that_has_a_name(stamp):
 
 
 def test_a_canonical_address_cannot_reach_a_dotted_allow_list_row(stamp):
-    """**THE LIMIT OF THE LIVE LOOKUP, PINNED AS A FACT RATHER THAN LEFT AS A SURPRISE.**
-
-    ``email_match_keys`` returns the literal spelling and ADDS the canonical one. So it walks from a
-    dotted address to a row stored either way, and it cannot walk back: an address that already IS
-    the mailbox yields exactly one key and can never reach a row somebody typed with dots in it.
-    That is what an INDEXED lookup can do — inverting it means a scan, on every sign-in — and it is
-    the same limit every other gate in this product has.
-
-    IT IS ALSO THE SHAPE THE LIVE DATA IS IN, which is why this is asserted rather than assumed.
-    ``tanyavanvari.nift@gmail.com`` sits on the allow-list with an administrator's dots while the
-    empanelment was written under the mailbox, because ``ensure_empanelled`` canonicalises. Anything
-    starting from the ROSTER row therefore starts from the mailbox and finds nothing here.
-
-    **SO THE BACKFILL IS NOT MERELY A CATCH-UP FOR OLD ROWS — IT IS THE ONLY THING THAT CLOSES THIS
-    PAIRING AT ALL.** ``scripts/backfill_roster_names.py`` reads the whole allow-list once and
-    indexes it under both its stored spelling AND its canonical form, which a bulk pass can afford
-    and a per-request lookup cannot. If this assertion ever starts failing because the live lookup
-    grew wider, that is good news and this test should be rewritten rather than deleted — but the
-    backfill's dual index must not be removed on the strength of it, because
-    ``scripts/backfill_email_canonicalisation.py`` has not been run everywhere yet.
-    """
     dotted = f"names.oneway.{stamp}@gmail.com"
     mailbox = f"namesoneway{stamp}@gmail.com"
 
@@ -342,18 +170,8 @@ def test_a_canonical_address_cannot_reach_a_dotted_allow_list_row(stamp):
     _in_a_private_loop(scenario)
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════
-# 3. Never overwritten, and never a Google display name
-# ══════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_adopting_a_name_refuses_a_row_that_already_has_one(stamp):
-    """FILL, NEVER OVERWRITE — the rule that makes it safe to call this on every admin edit.
-
-    The name on the designer roster was typed there, on that screen, about that empanelment. The
-    allow-list's copy may be older, a different transliteration, or the initials somebody used to
-    get an invitation out of the door.
-    """
     email = f"names-keep-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -373,7 +191,6 @@ def test_adopting_a_name_refuses_a_row_that_already_has_one(stamp):
 
 
 def test_adopting_a_name_fills_a_row_that_has_none(stamp):
-    """THE OTHER ORDER OF EVENTS: the empanelment exists first, the name arrives afterwards."""
     email = f"names-late-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -383,23 +200,12 @@ def test_adopting_a_name_fills_a_row_that_has_none(stamp):
         assert await adopt_allow_list_name(email, ACCESS_NAME) is True
         assert (await _roster_row(email)).fullName == ACCESS_NAME
 
-        # IDEMPOTENT, and it reports honestly: the second call changes nothing and says so, which is
-        # what lets the backfill's count line mean "rows I wrote" rather than "rows I looked at".
         assert await adopt_allow_list_name(email, ACCESS_NAME) is False
 
     _in_a_private_loop(scenario)
 
 
 def test_no_google_display_name_can_reach_the_designer_roster(stamp):
-    """THE RULE THE ORIGINAL ``fullName is None`` WAS REALLY PROTECTING, kept intact.
-
-    A display name is chosen by whoever owns the Google account and can be changed by them at any
-    moment. ``AccessRoster`` refuses to store it — ``test_nothing_the_caller_controls_is_stored_
-    beyond_the_address`` pins that — so the only way it could reach the designer roster is if
-    something here read ``User.fullName``. Nothing does, and this asserts it from the outside: an
-    account exists, carrying a name the account holder controls, and the empanelment comes out
-    holding the ADMIN'S name instead.
-    """
     email = f"names-google-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -423,14 +229,9 @@ def test_no_google_display_name_can_reach_the_designer_roster(stamp):
     _in_a_private_loop(scenario)
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════
-# 4. A blank is not a name
-# ══════════════════════════════════════════════════════════════════════════════════════
-
 
 @pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
 def test_a_whitespace_only_allow_list_name_is_not_carried(stamp, blank):
-    """NULL AND ``"   "`` ARE THE SAME FACT TO THE ROSTER SCREEN — both fall back to the address."""
     email = f"names-blank-{abs(hash(blank))}-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -444,12 +245,6 @@ def test_a_whitespace_only_allow_list_name_is_not_carried(stamp, blank):
 
 
 def test_adopting_a_blank_name_is_a_no_op_rather_than_a_write_of_null(stamp):
-    """CLEARING A NAME IS AN EDIT AN ADMIN MAKES ON THE ROSTER SCREEN, DELIBERATELY.
-
-    It is not something that should happen to them as a side effect of tidying a different row next
-    door — so a blank arriving from the allow-list writes nothing at all, and in particular does not
-    erase what the roster screen holds.
-    """
     email = f"names-blankwrite-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -465,12 +260,6 @@ def test_adopting_a_blank_name_is_a_no_op_rather_than_a_write_of_null(stamp):
 
 
 def test_adopting_a_name_for_an_empanelment_that_does_not_exist_writes_nothing(stamp):
-    """IT FILLS A ROW; IT DOES NOT CREATE ONE.
-
-    Creating an empanelment is ``ensure_empanelled``'s decision and carries the create-only rule
-    that protects every revocation an administrator has ever made. A name-carrying helper that could
-    also bring a roster row into existence would be a second, undocumented door into that table.
-    """
     email = f"names-absent-{stamp}@example.org"
 
     async def scenario() -> None:
@@ -480,20 +269,8 @@ def test_adopting_a_name_for_an_empanelment_that_does_not_exist_writes_nothing(s
     _in_a_private_loop(scenario)
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════
-# 5. Suspended rows are named too, and stay suspended
-# ══════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_a_suspended_empanelment_takes_the_name_and_keeps_its_suspension(stamp):
-    """A NAME IS NOT A STANDING, AND THIS IS THE ASSERTION THAT SAYS SO IN CODE.
-
-    ``adopt_allow_list_name`` does not consult ``isActive``, which is the correct behaviour and also
-    the alarming-looking one — so what it must not touch is pinned here rather than left to the
-    docstring. The revocation date is checked as well as the flag: a row that stayed suspended but
-    lost the date an administrator's decision is recorded at is the same defect wearing a smaller
-    hat, and it is the shape ``test_designer_empanelment_auto`` guards on the other write path.
-    """
     email = f"names-suspended-{stamp}@example.org"
     revoked_at = datetime(2026, 3, 14, 9, 30, tzinfo=UTC)
 
@@ -520,14 +297,6 @@ def test_a_suspended_empanelment_takes_the_name_and_keeps_its_suspension(stamp):
 
 
 def test_a_suspended_empanelment_is_still_never_revived_by_the_name_carrying_path(stamp):
-    """THE CREATE-ONLY RULE, RE-ASSERTED THROUGH THE DOOR THAT JUST GAINED A NEW READ.
-
-    ``ensure_empanelled`` gained an ``AccessRoster`` lookup on its create path. If that read were
-    ever placed above the existence check — the obvious "tidy" refactor, since both queries derive
-    from the same keys — the function would still return False, so no test about its RETURN VALUE
-    would notice. This one asserts the row itself, so a suspended empanelment cannot be revived or
-    re-stamped by a change made in the name of the feature this module is about.
-    """
     email = f"names-revoked-{stamp}@example.org"
     revoked_at = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
 

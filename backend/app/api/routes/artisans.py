@@ -67,7 +67,6 @@ logger = logging.getLogger("app.artisans")
 
 
 def _card_source(request: Request | None) -> str:
-    """ANDROID when the app labels itself (``x-client-app: android``), else WEB: for card events."""
     from app.services import artisan_card_store as card_store
     from app.services.usage import CLIENT_APP_HEADER, normalise_client_app
 
@@ -76,13 +75,6 @@ def _card_source(request: Request | None) -> str:
 
 
 async def _attach_cards(items: list[dict[str, Any]], user: Any, source: str = "WEB") -> None:
-    """The register's card fields, while cards are on here (services/artisan_card.py).
-
-    Each item gains ``card`` (``{code, shortCode, token}``, issued now for an artisan that has none)
-    and ``linkedCardCodes`` (the Field Repository card code its link holds). This is what lets the
-    phone match a scanned card against the register it caches, offline. ``aadhaarLast4`` is already
-    on every item. A failure here leaves the page as it was rather than failing the list.
-    """
     settings = get_settings()
     if not items or not artisan_card.active(settings):
         return
@@ -112,9 +104,6 @@ async def _attach_cards(items: list[dict[str, Any]], user: Any, source: str = "W
 
 router = APIRouter(prefix="/artisans", tags=["artisans"])
 
-# What an artisan carries on the wire. Reads load these in one parallel wave (see
-# services/records.py for why that is worth the indirection); writes still pass the derived
-# ``INCLUDE`` to Prisma, so the two can never describe different artisans.
 RELATIONS = (
     Relation("craft", "craft", "craftId"),
     Relation("location", "location", "locationId"),
@@ -123,101 +112,6 @@ RELATIONS = (
 )
 INCLUDE = include_of(RELATIONS)
 
-# ARTISAN'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null`` through for
-# on this model, and the reason a researcher can retract a phone number at all.
-#
-# WHY THIS IS A PER-MODEL LIST AND NOT MORE ENTRIES IN ``records.CLEARABLE_KEYS``: that set is global
-# and ``clean_data`` does not know which table a payload is bound for. ``email`` is nullable here and
-# NOT NULL on User, DesignerRoster and AccessRoster, so a global entry would trade one silent no-op
-# for a constraint violation on three other tables. See the ``clearable`` section of
-# ``clean_data``'s docstring for the whole argument, including why this may only be passed from a
-# route that dumps with ``exclude_unset=True`` — ``update_artisan`` below does, and must keep doing.
-#
-# WHAT IS DELIBERATELY ABSENT, so a later reader does not "complete" the list:
-#   * ``name`` and ``place`` — NOT NULL on Artisan.
-#   * ``pehchanCardAvailable``, ``status``, ``recordedAt``, ``recordedTimezone`` — NOT NULL.
-#   * ``craftId``/``workshopId``/``locationId`` and both identity numbers — already global.
-#   * ``craftName`` — not a column at all; ``resolve_craft_id`` turns it into ``craftId``.
-#   * ``extraMetadata`` — nullable, but naming it here would change nothing: ``merge_field_provenance``
-#     OWNS that column on this route and reassigns it a few lines below the clean, so the null never
-#     survives to Prisma either way. Left out rather than listed-and-inert.
-#
-# ``dos``/``donts`` ARE here even though ``ArtisanCreate`` demands them, and that asymmetry is the
-# existing one, not a new one: the columns are nullable precisely because rows recorded before the
-# fields existed hold NULL, and ``ArtisanUpdate`` deliberately carries no ``min_length`` on either —
-# so an editor can already empty the box today by sending ``""``. NULL is the honest spelling of the
-# same edit rather than a state the model did not already have.
-#
-# ── WHAT A RETRACTION DOES **NOT** ERASE: THREE PLACES, ONE NOW CLOSED, TWO STILL OPEN ───────────
-# Clearing the column is not the same as forgetting the value, and anybody reading this list as a
-# right-to-erasure mechanism should know exactly how far it reaches. The residues below are
-# PRE-EXISTING for ``aadhaarNumber`` and ``pehchanCardNumber``, which were globally clearable long
-# before this list existed; naming the contact and free-text columns here widens them to those too.
-# The two that remain are audit and report surfaces, and quietly redacting one of those is its own
-# kind of wrong — so closing EITHER OF THOSE TWO is an OWNER DECISION, not a follow-up patch. The
-# first residue was different in kind: it was a second copy the product had no use for, and it is
-# now closed in code. Do not read this block as three open questions.
-#
-#   1. CLOSED, for the identity and contact columns only. ``services/access.record_revision`` used
-#      to write the OLD value into an immutable ``RecordRevision.changes`` blob for every column not
-#      in ``REVISION_SKIP_FIELDS`` (which holds only infrastructural churn), so the phone number the
-#      subject asked to have removed was copied INTO the ledger by the request that removed it.
-#      ``access.REVISION_REDACTED_FIELDS`` now covers aadhaarNumber / pehchanCardNumber / phone /
-#      email / address: the ledger keeps which field changed, who changed it, when and in which
-#      direction, and drops the value. THE REST OF THIS LIST IS NOT CLOSED, and the set is wider than
-#      just the free text: ``notes``, ``dos``, ``donts`` and ``localName`` are excluded deliberately
-#      (the old text is the only way to see what a malicious edit quietly removed), and so are
-#      ``gender``, ``dateOfBirth``, ``craftStartDate`` and ``experienceYears`` — ``dateOfBirth`` is
-#      named above that set as the closest call, being personal but load-bearing derived data
-#      (``participant.age``). ``craftStartDate`` is the same shape one column later and is excluded
-#      for the same reason: it is the feeder ``participant.experienceYears`` derives from, and it is
-#      a fact about a trade rather than a route to a person.
-#      Widening the set is a one-line edit and an owner's call; read the argument first.
-#      The closure only holds because the READER end was fixed with it. Every response goes through
-#      ``records.public_encode``, which masks ``aadhaarNumber``/``pehchanCardNumber`` BY KEY NAME —
-#      and ``changes`` is keyed by column name too, so those two entries (dicts) were handed to a
-#      masker that normalises with ``str(value)`` and ``GET /api/data-access/revisions`` served the
-#      string ``"XXXX XXXX rue}"``. ``CollabPanel`` reads ``change.old`` off that, gets undefined,
-#      and printed the row as "— → —": for the two identity columns the redaction had cancelled
-#      itself out on both screens that read the ledger — the web panel and Android's
-#      ``RecordCollabSection`` "Edit history", which does the same ``change.old``/``change.new``
-#      render. ``records._mask_identity_node`` is what stops a container under an identity key being
-#      flattened; see it for what a HISTORICAL ledger row (written before the redaction, still
-#      holding a real number) is served as, and why. The handset is not yet at parity on the CAPTION
-#      naming this exception, nor on the ``redacted`` flag (``RevisionChange`` does not model it, so
-#      ``ignoreUnknownKeys`` drops it) — both are raised in ``access.REVISION_REDACTED_FIELDS``'s
-#      block as open Android items, and neither is a leak: the placeholders carry no value.
-#   2. STILL OPEN, AND LARGER THAN THE LEDGER EVER WAS. ``address``, ``email`` and ``phone`` are
-#      carried verbatim into every workshop stage entry that references the artisan
-#      (``stage_definitions``' ``fromref("address"/"email"/"phone", ...)``, fed by the Artisan
-#      reference ``data`` lambda in ``services/design_workshops``), and the masked Pehchan card
-#      rides across as ``participant.artisanCardNo``. Hydration copies at SAVE time and the report
-#      never re-resolves, so clearing the column here leaves the value in every ``DwStageEntry.data``
-#      and every generated report that already referenced her. That is the settled architecture
-#      working as intended — a document handed to a ministry officer must not change because a
-#      record was edited afterwards — which is exactly why erasing it is an owner decision and not a
-#      bug fix. THE AADHAAR IS NOW IN THIS RESIDUE, and that sentence used to say the opposite: it
-#      read "The Aadhaar is not in this residue: it is carried into no stage entry at any masking."
-#      The owner reversed that on 2026-08-24 (``stage_definitions``' ``participant.aadhaarNumber``,
-#      which carries the decision, what they were shown, and what would reverse it again), so the
-#      masked last four ride into ``participant.aadhaarNumber`` on every stage entry that referenced
-#      her, exactly as the Pehchan card already did. WHAT THAT CHANGES FOR THIS ROUTE IS WHAT IT CAN
-#      HONESTLY PROMISE: clearing ``Artisan.aadhaarNumber`` here removes the twelve digits from the
-#      record and from nothing else -- "XXXX XXXX 9012" survives in every ``DwStageEntry.data`` that
-#      referenced her and in every report already generated from one, because hydration copied at
-#      save time and the report never re-resolves. That is the same settled architecture the two
-#      paragraphs above describe, now applying to one more column; it is NOT a new decision made
-#      here, and it is not a bug in this handler. It does mean a "delete my details" request
-#      touching this column leaves four digits behind wherever a design workshop rostered her, and
-#      whoever answers such a request has to be able to say so.
-#   3. STILL OPEN, AND BY DESIGN RATHER THAN BY OVERSIGHT — an attribution outliving the value it
-#      attributes is the price of "an untouched field keeps the contributor it already had".
-#      ``merge_field_provenance`` skips a cleared field entirely (its loop reads
-#      ``if field in PROVENANCE_SKIP_FIELDS or is_empty_value(value): continue``, and
-#      ``deps.is_empty_value(None)`` is True), so ``extraMetadata.fieldProvenance.phone`` keeps its
-#      old ``{by, byName, at}`` stamp on a column that is now NULL. Not the number, but the web
-#      client's "Field contributions" panel builds its rows from whatever keys that object holds,
-#      so it still lists a ``phone`` row naming who entered the retracted number and when.
 _CLEARABLE_COLUMNS = (
     "localName",
     "gender",
@@ -227,36 +121,18 @@ _CLEARABLE_COLUMNS = (
     "address",
     "notes",
     "dateOfBirth",
-    # CLEARABLE for the same reason ``dateOfBirth`` is: a date typed into the wrong box has to be
-    # retractable from the form that typed it, and an omitted key on a PATCH means "leave it alone".
-    # Clearing it does not blank the artisan's experience — it hands the answer back to the stated
-    # ``experienceYears`` number, then to the legacy metadata, which is what the precedence in
-    # ``REFERENCE_MODELS["Artisan"].data`` is for.
     "craftStartDate",
     "experienceYears",
-    # THE MONTHS BESIDE THE YEARS, AND CLEARABLE FOR THE SAME REASON THE YEARS ARE. The two boxes are
-    # answered and un-answered together on the form, so a pair where one can be blanked and the other
-    # cannot would leave an artisan reading "and 6 months" under an empty years box, with no way back
-    # from the screen that typed it. NULL and 0 are different answers here — see
-    # ``ArtisanUpdate.experienceMonths`` — and this entry is what makes the NULL half reachable:
-    # without it ``clean_data`` drops the explicit null and the PATCH answers 200 having changed
-    # nothing at all.
     "experienceMonths",
     "dos",
     "donts",
 )
 
-# Unique columns that identify a real-world person, and the human phrasing for each. A collision on
-# one of these is the deduplication working as designed, so it has to read as "you already have this
-# artisan" rather than as a database error.
 _IDENTITY_CONSTRAINTS = {
     "aadhaarNumber": "Aadhaar number",
     "pehchanCardNumber": "Artisan Pehchan Card number",
 }
 
-#: The column whose unique index stands behind each request field. The Aadhaar is stored as its
-#: fingerprint (services/aadhaar_fingerprint.py); a 409 still names ``aadhaarNumber``, the field
-#: the form shows, so every client keeps placing the message under the Aadhaar box.
 _IDENTITY_COLUMNS = {
     "aadhaarNumber": aadhaar_fingerprint.FINGERPRINT_FIELD,
     "pehchanCardNumber": "pehchanCardNumber",
@@ -264,7 +140,6 @@ _IDENTITY_COLUMNS = {
 
 
 def _violated_identity_field(error: Exception) -> str | None:
-    """Which identity field a Prisma unique-constraint error was raised on, if any."""
     text = str(error)
     if "unique" not in text.lower():
         return None
@@ -275,7 +150,6 @@ def _violated_identity_field(error: Exception) -> str | None:
 
 
 def _fingerprint_unavailable() -> HTTPException:
-    """The server has no fingerprint key, so it cannot store or match an Aadhaar. An operator fault."""
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Aadhaar numbers can't be saved right now. Try again shortly.",
@@ -283,7 +157,6 @@ def _fingerprint_unavailable() -> HTTPException:
 
 
 def _seal_aadhaar(data: dict[str, Any], previous: Any = None) -> str | None:
-    """``aadhaar_fingerprint.seal`` with the missing-key fault turned into a 503 and logged."""
     try:
         return aadhaar_fingerprint.seal(data, previous=previous)
     except aadhaar_fingerprint.FingerprintKeyMissing as exc:
@@ -294,19 +167,6 @@ def _seal_aadhaar(data: dict[str, Any], previous: Any = None) -> str | None:
 async def _identity_conflict(
     field: str, value: str, exclude_id: str | None = None, existing: Any = None
 ) -> HTTPException:
-    """A 409 naming the artisan that already holds this number, so the researcher can go to them.
-
-    The existing artisan's name and place are safe to return — the caller already possesses the
-    identity number, and without them the message is a dead end ("duplicate" with nowhere to go).
-    The number itself is echoed back MASKED.
-
-    Pass ``existing`` when the caller has already loaded the clashing artisan: the pre-flight guard
-    below has it in hand, and re-reading it would be a whole extra round trip to learn something we
-    already know. That was written against a cross-region database and the link changed on
-    2026-09-02 (co-located, ~1-2ms a hop — ``services/concurrency.py``); the sentence did not,
-    because it is about a query that need not be issued at all, and the cheapest round trip is still
-    the one nobody makes.
-    """
     if existing is None and value:
         where = (
             aadhaar_fingerprint.match_where(
@@ -338,14 +198,6 @@ async def _identity_conflict(
 
 
 def _may_read_full_aadhaar(user: Any, artisan: Any) -> bool:
-    """May this caller see an artisan's UNMASKED Aadhaar number?
-
-    Aadhaar is regulated personal data, so plain "is signed in" is not the right bar — without this,
-    a crowdsource volunteer could read any artisan's full number straight off ``GET /artisans/{id}``.
-    The line is drawn at the people who actually need it to do the work: the researcher who recorded
-    the artisan, and professor-and-above (which includes admins) who supervise and correct the data.
-    Everyone else sees the same masked form the exports show.
-    """
     from app.core.deps import get_value, has_rank
 
     if has_rank(user, "PROFESSOR"):
@@ -356,12 +208,6 @@ def _may_read_full_aadhaar(user: Any, artisan: Any) -> bool:
 
 
 def _mask_artisan_identity(payload: Any, user: Any, artisan: Any) -> Any:
-    """Replace ``aadhaarNumber`` with its masked form for callers not entitled to the raw value.
-
-    Applied to the ENCODED payload, after ``public_encode``, so it covers the response no matter how
-    the row was loaded. The masked string is deliberately the same ``XXXX XXXX 9012`` the data
-    browser and the workbook show, so one artisan reads identically wherever they appear.
-    """
     if not isinstance(payload, dict) or "aadhaarNumber" not in payload:
         return payload
     if _may_read_full_aadhaar(user, artisan):
@@ -376,11 +222,6 @@ PEHCHAN_PAIR_DETAIL = (
 
 
 def assert_pehchan_pair(artisan: Any, data: dict[str, Any], *, detail: str = PEHCHAN_PAIR_DETAIL) -> None:
-    """422 when an edit would leave "card available = Yes" with no number (see ``update_artisan``).
-
-    Shared with the Field Repository refresh (``routes/cross_portal.refresh_artisan``), which writes
-    the same two columns and must be held to the same pair.
-    """
     answered_yes = data.get("pehchanCardAvailable") is True
     clears_number = "pehchanCardNumber" in data and not data["pehchanCardNumber"]
     still_yes = data.get("pehchanCardAvailable", artisan.pehchanCardAvailable) is True
@@ -393,23 +234,6 @@ def assert_pehchan_pair(artisan: Any, data: dict[str, Any], *, detail: str = PEH
 async def _guard_identity_conflicts(
     data: dict[str, Any], exclude_id: str | None = None, aadhaar: str | None = None
 ) -> None:
-    """Reject a duplicate Aadhaar/Pehchan number BEFORE writing, with a message worth reading.
-
-    The unique indexes are the real guarantee — this is the pre-check that turns a would-be 500 into
-    an actionable 409. The write is still wrapped in its own handler, because two researchers can
-    submit the same artisan in the same instant and only the index can settle that race.
-
-    Both numbers are checked in ONE query, and that query already loads what the 409 needs to say.
-    Checking them one at a time cost THREE SEQUENTIAL ROUND TRIPS on the way to every saved artisan
-    — two probes and a third to look up the artisan being reported — for a question a single ``OR``
-    answers. The count is the point and it has not changed; what has is the price of one, which was
-    a cross-region hop when this was written and is a co-located one or two milliseconds since
-    2026-09-02 (``services/concurrency.py``). Three trips to answer one question is still three
-    times the right number.
-    """
-    # ``aadhaar`` is the number ``_seal_aadhaar`` just took out of ``data``: the payload now carries
-    # its fingerprint, and the legacy column (rows the backfill has not reached) can only be matched
-    # by the number itself.
     clauses: list[dict[str, Any]] = []
     if aadhaar:
         legacy = await aadhaar_fingerprint.legacy_pending(db)
@@ -429,23 +253,10 @@ async def _guard_identity_conflicts(
             raise await _identity_conflict("pehchanCardNumber", pehchan, exclude_id, existing=clash)
 
 
-# ``resolve_craft_id`` USED TO BE DEFINED HERE AND IS NOW IMPORTED FROM ``services/records`` (see
-# the import block at the top of this file), with its behaviour on this path unchanged: the default
-# ``allow_create=True`` is exactly the branch that stood here.
-#
-# It moved because the artisan spreadsheet importer is a SECOND caller, and a service reaching into
-# a route module for a name is the dependency direction this codebase refuses everywhere else. The
-# importer passes ``allow_create=False``, which is a decision about SPREADSHEETS and not about the
-# rank of the person uploading one — every directorate tier clears ``can_manage_crafts``, so a
-# typo'd craft name in one cell would otherwise mint a row in the controlled vocabulary and report
-# it as a success. The argument is written out in full at the function.
-
 
 async def _likely_duplicates(
     payload: ArtisanCreate, data: dict[str, Any], viewer: Any = None
 ) -> list[tuple[artisan_duplicates.Profile, artisan_duplicates.Score]]:
-    """Stored artisans scoring 0.60 or more against this create. Advisory: a failure is logged and
-    reads as "none", so the duplicate finder can never stop a record being saved."""
     from app.api.routes.artisan_duplicates import profile_from_form
 
     try:
@@ -475,7 +286,6 @@ def _hold_if_duplicate(
     likely: list[tuple[artisan_duplicates.Profile, artisan_duplicates.Score]],
     acknowledged: list[str] | None,
 ) -> None:
-    """409 ``artisan_possible_duplicate`` when a pair at 0.75+ was not shown and set aside."""
     if acknowledged is None or not getattr(get_settings(), "artisan_duplicate_hold", True):
         return
     seen = set(acknowledged)
@@ -529,36 +339,13 @@ async def list_artisans(
     search: str | None = None,
     craft: str | None = None,
     craftId: str | None = None,
-    # THE CRAFT SCOPE, PLURAL — repeatable or comma-joined ids, the shape ``workshopIds`` below
-    # already has. Distinct from the singular ``craftId`` above, which stays because every existing
-    # form-picker link uses it; WHEN BOTH ARE SENT BOTH NARROW.
-    #
-    # It exists because a MULTI-craft picker cannot be served by the singular one. Issuing one
-    # request per ticked craft is not a substitute — "Select all 178" would fire 178 of them — and
-    # filtering one 100-row page in the browser gives the intersection of N crafts with the newest
-    # hundred artisans overall, which is the ceiling defect ``frontend/components/forms/
-    # recordPickers`` was written about. ``ToolAssignmentSection.tsx`` carried a paragraph calling
-    # this the one unclosed gap in that pass; this parameter is what closed it.
     craftIds: list[str] | None = Query(None),
     workshopId: str | None = None,
     designWorkshopId: str | None = None,
     place: str | None = None,
     statusFilter: str | None = None,
-    # WHOSE RECORDS. Reading is open to every signed-in account, so "the records I filed" is no
-    # longer a side effect of the visibility filter and has to be asked for. Without this the
-    # My Activity page had to fetch page 1 of the WHOLE repository and sift it client-side, which
-    # silently under-reported the moment the repository outgrew one page.
     createdBy: str | None = None,
-    # The workshop SCOPE, plural, from the shared filter vocabulary — repeatable or comma-joined ids
-    # plus the reserved value "none". Distinct from the singular ``workshopId`` above, which stays
-    # because every existing form-picker link uses it; when both are sent both narrow.
-    #
-    # It is broader than the singular filter on purpose: it also counts an artisan who SAT IN an
-    # interview taken at the workshop, through the shared ``artisan_workshop_clause``, so the
-    # consolidated-questionnaire index and the completion matrix cannot disagree about who was there.
     workshopIds: list[str] | None = Query(None),
-    # THE COMPLETENESS FILTER (2026-10-18): incomplete | required | complete, from the shared
-    # ``record-completeness.json``. AND-combined like every other OR-bearing clause.
     completeness: str | None = None,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
@@ -566,9 +353,6 @@ async def list_artisans(
 ) -> dict[str, Any]:
     page, page_size, skip = normalize_pagination(page, pageSize)
     where: dict[str, Any] = {}
-    # OR-bearing conditions are collected here and combined under a single top-level "AND" so the
-    # free-text search OR and the workshop OR can never overwrite one another — nor the row-visibility
-    # filter, which joins the same AND.
     and_filters: list[dict[str, Any]] = []
     vis = await viewable_where(current_user)
     if vis:
@@ -578,10 +362,6 @@ async def list_artisans(
             {"name": contains(search)},
             {"localName": contains(search)},
             {"place": contains(search)},
-            # ``notes`` is one of the columns that can now hold a rich-text document, so it goes
-            # through ``prose_contains`` rather than ``contains``. The other three cannot — a name,
-            # a local name and a place are single-line fields with no editor behind them — and they
-            # stay on the cheaper single-clause filter on purpose.
             prose_contains("notes", search),
             {"craft": {"is": {"name": contains(search)}}},
         ]
@@ -591,14 +371,8 @@ async def list_artisans(
         where["craftId"] = craftId
     resolved_crafts = resolve_craft_ids(craftIds)
     if resolved_crafts is not None:
-        # Into ``and_filters``, never ``where["craftId"]``: the singular filter above assigns that key
-        # directly, and a second assignment would silently discard whichever was written first. An id
-        # the caller cannot see, or one that does not exist, matches nothing and is not an error —
-        # this is a filter, not a lookup, and the same is true of every other narrowing on this route.
         and_filters.append({"craftId": {"in": resolved_crafts}})
     if workshopId:
-        # Either reading counts: the artisan's own workshopId column, or the WorkshopArtisan join
-        # (relation named ``workshops``) that carried the link before the column existed.
         and_filters.append(
             {
                 "OR": [
@@ -608,12 +382,6 @@ async def list_artisans(
             }
         )
     if designWorkshopId:
-        # THE DESIGN & PROTOTYPE WORKSHOP filter. A plain equality on the column and never an OR
-        # like `workshopId` above, because there is no second reading of this link: `workshopId`
-        # has a join table that predates the column, and this one has never had anything but the
-        # column. The reserved word "none" is deliberately NOT accepted here — that vocabulary
-        # belongs to the plural `workshopIds` scope, and inventing a second spelling of it on a
-        # singular filter is how two filters come to disagree about what "unfiled" means.
         where["designWorkshopId"] = designWorkshopId
     resolved_workshops = resolve_workshop_ids(workshopIds)
     if resolved_workshops is not None:
@@ -637,11 +405,6 @@ async def list_artisans(
         order={"createdAt": "desc"},
         relations=RELATIONS,
     )
-    # A list page hands back many artisans at once, so mask each row the caller is not entitled to
-    # read raw — otherwise one request yields every id AND every full Aadhaar on the page.
-    # The encoder masks per node against this viewer, so a list of a hundred artisans is one
-    # decision per artisan rather than one blanket decision for the page: the two the caller
-    # recorded come back raw, the rest masked.
     encoded = await attach_completeness("artisan", public_encode(items, current_user))
     await _attach_cards(encoded, current_user, _card_source(request))
     return page_payload(encoded, total, page, page_size)
@@ -653,39 +416,14 @@ async def create_artisan(
     current_user: Any = Depends(require_record_creator),
     request: Request = None,  # type: ignore[assignment]  # FastAPI injects it; direct calls may omit it
 ) -> dict[str, Any]:
-    # Not a column: the ids of the likely duplicates the creator was shown and called different
-    # people. ``None`` (every build before the duplicate finder) means "never held".
     acknowledged = payload.duplicateAcknowledged
     data = clean_data(payload.model_dump(exclude={"duplicateAcknowledged"}))
-    # The typed Aadhaar becomes its fingerprint and last four here, before anything else reads the
-    # payload; ``aadhaar`` is held only for the duplicate check below.
     aadhaar = _seal_aadhaar(data)
     _standardise(apply_artisan_values, data)
-    # The artisan form contract: both dates required on a save made under it, the old shape accepted.
     assert_form_contract(take_form_contract(data), data)
-    # Workshop entries: enforce assignment, then flag + pin a late submission for admin approval.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
-    # THE DESIGN & PROTOTYPE WORKSHOP is a DIFFERENT SCOPE with different machinery, so it needs
-    # its own gate beside the line above rather than instead of it: `workshopId` is
-    # `WorkshopAssignment`, `designWorkshopId` is creator / admin / `DesignWorkshopViewer`.
-    # `assert_payload_workshop` calls `load_workshop_or_404(for_edit=True)` — the same helper the
-    # stage writes and the questionnaire attach use — because filing a record under a workshop
-    # puts it inside that workshop's scoped lists and totals, which is a change to somebody
-    # else's record. Ungated, any client could post a stranger's workshop id and file into it,
-    # which is the hole `_require_attachable_workshop` was written to close one door over.
-    # `filed_under=None`: a row that does not exist yet is filed nowhere.
-    #
-    # BOTH GATES COME BEFORE THE TWO LINES BELOW THEM, BECAUSE BOTH OF THOSE LINES WRITE (2026-10-09).
-    # `attach_location` mints a `Location` row from the payload and `resolve_craft_id` may mint a
-    # craft, so a create refused AFTER them left behind a `Location` nothing references and, for a
-    # craft name the register lacked, a craft no record uses — on every refused save.
     await assert_payload_workshop(data, current_user, filed_under=None)
-    # Aadhaar / Pehchan are the dedup keys: point the researcher at the existing artisan instead of
-    # letting the unique index surface as a 500. A read only, so it sits above the two lines below
-    # that write (a refused create leaves no Location behind), and above the softer hold after it.
     await _guard_identity_conflicts(data, aadhaar=aadhaar)
-    # LIKELY DUPLICATES (services/artisan_duplicates.py). Scored on every create; held only when the
-    # client sends the list (``[]`` when it showed nothing) and a pair at 0.75 or more is not in it.
     likely = await _likely_duplicates(payload, data, current_user)
     _hold_if_duplicate(likely, acknowledged)
     data = await resolve_craft_id(data, current_user)
@@ -694,7 +432,6 @@ async def create_artisan(
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
     apply_status_policy_create(current_user, data)
-    # After the status policy, so a late submission outranks the submitter's own approval rights.
     pin_pending_if_late(data, current_user, check=check)
     try:
         created = await db.artisan.create(data=data, include=INCLUDE)
@@ -702,12 +439,9 @@ async def create_artisan(
         field = _violated_identity_field(exc)
         if field is None:
             raise
-        # Lost the race against a concurrent submission of the same person.
         value = aadhaar if field == "aadhaarNumber" else data.get(field)
         raise await _identity_conflict(field, value) from exc
-    # The explicit column ADDS to the WorkshopArtisan join every existing query still reads through.
     await link_workshop_artisan(created.workshopId, created.id)
-    # Its QR card, so the first print needs no second request. Lazily issued on first read anyway.
     if artisan_card.active(get_settings()):
         from app.services import artisan_card_store as card_store
 
@@ -718,8 +452,6 @@ async def create_artisan(
         except Exception:
             logger.warning("artisan create: card not issued yet", exc_info=True)
     await _store_likely(created.id, likely, acknowledged)
-    # The creator is by definition entitled, but pass the viewer anyway rather than relying on
-    # that: a future change to who may create an artisan would otherwise silently leak.
     return await attach_completeness("artisan", public_encode(created, current_user))
 
 
@@ -729,8 +461,6 @@ async def get_artisan(
 ) -> dict[str, Any]:
     artisan = await db.artisan.find_unique(where={"id": artisan_id})
     if artisan is None:
-        # A record merged into another answers with where it went, so a stale link, an offline
-        # queue or a dataset consumer can follow it (services/artisan_merge.resolve).
         survivor = await artisan_merge.resolve(artisan_id)
         if survivor:
             raise HTTPException(
@@ -738,9 +468,6 @@ async def get_artisan(
             )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     await hydrate_relations([artisan], RELATIONS)
-    # Masked unless this caller is entitled to the raw number (creator, or professor+) — decided
-    # inside the encoder now, so the same rule covers this route and every route that merely embeds
-    # an Artisan relation without thinking about it.
     return await attach_completeness("artisan", public_encode(artisan, current_user))
 
 
@@ -751,91 +478,27 @@ async def update_artisan(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     artisan = await require_record(db.artisan, artisan_id)
-    # Read BEFORE anything writes: the mirrored WorkshopArtisan row is keyed on the workshop the
-    # artisan is leaving, and after the update that value is gone. See the sync call at the end of
-    # this route for the unlink this pairs with.
     previous_workshop_id = artisan.workshopId
-    # ``exclude_unset=True`` IS THE PRECONDITION OF ``clearable``, not a stylistic choice: it is what
-    # makes a present key mean "the caller sent this". Drop it and every optional the client left
-    # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
     data = clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     _standardise(apply_artisan_values, data, artisan)
-    # The precondition is a question, not a column — taken out of the body here, asked inside the
-    # transaction below. Popped BEFORE ``drop_masked_identity_numbers`` and everything after it, for
-    # the reason ``records.take_expected_updated_at`` gives: every helper between here and the write
-    # reads this dict, and a stray key becomes an audit entry, a provenance stamp, or a 500 naming a
-    # column ``Artisan`` does not have.
     expected_updated_at = take_expected_updated_at(data)
-    # Checked against the row as it will be after this write: a date the body leaves out keeps the
-    # stored value, so a record saved before the contract must gain both. Old shape: unchanged.
     assert_form_contract(take_form_contract(data), data, stored=artisan)
-    # A caller shown a masked number who saves without touching it means "leave it alone" — for the
-    # Pehchan card as much as for the Aadhaar, since both are masked on the way out to them.
     data = drop_masked_identity_numbers(data)
-    # Before the edit guard, so the ledger and the provenance see the stored columns.
     aadhaar = _seal_aadhaar(data, previous=artisan)
-    # Moving a record into (or between) workshops is a workshop submission too, so the create-time
-    # guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None
     if "workshopId" in data and data.get("workshopId") != artisan.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
-    # Same gate on the PATCH, so the create-time check cannot be bypassed by filing the record
-    # afterwards. The destination is keyed on PRESENCE, so an edit that does not mention the
-    # workshop is not re-validated — a record filed under a workshop the designer was later removed
-    # from must still be editable by them. `filed_under` is the workshop the stored row names, and
-    # its inspector and its two directors may not change this artisan at all — not unfile it, which
-    # is the oversight screen's unlink refused on this door too, and not edit a field of it either,
-    # because the records filed under a workshop are its content (2026-10-09). Above the craft and
-    # location lines, which write, for the create route's reason.
     await assert_payload_workshop(data, current_user, filed_under=artisan.designWorkshopId)
     data = await resolve_craft_id(data, current_user, stored=artisan)
     data = await attach_location(data)
-    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
-    # ends in ``record_revision``, which used to COMMIT on its own thirty lines before the update
-    # below — so a request that died in that gap (P2024 on a cross-region pool, a dropped connection)
-    # left a RecordRevision asserting an artisan's Aadhaar or place had been changed to a value the
-    # row does not hold. ``client=tx`` is not decoration: ``db.tx()`` hands back a DIFFERENT client,
-    # so a callee writing through the module singleton is not in this block however it reads. The
-    # whole argument is in ``access.record_revision``.
-    #
-    # THIS GAP IS WIDER HERE THAN ANYWHERE ELSE, WHICH IS WHY IT IS WORTH SAYING TWICE. Two refusals
-    # sit BETWEEN the audit row and the update — the Pehchan pair below (422) and
-    # ``_guard_identity_conflicts`` (409) — and until this block existed both of them answered a
-    # refusal while leaving a committed ledger entry for the edit they had just refused. That is the
-    # exact defect ``processes.update_process`` moved its step guard upwards to avoid, arrived at
-    # from the other side: there the write was above the refusal, here the refusal is above a write
-    # that never happens. A transaction fixes both without reordering either.
     async with db.tx() as tx:
-        # ABOVE ``guard_record_edit`` AND THEREFORE ABOVE THE LEDGER, which is what the paragraph
-        # immediately above this block is about: two refusals already sat between the audit row and
-        # the update, and this is a third. It is placed on the correct side of the ledger from the
-        # start rather than being one more thing the transaction has to rescue. ``None`` passes and
-        # changes nothing, which is every client shipped to date — see
-        # ``records.assert_expected_updated_at``, and note that an Aadhaar clash is still a 409 of
-        # its own with its own detail, so the two conflicts never have to be told apart by a code.
-        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
         await lock_and_assert_expected_updated_at(tx, "artisan", artisan, expected_updated_at)
         await guard_record_edit(artisan, current_user, data, "artisan", client=tx)
         await apply_status_policy_update(current_user, artisan, data)
-        # Stamped after the edit guard (the stamp is the API's bookkeeping, never a contributor's
-        # edit) and pinned after the status policy, so an already-flagged record cannot be
-        # self-approved.
         stamp_workshop_submission(data, check=check, record=artisan)
         pin_pending_if_late(data, current_user, check=check, record=artisan)
         merge_field_provenance(data, current_user, previous=artisan)
         resubmit_status(artisan, current_user, data)
-        # "Card available = Yes" on an edit is only valid if a number exists — either arriving in this
-        # PATCH or already stored. The create-time validator cannot make this call, because a PATCH
-        # carrying just the flag is legitimate when the record already holds a number.
-        #
-        # There are two ways a PATCH can break that pair, and the schema validator can see neither: it
-        # is handed only the keys the client actually sent, so it never learns what is on the row.
-        #   * the answer turns to Yes while no number exists here or on the record, and
-        #   * the number is CLEARED while the answer stays Yes — the mirror image, and the one that
-        #     otherwise slips through as {"pehchanCardNumber": null} on its own.
-        # A PATCH touching neither key is deliberately left alone: rows that predate this feature
-        # carry the column's DEFAULT of Yes with no number, and an unrelated edit to one must not be
-        # refused.
         assert_pehchan_pair(artisan, data)
         await _guard_identity_conflicts(data, exclude_id=artisan_id, aadhaar=aadhaar)
         try:
@@ -844,23 +507,9 @@ async def update_artisan(
             field = _violated_identity_field(exc)
             if field is None:
                 raise
-            # ``_identity_conflict`` READS, and it deliberately reads through the module client and
-            # not ``tx``: a unique violation has already aborted this transaction in Postgres, so any
-            # further statement on ``tx`` would fail with "current transaction is aborted" and the
-            # 409 would arrive as a 500 naming nothing. The lookup only needs committed rows — it is
-            # finding whose artisan already holds the number — so a separate connection is the right
-            # place for it as well as the only working one.
             value = aadhaar if field == "aadhaarNumber" else data.get(field)
             raise await _identity_conflict(field, value, exclude_id=artisan_id) from exc
-    # BIDIRECTIONAL, unlike the create path's one-way ``link_workshop_artisan``. An edit can REMOVE
-    # a workshop, and until this call the removal stopped at the column: the join row this mirror
-    # wrote the first time survived, so every query reading the roster kept the artisan in a
-    # workshop their own page reported them as having left. Passing the previous value is what
-    # makes the delete possible at all — ``updated.workshopId`` is null in exactly the case that
-    # needs cleaning up. See ``sync_workshop_artisan`` for what it deliberately does NOT try to
-    # tell apart.
     await sync_workshop_artisan(previous_workshop_id, updated.workshopId, updated.id)
-    # An edit can make or unmake a likely duplicate; advisory, never fails the save.
     await artisan_duplicates.rescore_artisan(updated.id)
     return await attach_completeness("artisan", public_encode(updated, current_user))
 
@@ -873,16 +522,6 @@ class AadhaarLookup(BaseModel):
 async def lookup_artisan_by_aadhaar_body(
     payload: AadhaarLookup, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """Is this Aadhaar already on an artisan? The form's pre-flight duplicate check.
-
-    Lets the researcher find out while they are still typing, instead of after filling a whole form
-    and hitting a 409 on save. Returns ``{found, artisan?}`` and never 404s — "not found" is the
-    expected, successful answer. Only the identifying fields of the existing artisan come back, and
-    only to a signed-in user who already holds the number they searched with.
-
-    THE NUMBER TRAVELS IN THE BODY. A query string is written to the access logs of CloudFront,
-    nginx and uvicorn; a body is not. The GET below stays for app builds already in the field.
-    """
     return await _lookup_aadhaar(payload.number)
 
 
@@ -890,13 +529,11 @@ async def lookup_artisan_by_aadhaar_body(
 async def lookup_artisan_by_aadhaar(
     number: str, _: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """The same check for clients that predate the POST. New code must use the POST."""
     return await _lookup_aadhaar(number)
 
 
 async def _lookup_aadhaar(number: str) -> dict[str, Any]:
     normalized = normalize_aadhaar(number)
-    # Only a well-formed number is fingerprinted; anything else cannot be on an artisan.
     if not normalized or aadhaar_error(normalized):
         return {"found": False, "artisan": None}
     try:
@@ -925,23 +562,6 @@ async def _lookup_aadhaar(number: str) -> dict[str, Any]:
 async def get_artisan_questionnaire(
     artisan_id: str, _: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """Everything recorded against this artisan in the questionnaire, gathered per artisan.
-
-    Because one interview is shared across an exact set of artisans, a recording/note/answer made for
-    a group (or a larger superset) belongs to EACH member individually — so it surfaces here for every
-    artisan in the set, letting each be validated on their own, as part of a subset, or for the whole
-    set. Returns: ``answered`` (non-empty answers across every interview the artisan belongs to) and
-    ``interviews`` (each interview the artisan is in, with its recordings/media, notes, and the other
-    artisans it was recorded with). Deletion of any media stays uploader-or-admin; the interview row is
-    admin-only — enforced on the media/questionnaire routes, not here.
-    """
-    # The artisan check, the answers and the interviews are three independent reads, so they run
-    # together — the 404 is still decided first, it just no longer holds the other two behind a
-    # round trip of its own. (Written against the cross-region database; co-located since
-    # 2026-09-02, so the saving is milliseconds rather than seconds, and the shape is the same
-    # either way.) Every interview the artisan belongs to (alone, in a subset,
-    # or in a larger set) comes back with its recordings and co-artisans, so the same content is
-    # validatable for this artisan individually.
     artisan, responses, interview_rows = await gather_reads(
         db.artisan.find_unique(where={"id": artisan_id}),
         db.questionnaireresponse.find_many(
@@ -1022,27 +642,19 @@ async def get_artisan_questionnaire(
 async def delete_artisan(artisan_id: str, current_user: Any = Depends(get_current_user)) -> None:
     assert_can_delete(current_user)
     artisan = await require_record(db.artisan, artisan_id)
-    # Not by the inspector or a director of the workshop it is filed under, admins included: its
-    # records are its content (``services/record_design_workshop``, 2026-10-09).
     await assert_may_write_a_record_filed_under(artisan.designWorkshopId, current_user)
     await db.artisan.delete(where={"id": artisan_id})
 
 
 def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:
-    """The shared standard values (``services/standard_values``): a value off its list is a 422."""
     try:
         apply(data, stored)
     except StandardValueError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc
 
 
-# ── the artisan's own consent (the one consent store, both portals) ─────────────────────────────
-
 
 class ArtisanConsentIn(BaseModel):
-    """The artisan's answer to "may their recordings be sent to an outside service". GRANTED or
-    REFUSED only; taking a consent back is recording REFUSED. Who recorded it is the caller."""
-
     state: str = Field(pattern="^(GRANTED|REFUSED)$")
     note: str | None = Field(default=None, max_length=2000)
 
@@ -1064,7 +676,6 @@ async def _artisan_consent(artisan_id: str) -> dict[str, Any]:
 
 @router.get("/{artisan_id}/consent")
 async def get_artisan_consent(artisan_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """The artisan's current answer in the ``Consent`` ledger: the same row documentation-portal reads."""
     await require_record(db.artisan, artisan_id)
     return await _artisan_consent(artisan_id)
 
@@ -1073,9 +684,6 @@ async def get_artisan_consent(artisan_id: str, current_user: Any = Depends(get_c
 async def record_artisan_consent(
     artisan_id: str, payload: ArtisanConsentIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """Append the artisan's answer to the ledger (append-only: a change is a new row). It never blocks
-    recording; it decides only whether a recording of this artisan may be SENT outside, in both
-    portals. Needs the standing to edit the artisan."""
     from app.core.deps import is_content_admin, may_edit_lower_ranked_record
     from app.services import dictation_consent
 

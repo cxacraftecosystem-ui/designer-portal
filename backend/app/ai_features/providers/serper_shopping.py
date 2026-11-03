@@ -1,22 +1,3 @@
-"""Comparable products through serper.dev's Google Shopping endpoint.
-
-WHY A SHOPPING API AND NOT A CRAWLER. This endpoint answers with fields — ``title``, ``source``,
-``price``, ``link`` — which is the entire reason :mod:`app.ai_features.market_research` needs no
-model to read a page and no robots.txt logic to be allowed to. The operator agrees to serper's
-terms and pays for what they use; nothing here visits a shop's website.
-
-WHAT LEAVES THE BUILDING. The query only — the words a designer typed plus the craft, category,
-materials and district on the brief. No respondent name, no photograph, no captured survey row.
-That is a materially smaller disclosure than the hosted image providers make, and it is worth
-saying explicitly, because "we sent it to a search API" is otherwise a sentence with no bound on it.
-
-Never run against the real service. The request shape follows serper's published documentation as
-of 2026-08 and is covered by stubbed tests; the vendor key names are read through
-:func:`~app.ai_features.providers.base.first_string` with alternatives, so a rename degrades to a
-blank field rather than losing the batch. Expect to spend ten minutes confirming it with an
-account, exactly as ``docs/AI_FEATURES.md`` §8 says of remove.bg.
-"""
-
 from collections.abc import Sequence
 from typing import Any
 
@@ -26,18 +7,12 @@ from app.ai_features.providers.http import JSON_RESPONSE_CEILING, request_json
 from app.ai_features.runtime import Deadline, throttle
 from app.ai_features.types import Capability, RawListing, ResearchBrief
 
-#: Pages fetched per query before giving up on reaching the result budget. Three, because every
-#: page is a credit and a fourth page of Google Shopping is not comparable products any more.
 _MAX_PAGES = 3
 
-#: Results asked for per request. serper documents 10 as the default depth and charges more beyond
-#: it, so this is the boundary of one credit.
 _PAGE_SIZE = 10
 
 
 class SerperShoppingProvider(MarketResearchProvider):
-    """One POST per page, mapped onto RawListing. No interpretation — see the base class."""
-
     provider_id = "serper_shopping"
 
     def search(
@@ -58,8 +33,6 @@ class SerperShoppingProvider(MarketResearchProvider):
             )
 
         budget = self.settings.market_research_max_results
-        # THE BUDGET IS SPLIT ACROSS QUERIES, NOT GIVEN TO EACH. Three queries each fetching
-        # twenty results is sixty credits for a button press nobody warned the operator about.
         per_query = max(1, budget // max(1, len(queries)))
         out: list[RawListing] = []
 
@@ -80,7 +53,7 @@ class SerperShoppingProvider(MarketResearchProvider):
                     )
                 collected += len(rows)
                 if len(rows) < _PAGE_SIZE:
-                    break  # a short page is the last page; asking for another spends a credit
+                    break
         return tuple(out)
 
     def _page(
@@ -91,8 +64,6 @@ class SerperShoppingProvider(MarketResearchProvider):
         capability: Capability,
         deadline: Deadline,
     ) -> list[Any]:
-        # Courtesy delay first, then the budget check — so a call that the throttle pushed past
-        # the deadline is reported as "out of budget" rather than made anyway.
         throttle(
             f"market_research:{self.provider_id}",
             self.settings.market_research_min_interval_seconds,
@@ -134,8 +105,6 @@ class SerperShoppingProvider(MarketResearchProvider):
             )
         rows = payload.get("shopping")
         if rows is None:
-            # An empty market is a legitimate answer and must not look like a failure; a missing
-            # key when the vendor also sent an error message is a failure and must not look empty.
             message = first_string(payload, "message", "error")
             if message:
                 raise self._fail(
@@ -154,18 +123,15 @@ class SerperShoppingProvider(MarketResearchProvider):
 
 
 def _now() -> str:
-    from app.ai_features.market_research import utc_now_iso  # avoids a cycle
+    from app.ai_features.market_research import utc_now_iso
 
     return utc_now_iso()
 
 
 def _listing(row: Any, *, provider: str, query: str, retrieved_at: str) -> RawListing:
-    """One vendor row as a RawListing. The ONLY vendor-specific knowledge in this file."""
     return RawListing(
         name=first_string(row, "title", "name"),
         seller=first_string(row, "source", "seller", "store", "merchant"),
-        # The formatted string is preferred over any numeric field: it carries the currency and it
-        # is what a person auditing the figure will see on the page.
         price_text=first_string(row, "price", "priceText", "extractedPrice", "price_value"),
         url=first_string(row, "link", "url", "productLink", "product_link", "offersLink"),
         provider=provider,

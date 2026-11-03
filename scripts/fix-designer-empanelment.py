@@ -1,40 +1,3 @@
-"""
-Diagnose and fix a designer who is allow-listed but refused with
-"Your designer access has been suspended."
-
-WHY THIS HAPPENS
-----------------
-There are two independent gates on sign-in:
-
-  * AccessRoster   - the platform allow-list. Gates everybody.
-  * DesignerRoster - the EMPANELMENT list. Gates only accounts whose role is
-                     DESIGNER, and it is the one printing this message.
-
-Passing the first does not pass the second. assert_roster_admits()
-(app/api/routes/auth.py) refuses a DESIGNER with no ACTIVE DesignerRoster row,
-and roster_allows() is literally:
-
-    db.designerroster.find_first(where={"email": address, "isActive": True})
-
-THE SUBTLE CAUSE THIS SCRIPT EXISTS TO CATCH
---------------------------------------------
-normalise_email() is only `.strip().lower()`. It does NOT canonicalise Gmail
-dots or +aliases. So `sandy.craft3@gmail.com` and `sandycraft3@gmail.com` are
-the same mailbox to Google and two different rows here. An admin reading the
-roster screen sees the right person and cannot see why the gate refuses them.
-
-This script compares Gmail-canonical forms (dots stripped, +suffix removed) so
-a near-miss is reported as a near-miss instead of "not on the roster".
-
-USAGE
------
-    python fix-designer-empanelment.py                       # diagnose only
-    python fix-designer-empanelment.py --fix                 # also repair
-    python fix-designer-empanelment.py --email someone@x.com
-
-Nothing is written unless --fix is passed.
-"""
-
 import argparse
 import getpass
 import json
@@ -46,7 +9,6 @@ DEFAULT_EMAIL = "sandycraft3@gmail.com"
 
 
 def canonical_gmail(addr: str) -> str:
-    """The mailbox Google actually delivers to, for comparison only."""
     addr = (addr or "").strip().lower()
     if "@" not in addr:
         return addr
@@ -102,7 +64,6 @@ def main():
     token = body["accessToken"]
     print("Signed in.\n")
 
-    # The roster endpoint gates READ as well as write, so this needs Admin+.
     st, body = call(base, "GET", "/designers/roster?pageSize=500", token=token)
     if st != 200:
         print("!! Could not read the roster (%s): %s" % (st, (body or {}).get("detail")))

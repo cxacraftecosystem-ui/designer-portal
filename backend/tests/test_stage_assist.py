@@ -1,10 +1,3 @@
-"""Stage capture that fills itself in: numbering, computed counts and one-tap suggestions.
-
-Owner decisions of 2026-10-17 — A14, A16, B10, C6, C7, C8, C10, C12 — pinned here. The pure half
-needs no database; the save path and the assist route at the bottom run against a local one and
-skip themselves without it, exactly as ``test_stage_sync`` does.
-"""
-
 from __future__ import annotations
 
 import os
@@ -34,17 +27,12 @@ def _field(stage_key: str, entity_key: str, field_key: str):
     return entity, spec
 
 
-# --------------------------------------------------------------------------------------
-# The registry declarations
-# --------------------------------------------------------------------------------------
-
 
 def test_the_registry_with_its_new_declarations_is_sound():
     assert validate_registry() == []
 
 
 def test_each_row_type_numbers_itself_as_the_owner_decided():
-    """C6: "S-01", "P-01", "D-01" per row type; iterations per prototype; days 1, 2, 3."""
     declared = {
         f"{entity.key}.{spec.key}": (spec.auto_number, spec.auto_number_within)
         for s in (stage(k) for k in ("SKETCH_DEVELOPMENT", "PROTOTYPE_DEVELOPMENT"))
@@ -67,7 +55,6 @@ def test_each_row_type_numbers_itself_as_the_owner_decided():
 
 
 def test_the_counts_replace_the_typed_boxes():
-    """C7 and C8: every count named by the owner is computed, and is an optional INT."""
     computed = {
         f"{entity.key}.{spec.key}": spec.computed_kind
         for s in (stage(k) for k in (sc.ROSTER_STAGE, sc.SURVEY_STAGE, sc.CLOSING_STAGE))
@@ -94,13 +81,11 @@ def test_attendance_is_a_hidden_tick_list_and_not_a_box():
 
 
 def test_the_venue_location_is_a_standard_field():
-    """C12: the artisan-list import refuses a workshop without it, so it cannot hide in Advanced."""
     _, venue = _field(sc.SETUP_STAGE, "workshopSetup", "venueLocation")
     assert venue.tier is Tier.STANDARD
 
 
 def test_planned_follow_ups_hold_dates_and_never_an_outcome():
-    """B10: a planned visit cannot carry an adoption status, so it can never count in the figures."""
     entity = next(e for e in stage("POST_WORKSHOP_FOLLOWUP").entities if e.key == "plannedFollowUp")
     assert [f.key for f in entity.fields] == ["productRef", "interval", "dueDate"]
     assert all(f.report_role.value == "HIDDEN" and not f.required for f in entity.fields)
@@ -122,13 +107,8 @@ def test_the_clients_are_told_every_behaviour():
         "fill": {"name": "name", "materials": "materials"},
         "hint": {"lengthCm": "lengthCm", "widthCm": "widthCm", "heightCm": "heightCm"},
     }
-    # C10: the maker crosses BY REFERENCE — the roster row's id, not a name.
     assert fields["finalProduct.prototypeRef"]["refSuggest"]["fill"] == {"artisanRef": "artisanRef"}
 
-
-# --------------------------------------------------------------------------------------
-# Numbering
-# --------------------------------------------------------------------------------------
 
 
 def test_the_next_code_follows_the_highest_one_already_used():
@@ -159,10 +139,6 @@ def test_a_field_that_numbers_nothing_answers_none():
     assert next_auto_number(spec, []) is None
 
 
-# --------------------------------------------------------------------------------------
-# The counts
-# --------------------------------------------------------------------------------------
-
 SETUP = {"startDate": "2026-10-05", "endDate": "2026-10-09"}
 
 
@@ -184,7 +160,6 @@ def test_an_absence_lowers_days_attended_and_the_completion_count():
     people = [{"name": "Asha", "absentDays": ["2"]}, {"name": "Ravi"}, {"name": ""}]
     assert sc.attended_days(people[0], [1, 2, 3]) == 2
     assert sc.roster_values(people, [1, 2, 3])["ROSTER_COMPLETED"] == 1
-    # The blank row a designer added and never filled is nobody.
     assert sc.roster_values(people, [1, 2, 3])["ROSTER_COUNT"] == 2
 
 
@@ -195,17 +170,13 @@ def test_nothing_to_count_never_overwrites_a_typed_legacy_value():
 
 
 def test_a_typed_legacy_days_attended_stands_until_the_row_is_ticked():
-    """C7: an older workshop's typed 3 of 5 is never read back as "All present"."""
     legacy = {"name": "Asha", "attendedDays": 3}
     assert sc.is_legacy_attendance(legacy)
     assert sc.attended_days(legacy, [1, 2, 3, 4, 5]) is None
-    # Not formed while any typed row remains, so a typed completion count stands too.
     assert sc.roster_values([legacy, {"name": "Ravi"}], [1, 2, 3])["ROSTER_COMPLETED"] is None
-    # Ticked — even "All present", an empty list — it is counted.
     ticked = {**legacy, "absentDays": []}
     assert not sc.is_legacy_attendance(ticked)
     assert sc.attended_days(ticked, [1, 2, 3, 4, 5]) == 5
-    # A new row with nothing typed is not legacy.
     assert not sc.is_legacy_attendance({"name": "Ravi", "attendedDays": ""})
 
 
@@ -246,7 +217,6 @@ def _report_shape():
 
 
 def test_the_report_recounts_what_a_later_stage_stored():
-    """C7/C8: an absence ticked on stage 3 reaches stage 19's figures without a stage 19 save."""
     singletons, collections = _report_shape()
     sc.refresh_counts(singletons, collections, sittings=4, client_keys={"e-a": "c-a"})
     assert singletons[sc.CLOSING_STAGE]["participantsCompleted"] == 1
@@ -267,7 +237,6 @@ def test_a_filed_report_keeps_its_survey_figure_and_legacy_rows_keep_theirs():
 
 
 def test_survey_responses_add_the_sittings_to_the_rows():
-    """C8: counted and summarised, never duplicated as rows."""
     assert sc.survey_responses([{"response": "a"}, {"response": "b"}], 12) == 14
 
 
@@ -277,10 +246,6 @@ def test_a_certificate_finds_its_participant_by_either_key():
     assert sc.participant_for("e1", people)["name"] == "Asha"
     assert sc.participant_for("nobody", people) is None
 
-
-# --------------------------------------------------------------------------------------
-# Suggestions
-# --------------------------------------------------------------------------------------
 
 
 def _workshop(singletons=None, collections=None, **kw) -> sa.Workshop:
@@ -303,7 +268,6 @@ def test_a_full_schedule_offers_nothing():
 
 
 def test_a_prototype_is_offered_the_total_of_its_material_lines():
-    """A16 on stage 13: "Use ₹X from the lines", and nothing changes without the tap."""
     proto = {"_entryId": "p1", "name": "Tote", "materialCost": "100.00"}
     lines = [
         {"prototypeRef": "p1", "material": "Jute", "amount": "120.00"},
@@ -353,7 +317,6 @@ def _costing() -> dict[str, list[dict]]:
 
 
 def test_a_cost_sheet_is_offered_the_prototype_costs_and_its_material_lines():
-    """C10: cost suggested from the prototype; optional "copy material lines"."""
     by_id = {s["id"]: s for s in sa.costing_suggestions(_workshop({}, _costing()))}
     costs = by_id["costSheet:fromPrototype:c1"]
     assert costs["values"] == {"materialCost": "150.00", "labourCost": "400.00"}
@@ -393,7 +356,6 @@ def test_certificates_are_offered_for_everyone_present_every_day():
 
 
 def test_stage_20_is_offered_the_workshops_own_template():
-    """A14."""
     [s] = sa.report_suggestions(_workshop(template_id="PHOTO_CATALOGUE"))
     assert s["values"] == {"templateId": "PHOTO_CATALOGUE"} and s["rowKey"] is None
     chosen = _workshop(
@@ -404,7 +366,6 @@ def test_stage_20_is_offered_the_workshops_own_template():
 
 
 def test_stage_21_ticks_are_offered_with_the_evidence():
-    """A14: "Saved 14 Oct 2026, PDF, 38 pages"; media only when every file is on the server."""
     w = _workshop(
         exports=[{"format": "pdf", "pageCount": 38, "generatedAt": "2026-10-14T09:00:00+00:00"}],
         media={"referenced": 12, "stored": 12},
@@ -417,7 +378,6 @@ def test_stage_21_ticks_are_offered_with_the_evidence():
 
 
 def test_follow_ups_are_planned_as_dates_and_opened_when_due():
-    """B10: plan stores due dates only; a due plan opens a follow-up with its outcome left blank."""
     setup = {"workshopSetup": {"endDate": "2026-01-31"}}
     products = [{"_entryId": "f1", "name": "Tote bag"}]
     to_plan, due = sa.follow_up_plan(
@@ -474,10 +434,6 @@ def test_the_assist_payload_carries_counts_and_days_for_display():
     assert survey["sittings"][0]["count"] == 9
     assert sa.build_assist(_workshop(), "CLUSTER_CRAFT_BACKGROUND")["suggestions"] == []
 
-
-# --------------------------------------------------------------------------------------
-# Against a database: the save stores the counts, the route answers
-# --------------------------------------------------------------------------------------
 
 _URL = os.environ.get("DATABASE_URL", "")
 _LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))
@@ -552,7 +508,6 @@ async def test_a_roster_save_stores_its_counts_over_whatever_was_typed(client):
                     "name": "Ravi",
                     "gender": "Male",
                     "attendedDays": 1,
-                    # Ticked "All present": counted, so the stale 1 is replaced.
                     "absentDays": [],
                 },
             },
@@ -564,7 +519,6 @@ async def test_a_roster_save_stores_its_counts_over_whatever_was_typed(client):
     days = {p["name"]: p["attendedDays"] for p in stored["collections"]["participant"]}
     assert days == {"Asha": 4, "Ravi": 5}
 
-    # A roster-only merge save still moves the singleton's counts.
     _put(
         client,
         workshop,
@@ -601,7 +555,6 @@ async def test_a_roster_save_stores_its_counts_over_whatever_was_typed(client):
 @needs_db
 @pytest.mark.anyio
 async def test_a_legacy_typed_days_attended_survives_both_saves(client):
-    """C7: a schedule plus a typed 3 and no tick-list keeps 3 through stage 3 and stage 19 saves."""
     workshop = client.post("/api/design-workshops", json={"title": "Assist typed"}).json()["id"]
     _put(client, workshop, sc.SETUP_STAGE, [{"entityKey": "workshopSetup", "data": SETUP}])
     schedule = [
@@ -639,7 +592,6 @@ async def test_a_legacy_typed_days_attended_survives_both_saves(client):
 @needs_db
 @pytest.mark.anyio
 async def test_the_report_counts_an_absence_stage_19_never_saw(client):
-    """C7: tick an absence on stage 3, preview the report without re-saving stage 19."""
     import json
 
     workshop = client.post("/api/design-workshops", json={"title": "Assist report"}).json()["id"]
@@ -666,7 +618,6 @@ async def test_the_report_counts_an_absence_stage_19_never_saw(client):
 @needs_db
 @pytest.mark.anyio
 async def test_stage_8_counts_the_sittings_and_names_nobody(client):
-    """C8: one grouped count per form, its latest date, and no respondent names on this route."""
     workshop = client.post("/api/design-workshops", json={"title": "Assist sittings"}).json()["id"]
     form = client.post(
         "/api/questionnaires",
@@ -713,11 +664,9 @@ async def test_the_assist_route_answers_every_stage_and_refuses_an_unknown_one(c
 
 
 def test_planned_follow_ups_never_reach_the_report():
-    """B10's due dates are the designer's own; the stage's one printable collection stays alone."""
     from app.services.report_builder import printable_collections
 
     keys = [e.key for e in printable_collections(stage("POST_WORKSHOP_FOLLOWUP"))]
     assert keys == ["followUp"]
-    # Every other stage keeps every collection it had.
     for s in (stage(k) for k in ("PROTOTYPE_DEVELOPMENT", "COSTING_MARKET_LINKAGE")):
         assert printable_collections(s) == list(s.collections)

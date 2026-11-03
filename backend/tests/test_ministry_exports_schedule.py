@@ -1,10 +1,3 @@
-"""THE MINISTRY PACKS' MONTHLY SCHEDULE: which month is owed when, and that it is queued exactly once.
-
-The period rules are pure (``period_for``); the rest runs over the database: two passes of
-``maybe_run`` queue the seven packs of the month before and no more, a second scheduler run in the
-same month changes nothing, and a unique violation from a racing writer is swallowed.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -24,8 +17,6 @@ def _ist(*parts: int) -> datetime:
     return datetime(*parts, tzinfo=IST)
 
 
-# ── pure ────────────────────────────────────────────────────────────────────────────────────────
-
 
 def test_nothing_is_owed_before_the_run_hour_on_the_first() -> None:
     assert packs.period_for(_ist(2026, 10, 1, 5, 59), 6) is None
@@ -42,7 +33,6 @@ def test_a_worker_down_on_the_first_catches_up_on_the_third() -> None:
 
 
 def test_india_time_decides_the_day_not_utc() -> None:
-    # 1 Oct 00:40 UTC is 06:10 IST: owed. 30 Sep 23:00 UTC is 1 Oct 04:30 IST: not yet.
     assert packs.period_for(datetime(2026, 10, 1, 0, 40, tzinfo=UTC), 6) == "2026-09"
     assert packs.period_for(datetime(2026, 9, 30, 23, 0, tzinfo=UTC), 6) is None
     assert packs.current_period(datetime(2026, 9, 30, 19, 0, tzinfo=UTC)) == "2026-10"
@@ -73,8 +63,6 @@ async def test_the_switch_off_does_nothing(monkeypatch: pytest.MonkeyPatch) -> N
     await packs.maybe_run(settings_on(ministry_exports_enabled=False), _ist(2026, 10, 1, 7, 0))
     assert called == []
 
-
-# ── over the database ───────────────────────────────────────────────────────────────────────────
 
 
 def _rows() -> list[Any]:
@@ -112,7 +100,7 @@ def test_two_passes_queue_exactly_seven_packs_for_the_month_before(
     assert len(rows) == 7
     assert {row.period for row in rows} == {"2026-09"}
     assert {row.trigger for row in rows} == {packs.SCHEDULED}
-    assert len(built) == 2  # one pack per pass
+    assert len(built) == 2
 
 
 @needs_db
@@ -156,10 +144,10 @@ def test_a_racing_insert_is_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
                 "status": packs.READY,
             }
         )
-        actions = type(db.ministryexportpack)  # slotted: patch the class, not the instance
+        actions = type(db.ministryexportpack)
 
         async def stale_find(self: Any, *args: Any, **kwargs: Any) -> list[Any]:
-            return []  # as if another writer inserted between our read and our create
+            return []
 
         with monkeypatch.context() as patch:
             patch.setattr(actions, "find_many", stale_find)
@@ -170,7 +158,7 @@ def test_a_racing_insert_is_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(rows) == 7
     other = next(row for row in rows if row.scheme == "OTHER")
     assert other.trigger == packs.ON_DEMAND and other.revision == 1
-    assert UniqueViolationError  # imported: the class the scheduler catches
+    assert UniqueViolationError
 
 
 @needs_db
@@ -201,7 +189,6 @@ def test_a_month_to_date_pack_is_rebuilt_once_the_month_is_over() -> None:
     rows = private(work)
     assert rows["OTHER"].status == packs.QUEUED and rows["OTHER"].revision == 2
     assert rows["OTHER"].trigger == packs.SCHEDULED
-    # A failed month-to-date pack is left alone, or it would be retried every ten minutes.
     assert (
         rows["SKILL_UPGRADATION"].status == packs.FAILED and rows["SKILL_UPGRADATION"].revision == 1
     )

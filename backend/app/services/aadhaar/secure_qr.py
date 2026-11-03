@@ -1,32 +1,3 @@
-"""The Aadhaar Secure QR code — printed on the Aadhaar letter, the PVC card and e-Aadhaar.
-
-WHAT UIDAI PUBLISHES AND WHAT IT DOES NOT. UIDAI's only Secure QR specification is "Secure QR Code
-Specification, Version 0, March 2019" (no longer on the live site; archived), and it describes the
-UNVERSIONED layout. Every QR printed since about 2020 begins with a version marker ("V2", "V3",
-"V5" have been seen) whose layout UIDAI has never published. What this module reads of those is the
-part four independent open-source readers agree on, and — this is the point — it reads ONLY the
-leading text fields, which come before the photograph in every layout. The signature check does
-not depend on the layout at all: it is SHA256withRSA over every byte but the last 256.
-
-THE DECODING, common to every version:
-
-  1. the QR's text is a decimal integer of a few thousand digits;
-  2. as a big-endian byte string it is a GZIP stream;
-  3. decompressed, the last 256 bytes are the RSA signature over everything before them;
-  4. the signed bytes are fields separated by 0xFF, ISO-8859-1 text, then the JPEG 2000 photo.
-
-Unversioned:  indicator, referenceId, name, dob, gender, careof, district, landmark, house,
-              location, pincode, post office, state, street, sub district, VTC, photo,
-              [email hash], [mobile hash].
-"V2" onwards: "V2", indicator, referenceId, … VTC, last 4 digits of the mobile, photo.
-
-``referenceId`` is the last four digits of the Aadhaar number followed by the time UIDAI generated
-the QR, YYYYMMDDHHMMSSsss.
-
-NOTHING IS KEPT. The photo, the address fields and the hashes are never even decoded into strings;
-only name, date of birth, gender, the last four digits and the timestamp leave this module.
-"""
-
 from __future__ import annotations
 
 import zlib
@@ -42,8 +13,6 @@ from app.services.aadhaar.identity import METHOD_SECURE_QR, AadhaarError, Verifi
 
 SIGNATURE_BYTES = 256
 DELIMITER = 0xFF
-#: A Secure QR decompresses to a few kilobytes. Anything that inflates past this is not one, and
-#: the bound stops a crafted "zip bomb" number from costing the server memory.
 MAX_DECOMPRESSED_BYTES = 64 * 1024
 
 NOT_A_SECURE_QR = (
@@ -57,12 +26,6 @@ NOT_SIGNED = (
 
 
 def _digits_to_bytes(text: str) -> bytes:
-    """A decimal string of any length to big-endian bytes, without ``int(str)``'s 4,300-digit cap.
-
-    The cap (``sys.set_int_max_str_digits``) is a process-wide guard against quadratic parsing, and
-    raising it globally to read one QR would remove it for every other parser in the server. So the
-    number is built from 1,000-digit chunks, each well under the cap.
-    """
     digits = "".join(text.split())
     if not digits or not digits.isdigit():
         raise AadhaarError("qr_format", NOT_A_SECURE_QR)
@@ -104,8 +67,6 @@ def verify_signature(data: bytes) -> None:
 
 
 def _fields(signed: bytes, count: int) -> list[str]:
-    """The first ``count`` 0xFF-separated fields. The photograph after them may itself contain 0xFF
-    bytes, which is why the bytes are not simply split."""
     out: list[str] = []
     position = 0
     for _ in range(count):
@@ -118,7 +79,6 @@ def _fields(signed: bytes, count: int) -> list[str]:
 
 
 def parse_reference_id(reference_id: str) -> tuple[str, datetime]:
-    """(last four digits, the moment UIDAI generated the document, as UTC)."""
     value = reference_id.strip()
     if len(value) < 18 or not value.isdigit():
         raise AadhaarError("qr_format", NOT_A_SECURE_QR)
@@ -128,13 +88,11 @@ def parse_reference_id(reference_id: str) -> tuple[str, datetime]:
     except ValueError:
         raise AadhaarError("qr_format", NOT_A_SECURE_QR) from None
     millis = int(stamp[14:17] or "0") if stamp[14:17].isdigit() else 0
-    # UIDAI writes Indian Standard Time.
     moment = (moment + timedelta(milliseconds=millis)).astimezone(UTC)
     return last4, moment
 
 
 def parse_dob(value: str) -> tuple[date | None, int | None]:
-    """UIDAI writes DD-MM-YYYY, DD/MM/YYYY, or the year alone."""
     text = (value or "").strip()
     for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
         try:
@@ -153,13 +111,11 @@ def normalise_gender(value: str) -> str | None:
 
 
 def verify_secure_qr(text: str, *, now: datetime) -> VerifiedIdentity:
-    """Decode, verify UIDAI's signature, and return only what may be stored. Raises AadhaarError."""
     data = decompress(text)
     verify_signature(data)
     signed = data[:-SIGNATURE_BYTES]
     versioned = signed[:1] == b"V" and signed[1:2].isdigit()
     offset = 1 if versioned else 0
-    # indicator, referenceId, name, dob, gender — the five leading fields every layout shares.
     fields = _fields(signed, offset + 5)
     reference_id, name, dob_text, gender = fields[offset + 1 : offset + 5]
     last4, generated_at = parse_reference_id(reference_id)

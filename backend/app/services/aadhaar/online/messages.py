@@ -1,12 +1,3 @@
-"""The OTP, Auth and e-KYC request documents, and the parsing of their answers.
-
-Templates are UIDAI's, from OTP Request API 2.5, Aadhaar Authentication API 2.5 Revision 1 and
-Aadhaar e-KYC API 2.5. The request documents carry no namespace, as UIDAI's 2.5 templates show.
-Every request is signed by the AUA (``xmldsig.sign_enveloped``: enveloped, inclusive C14N,
-RSA-SHA256 over a SHA-256 digest — the only algorithms UIDAI accepts after 30 June 2026, Circular
-4/2026).
-"""
-
 from __future__ import annotations
 
 import base64
@@ -27,7 +18,6 @@ PID_VERSION = "2.0"
 
 
 def ist_timestamp(moment: datetime) -> str:
-    """``YYYY-MM-DDThh:mm:ss`` in Indian Standard Time with no zone, as every 2.5 API wants."""
     return moment.astimezone(IST).strftime("%Y-%m-%dT%H:%M:%S")
 
 
@@ -71,7 +61,6 @@ def pid_block(otp: str, ts: str, name: str | None) -> bytes:
 def auth_request(
     uid: str, txn: str, otp: str, ts: str, config: OnlineConfig, *, name: str | None
 ) -> bytes:
-    """The signed Auth XML. ``uses pi`` only when a name is sent for UIDAI to match."""
     from lxml import etree
     pid = pid_block(otp, ts, name)
     encrypted = encrypt_pid(pid, ts, config.encryption_certificate)
@@ -98,15 +87,11 @@ def auth_request(
 
 
 def kyc_request(signed_auth: bytes) -> bytes:
-    """e-KYC wrapping the signed Auth XML. ``de="Y"``: the ASA decrypts the response — UIDAI has not
-    published the byte layout of the KUA-key encryption, so this deployment does not guess it."""
     from lxml import etree
     root = etree.Element("Kyc", ver=API_VERSION, ra="O", rc="Y", lr="N", de="Y", pfr="N")
     etree.SubElement(root, "Rad").text = base64.b64encode(signed_auth).decode()
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
-
-# ── answers ──────────────────────────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -116,7 +101,6 @@ class Answer:
     txn: str | None
     ts: str | None
     code: str | None
-    #: The document UIDAI signed (the AuthRes / OtpRes root, or the decrypted KycRes).
     root: etree._Element
 
 
@@ -135,8 +119,6 @@ def parse_answer(body: bytes, expected_tag: str) -> Answer:
 
 
 def parse_kyc_answer(body: bytes) -> tuple[str, str | None, etree._Element | None]:
-    """(status, err, KycRes root or None). The ``Resp`` element's payload is the base64 KycRes,
-    either as its text or as a child element (UIDAI's sandbox does the latter)."""
     resp = xmldsig.parse(body)
     if resp.tag != "Resp":
         raise xmldsig.SignatureError("shape", "expected Resp")
@@ -153,6 +135,5 @@ def parse_kyc_answer(body: bytes) -> tuple[str, str | None, etree._Element | Non
     except ValueError:
         return status, err or "encrypted", None
     if not decoded.lstrip().startswith(b"<"):
-        # Still encrypted: the ASA did not decrypt it. See ``kyc_request``.
         return status, err or "encrypted", None
     return status, err, xmldsig.parse(decoded)

@@ -1,22 +1,3 @@
-"""A CO-DESIGNER'S FIRST SIGN-IN LINK CAN BE RE-ISSUED (F10, 2026-10-10), under every rule the lead's is.
-
-``POST /api/sanction-orders/{id}/credential-link?designerUserId=`` names WHICH designer on the order;
-left out, it is the lead, as it always was. Every refusal is asked of THAT person:
-
-* their own ``accountCreated`` on the order (an account the order did not create gets nothing);
-* their rank against the officer re-issuing (an account since promoted to the officer's tier or above
-  is refused — the takeover the lead's arm already closed);
-* the master admin's mailbox, and Google sign-in;
-* and somebody the order does not name is a 404.
-
-Who may press it is the register's own gate — Assistant Director and above — asked per role, allowed
-and refused. The issuer recorded on the link is the officer who pressed it, which is what the
-redemption re-checks (``account_provisioning.issuer_still_manages``).
-
-The database pattern is ``tests/test_sanction_orders.py``'s: every database call in a private
-``asyncio.run`` loop with no ``TestClient`` alive, requests in between.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -79,8 +60,6 @@ def world():
                     }
                 )
                 facts["users"][key] = user.id
-            # A designer who already had an account before the order: the order creates nothing
-            # for them, so there is nothing to re-issue.
             existing = await db.user.create(
                 data={
                     "email": f"reissue-existing-{stamp}@example.org",
@@ -124,7 +103,6 @@ def world():
         await db.connect()
         try:
             if facts["co2"]:
-                # Promoted after the order, above an Assistant Director and below a Ministry Admin.
                 await db.user.update(
                     where={"id": facts["co2"]}, data={"role": "REGIONAL_DIRECTOR"}
                 )
@@ -136,9 +114,6 @@ def world():
     asyncio.run(reshape())
 
     answers: dict[str, Any] = {}
-    # The 4-per-hour-per-account throttle is not what this module asks about, and six officers
-    # re-issuing for one co-designer within a second would meet it. Widened for the act phase only,
-    # and put back whatever happens.
     budget = credential_links.ISSUE_BUDGET
     credential_links.ISSUE_BUDGET = 50
     try:
@@ -195,7 +170,6 @@ def test_every_sanction_recorder_may_reissue_a_co_designers_link(world, actor: s
     reply = world["answers"][f"co1-{actor}"]
     assert reply.status_code == 200, reply.text
     body = reply.json()
-    # A designer who has never signed in is still being invited: INVITE, seventy-two hours.
     assert body["purpose"] == credential_links.INVITE
     assert "token=" in body["link"]
     assert set(body) == {"id", "link", "expiresAt", "purpose", "deliveredBy"}
@@ -221,7 +195,6 @@ def test_a_co_designer_promoted_to_the_officers_tier_or_above_is_refused(world) 
     by_ad = world["answers"]["co2-by-ad"]
     assert by_ad.status_code == 422, by_ad.text
     assert "senior to the officer" in by_ad.json()["detail"]
-    # A Ministry Admin still outranks a Regional Director, so the same person is reachable by them.
     assert world["answers"]["co2-by-ma"].status_code == 200
 
 
@@ -242,7 +215,6 @@ def test_somebody_the_order_does_not_name_is_a_404(world) -> None:
 
 
 def test_the_master_mailbox_refusal_is_asked_of_the_named_designer() -> None:
-    """Read off the source: the mailbox test reads the account the re-issue resolved, not the lead."""
     import inspect
 
     from app.services import sanction_orders

@@ -1,20 +1,3 @@
-"""Designer-portal's side of the shared questionnaire package's ports (``app/questionnaire/ports.py``).
-
-The package is byte-identical in both portals and never imports portal code; it reaches this module
-by its well-known name. Every function looks its target up at call time, so a test that patches
-``app.core.db.db`` or a service module is seen by the package.
-
-Every port is served (U1, 22 Oct 2026):
-
-* ``consent_gate`` is ``services/questionnaire_consent``: the shared ledger rule over a take's
-  subjects plus the design workshop's dictation consent (opt-out; C4, DR audit H3);
-* ``transcription`` is ``services/questionnaire_transcription``: the pause-aware enqueue, which
-  writes a QUEUED job and never calls a provider;
-* ``workshop_access`` is ``services/workshop_access`` (the Workshop submission rules, identical in
-  shape to documentation-portal's). A session on a DESIGN workshop is checked in the route layer
-  (``api/routes/questionnaire_v2.py``) with the design workshop's own filing rule.
-"""
-
 from __future__ import annotations
 
 import importlib

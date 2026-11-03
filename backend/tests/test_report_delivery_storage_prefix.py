@@ -1,12 +1,3 @@
-"""The office's report file must land where the API's key may write it, and nowhere public.
-
-In production the API's IAM user (``infra/terraform/main.tf``, ``aws_iam_user_policy.media``) may
-write ``media/*``, ``aadhaar-log-archive/*`` and ``report-deliveries/*`` only, and the bucket policy
-makes everything under ``media/`` world-readable. A key outside the granted prefixes answers
-AccessDenied (every "Approve and hand on" became a 503); a key under ``media/`` would publish an
-approved report naming artisans. This pins the key to the one prefix that is both.
-"""
-
 from __future__ import annotations
 
 import re

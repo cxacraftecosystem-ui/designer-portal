@@ -1,35 +1,3 @@
-"""Likely-duplicate artisans: score pairs on the server, store the ones worth a look.
-
-THE ONLY SCORER. Web and Android never score; they ask ``POST /artisan-duplicates/check`` and show
-what comes back. An offline-created record is scored when it syncs, as part of its create.
-
-WHAT A PAIR IS SCORED ON (the contract shared with the Field Repository; the file there is the same
-apart from :data:`REASON_SAME_FIELD_REPOSITORY_LINK`, which only this portal can see):
-
-* Definitive: the same Aadhaar fingerprint (1.0, ``AADHAAR``) or the same Pehchan card number
-  (1.0, ``PEHCHAN``); here, both linked to one Field Repository record (0.98).
-* Otherwise a pair is considered only when the names are at least half alike (:func:`name_sim`),
-  and the score is ``0.55 x nameSim`` plus the stated state and district (+0.15), a place or village
-  at least 60% alike by trigrams (+0.10), the same 10-digit phone (+0.15), the same date of birth
-  (+0.10), the same craft (+0.05) and the same local name (+0.05), capped at 1.0. Two different
-  fingerprints or Pehchan numbers cap it at 0.30, two different genders at 0.40, and birth years
-  more than three apart take 0.25 off.
-* Bands: VERY_LIKELY >= 0.90, LIKELY >= 0.75 (the hold at save time), POSSIBLE >= 0.60 (shown).
-  Below 0.60 nothing is stored.
-
-``shared/duplicate-score-vectors.json`` pins all of it; ``tests/test_artisan_duplicates_scoring.py``
-runs the vectors.
-
-PRIVACY. A reason is a code and a short label ("Same district", "Names 92% alike") and never a
-value. Matching across the portals is on exact keys only (fingerprint and Pehchan), through the
-Field Repository's ``/peer/artisans/match``, which answers ids for consenting artisans and nothing
-else; names never leave this server.
-
-NO EXTENSIONS, NO NEW COLUMNS. ``pg_trgm`` and ``fuzzystrmatch`` need a superuser, so the trigram
-and phonetic work is done here, in Python, on a pre-filtered set of at most 500 rows at save time,
-and on in-memory blocks (district, phone, first-name skeleton) in the nightly scan.
-"""
-
 from __future__ import annotations
 
 import json
@@ -52,11 +20,8 @@ VERY_LIKELY_THRESHOLD = 0.90
 UNDO_DAYS = 30
 CHECK_MAX_CANDIDATES = 5
 PEER_MATCH_BATCH = 100
-#: The Field Repository answers 50 match calls a day (MATCH_CALLS_PER_DAY there).
 PEER_SCAN_MAX_CALLS = 50
 PREFILTER_LIMIT = 500
-#: A block in the nightly scan larger than this is split by the name's first letter, so one big
-#: district cannot turn the scan quadratic.
 SCAN_BLOCK_LIMIT = 1500
 SCAN_PAGE = 1000
 
@@ -115,14 +80,11 @@ _LABELS = {
 
 MATCHED_BY_LABELS = {REASON_PEHCHAN: _LABELS[REASON_PEHCHAN], REASON_AADHAAR: _LABELS[REASON_AADHAAR]}
 
-# ── Names ─────────────────────────────────────────────────────────────────────────────────────
-
 HONORIFICS = frozenset(
     {"shri", "sri", "shree", "sh", "smt", "shrimati", "srimati", "kumari", "km", "mr", "mrs", "ms", "dr", "late"}
 )
 _ALIASES = {"mohd": "mohammad", "md": "mohammad"}
 
-#: Applied in this order, each over the whole token.
 _PHONETIC_RULES: tuple[tuple[str, str], ...] = (
     ("aa", "a"),
     ("ee", "i"),
@@ -153,7 +115,6 @@ _VOWELS = frozenset("aeiou")
 
 
 def normalise_name(text: str | None) -> str:
-    """Folded, honorific-free, ``mohd``/``md`` spelled ``mohammad``, single-spaced."""
     tokens = []
     for token in normalise(text).split():
         if token in HONORIFICS:
@@ -163,7 +124,6 @@ def normalise_name(text: str | None) -> str:
 
 
 def skeleton(token: str) -> str:
-    """The phonetic skeleton of one normalised token: Lakshmi and Laxmi are both ``lksm``."""
     out = token
     for old, new in _PHONETIC_RULES:
         out = out.replace(old, new)
@@ -178,7 +138,6 @@ def skeleton(token: str) -> str:
 
 
 def trigrams(text: str) -> set[str]:
-    """pg_trgm's trigrams: each word padded with two spaces in front and one behind."""
     grams: set[str] = set()
     for word in text.split():
         padded = f"  {word} "
@@ -187,7 +146,6 @@ def trigrams(text: str) -> set[str]:
 
 
 def trigram_sim(a: str, b: str) -> float:
-    """Jaccard of the two trigram sets (pg_trgm's ``similarity``). 0.0 when either is empty."""
     ga, gb = trigrams(a), trigrams(b)
     if not ga or not gb:
         return 0.0
@@ -211,8 +169,6 @@ def _overlap_from(shorter: list[str], longer: list[str]) -> float:
 
 
 def phonetic_overlap(a: str, b: str) -> float:
-    """Share of the shorter name's tokens whose skeleton is in the other (an initial matches a token
-    with its first letter). Symmetric: on a tie in token count both directions are tried."""
     ta, tb = a.split(), b.split()
     if len(ta) < len(tb):
         return _overlap_from(ta, tb)
@@ -222,14 +178,11 @@ def phonetic_overlap(a: str, b: str) -> float:
 
 
 def name_sim(a: str | None, b: str | None) -> float:
-    """max(trigram Jaccard of the normalised names, 0.9 x phonetic token overlap)."""
     na, nb = normalise_name(a), normalise_name(b)
     if not na or not nb:
         return 0.0
     return max(trigram_sim(na, nb), 0.9 * phonetic_overlap(na, nb))
 
-
-# ── Profiles ──────────────────────────────────────────────────────────────────────────────────
 
 
 def _clean(value: Any) -> str:
@@ -237,7 +190,6 @@ def _clean(value: Any) -> str:
 
 
 def phone10(value: Any) -> str | None:
-    """The last ten digits of a phone number, or None when it has fewer than ten."""
     digits = re.sub(r"[^0-9]", "", str(value or ""))
     return digits[-10:] if len(digits) >= 10 else None
 
@@ -272,8 +224,6 @@ def _local(value: Any) -> str:
 
 @dataclass
 class Profile:
-    """What the scorer reads of one artisan, from a stored row or from a form payload."""
-
     id: str | None = None
     name: str = ""
     localName: str | None = None
@@ -289,7 +239,6 @@ class Profile:
     aadhaarFingerprint: str | None = None
     pehchanCardNumber: str | None = None
     remoteArtisanId: str | None = None
-    # Display only, never scored.
     display: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -302,7 +251,6 @@ class Profile:
 
 
 def profile_from_dict(raw: dict[str, Any]) -> Profile:
-    """A profile from a flat dict (a vector, a raw SQL row, a /check body)."""
     return Profile(
         id=raw.get("id"),
         name=raw.get("name") or "",
@@ -334,8 +282,6 @@ def profile_from_dict(raw: dict[str, Any]) -> Profile:
         },
     )
 
-
-# ── Scoring ───────────────────────────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -411,8 +357,6 @@ def _side_signals(a: Profile, b: Profile, sim: float) -> tuple[float, list[tuple
 
 
 def explain_pair(a: Profile, b: Profile) -> tuple[float, tuple[tuple[str, str], ...]] | None:
-    """The raw score and reasons, before the show threshold. None when the names are not even half
-    alike and nothing definitive joins the two (the pair is not considered at all)."""
     definitive: list[tuple[float, str]] = []
     if a.aadhaarFingerprint and a.aadhaarFingerprint == b.aadhaarFingerprint:
         definitive.append((1.0, REASON_AADHAAR))
@@ -448,7 +392,6 @@ def explain_pair(a: Profile, b: Profile) -> tuple[float, tuple[tuple[str, str], 
 
 
 def score_pair(a: Profile, b: Profile) -> Score | None:
-    """The score, band and reasons for two artisans, or None below the show threshold."""
     explained = explain_pair(a, b)
     if explained is None:
         return None
@@ -458,8 +401,6 @@ def score_pair(a: Profile, b: Profile) -> Score | None:
         return None
     return Score(total, band, reasons)
 
-
-# ── Loading profiles (raw SQL: minimal columns, no ORM rows) ──────────────────────────────────
 
 _PROFILE_SELECT = """
 SELECT a."id", a."name", a."localName", a."gender", a."phone", a."dateOfBirth", a."place",
@@ -498,8 +439,6 @@ async def load_profile(artisan_id: str, *, client: Any = None) -> Profile | None
 
 
 async def prefilter(profile: Profile, *, exclude_id: str | None = None, client: Any = None) -> list[Profile]:
-    """At most 500 artisans that could pair with ``profile``: the same stated state, the same
-    phone, any name token of three letters or more, or the same fingerprint or Pehchan number."""
     clauses: list[str] = []
     params: list[Any] = []
 
@@ -541,11 +480,6 @@ async def candidates_for_profile(
     client: Any = None,
     viewer: Any = None,
 ) -> list[tuple[Profile, Score]]:
-    """Every stored artisan scoring at least 0.60 against ``profile``, best first.
-
-    ``viewer`` is the signed-in person a list is shown to (/check, the create hold): the candidates
-    are narrowed by ``records.viewable_where`` exactly as ``list_artisans`` is. The worker's scan
-    passes none, since its pairs are only ever shown to admins."""
     found: list[tuple[Profile, Score]] = []
     for other in await prefilter(profile, exclude_id=exclude_id, client=client):
         if other.id == profile.id:
@@ -568,9 +502,6 @@ async def candidates_for_profile(
 
 
 def candidate_payload(other: Profile, result: Score, *, typed_aadhaar: bool) -> dict[str, Any]:
-    """One candidate as /check and the 409 hold return it. No identifier value, birth year only.
-
-    The AADHAAR reason is kept only when the caller typed that number themselves."""
     reasons = [
         r for r in result.reasons_payload() if typed_aadhaar or r["code"] != REASON_AADHAAR
     ]
@@ -582,8 +513,6 @@ def candidate_payload(other: Profile, result: Score, *, typed_aadhaar: bool) -> 
         "reasons": reasons,
     }
 
-
-# ── Storing pairs ─────────────────────────────────────────────────────────────────────────────
 
 _UPSERT_WITHIN = """
 INSERT INTO "ArtisanDuplicateCandidate"
@@ -629,7 +558,6 @@ async def upsert_within(
     creator_said_different: bool = False,
     client: Any = None,
 ) -> str | None:
-    """Store or refresh one pair. A decided pair keeps its status; only score and reasons move."""
     if a_id == b_id:
         return None
     first, second = ordered(a_id, b_id)
@@ -690,8 +618,6 @@ async def store_candidates(
 
 
 async def rescore_artisan(artisan_id: str, *, source: str = "SCAN", client: Any = None) -> int:
-    """Re-score one artisan against everyone and refresh its pairs. Drops OPEN pairs it no longer
-    makes (a decided pair is kept as the decision it records). Never raises into a request."""
     try:
         profile = await load_profile(artisan_id, client=client)
         if profile is None:
@@ -712,8 +638,6 @@ async def rescore_artisan(artisan_id: str, *, source: str = "SCAN", client: Any 
         logger.exception("duplicate re-score failed for an artisan")
         return 0
 
-
-# ── The nightly scan ──────────────────────────────────────────────────────────────────────────
 
 
 async def _all_profiles(client: Any = None) -> list[Profile]:
@@ -763,7 +687,6 @@ def _blocks(profiles: list[Profile]) -> list[list[Profile]]:
 
 
 def scan_pairs(profiles: list[Profile]) -> dict[tuple[str, str], Score]:
-    """Every pair at or above 0.60 among ``profiles``, found by blocking (pure; tests call it)."""
     seen: set[tuple[str, str]] = set()
     found: dict[tuple[str, str], Score] = {}
     for block in _blocks(profiles):
@@ -790,13 +713,6 @@ async def run_within_scan(client: Any = None) -> int:
 
 
 async def run_peer_scan(settings: Any, client: Any = None) -> int:
-    """Ask the Field Repository which unlinked artisans it holds, by exact key only. Ids come back;
-    no personal data is stored. Two local artisans answered with one remote id become a pair.
-
-    The peer answers PEER_SCAN_MAX_CALLS calls a day, so one run asks at most that many batches,
-    least recently asked first (``ArtisanPeerScan``): every artisan is reached in turn, however
-    large the register. An artisan whose cross-portal pair was decided "Not a duplicate" is not
-    asked again."""
     from app.services import cross_portal
     from app.services.cross_portal_client import PeerUnavailable, peer_call
 
@@ -904,11 +820,9 @@ async def run_scan(settings: Any) -> dict[str, int]:
 
 
 async def maybe_run(settings: Any, *, now: datetime | None = None) -> dict[str, int] | None:
-    """At most once a day per process. The worker calls this every loop; cheap when not due."""
     global _next_run
     now = now or datetime.now(UTC)
     if _next_run is None:
-        # A restarted worker: if the peer was asked within the day, today's run has happened.
         last = await _last_peer_ask()
         if last is not None and now < last + _DAY:
             _next_run = last + _DAY

@@ -1,13 +1,3 @@
-"""C11 — a designer imports their own workshop's artisan list, through the officers' one pipeline.
-
-Owner decision (2026-10-17): designers may import their own workshop's roster, under the same
-delete-after-reading and audit rules. The import itself is covered by ``test_artisan_import``; this
-file holds the DOOR: who it admits, that it is the same pipeline, and that it records the ledger.
-
-Arranged like ``tests/test_sanction_orders.py``: database calls only in private ``asyncio.run``
-loops while no ``TestClient`` is alive.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -37,7 +27,6 @@ def test_the_designer_door_is_the_stage_write_door_and_the_officers_pipeline() -
     assert source.count("load_workshop_or_404(workshop_id, current_user, for_edit=True)") == 2
     assert source.count("_require_designer(current_user)") == 2
     assert "run_artisan_import(" in source and "artisan_import_history(" in source
-    # One pipeline: the import service is never called from the designer's module directly.
     assert "import_artisans" not in source
 
 
@@ -90,7 +79,6 @@ def world() -> Any:
 
     stamp = uuid.uuid4().hex[:8]
     facts: dict[str, Any] = {"stamp": stamp}
-    # Digits only after the words: the parser title-cases a craft name before it looks it up.
     craft_name = f"Roster Craft {int(stamp, 16) % 10**8}"
 
     async def seed() -> None:

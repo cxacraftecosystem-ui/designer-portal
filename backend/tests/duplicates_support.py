@@ -1,10 +1,3 @@
-"""Seeds and state snapshots shared by the duplicate-artisan suites.
-
-Everything here talks to the database through the module ``db``, and is only ever called inside an
-``asyncio.run`` of a coroutine that connects and disconnects it (see tests/conftest.py, "HOW A
-DATABASE-BACKED MODULE IS SUPPOSED TO REACH THE DATABASE").
-"""
-
 from __future__ import annotations
 
 import json
@@ -30,7 +23,6 @@ def tag() -> str:
 
 
 def fp(seed: str) -> str:
-    """A fingerprint-shaped value (64 hex). Never a real Aadhaar's."""
     return (uuid.uuid5(uuid.NAMESPACE_URL, seed).hex * 2)[:64]
 
 
@@ -60,7 +52,6 @@ async def artisan(user: Any, name: str, **extra: Any) -> Any:
     if meta is not None:
         data["extraMetadata"] = Json(meta)
     data.update(extra)
-    # The fingerprint and its last four are "both or neither" (Artisan_aadhaarFingerprint_pair).
     if data.get("aadhaarFingerprint") and not data.get("aadhaarLast4"):
         data["aadhaarLast4"] = "9012"
     return await db.artisan.create(data=data)
@@ -75,13 +66,10 @@ async def make_pair(a_id: str, b_id: str, score: float = 0.9) -> Any:
 
 
 def sides(pair: Any, a_id: str) -> str:
-    """Which side letter (A/B) the artisan ``a_id`` is on in ``pair``."""
     return "A" if pair.artisanAId == a_id else "B"
 
 
 async def rich_world(user: Any, t: str) -> dict[str, Any]:
-    """Two records of one person (``keep`` and ``gone``) with every kind of row naming ``gone``,
-    including the collisions each unique table can produce."""
     from app.api.routes.questionnaire import artisan_set_key
 
     loc = await location()
@@ -133,7 +121,6 @@ async def rich_world(user: Any, t: str) -> dict[str, Any]:
     })
     for iid, aid in ((i_gone.id, gone.id), (i_both.id, keep.id), (i_both.id, gone.id), (i_both.id, other.id)):
         await db.questionnaireinterviewartisan.create(data={"interviewId": iid, "artisanId": aid})
-    # `sortOrder` is unique across the register, so each run takes its own pair of slots.
     slot = 1_000_000 + int(t[:6], 16) * 2
     s1 = await db.questionnairesection.create(data={"code": f"Z{t}1", "title": "S1", "sortOrder": slot})
     s2 = await db.questionnairesection.create(data={"code": f"Z{t}2", "title": "S2", "sortOrder": slot + 1})
@@ -177,7 +164,6 @@ def _clean(value: Any) -> Any:
 
 
 async def state(ids: list[str], dw_ids: list[str]) -> dict[str, Any]:
-    """Every row naming any of ``ids``, as comparable JSON (updatedAt and version left out)."""
     out: dict[str, Any] = {}
     rows = await db.query_raw('SELECT to_jsonb(a) AS r FROM "Artisan" a WHERE a."id" = ANY($1::text[]) ORDER BY a."id"', ids)
     out["Artisan"] = [_clean(r["r"]) for r in rows]

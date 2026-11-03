@@ -1,27 +1,3 @@
-"""A questionnaire voice note, and which workshop's consent — if any — governs sending it.
-
-WHY THIS FILE EXISTS. On 2026-08-31 the questionnaire page began posting a just-recorded voice note
-to ``POST /design-workshops/{id}/dictate`` for an immediate transcript, which is a gated route. The
-same bytes then travel to the media queue, which read a questionnaire clip as NOT_WORKSHOP_MATERIAL
-and sent it ungated. A clip on a REFUSED workshop would therefore have been refused at the microphone
-and handed to ElevenLabs by the drain two hours later: one artisan's voice, one consent answer, two
-opposite outcomes, and the second one silent. **A gate that only one of two paths honours is not a
-gate**, so these tests pin both halves of the resolution that closed it.
-
-THE HALF THAT MUST NOT MOVE IS THE OTHER ONE. ``stage_attached_workshop_ids``'s own docstring records
-that of 528 AUDIO rows on this deployment, "279 of them are transcribed questionnaire material this
-consent says nothing about" — interviews taken by researchers who are running no design workshop at
-all. Sweeping those into a workshop's consent regime would make the archive's interviews
-un-transcribable until somebody answered a question about a workshop they were never part of. So the
-rule is narrow and is asserted as such: **a questionnaire clip is a workshop's material exactly when
-its own interview says it is**, and where the interview says nothing the verdict is byte-for-byte
-what it has always been.
-
-No database: ``db`` is replaced per test, so what is pinned is the resolution logic rather than a
-schema. Each fake read also RECORDS whether it was called, because "an artisan portrait does not pay
-for an interview lookup" is a claim about the number of queries and cannot be tested by its result.
-"""
-
 from types import SimpleNamespace
 
 import pytest
@@ -36,8 +12,6 @@ from app.services.dictation_consent import (
 
 
 class _FakeDb:
-    """Just enough of the Prisma client for the two reads this module makes."""
-
     def __init__(self, interviews: dict, workshops: dict):
         self.interview_lookups: list[str] = []
         self.workshop_lookups: list[str] = []
@@ -51,7 +25,6 @@ class _FakeDb:
         return self._interviews.get(where["id"])
 
     async def query_raw(self, *_args):
-        """The consent ledger: empty, so each workshop answers from its cached columns."""
         return []
 
     async def _workshop(self, where):
@@ -66,7 +39,6 @@ def _install(monkeypatch, *, interviews=None, workshops=None) -> _FakeDb:
 
 
 def _clip(**overrides):
-    """A stored questionnaire recording, in the shape the queue holds one."""
     row = {
         "id": "media-1",
         "linkedRecordType": "questionnaire",
@@ -85,13 +57,8 @@ def _workshop(consent):
     return SimpleNamespace(id="ws-1", dictationConsent=consent)
 
 
-# ---------------------------------------------------------------------------------------------
-# The half that must not move
-# ---------------------------------------------------------------------------------------------
-
 
 async def test_an_interview_that_names_no_workshop_is_exactly_as_ungated_as_before(monkeypatch):
-    """The 279 archived interviews. NULL is not a refusal and must never become one."""
     _install(monkeypatch, interviews={"interview-1": _interview(None)})
     verdict = await transcription_verdict(_clip())
     assert verdict.decision is SendDecision.NOT_WORKSHOP_MATERIAL
@@ -100,7 +67,6 @@ async def test_an_interview_that_names_no_workshop_is_exactly_as_ungated_as_befo
 
 
 async def test_an_interview_this_server_cannot_find_is_an_orphan_and_not_a_refusal(monkeypatch):
-    """A clip whose parent was deleted. Refusing would strand it: refused jobs are not retried."""
     _install(monkeypatch, interviews={})
     verdict = await transcription_verdict(_clip())
     assert verdict.decision is SendDecision.NOT_WORKSHOP_MATERIAL
@@ -108,7 +74,6 @@ async def test_an_interview_this_server_cannot_find_is_an_orphan_and_not_a_refus
 
 
 async def test_a_row_that_is_not_questionnaire_material_never_pays_for_the_lookup(monkeypatch):
-    """The claim is about the number of queries, so the call log is the only thing that can prove it."""
     fake = _install(monkeypatch, interviews={"interview-1": _interview("ws-1")})
     portrait = {"id": "media-2", "linkedRecordType": "artisan", "linkedRecordId": "artisan-1"}
     verdict = await transcription_verdict(portrait)
@@ -116,13 +81,8 @@ async def test_a_row_that_is_not_questionnaire_material_never_pays_for_the_looku
     assert fake.interview_lookups == []
 
 
-# ---------------------------------------------------------------------------------------------
-# The half that closed the hole
-# ---------------------------------------------------------------------------------------------
-
 
 async def test_an_interview_that_names_a_refused_workshop_refuses_the_queue_too(monkeypatch):
-    """THE DEFECT THIS FILE IS ABOUT. The synchronous route already refused; the drain did not."""
     _install(
         monkeypatch,
         interviews={"interview-1": _interview("ws-1")},
@@ -131,13 +91,10 @@ async def test_an_interview_that_names_a_refused_workshop_refuses_the_queue_too(
     verdict = await transcription_verdict(_clip())
     assert verdict.decision is SendDecision.REFUSED
     assert verdict.may_send is False
-    # A refused send must carry the sentence that will be shown — a blank refusal reaches a designer
-    # as nothing at all, which `SendVerdict.__post_init__` refuses at construction.
     assert verdict.refusal
 
 
 async def test_an_interview_whose_workshop_never_answered_is_sent(monkeypatch):
-    """Consent is assumed by default (owner decision, 19 Oct 2026): no answer is not a refusal."""
     _install(
         monkeypatch,
         interviews={"interview-1": _interview("ws-1")},
@@ -161,14 +118,12 @@ async def test_a_granted_workshop_permits_the_send_and_names_the_workshop(monkey
 
 
 async def test_a_workshop_that_no_longer_exists_holds_no_refusal_and_is_sent(monkeypatch):
-    """A missing workshop is asked of the ledger like any other; with no refusal there it is sent."""
     _install(monkeypatch, interviews={"interview-1": _interview("ws-1")}, workshops={})
     verdict = await transcription_verdict(_clip())
     assert verdict.may_send is True
 
 
 async def test_a_workshop_whose_consent_cannot_be_read_refuses(monkeypatch):
-    """A FAILED READ still fails closed: the store that failed may hold a refusal."""
     fake = _install(monkeypatch, interviews={"interview-1": _interview("ws-1")}, workshops={})
 
     async def _broken(*_a, **_k):
@@ -180,13 +135,8 @@ async def test_a_workshop_whose_consent_cannot_be_read_refuses(monkeypatch):
     assert verdict.refusal == dictation_consent.UNREADABLE
 
 
-# ---------------------------------------------------------------------------------------------
-# How the interview is found
-# ---------------------------------------------------------------------------------------------
-
 
 async def test_the_typed_foreign_key_is_read_before_the_free_text_tag(monkeypatch):
-    """The FK is written by the server from the same request; the tag is a free string."""
     fake = _install(monkeypatch, interviews={"interview-fk": _interview(None)})
     await interview_workshop_id(
         _clip(questionnaireInterviewId="interview-fk", linkedRecordId="interview-tag")
@@ -202,7 +152,6 @@ async def test_the_tag_is_the_fallback_for_a_row_that_carries_no_foreign_key(mon
 
 @pytest.mark.parametrize("spelling", ["questionnaire", "Questionnaire", " QUESTIONNAIRE "])
 async def test_the_tag_is_matched_loosely_because_nothing_normalises_it(monkeypatch, spelling):
-    """Matching loosely can only ever ADD a consent check — `tagged_workshop_id`'s own reasoning."""
     fake = _install(monkeypatch, interviews={"interview-1": _interview("ws-1")})
     assert (
         await interview_workshop_id(
@@ -214,8 +163,6 @@ async def test_the_tag_is_matched_loosely_because_nothing_normalises_it(monkeypa
 
 
 async def test_a_failed_read_raises_rather_than_reading_as_no_workshop(monkeypatch):
-    """None here means "no workshop", which means SEND. A swallowed exception would be permission."""
-
     class _Broken:
         questionnaireinterview = SimpleNamespace(
             find_unique=lambda where: (_ for _ in ()).throw(RuntimeError("the database blinked"))
@@ -226,18 +173,8 @@ async def test_a_failed_read_raises_rather_than_reading_as_no_workshop(monkeypat
         await interview_workshop_id(_clip())
 
 
-# ---------------------------------------------------------------------------------------------
-# Precedence: the interview joins the candidates, it does not win over them
-# ---------------------------------------------------------------------------------------------
-
 
 async def test_one_refusal_among_several_named_workshops_is_the_answer(monkeypatch):
-    """A clip tagged to a GRANTED workshop but interviewed for a REFUSED one is refused.
-
-    The module's existing rule — every workshop that names this file has to permit the send — is what
-    makes this safe to add as a fourth source rather than as a preferred one. There is no id a caller
-    can supply that turns a REFUSED answer into a send.
-    """
     _install(
         monkeypatch,
         interviews={"interview-1": _interview("ws-refused")},

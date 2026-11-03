@@ -1,15 +1,3 @@
-"""A REGIONAL DIRECTOR CORRECTS THEIR OWN STATE'S ANNUAL-PLAN ROWS, AND ONLY THEIR STATE'S (F11).
-
-The annual plan is the Ministry Admin's and above. A Regional Director reaches four of its arms —
-the year list, the list, one row and the remarks correction — NARROWED to the states a Ministry Admin
-assigned them in ``RegionalDirectorState``; every other arm (upload, export, pro-forma, promote,
-withdraw, reinstate, and the assignment itself) stays the manager's. Asked per role, allowed and
-refused, including a Regional Director of a DIFFERENT state, a Ministry Admin and an admin.
-
-The database pattern is ``tests/test_sanction_orders.py``'s: every database call in a private
-``asyncio.run`` loop with no ``TestClient`` alive, requests in between.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +14,6 @@ from app.services import annual_plan
 
 pytestmark = [needs_db]
 
-#: Far from any year a real upload or another module writes, so the rows here are this module's.
 PLAN_YEAR = 2091
 
 ROLES = {
@@ -88,7 +75,6 @@ def world():
                     }
                 )
                 facts["rows"][key] = row.id
-            # Assigned through the service, exactly as the Ministry Admin's route assigns them.
             ma = await db.user.find_unique(where={"id": facts["users"]["ma"]})
             for key, states in (("rd_gujarat", ["gujarat"]), ("rd_kerala", ["Kerala"])):
                 target = await db.user.find_unique(where={"id": facts["users"][key]})
@@ -116,13 +102,11 @@ def world():
                 answers[f"patch-{row}-{actor}"] = call(
                     "PATCH", f"/{rows[row]}", actor, json={"notes": f"{actor} was here"}
                 )
-        # The national acts stay the manager's, for a Regional Director inside their own state too.
         answers["withdraw-rd"] = call("POST", f"/{rows['gujarat']}/withdraw", "rd_gujarat")
         answers["reinstate-rd"] = call("POST", f"/{rows['gujarat']}/reinstate", "rd_gujarat")
         answers["promote-rd"] = call("POST", f"/{rows['gujarat']}/promote", "rd_gujarat", json={})
         answers["export-rd"] = call("GET", f"/export.xlsx?planYear={PLAN_YEAR}", "rd_gujarat")
         answers["proforma-rd"] = call("GET", "/pro-forma", "rd_gujarat")
-        # The assignment: the manager's, per role.
         for actor in ("rd_gujarat", "ad", "designer", "ma", "admin"):
             answers[f"directors-{actor}"] = call("GET", "/regional-directors", actor)
         answers["assign-rd"] = call(
@@ -236,8 +220,6 @@ def test_a_manager_corrects_any_states_remarks(world, actor: str) -> None:
 
 
 def test_the_last_permitted_write_is_what_the_rows_hold(world) -> None:
-    """Every refused write left nothing: the last writer each row accepted is a manager (the act
-    order is the ROLES order, and the admin writes after everybody else who may)."""
     assert world["notes-gujarat"] == "admin was here"
     assert world["notes-kerala"] == "admin was here"
 

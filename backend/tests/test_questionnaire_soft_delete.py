@@ -1,25 +1,3 @@
-"""A questionnaire form and a sitting are SOFT-deleted, and can be restored.
-
-Owner, 2026-10-20: deleting must be undoable. Amended 2026-10-22: a FORM is deleted and restored by
-its author or a content admin; a SITTING stays a content admin's alone.
-``DELETE /questionnaires/{id}`` and ``DELETE /questionnaires/{id}/entries/{entryId}`` set
-``deletedAt``; every read stops finding the row; ``GET ?deletedOnly=true`` and
-``GET /{id}/deleted-entries`` list them; ``POST .../restore`` puts them back whole.
-
-What this file proves, against a real database:
-
-  * the form's author deletes it, sees it in their own trash and restores it;
-  * another designer can neither delete nor restore it, and never sees it in their trash;
-  * the author still neither lists deleted sittings nor deletes or restores a sitting;
-  * a Ministry Admin deletes, and the form disappears from the read, the list and the dropdown while
-    every section, question, sitting and answer stays in the table;
-  * the restore brings the form back with its answers, and a deleted sitting comes back the same way;
-  * a deleted sitting's answers still pin their question (``hasAnswers``), because the database's
-    ``ON DELETE RESTRICT`` still counts them and a restore would bring them back.
-
-Needs a LOCAL Postgres, like ``test_questionnaire_write_path_access``; skips itself otherwise.
-"""
-
 import os
 import uuid
 from typing import Any
@@ -90,7 +68,6 @@ def _as(env: dict[str, Any], slug: str) -> dict[str, str]:
 
 
 def _form_with_an_answer(client, env, title: str) -> tuple[dict, str]:
-    """An unattached form owned by the designer, with one sitting and one recorded answer."""
     created = client.post(
         "/api/questionnaires",
         json={"title": title, "sections": ONE_QUESTION},
@@ -127,24 +104,19 @@ def test_the_author_deletes_lists_and_restores_their_own_form_and_nobody_else_do
     form, entry_id = _form_with_an_answer(client, env, "The author deletes this one")
     form_id = form["id"]
 
-    # Another designer: refused on the delete, and the form stays live.
     assert client.delete(f"/api/questionnaires/{form_id}", headers=_as(env, "stranger")).status_code == 403
     assert client.get(f"/api/questionnaires/{form_id}", headers=_as(env, "owner")).status_code == 200
 
-    # The author deletes it softly, and it is in THEIR trash and not in the other designer's.
     assert client.delete(f"/api/questionnaires/{form_id}", headers=_as(env, "owner")).status_code == 204
     assert form_id in _listed_ids(client, env, "owner", deletedOnly=True)
     assert form_id not in _listed_ids(client, env, "stranger", deletedOnly=True)
     assert form_id not in _listed_ids(client, env, "owner")
 
-    # Another designer cannot restore it; the author can.
     assert client.post(f"/api/questionnaires/{form_id}/restore", headers=_as(env, "stranger")).status_code == 403
     restored = client.post(f"/api/questionnaires/{form_id}/restore", headers=_as(env, "owner"))
     assert restored.status_code == 200, restored.text
     assert form_id in _listed_ids(client, env, "owner")
 
-    # Sittings stay a content admin's: the author neither deletes one, lists the deleted ones nor
-    # restores one.
     assert (
         client.delete(
             f"/api/questionnaires/{form_id}/entries/{entry_id}", headers=_as(env, "owner")
@@ -172,7 +144,6 @@ def test_a_ministry_admin_deletes_a_form_softly_and_an_admin_restores_it(client,
     deleted = client.delete(f"/api/questionnaires/{form_id}", headers=_as(env, "ministry"))
     assert deleted.status_code == 204, deleted.text
 
-    # Gone from every read...
     assert (
         client.get(f"/api/questionnaires/{form_id}", headers=_as(env, "owner")).status_code == 404
     )
@@ -184,7 +155,6 @@ def test_a_ministry_admin_deletes_a_form_softly_and_an_admin_restores_it(client,
     options = client.get("/api/questionnaires/options", headers=_as(env, "admin"))
     assert form_id not in [row["id"] for row in options.json()]
 
-    # ...listed in the trash, with who deleted it...
     trash = client.get(
         "/api/questionnaires",
         params={"deletedOnly": True, "pageSize": 100},
@@ -195,7 +165,6 @@ def test_a_ministry_admin_deletes_a_form_softly_and_an_admin_restores_it(client,
     assert row["deletedAt"]
     assert row["deletedByName"] == "Ministry Admin Restorer"
 
-    # ...and nothing under it was touched.
     restored = client.post(f"/api/questionnaires/{form_id}/restore", headers=_as(env, "admin"))
     assert restored.status_code == 200, restored.text
     back = client.get(f"/api/questionnaires/{form_id}", headers=_as(env, "owner"))
@@ -205,7 +174,6 @@ def test_a_ministry_admin_deletes_a_form_softly_and_an_admin_restores_it(client,
     assert [a["answerText"] for a in entries[0]["answers"]] == ["Twelve"]
     assert form_id in _listed_ids(client, env, "owner")
 
-    # A second Restore is not an error.
     assert (
         client.post(f"/api/questionnaires/{form_id}/restore", headers=_as(env, "admin")).status_code
         == 200
@@ -224,9 +192,7 @@ def test_a_deleted_sitting_is_hidden_kept_and_restorable(client, env):
 
     read = client.get(f"/api/questionnaires/{form_id}", headers=_as(env, "owner")).json()
     assert read["entries"] == []
-    # The answer still pins its question: a restore would bring it back.
     assert read["sections"][0]["questions"][0]["hasAnswers"] is True
-    # A deleted sitting takes no more answers.
     refused = client.put(
         f"/api/questionnaires/{form_id}/entries/{entry_id}/answers",
         json={"answers": [{"questionId": question_id, "answerText": "Thirteen"}]},

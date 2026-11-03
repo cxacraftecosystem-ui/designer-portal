@@ -1,11 +1,3 @@
-"""One seeded world for the search tests (docs/SEARCH.md), shared by the database-backed modules.
-
-Every title carries a per-run ``stamp`` so a query can be scoped to this run's rows on a database
-nobody truncates, and every ranking query is narrowed further by this run's craft. Identity values
-(Aadhaar, phone, Pehchan, e-mail, date of birth, address) are seeded on purpose, distinctive enough
-that an assertion that none reaches the index cannot pass by accident.
-"""
-
 from __future__ import annotations
 
 import uuid
@@ -25,7 +17,6 @@ EMAIL = "ramesh.private@example.net"
 ADDRESS = "House 42 Gali Seven"
 DOB = datetime(1971, 3, 9, tzinfo=UTC)
 
-#: Strings that must never appear in a document's title, subtitle or body.
 SECRETS = (AADHAAR, PHONE, PEHCHAN, EMAIL, ADDRESS, "1971-03-09")
 
 
@@ -45,8 +36,6 @@ async def _user(stamp: str, slug: str, role: str) -> Any:
 
 
 async def seed(stamp: str) -> SimpleNamespace:
-    """Every record type, two design workshops (one the designer's, one a professor's), linked and
-    unlinked artisans, and records naming an artisan by id, by free text and not at all."""
     w = SimpleNamespace(stamp=stamp)
     w.professor = await _user(stamp, "professor", "PROFESSOR")
     w.researcher = await _user(stamp, "researcher", "RESEARCHER")
@@ -77,9 +66,6 @@ async def seed(stamp: str) -> SimpleNamespace:
         }
     )
     common = {"place": "Bagru", "createdById": owner}
-    # aadhaarFingerprint and pehchanCardNumber are unique and every module seeds its own world into
-    # one database, so an earlier world gives both up before this one takes them. The register keeps
-    # no Aadhaar number: a seeded artisan holds its fingerprint and last four, as a saved one does.
     fingerprint = aadhaar_fingerprint.fingerprint(AADHAAR, "search-test-only-key")
     await db.artisan.update_many(
         where={"aadhaarFingerprint": fingerprint},
@@ -309,7 +295,6 @@ async def index_world(w: SimpleNamespace) -> None:
 
 async def document(entity_type: str, entity_id: str) -> dict[str, Any] | None:
     rows = await db.query_raw(
-        # Named columns: Prisma cannot deserialize the tsvector (or a pgvector) column.
         'SELECT "id", "entityType", "entityId", "title", "subtitle", "body", "place", "craftIds",'
         ' "craftCodes", "workshopIds", "artisanIds", "designWorkshopId", "audience", "shareable",'
         ' "openPath", "recordDate", "contentHash", "embeddedHash", "updatedAt"'

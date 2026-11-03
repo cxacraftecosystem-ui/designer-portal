@@ -1,18 +1,3 @@
-"""DELIVERING AN APPROVED REPORT TO THE OFFICE (2026-10-18, owner decision C4).
-
-"Approve and hand on" makes the report file, stores it, and e-mails the Development Commissioner
-(Handicrafts) office a download link that expires after :data:`LINK_DAYS` days and can be re-issued.
-The addresses come from an administrator's setting (``AppSetting.dcOfficeEmails``) and are never
-written into code: with none set, the approver hands the report on by hand exactly as before and is
-told where to set them.
-
-THE LINK IS A CREDENTIAL FOR ONE FILE. Only the SHA-256 of its secret is stored
-(``DwReportDelivery.tokenHash``); the link itself travels sealed on the outbox row, as a password
-link does, and is cleared when the message is sent. Re-issuing revokes the previous link and writes a
-new row over the same stored file. Opening it records when the office first and last opened it,
-which is what the Ministry dashboard shows as "Received".
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -32,10 +17,8 @@ from app.services import app_settings, email_outbox, mailer, s3
 logger = logging.getLogger(__name__)
 
 LINK_DAYS = 7
-#: The public page the e-mailed link opens. The token rides the query string, like a password link.
 DOWNLOAD_PATH = "/report-download"
 MAX_OFFICE_ADDRESSES = 10
-#: The most delivery rows ``received_for`` reads per workshop on a page (each re-send adds one).
 RECEIVED_ROWS_PER_WORKSHOP = 20
 _ADDRESS = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
 
@@ -46,8 +29,6 @@ NOT_CONFIGURED = (
 
 
 def clean_addresses(values: list[str]) -> tuple[list[str], list[str]]:
-    """``(kept, refused)``: trimmed, lower-cased, de-duplicated addresses, and the entries that are
-    not addresses at all."""
     kept: list[str] = []
     refused: list[str] = []
     for raw in values:
@@ -55,7 +36,6 @@ def clean_addresses(values: list[str]) -> tuple[list[str], list[str]]:
             address = part.strip().lower()
             if not address:
                 continue
-            # 254 is the longest address SMTP allows; the cap also bounds the regex's backtracking.
             if len(address) > 254 or not _ADDRESS.match(address):
                 refused.append(part.strip())
             elif address not in kept:
@@ -64,7 +44,6 @@ def clean_addresses(values: list[str]) -> tuple[list[str], list[str]]:
 
 
 async def office_settings() -> dict[str, Any]:
-    """``{addresses, officeName}`` as an administrator set them (no row means none)."""
     row = await app_settings.load_app_settings()
     addresses = list(getattr(row, "dcOfficeEmails", None) or []) if row is not None else []
     name = str(getattr(row, "dcOfficeName", None) or "").strip() if row is not None else ""
@@ -85,7 +64,6 @@ def storage_key_for(workshop_id: str, file_name: str) -> str:
 
 
 async def store_file(workshop_id: str, file_name: str, blob: bytes, mime_type: str) -> str:
-    """Put the report file in the media bucket and return its key. Raises on a storage failure."""
     key = storage_key_for(workshop_id, file_name)
     await asyncio.to_thread(s3.put_object_bytes, key, blob, mime_type=mime_type)
     return key
@@ -102,7 +80,6 @@ async def send(
     office_name: str,
     sanction_order_no: str | None = None,
 ) -> Any:
-    """Write one delivery row and e-mail its link to every address. Returns the row."""
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(UTC) + timedelta(days=LINK_DAYS)
     row = await db.dwreportdelivery.create(
@@ -147,11 +124,6 @@ async def latest(workshop_id: str) -> Any | None:
 
 
 async def reissue(record: Any, *, actor: Any) -> Any | None:
-    """Revoke the live link and e-mail a new one over the same file, to the addresses set NOW.
-
-    With no delivery yet — "Approve and hand on" committed but its e-mail could not be written — the
-    file handed on (a stored export) is sent for the first time. ``None`` when there is no stored
-    file to send or no addresses are set."""
     previous = await latest(record.id)
     office = await office_settings()
     if not office["addresses"]:
@@ -193,7 +165,6 @@ async def sanction_number(workshop_id: str) -> str | None:
 
 
 def link_state(row: Any, now: datetime | None = None) -> str:
-    """LIVE, EXPIRED or REVOKED."""
     moment = now or datetime.now(UTC)
     if getattr(row, "revokedAt", None) is not None:
         return "REVOKED"
@@ -202,7 +173,6 @@ def link_state(row: Any, now: datetime | None = None) -> str:
 
 
 async def resolve(token: str | None) -> Any | None:
-    """The delivery a presented link names, whatever its state, or ``None``."""
     clean = (token or "").strip()
     if not clean or len(clean) > 200 or not clean.isprintable():
         return None
@@ -224,13 +194,10 @@ def _iso(value: Any) -> str | None:
 
 
 async def delivery_view(workshop_id: str) -> dict[str, Any]:
-    """What the approver's screen shows: whether delivery is set up, and the latest delivery with
-    the state of its link and of each e-mail."""
     office, row = await asyncio.gather(office_settings(), latest(workshop_id))
     view: dict[str, Any] = {
         "configured": bool(office["addresses"]) and mailer.mail_configured(),
         "addressCount": len(office["addresses"]),
-        # Apart from the addresses, so a deployment with mail off is not told to set addresses.
         "mailAvailable": mailer.mail_configured(),
         "officeName": office["officeName"],
         "linkDays": LINK_DAYS,
@@ -265,8 +232,6 @@ async def delivery_view(workshop_id: str) -> dict[str, Any]:
 
 
 async def received_for(workshop_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """``{workshop id: {sentAt, firstOpenedAt, officeName}}`` — the Ministry dashboard's "Received"
-    line, from each workshop's newest delivery. One query."""
     if not workshop_ids:
         return {}
     rows = await db.dwreportdelivery.find_many(
@@ -274,8 +239,6 @@ async def received_for(workshop_ids: list[str]) -> dict[str, dict[str, Any]]:
         order={"createdAt": "desc"},
         take=len(workshop_ids) * RECEIVED_ROWS_PER_WORKSHOP,
     )
-    # One pass: rows come newest first, so the first row per workshop is its newest delivery, and the
-    # earliest opening across all of that workshop's links is kept as the pass goes.
     found: dict[str, dict[str, Any]] = {}
     first_opened: dict[str, Any] = {}
     for row in rows:

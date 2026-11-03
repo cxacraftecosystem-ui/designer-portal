@@ -1,16 +1,3 @@
-"""The browser's copy of the report builder is held to the server's — this half proves the target.
-
-``frontend/lib/offlineReport`` builds a workshop's report in the browser when there is no
-connection, and ``frontend/e2e/offline-report-parity-unit.spec.ts`` holds it, block for block, to
-``shared/report-parity/expected.json``. That file is only worth comparing against if it is what the
-SERVER builds for ``shared/report-parity/workshop.json`` today, so this test rebuilds it with
-``tools/report_offline_parity.py`` and fails when the committed copy is stale. A change to the
-builder, a template, a warning's wording or the gazetteer then cannot land without both files being
-regenerated — and regenerating them is what turns the frontend spec red until the port agrees.
-
-No database: the tool builds documents in memory from the fixture.
-"""
-
 from __future__ import annotations
 
 import importlib.util
@@ -50,7 +37,6 @@ def test_the_gazetteer_is_what_the_server_geocodes_with_today():
 
 
 def test_the_fixture_reaches_the_branches_it_exists_to_reach():
-    """A fixture that stopped exercising a branch would let the port drift there unseen."""
     tool = _tool()
     cases = tool.expected()["cases"]
     every = [block for case in cases.values() for block in case["blocks"]]
@@ -63,5 +49,4 @@ def test_the_fixture_reaches_the_branches_it_exists_to_reach():
     for phrase in ("capture tier", "photograph cap", "named in this report but", "cover table",
                    "not recorded —", "own sections"):
         assert phrase in warnings, phrase
-    # Odia text sits in table cells and key/value pairs, so the whole output is searched.
     assert '"script": "ODIA"' in json.dumps(cases)

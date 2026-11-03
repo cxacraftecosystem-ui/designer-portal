@@ -1,12 +1,3 @@
-"""C9 — start a stage from an earlier workshop.
-
-Owner decision (2026-10-17): copy from the designer's OWN earlier workshops (source marked);
-other designers' text only as a read-only reference block; copied text that has not been edited
-does NOT count toward completeness until edited or confirmed.
-
-The pure half needs no database. The rest follows ``tests/test_sanction_orders.py``'s convention.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -29,10 +20,6 @@ from prisma import Json
 STAGE = "CLUSTER_CRAFT_BACKGROUND"
 ENTITY = "clusterBackground"
 
-
-# --------------------------------------------------------------------------------------
-# Pure
-# --------------------------------------------------------------------------------------
 
 
 def test_only_the_four_narrative_stages_are_copyable() -> None:
@@ -67,14 +54,12 @@ def test_marking_and_confirming_a_copy() -> None:
 
 
 def test_a_kept_copy_is_not_re_marked_by_a_repeated_claim() -> None:
-    """A second device (or an older client) re-sending the mark must not undo "Keep as is"."""
     user = SimpleNamespace(id="u1", name="Asha")
     source = {"workshopId": "w0", "title": "Earlier"}
     marked = workshop_copy.mark_provenance({}, {"history": source}, [], user)
     kept = workshop_copy.mark_provenance(marked, {}, ["history"], user)
     again = workshop_copy.mark_provenance(kept, {"history": source}, [], user)
     assert again["history"]["source"] == "designer"
-    # A copy from a DIFFERENT earlier workshop is a new copy, and is marked.
     other = workshop_copy.mark_provenance(kept, {"history": {"workshopId": "w9", "title": "X"}}, [], user)
     assert other["history"]["source"] == workshop_copy.SOURCE_COPIED
 
@@ -114,10 +99,6 @@ def test_a_non_copyable_stage_is_scored_as_it_always_was() -> None:
         == data
     )
 
-
-# --------------------------------------------------------------------------------------
-# Against Postgres
-# --------------------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -176,7 +157,6 @@ def world() -> Any:
                     "data": Json({"history": f"Their history {stamp}"}),
                 }
             )
-            # A frozen report still holding an unchecked copy: keeping it would move completeness.
             await db.dwstageentry.create(
                 data={
                     "designWorkshopId": facts["approved"].id,
@@ -233,7 +213,6 @@ def world() -> Any:
             headers=headers("author"),
         )
         facts["after_confirm"] = read("current")
-        # The same copy mark arriving again from a second device after "Keep as is".
         facts["resent"] = put(
             "current",
             {"history": copied_value, "craftIntroduction": f"Typed by hand {stamp}"},
@@ -269,7 +248,6 @@ def test_a_verified_copy_is_marked_and_not_counted(world: Any) -> None:
     stamps = stage_read["provenance"]["singleton"]
     assert stamps["history"]["source"] == workshop_copy.SOURCE_COPIED
     assert stamps["history"]["copiedFrom"]["workshopId"] == world["earlier"].id
-    # A claim on text that is NOT the source's is dropped: that box is the designer's own.
     assert stamps["craftIntroduction"]["source"] == "designer"
     assert "History of the craft" in stage_read["completeness"]["missing"]
     assert "Craft introduction" not in stage_read["completeness"]["missing"]

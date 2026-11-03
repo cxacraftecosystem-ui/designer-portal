@@ -1,19 +1,3 @@
-"""Package-level checks on the generated .docx.
-
-Word reports every one of the failures below as the same sentence — "the file appears to be
-corrupted" — with no indication of which part is wrong, so each check here exists because the
-generic message once cost an afternoon:
-
-* a part declared with the wrong content type (the .docx FILE mime on the main document PART),
-* a relationship id used in document.xml but never declared in document.xml.rels,
-* two adjacent tables, which Word merges silently rather than rejecting,
-* a style or numbering id referenced but not defined.
-
-``test_every_block_type_survives_a_round_trip`` is the regression net: it renders one of every
-block the model can produce, so a new block type that forgets its trailing paragraph or its
-relationship fails here rather than in the field.
-"""
-
 import re
 import struct
 import zipfile
@@ -63,10 +47,6 @@ EXPECTED_CONTENT_TYPES = {
 }
 
 
-# --------------------------------------------------------------------------------------
-# Fixtures
-# --------------------------------------------------------------------------------------
-
 
 def _png(width: int, height: int, rgb: tuple[int, int, int] = (120, 90, 60)) -> bytes:
     raw = b"".join(b"\x00" + bytes(rgb) * width for _ in range(height))
@@ -83,7 +63,6 @@ def _png(width: int, height: int, rgb: tuple[int, int, int] = (120, 90, 60)) -> 
 
 
 def _jpeg(width: int, height: int) -> bytes:
-    """A JPEG header far enough along to carry a real SOF0 frame size."""
     return (
         b"\xff\xd8"
          b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00" + b"\x01\x01\x00" + b"\x00\x01"
@@ -117,7 +96,6 @@ def _render(build) -> tuple[zipfile.ZipFile, str, list[str]]:
 
 
 def _all_blocks(b: DocumentBuilder) -> None:
-    """One of every block type the model can produce."""
     b.add(CoverBlock(
         title="T", subtitle="S", org_lines=("Ministry",),
         logo=ImageRef("p", 400, 300, mime_type="image/png"),
@@ -147,10 +125,6 @@ def _all_blocks(b: DocumentBuilder) -> None:
                 (ImageRef("j", 640, 480, mime_type="image/jpeg"), "b")),
         columns=2, caption="Fig 2",
     ))
-    # A chart of each kind. These take the NATIVE path, so they are what makes the package-level
-    # checks below cover word/charts/*, word/embeddings/*.xlsx and the "cId" relationships as well
-    # as the picture parts. MapBlock is deliberately absent: it needs boundary assets that are not
-    # in every checkout, and tests/test_report_figure_rasterisers.py covers it where they are.
     for kind in ChartKind:
         b.add(ChartBlock(kind=kind, series=(("Material", 562.5), ("Labour", 900.0)),
                          title=f"{kind.value} figure", unit="INR", caption="Fig 3"))
@@ -161,10 +135,6 @@ def _all_blocks(b: DocumentBuilder) -> None:
     b.add(SignatureBlock(signatories=(("A", "Designer"), ("B", "Officer"))))
 
 
-# --------------------------------------------------------------------------------------
-# Package structure
-# --------------------------------------------------------------------------------------
-
 
 def test_every_block_type_survives_a_round_trip():
     z, _doc, dropped = _render(_all_blocks)
@@ -172,12 +142,10 @@ def test_every_block_type_survives_a_round_trip():
     assert z.testzip() is None
     for part in z.namelist():
         if part.endswith((".xml", ".rels")):
-            ET.fromstring(z.read(part))  # raises on malformed XML
+            ET.fromstring(z.read(part))
 
 
 def test_well_known_parts_carry_their_exact_content_type():
-    """The .docx FILE mime on the main document PART passes every structural check and is
-    rejected by Word with no explanation. This is that regression."""
     z, _doc, _ = _render(_all_blocks)
     ct = ET.fromstring(z.read("[Content_Types].xml"))
     declared = {o.get("PartName"): o.get("ContentType") for o in ct.findall(CT + "Override")}
@@ -224,7 +192,6 @@ def test_body_ends_with_exactly_one_sectpr():
 
 
 def test_no_two_adjacent_tables():
-    """Word merges them silently: the second table's rows appear inside the first."""
     z, _doc, _ = _render(_all_blocks)
     body = ET.fromstring(z.read("word/document.xml")).find(W + "body")
     tags = [c.tag for c in body]
@@ -233,7 +200,6 @@ def test_no_two_adjacent_tables():
 
 
 def test_adjacent_table_guard_actually_fires():
-    """Prove the guard is live rather than vacuously true, by defeating the trailing paragraph."""
     from app.services.report_docx import DocxWriter
 
     b = DocumentBuilder(meta=_meta())
@@ -261,8 +227,6 @@ def test_referenced_styles_and_numbering_are_defined():
 def test_header_and_footer_are_wired_to_the_section():
     z, doc, _ = _render(_all_blocks)
     assert "<w:headerReference" in doc and "<w:footerReference" in doc
-    # titlePg suppresses both on the cover; without it the running head prints over the
-    # ministry line and the cover is numbered as page 1 of the body.
     assert "<w:titlePg/>" in doc
     footer = z.read("word/footer1.xml").decode()
     assert "PAGE" in footer and "NUMPAGES" in footer
@@ -280,15 +244,10 @@ def test_headings_carry_outline_levels_so_the_toc_can_find_them():
     assert '<w:outlineLvl w:val="1"/>' in doc
 
 
-# --------------------------------------------------------------------------------------
-# Escaping — the second half of the single door
-# --------------------------------------------------------------------------------------
-
 
 def test_xml_entities_are_escaped_in_body_text():
     z, doc, _ = _render(lambda b: b.para('Weft <must> be "combed" & set'))
     assert "&lt;must&gt;" in doc and "&amp;" in doc and "&quot;" in doc
-    # And it still parses, which is the point.
     ET.fromstring(z.read("word/document.xml"))
 
 
@@ -315,10 +274,6 @@ def test_metadata_is_escaped():
     ET.fromstring(z.read("docProps/core.xml"))
 
 
-# --------------------------------------------------------------------------------------
-# Images
-# --------------------------------------------------------------------------------------
-
 
 def test_probe_image_size_reads_png_and_jpeg():
     assert probe_image_size(_png(123, 45)) == (123, 45)
@@ -327,7 +282,6 @@ def test_probe_image_size_reads_png_and_jpeg():
 
 
 def test_repeated_image_is_embedded_once():
-    """A photo used on the prototype page and again in the annexure doubled the file size."""
     def build(b):
         ref = ImageRef("p", 400, 300, mime_type="image/png")
         b.add(ImageBlock(image=ref))
@@ -338,7 +292,6 @@ def test_repeated_image_is_embedded_once():
 
 
 def test_unloadable_image_is_dropped_with_a_warning_not_an_exception():
-    """A report missing one photo is still worth having in the field."""
     z, doc, dropped = _render(
         lambda b: b.add(ImageBlock(image=ImageRef("nope", 10, 10), caption="gone"))
     )
@@ -348,7 +301,6 @@ def test_unloadable_image_is_dropped_with_a_warning_not_an_exception():
 
 
 def test_non_image_bytes_are_dropped_rather_than_embedded():
-    """Embedding an undecodable part puts a red X in the document, which reads as an app bug."""
     b = DocumentBuilder(meta=_meta())
     b.add(ImageBlock(image=ImageRef("bad", 10, 10)))
     data, dropped = render_docx(b.build(), lambda ref: b"definitely not a picture")
@@ -357,8 +309,6 @@ def test_non_image_bytes_are_dropped_rather_than_embedded():
 
 
 def test_image_extension_follows_the_magic_bytes_not_the_declared_mime():
-    """The media table has held "image/jpeg" for PNG bytes since the client guessed from the
-    file extension; trusting the declaration writes a .jpeg part Word cannot decode."""
     z, _doc, _ = _render(
         lambda b: b.add(ImageBlock(image=ImageRef("p", 400, 300, mime_type="image/jpeg")))
     )
@@ -374,7 +324,6 @@ def test_rotated_portrait_keeps_its_aspect_ratio():
         ))
     )
     cx, cy = (int(v) for v in re.search(r'<wp:extent cx="(\d+)" cy="(\d+)"/>', doc).groups())
-    # 300x400 rotated a quarter turn displays as 400x300, i.e. landscape 4:3.
     assert cx / cy == pytest.approx(4 / 3, rel=0.02)
 
 
@@ -384,12 +333,10 @@ def test_image_never_exceeds_the_text_column():
                                    width_pct=100.0))
     )
     cx = int(re.search(r'<wp:extent cx="(\d+)"', doc).group(1))
-    # A4 minus two 25 mm margins = 160 mm, at 36000 EMU/mm.
     assert cx <= (160 * 36000) + 1
 
 
 def test_image_grid_drops_columns_rather_than_shrink_past_legibility():
-    """Below ~45 mm a photo stops being evidence. Six requested columns on A4 cannot all fit."""
     _z, doc, _ = _render(
         lambda b: b.add(ImageGridBlock(
             images=tuple((ImageRef("p", 400, 300, mime_type="image/png"), "c") for _ in range(6)),
@@ -400,16 +347,11 @@ def test_image_grid_drops_columns_rather_than_shrink_past_legibility():
     assert grid_cols <= 3
 
 
-# --------------------------------------------------------------------------------------
-# Tables
-# --------------------------------------------------------------------------------------
-
 
 def test_table_header_repeats_across_pages_and_cannot_split():
     _z, doc, _ = _render(
         lambda b: b.add(TableBlock(columns=(TableColumn("A", 100.0),), rows=((runs_of("x"),),)))
     )
-    # cantSplit must precede tblHeader: CT_TrPr is a sequence, not a set.
     assert "<w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>" in doc
 
 
@@ -422,7 +364,6 @@ def test_table_borders_precede_layout_in_tblpr():
 
 
 def test_short_row_is_padded_rather_than_dropping_cells():
-    """A ragged row would otherwise produce a table Word renders with a missing column."""
     z, _doc, _ = _render(
         lambda b: b.add(TableBlock(
             columns=(TableColumn("A", 50.0), TableColumn("B", 50.0)),
@@ -449,7 +390,6 @@ def test_table_column_widths_sum_to_the_text_column():
 
 
 def test_empty_cell_still_contains_a_paragraph():
-    """w:tc must hold at least one block-level element; Word drops the whole row otherwise."""
     z, _doc, _ = _render(
         lambda b: b.add(TableBlock(columns=(TableColumn("A", 100.0),), rows=(((),),)))
     )
@@ -459,14 +399,8 @@ def test_empty_cell_still_contains_a_paragraph():
         assert cell.find(W + "p") is not None
 
 
-# --------------------------------------------------------------------------------------
-# Scripts
-# --------------------------------------------------------------------------------------
-
 
 def test_indic_runs_get_a_complex_script_font_and_latin_runs_do_not():
-    """w:cs is the only lever a .docx has over shaping. Tagging a Latin run with it changes
-    typeface mid-sentence."""
     _z, doc, _ = _render(lambda b: b.para("Ikat (ସମ୍ବଲପୁରୀ) weave"))
     runs = re.findall(r"<w:r>(.*?)</w:r>", doc, re.DOTALL)
     indic = [r for r in runs if "ସ" in r]
@@ -476,18 +410,6 @@ def test_indic_runs_get_a_complex_script_font_and_latin_runs_do_not():
 
 
 def test_restyled_runs_keep_every_property_they_were_not_restyled_for():
-    """A quote is italicised and a total row bolded by REBUILDING each run, and for a while both
-    rebuilt it positionally — ``Run(r.text, r.bold, True, r.script, r.color)``.
-
-    That was correct until RICH_TEXT inserted ``underline`` and ``strike`` at positions four and
-    five, after which the Script landed in ``underline`` (truthy for every script there is) and
-    the colour in ``strike``. Every artisan verbatim came out UNDERLINED, every cost sheet's total
-    row underlined and struck through, and both lost the ``w:cs`` that is the only thing making an
-    Odia quote render as words instead of boxes. Nothing raised and the file opened perfectly.
-
-    ``DocxWriter.kt`` used ``copy()`` and was never wrong, so this was also a DIVERGENCE: the same
-    workshop's quote was underlined in the office's download and not on the phone.
-    """
     def build(b):
         b.para("Combed weft (ସମ୍ବଲପୁରୀ).", style=ParaStyle.QUOTE)
         b.add(TableBlock(
@@ -499,7 +421,6 @@ def test_restyled_runs_keep_every_property_they_were_not_restyled_for():
     _z, doc, _ = _render(build)
     assert "<w:u " not in doc, "a restyled run picked up an underline it was never given"
     assert "<w:strike/>" not in doc, "a restyled run picked up a strikethrough"
-    # And the Indic run inside the quote still carries the complex-script face.
     indic = [r for r in re.findall(r"<w:r>(.*?)</w:r>", doc, re.DOTALL) if "ସ" in r]
     assert indic and all('w:cs="Nirmala UI"' in r for r in indic), \
         "the quote lost its script, so Word shapes an Odia verbatim with the Latin face"

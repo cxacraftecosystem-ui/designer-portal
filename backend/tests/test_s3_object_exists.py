@@ -1,9 +1,3 @@
-"""``s3.object_exists`` tells a removed object from storage that could not answer.
-
-The Ministry pack link route turns ``False`` into 410 ("files removed") and ``None`` into 503, so a
-permission error or a timeout must never read as "missing".
-"""
-
 from __future__ import annotations
 
 from typing import Any

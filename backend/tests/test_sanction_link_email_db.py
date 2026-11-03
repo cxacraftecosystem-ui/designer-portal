@@ -1,14 +1,3 @@
-"""THE SANCTION REGISTER E-MAILS SIGN-IN LINKS AND REMINDERS (2026-10-18, C3 and A20), OVER A DATABASE.
-
-With mail on, recording an order e-mails each new designer their sign-in link (the officer is handed
-no link), the register shows each e-mail's status, "Copy link instead" still hands one over,
-"Resend" e-mails a fresh one, an existing account the order names is told it has a workshop, and
-"Remind designers" e-mails what Workshop Setup still needs, once an hour at most.
-
-``test_email_db.py``'s shape: seed in a private ``asyncio.run``, drive the ``TestClient``, read back
-once it is closed.
-"""
-
 from __future__ import annotations
 
 import asyncio

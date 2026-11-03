@@ -1,15 +1,3 @@
-"""/api/aadhaar end to end against a LOCAL database: the flags, consent, permissions, what is stored,
-the admin decision, the audit trail and the OTP throttle.
-
-Pattern: ``tests/test_workshop_join_sync.py`` — seed in a private ``asyncio.run``, then drive a
-``TestClient``. Stored values are read back through the API wherever one exposes the row (an admin's
-``GET /users``, ``GET /artisans/{id}``, ``GET /data-access/revisions``), and through a PRIVATE
-``Prisma()`` client for the two tables no route reads, so the shared client is never touched from a
-second event loop.
-
-Every document is signed with a TEST key that the ``offline_on`` fixture adds to the trusted list.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -89,8 +77,6 @@ def world():
                         "name": name,
                         "place": "Bagru",
                         "createdById": researcher.id,
-                        # As the register holds an Aadhaar: the keyed fingerprint and the last four
-                        # (the full-number column was dropped on 2026-10-19).
                         "aadhaarFingerprint": aadhaar_fingerprint.fingerprint_of(number) if number else None,
                         "aadhaarLast4": number[-4:] if number else None,
                     }
@@ -153,8 +139,6 @@ def _admin_view_of(world: dict[str, Any], user: Any) -> dict[str, Any]:
     return row
 
 
-# ── off means absent ─────────────────────────────────────────────────────────────────────────
-
 HIDDEN_ROUTES = [
     ("get", "/api/aadhaar/self"),
     ("post", "/api/aadhaar/self/secure-qr"),
@@ -207,8 +191,6 @@ def test_online_routes_stay_hidden_while_only_offline_is_on(world, offline_on):
     assert features == {"aadhaarOfflineVerification": True, "aadhaarOnlineAuth": False, "ministryExports": False}
 
 
-# ── consent, verification, storage ───────────────────────────────────────────────────────────
-
 
 def test_consent_is_required_before_anything_is_read(world, offline_on):
     body = _qr_body()
@@ -232,7 +214,7 @@ def test_self_secure_qr_verifies_and_stores_only_the_permitted_columns(world, of
     assert summary["status"] == "VERIFIED" and summary["verified"] is True
     assert summary["method"] == "SECURE_QR" and summary["last4"] == TEST_LAST4
     assert summary["birthYear"] == 1987 and summary["gender"] == "F"
-    assert summary["dateOfBirth"] is None  # an account keeps the year only
+    assert summary["dateOfBirth"] is None
 
     row = _admin_view_of(world, world["researcher"])
     stored = {key: value for key, value in row.items() if key.startswith(flags.COLUMN_PREFIX)}
@@ -288,8 +270,6 @@ def test_tampered_qr_is_refused_and_changes_nothing(world, offline_on):
     ).json()["status"] == "VERIFIED"
 
 
-# ── name mismatch and the admin's decision ───────────────────────────────────────────────────
-
 
 def test_name_mismatch_waits_for_an_admin(world, offline_on):
     client = world["client"]
@@ -329,8 +309,6 @@ def test_withdrawing_clears_every_column(world, offline_on):
     assert all(row[column] is None for column in USER_COLUMNS)
 
 
-# ── artisans ─────────────────────────────────────────────────────────────────────────────────
-
 
 def test_only_somebody_who_may_edit_the_artisan_may_verify_it(world, offline_on):
     client = world["client"]
@@ -340,10 +318,8 @@ def test_only_somebody_who_may_edit_the_artisan_may_verify_it(world, offline_on)
     response = client.post(path, json=_qr_body(), headers=_h(world["researcher"]))
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "VERIFIED"
-    assert response.json()["dateOfBirth"] == "1987-05-07"  # an artisan row keeps the date
+    assert response.json()["dateOfBirth"] == "1987-05-07"
 
-    # The record payloads never carry the result — not even to an admin; the verification has its
-    # own read, which tells a reader outside the record's circle only THAT it is verified.
     artisan = client.get(f"/api/artisans/{world['art_match']}", headers=_h(world["admin"])).json()
     assert not [key for key in artisan if key.startswith(flags.COLUMN_PREFIX)]
     path = f"/api/aadhaar/artisans/{world['art_match']}"
@@ -351,7 +327,6 @@ def test_only_somebody_who_may_edit_the_artisan_may_verify_it(world, offline_on)
     assert full["name"] == TEST_NAME and full["last4"] == TEST_LAST4
     limited = client.get(path, headers=_h(world["volunteer"])).json()
     assert limited == {key: full[key] for key in ("status", "verified", "method", "verifiedAt")}
-    # The record's own dedup number is untouched and still masked by the existing rules.
     viewer = client.get(f"/api/artisans/{world['art_match']}", headers=_h(world["volunteer"])).json()
     assert viewer["aadhaarNumber"].startswith("XXXX XXXX ")
 
@@ -388,14 +363,10 @@ def test_every_attempt_is_audited_without_personal_data(world, offline_on):
     entries = [row["changes"]["aadhaarVerification"] for row in response.json()]
     assert entries and entries[-1]["outcome"] == "REFUSED"
     assert entries[-1]["code"] == "last4_mismatch"
-    # The entries carry no name, date or number — and the editor embedded beside them (whose own
-    # account is verified) carries no verification columns either.
     assert TEST_NAME not in json.dumps(entries) and "1987" not in json.dumps(entries)
     editor = response.json()[-1]["editedBy"]
     assert not [key for key in editor if key.startswith(flags.COLUMN_PREFIX)]
 
-
-# ── online OTP through a fake ASA ────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -444,7 +415,6 @@ def test_online_otp_verifies_an_account_and_throttles(world, online_on):
 
 
 def test_nothing_identifying_reaches_the_throttle_or_the_ledger(world):
-    """Read back with a PRIVATE client, after every request above has finished."""
     from prisma import Prisma
 
     async def read() -> tuple[list[Any], list[Any], Any]:

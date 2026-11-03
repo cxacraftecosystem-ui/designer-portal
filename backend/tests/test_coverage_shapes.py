@@ -1,18 +1,3 @@
-"""THE COVERAGE MAP'S DISTRICT SHAPES, held to the register and to the official depiction of India.
-
-``scripts/build_boundaries.py --shapes`` refuses to write a file that fails these checks; this runs
-the same checks over the COMMITTED file, so a hand edit or a stale file fails the suite too.
-
-* the file decodes, in the outline's own polyline encoding;
-* every district code is a register code of the state it claims;
-* Gilgit and Aksai Chin fall inside Ladakh or the base fill, Muzaffarabad inside Jammu and Kashmir or
-  the base fill, and all three inside the national outline;
-* no polygon vertex lies more than 0.03 degrees outside the national outline;
-* every centroid lies inside its own polygon, and the server's centroid file agrees with the web's.
-
-No database.
-"""
-
 from __future__ import annotations
 
 import importlib.util

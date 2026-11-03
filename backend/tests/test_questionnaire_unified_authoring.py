@@ -1,24 +1,3 @@
-"""Designer-portal's form authoring once the forms are unified (UNIFY U5/U10; stream U1).
-
-On a database of its own, migrated and with the per-form section keys the migration's apply puts in
-place (the deferred ``section_keys`` folder), ``QUESTIONNAIRE_V2`` on: every authoring path writes
-the instrument tables (``QuestionnaireSection``/``QuestionnaireQuestion``) and none writes the old
-form tables, which are read-only legacy from then on.
-
-* a form made by hand, its sections and questions (positions unique per form; a move shifts the
-  others; a question carries its section's code and title, and renaming the section renames them);
-* the reword rule on the shared evidence: unanswered wording is edited in place, an answered one is
-  superseded keeping its lineage and display code, an answered one taken out is retired, an
-  unanswered one deleted;
-* a hand-filled workbook: the form, and its answers as WORKBOOK sessions (one per column);
-* reuse, the handoff bundle (import idempotent per importer, and the download), and the annexure in
-  the one shape both portals serve;
-* the retired global form: a create that resolves to no form is refused, never keyed by artisan set.
-
-CI runs it in the "Questionnaire unify migration" job with ``QUESTIONNAIRE_UNIFIED_DATABASE_URL``
-naming an empty database (it cannot share the integration job's, whose global keys it would drop).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -55,7 +34,7 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> None:
     for name in names:
         shutil.copytree(BACKEND / "prisma" / "migrations" / name, root / "migrations" / name)
     deferred = BACKEND / "prisma" / "deferred" / SECTION_KEYS
-    if deferred.is_dir():  # until the switch-on commit moves it into prisma/migrations
+    if deferred.is_dir():
         shutil.copytree(deferred, root / "migrations" / SECTION_KEYS)
     env = {**os.environ, "DATABASE_URL": URL}
     out = subprocess.run([sys.executable, "-m", "prisma", "migrate", "deploy", "--schema", str(root / "schema.prisma")],
@@ -130,7 +109,6 @@ def test_authoring_writes_the_instrument_tables_and_never_the_old_ones(migrated,
         assert [(r["sectionCode"], r["sectionTitle"]) for r in rows] == [("A", "Dyes"), ("A", "Dyes")]
         assert all(r["lineageId"] and r["displayCode"] for r in rows), "the U0 trigger gave each its lineage and display code"
 
-        # A second section, then one inserted at position 1: the others move down, one per form.
         form = await routes.create_section(fid, CustomSectionCreate(title="Tools", code="B"), designer)
         tools = next(s for s in form["sections"] if s["code"] == "B")
         form = await routes.create_section(fid, CustomSectionCreate(title="Intro", code="C", sortOrder=1), designer)
@@ -142,7 +120,6 @@ def test_authoring_writes_the_instrument_tables_and_never_the_old_ones(migrated,
         q = (await client.query_raw('SELECT "sectionTitle" FROM "QuestionnaireQuestion" WHERE "id" = $1', carve["id"]))[0]
         assert q["sectionTitle"] == "Blocks", "a question carries its section's current title"
 
-        # The reword rule on the shared evidence.
         dyes = next(s for s in form["sections"] if s["code"] == "A")
         q1, q2 = dyes["questions"]
         edited = await routes.update_question(fid, q2["id"], CustomQuestionUpdate(prompt="Who mixes the dyes?"), designer)
@@ -221,8 +198,6 @@ def test_a_workbook_reuse_bundle_and_annexure_on_the_unified_tables(migrated, mo
         assert form["sections"][0]["questions"][1]["answers"] == [{"subject": "Meena", "text": "Her mother"}, {"subject": "Ramesh", "text": "He does"}]
         assert "Questionnaire annexure: Bagru block printing" in library.annexure_text(doc)
 
-        # The retired global form: with nothing bound and no default, an old build's create resolves
-        # to no form, and the route then refuses it (it never writes a row keyed by artisan set).
         from app.questionnaire import shims_dr
 
         await client.execute_raw('DELETE FROM "QuestionnaireBinding"')

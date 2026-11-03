@@ -1,19 +1,3 @@
-"""THE REVIEW FIXES TO THE 2026-10-18 NOTICES AND DELIVERY, OVER A DATABASE.
-
-* "Approve and hand on" is ONE transaction: a hand-on that loses its race leaves the report NOT
-  approved and the stored file removed; a delivery that fails after the hand-on committed still
-  answers 200 (``deliveryFailed``) and the link can then be sent; the designers hear REPORT_APPROVED
-  as well as REPORT_HANDED_ON when the route approved the report itself.
-* A repeated data-access request while one is pending does not e-mail the owner again.
-* The inspection badge drops once the inspector has acted in the current round.
-* The approving authority barred by rule 7 is not e-mailed a hand-in; a held notice of a person who
-  has since turned hand-in e-mails OFF is set aside, not sent.
-* ``received_for`` keeps the newest delivery's line and the earliest opening.
-
-Same shape as ``test_notify_delivery_db.py``: seed in a private ``asyncio.run``, drive the
-``TestClient``, read back in another.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -108,12 +92,9 @@ def _seed() -> dict[str, Any]:
             await db.designworkshopinspector.create(
                 data={"designWorkshopId": row.id, "userId": people["inspector"].id, "assignedById": people["admin"].id}
             )
-        # Rule 7: "barred" is on the hand-in workshop's design team, so may not decide it.
         await db.designworkshopviewer.create(
             data={"designWorkshopId": workshops["handin"], "userId": people["barred"].id, "grantedById": people["admin"].id}
         )
-        # The inspector already filed a suggestion on "reviewed" in its CURRENT round (2), and one on
-        # "waiting" in an EARLIER round (a resubmission is waiting for them again).
         for workshop, round_no in (("reviewed", 2), ("waiting", 1)):
             await db.dwinspectionfeedback.create(
                 data={
@@ -173,7 +154,6 @@ def test_approve_and_hand_on_is_one_transaction_and_survives_a_failed_delivery(
     monkeypatch.setattr(s3, "delete_object", removed.append)
     monkeypatch.setattr(s3, "presign_get_url", lambda key, **_: f"https://bucket.example/{key}?sig=1")
 
-    # ── the race: the hand-on's guard matches nothing, so the approval rolls back with it ─────────
     real_apply_in = route._apply_in
 
     async def lose_the_hand_on(tx: Any, decision: Any) -> None:
@@ -195,7 +175,6 @@ def test_approve_and_hand_on_is_one_transaction_and_survives_a_failed_delivery(
             assert lost.status_code == 409, lost.text
             assert removed == list(stored), "the file stored for the lost hand-on is removed again"
 
-            # ── the delivery fails after the hand-on committed: still a 200 ────────────────────
             async def broken_send(*args: Any, **kwargs: Any) -> Any:
                 raise RuntimeError("delivery table unavailable")
 
@@ -213,7 +192,6 @@ def test_approve_and_hand_on_is_one_transaction_and_survives_a_failed_delivery(
             assert answer["status"] == "SUBMITTED" and answer["deliveryFailed"] is True
             assert answer["delivery"]["latest"] is None
 
-            # "Send the link": the handed-on export is sent for the first time.
             first = client.post(
                 f"/api/design-workshop-approvals/{workshops['fail']}/delivery/resend", headers=_as(people, "ministry")
             )
@@ -260,7 +238,6 @@ def test_requests_badges_and_hand_in_audience(mail_on: None) -> None:
     people, workshops = world["people"], world["workshops"]
     try:
         with TestClient(app) as client:
-            # ── A5: three POSTs while pending e-mail the owner once ───────────────────────────
             for _ in range(3):
                 asked = client.post(
                     "/api/data-access/requests",
@@ -269,13 +246,10 @@ def test_requests_badges_and_hand_in_audience(mail_on: None) -> None:
                 )
                 assert asked.status_code == 201, asked.text
 
-            # ── A4: "reviewed" is acted on in its current round; the badge leaves it out ─────────
             count = client.get("/api/design-workshop-inspections/awaiting-count", headers=_as(people, "inspector"))
             assert count.status_code == 200, count.text
-            # race, fail, waiting are waiting; reviewed is not.
             assert count.json() == {"awaiting": 3}
 
-            # ── C2: the hand-in reaches the inspector and the unbarred approver only ──────────────
             handed = client.patch(
                 f"/api/design-workshops/{workshops['handin']}",
                 json={"status": "PRE_SUBMISSION"},
@@ -299,7 +273,6 @@ def test_requests_badges_and_hand_in_audience(mail_on: None) -> None:
     assert handed_in("ministry"), "an approver free to decide hears of it"
     assert handed_in("barred") == [], "rule 7 bars this approver from deciding, so no notice"
 
-    # ── C2: a held notice of a person who switched to OFF is set aside ───────────────────────
     async def digest_after_off() -> tuple[int, Any, list[Any]]:
         await db.emailmessage.update_many(
             where={"recipientId": people["inspector"].id, "status": "QUEUED"}, data={"status": "SENT"}

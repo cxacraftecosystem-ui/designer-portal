@@ -16,23 +16,15 @@ class PresignRequest(APIModel):
 
 
 class MediaRelinkRequest(APIModel):
-    """Re-attach an orphaned/mis-linked media file to an existing record of the given type."""
-
     linkedRecordType: str = Field(min_length=1, max_length=60)
     linkedRecordId: str = Field(min_length=1, max_length=60)
 
 
 class TranscriptRefineRequest(APIModel):
-    """Refine a media file's transcript into a clean interviewer/interviewee conversation; when
-    ``translate`` is true the conversation is also translated into English."""
-
     translate: bool = False
 
 
 class TranscriptUpdateRequest(APIModel):
-    """Replace a media file's stored transcript text — used when a user approves an AI-refined
-    transcript to save it in place of the raw one."""
-
     text: str = Field(min_length=1, max_length=200_000)
 
 
@@ -102,58 +94,18 @@ class MediaCompleteRequest(APIModel):
     sizeBytes: int = Field(gt=0)
     objectKey: str = Field(min_length=1)
     bucket: str | None = None
-    #: ACCEPTED AND IGNORED. The stored URL is always derived from ``objectKey`` by the route (see
-    #: ``api/routes/media.complete_media_upload``); a caller-supplied one was a stored redirect
-    #: target. The field survives only because ``APIModel`` forbids extra keys and every installed
-    #: client sends it, so removing it would 422 uploads from phones that cannot be updated.
     url: str | None = None
     caption: str | None = None
     checksum: str | None = None
-    #: ACCEPTED AND IGNORED, all four, exactly as ``url`` above is. ``complete_media_upload`` excludes
-    #: them from the create (``media.SERVER_WRITTEN_TRANSCRIPT_FIELDS``, which carries the argument):
-    #: the transcript columns are written by ``media_queue`` after the consent gate has decided, by
-    #: ``POST /media/{id}/transcript`` and by the workshop dictate route, and an upload body that could
-    #: set them let a caller record their own words as the artisan's without passing any of the three.
-    #:
-    #: NEITHER SHIPPED CLIENT SENDS ANY OF THEM (checked 2026-08-28: Android's ``MediaCompleteRequest``
-    #: in ``data/ApiModels.kt`` declares none; the web body in ``frontend/lib/media.ts`` lists none), so
-    #: these could have been deleted outright. They are kept because ``APIModel`` forbids extra keys —
-    #: deleting one 422s any build still sending it, and Android's ``saveOrQueue`` does not queue a 4xx,
-    #: so the refused upload loses the recording. ``transcribeMediaFile`` in that same web module still
-    #: returns ``{transcriptText, transcriptStatus, transcriptError}``, which is the shape an older
-    #: build merged into this body; tolerating them costs nothing and betting against it costs a file.
     transcriptText: str | None = None
     transcriptSummary: str | None = None
     transcriptStatus: str | None = None
     transcriptError: str | None = None
     linkedRecordType: str | None = None
     linkedRecordId: str | None = None
-    #: THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload is filed under, from the dropdown on
-    #: that form. Added 2026-08-28 with the column, so that "Miscellaneous Media" can be linked to a
-    #: design workshop like every other record type the owner named.
-    #:
-    #: IT IS NOT THE SAME AS ``linkedRecordType="designWorkshop"`` ABOVE, and it is deliberately not
-    #: derived from it. That pair says which RECORD a file was uploaded against and is written by the
-    #: upload path itself for every stage photograph; this says which workshop a person chose to file
-    #: a loose file under. ``records.media_relation_data`` carries the argument for why deriving one
-    #: from the other would break the orphan-recovery machinery, which is split precisely on whether
-    #: a link has a typed foreign key.
-    #:
-    #: GATED by ``record_design_workshop.assert_may_file_under`` in ``complete_media_upload``: the
-    #: caller must be able to edit that workshop, exactly as the record forms require.
     designWorkshopId: str | None = None
     processingRequests: list[str] | None = None
     recordedAt: datetime | None = None
     recordedTimezone: str | None = None
-    # DELIBERATELY still optional, and the one location field in the API that is.
-    #
-    # Every other record type demands one on create; this request does not, because it is not one
-    # surface. It finalises the misc-media upload — which does render the location card, and whose
-    # form will not submit without a coordinate — and it ALSO finalises every attachment on every
-    # other form: the artisan's photographs, the tool's measurement grid, each question's audio
-    # clip. Those carry no location card and never did, because their location is the parent
-    # record's, which the parent's own create has just been made to guarantee. Requiring it here
-    # would 422 every file attached anywhere in the app while adding nothing that is not already
-    # stored one row up.
     location: LocationInput | None = None
     extraMetadata: dict[str, Any] | None = None

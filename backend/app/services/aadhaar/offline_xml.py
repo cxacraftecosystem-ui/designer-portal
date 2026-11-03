@@ -1,36 +1,3 @@
-"""Aadhaar Paperless Offline e-KYC — the password-protected ZIP a resident downloads from UIDAI.
-
-THE FILE. A ZIP holding one XML, protected with the "share code" (UIDAI also calls it the share
-phrase) the resident chose when downloading. UIDAI names no ZIP algorithm ("any standard unzipping
-utility"); files in the wild use both the legacy ZipCrypto scheme, which ``zipfile`` reads, and
-WinZip AES, which it cannot — so AES is decrypted here (``_aes_member``) with ``cryptography``.
-
-THE XML::
-
-    <OfflinePaperlessKyc referenceId="<last 4 of Aadhaar><YYYYMMDDHHMMSSmmm>">
-      <UidData>
-        <Poi name dob gender e m/>      e, m: hashes of the e-mail and mobile (see below)
-        <Poa careof country dist house landmark loc pc po state street subdist vtc/>
-        <Pht>base64 JPEG 2000</Pht>
-      </UidData>
-      <Signature>…enveloped XMLDSig over the whole document…</Signature>
-    </OfflinePaperlessKyc>
-
-Real files are signed RSA-SHA1 over a SHA-256 digest with inclusive C14N (verified against three
-genuine files on 2026-10-16); ``xmldsig.verify_enveloped`` accepts that and the SHA-256 variants.
-
-THE MOBILE / E-MAIL HASH, UIDAI's wording: "Sha256(Sha256(Mobile+SharePhrase))*number of times last
-digit of Aadhaar number … ends with Zero hashed one time". Read, as every published reader reads it,
-as: hash ``value + share code`` to lower-case hex, then hash that hex string again, ``max(1, digit)``
-rounds in all. Checked ONLY when the person types a mobile number or e-mail address, and never stored.
-
-AGE. ``AADHAAR_OFFLINE_XML_MAX_AGE_DAYS`` (default 3). UIDAI itself publishes no maximum; 3 days is
-the RBI KYC Master Direction's rule for an XML or QR, which the owner adopted for this deployment.
-
-NOTHING IS KEPT. The ZIP, the XML, the share code, the photo and the address are discarded when this
-function returns.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -66,12 +33,8 @@ NOT_SIGNED = (
 )
 
 
-# ── the ZIP ──────────────────────────────────────────────────────────────────────────────────
-
 
 def _aes_member(archive: bytes, info: zipfile.ZipInfo, password: bytes) -> bytes:
-    """Decrypt one WinZip-AES (AE-1/AE-2) member: PBKDF2-HMAC-SHA1 x1000, AES-CTR with a
-    little-endian counter from 1, HMAC-SHA1 truncated to 10 bytes over the ciphertext."""
     extra = info.extra
     strength = method = None
     position = 0
@@ -119,7 +82,6 @@ def _aes_member(archive: bytes, info: zipfile.ZipInfo, password: bytes) -> bytes
 
 
 def extract_xml(archive: bytes, share_code: str) -> bytes:
-    """The one XML inside the ZIP, decrypted with the share code. Raises AadhaarError."""
     password = share_code.strip().encode("utf-8")
     try:
         bundle = zipfile.ZipFile(io.BytesIO(archive))
@@ -134,7 +96,6 @@ def extract_xml(archive: bytes, share_code: str) -> bytes:
         if info.file_size > MAX_XML_BYTES:
             raise AadhaarError("zip_unreadable", NOT_A_KYC_ZIP)
         if not info.flag_bits & 0x1:
-            # An unencrypted offline e-KYC ZIP is not something UIDAI produces.
             raise AadhaarError("zip_unreadable", NOT_A_KYC_ZIP)
         if info.compress_type == 99:
             return _aes_member(archive, info, password)
@@ -144,8 +105,6 @@ def extract_xml(archive: bytes, share_code: str) -> bytes:
         except RuntimeError:
             raise AadhaarError("share_code_wrong", WRONG_SHARE_CODE) from None
         except (zipfile.BadZipFile, zlib.error, EOFError):
-            # ZipCrypto's one-byte password check passes a wrong password 1 time in 256; the
-            # CRC or the inflater then fails instead.
             raise AadhaarError("share_code_wrong", WRONG_SHARE_CODE) from None
         except NotImplementedError:
             raise AadhaarError("zip_unreadable", NOT_A_KYC_ZIP) from None
@@ -153,8 +112,6 @@ def extract_xml(archive: bytes, share_code: str) -> bytes:
             raise AadhaarError("zip_unreadable", NOT_A_KYC_ZIP)
         return data
 
-
-# ── the hashes ───────────────────────────────────────────────────────────────────────────────
 
 
 def contact_hash(value: str, share_code: str, last_digit: int) -> str:
@@ -197,8 +154,6 @@ def _check_contact(
         f"The {kind} you typed is not the one registered with this Aadhaar.",
     )
 
-
-# ── the whole check ──────────────────────────────────────────────────────────────────────────
 
 
 def verify_offline_xml(
@@ -257,6 +212,5 @@ def verify_offline_zip(
     email: str | None = None,
     now: datetime,
 ) -> VerifiedIdentity:
-    """Open, verify, and return only what may be stored. Raises AadhaarError."""
     xml = extract_xml(archive, share_code)
     return verify_offline_xml(xml, share_code, mobile=mobile, email=email, now=now)

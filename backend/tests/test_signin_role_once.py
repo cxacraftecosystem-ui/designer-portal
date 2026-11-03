@@ -1,22 +1,10 @@
-"""The sign-in list rule at designer-portal's own doors (``services/signin_role``, 2026-10-18).
-
-``tests/test_signin_role_contract.py`` holds the shared rule; this file drives the doors that apply
-it here, over the contract's vectors, against fakes:
-
-* the provider sign-in (``auth._sign_in_verified_mailbox``) creates a new account at the list's role
-  and never writes the role of an existing one — neither from the allow-list nor from the designer
-  roster — while the configured master admin address is still restored to MASTER_ADMIN;
-* the approval (``access._role_kept``) never writes an account and says when one keeps its role;
-* ``PATCH /api/users/{id}`` is the door that changes a role, and it writes the audit entry.
-
-documentation-portal's file of the same name drives its own doors over the same vectors.
-"""
-
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import pathlib
+import textwrap
 from types import SimpleNamespace
 from typing import Any
 
@@ -39,8 +27,6 @@ def anyio_backend():
 
 
 class _Users:
-    """``db.user`` over at most one account, recording every write."""
-
     def __init__(self, account: Any | None):
         self.account = account
         self.updates: list[dict[str, Any]] = []
@@ -122,7 +108,6 @@ async def test_a_new_account_on_the_designer_roster_is_created_as_a_designer(mon
 
 
 async def test_the_master_admin_address_is_still_restored(monkeypatch):
-    """The break-glass is not the list: its sign-in writes MASTER_ADMIN, as it always did."""
     master = get_settings().master_admin_email or "master@example.org"
     monkeypatch.setattr(get_settings(), "master_admin_email", master)
     users = _Users(_account("ADMIN", email=master.lower()))
@@ -147,8 +132,6 @@ def test_the_users_patch_is_the_door_that_audits_a_change_of_role():
 
 
 def test_no_sign_in_door_writes_a_role_from_the_list():
-    """Source guard: the only role the provider sign-in writes onto an existing account is the
-    break-glass MASTER_ADMIN. A future ``data["role"] = granted`` would be the rule undone."""
     source = inspect.getsource(auth_routes._sign_in_verified_mailbox)  # noqa: SLF001
     writes = [line.strip() for line in source.splitlines() if 'data["role"]' in line]
     assert writes == ['data["role"] = "MASTER_ADMIN"'], writes
@@ -158,7 +141,6 @@ def test_no_sign_in_door_writes_a_role_from_the_list():
 
 @pytest.mark.parametrize("vector", CONTRACT["roleKeptSentence"], ids=lambda v: f"{v['current']}+{v['listed']}")
 async def test_adding_an_address_never_writes_an_account_and_says_when_it_keeps_its_role(monkeypatch, vector):
-    """Adding an address by hand admits it like an approval, so it answers the same sentence."""
     from app.schemas.access_roster import AccessRosterCreate
 
     users = _Users(_account(vector["current"], email=vector["email"]) if vector["current"] else None)
@@ -193,11 +175,16 @@ async def test_adding_an_address_never_writes_an_account_and_says_when_it_keeps_
 
 
 def test_the_sanction_register_audits_its_raise_only_after_the_commit():
-    """Inside the transaction a rollback would leave a log line describing a change that never happened."""
     from app.services import sanction_orders
 
-    source = inspect.getsource(sanction_orders.create_from_sanction)
-    after_commit = source.index("PHASE 2: AFTER THE COMMIT")
+    source = textwrap.dedent(inspect.getsource(sanction_orders.create_from_sanction))
+    transactions = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.AsyncWith) and "db.tx(" in ast.unparse(node.items[0].context_expr)
+    ]
+    assert len(transactions) == 1
+    after_commit = "\n".join(source.splitlines()[transactions[0].end_lineno :])
     assert source.count("signin_role.audit_role_change(") == 1
-    assert source.index("signin_role.audit_role_change(") > after_commit
-    assert 'via="sanction-order"' in source[after_commit:]
+    assert "signin_role.audit_role_change(" in after_commit
+    assert 'via="sanction-order"' in after_commit

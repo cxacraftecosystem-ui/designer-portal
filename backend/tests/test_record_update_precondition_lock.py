@@ -1,13 +1,3 @@
-"""``expectedUpdatedAt`` asked of the LOCKED row, so two corrections composed against one version
-cannot both land (2026-10-16). See ``records.lock_and_assert_expected_updated_at``.
-
-Two halves. The first needs no database: the helper's contract (``None`` touches nothing, the read
-is ``FOR UPDATE`` on an allow-listed table, a stale stamp is the usual 409). The second is the race
-itself, on a LOCAL database: two transactions holding the same ``expectedUpdatedAt`` for one craft,
-the first takes the lock and writes, and the second — which would have passed the old comparison
-against its earlier read — is refused once the first commits.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -64,8 +54,6 @@ async def test_a_match_claims_the_row_with_a_conditional_write():
 
 
 async def test_a_row_written_since_it_was_read_matches_nothing_and_is_refused():
-    # The route read the row at T, another writer moved it on, and the precondition still says T:
-    # the comparison against the route's own copy passes; the conditional claim matches nothing.
     tx = _Tx(NOW + timedelta(hours=1))
     with pytest.raises(HTTPException) as refused:
         await lock_and_assert_expected_updated_at(tx, "craft", _Row("c1", NOW), NOW)
@@ -83,7 +71,6 @@ async def test_a_stale_precondition_is_refused_before_any_write():
 async def test_only_known_models_are_claimed():
     with pytest.raises(ValueError):
         await lock_and_assert_expected_updated_at(_Tx(NOW), "user", _Row("c1", NOW), NOW)
-    # The product and tool tables are the *Documentation models, and that is what the routes pass.
     assert {"productdocumentation", "tooldocumentation"} <= records_service.EXPECTED_UPDATED_AT_MODELS
 
 
@@ -108,9 +95,6 @@ async def test_two_corrections_against_one_version_cannot_both_land():
             async with db.tx() as tx:
                 await lock_and_assert_expected_updated_at(tx, "craft", craft, expected)
                 first_holds_lock.set()
-                # Hold the lock long enough that the second is certainly waiting on it, AND past the
-                # precondition's one-second tolerance, so the write below moves `updatedAt` by more than
-                # the comparison forgives.
                 await asyncio.sleep(1.5)
                 await tx.craft.update(where={"id": craft.id}, data={"description": "first"})
             outcomes["first"] = "landed"

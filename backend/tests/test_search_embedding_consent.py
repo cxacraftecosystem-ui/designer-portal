@@ -1,15 +1,3 @@
-"""Search embeddings send text to OpenAI or Gemini, so people's words are embedded only with consent.
-
-A ``transcripts`` document asks ``transcription_verdict`` for its recording, an ``interviews``
-document asks ``interview_verdict`` and a ``designWorkshops`` document (every stage's text) asks
-``workshop_verdict``: the one consent store, the same question every other outside send asks.
-
-No database and no provider: ``search_indexer.db`` is a small in-memory stand-in for the two tables
-the embedder reads (``SearchDocument`` and the ``Consent`` ledger's newest row), ``embed`` records
-what it was given, and each consent question answers from a dict. The last test runs the real
-questions over ``consent_store_fakes.LedgerDb``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -159,8 +147,6 @@ def test_an_unreadable_consent_sends_nothing_and_is_asked_again(world, monkeypat
 
 
 def test_the_real_questions_read_the_one_consent_store(world, monkeypatch):
-    """The three questions, unreplaced, over the ledger fake: a recording refusal, an artisan linked
-    to the workshop refusing, and the workshop's own answer each keep their document here."""
     db, sent, _consent = world
     ledger = LedgerDb()
     monkeypatch.setattr(dictation_consent, "db", ledger)
@@ -188,5 +174,4 @@ def test_the_real_questions_read_the_one_consent_store(world, monkeypatch):
     assert sent == [], "an artisan linked to the workshop refused: none of the three may leave"
 
 
-#: The real questions, kept before any test replaces them.
 _ORIGINAL = dict(search_indexer.CONSENT_QUESTIONS)

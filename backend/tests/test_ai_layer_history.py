@@ -1,17 +1,3 @@
-"""AN AI LAYER'S DECISION HISTORY, AND ONE LAYER'S TEXT, READ ON THEIR OWN (F9, 2026-10-10).
-
-Two reads, both on the workshop's own gate (anybody who can open the workshop):
-
-* ``GET /api/design-workshops/{id}/ai-layers/decisions`` — who accepted, withdrew or declined which
-  layer, and when, newest first, with the actor's name;
-* ``GET /api/design-workshops/{id}/ai-layers/{layer_id}`` — one layer with its full text and its own
-  history, the text WITHHELD exactly as the list withholds it when the recording underneath is one
-  the caller may not read.
-
-Asked of the workshop's designer, an admin, and a designer with no access to the workshop. The
-history entries themselves are asserted without a database too (``ai_layers.history_entries``).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -32,10 +18,6 @@ ROLES = {"designer": "DESIGNER", "admin": "ADMIN", "outsider": "DESIGNER", "uplo
 def _auth(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {create_access_token(subject=user_id)}"}
 
-
-# --------------------------------------------------------------------------------------
-# The history, without a database
-# --------------------------------------------------------------------------------------
 
 
 class _Row:
@@ -75,10 +57,6 @@ def test_a_layer_never_decided_on_has_an_empty_history() -> None:
     layer = _Row(id="L1", kind="RAW_TRANSCRIPT", deletedAt=None, deletedById=None)
     assert ai_layers.history_entries([layer], []) == []
 
-
-# --------------------------------------------------------------------------------------
-# The two routes, against a database
-# --------------------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -252,7 +230,6 @@ def test_one_layers_text_is_withheld_where_the_recording_is_not_the_callers(worl
     assert layer["textWithheld"] is True
     assert not layer.get("text")
     assert not layer.get("preview")
-    # An admin may read every recording, so the same layer is readable to them.
     admin = world["answers"]["withheld-admin"].json()["layer"]
     assert admin["textWithheld"] is False
     assert admin["text"].startswith("Somebody else's recording")

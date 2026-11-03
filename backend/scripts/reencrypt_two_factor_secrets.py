@@ -86,10 +86,6 @@ async def run(*, apply: bool, only_ids: list[str] | None = None) -> Tally:
             if not apply:
                 tally.would_move += 1
                 continue
-            # NOT invalidate_cached_user: this process is not the API's, so its cache is not the one
-            # serving requests. A serving process may hold the old ciphertext for up to
-            # AUTH_USER_CACHE_TTL_SECONDS; it still opens, because the key it names stays configured
-            # until this script reports nothing left to move (the runbook's step 4).
             written = await db.user.update_many(
                 where={"id": row.id, column: stored}, data={column: fresh}
             )

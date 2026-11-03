@@ -14,9 +14,9 @@ The cloud tier is not a future addition. It is the oldest part of this system.
 transcription, **ElevenLabs Scribe v2**, **Deepgram Nova-3**, and Gemini with multi-key rotation
 (`_next_gemini_start`). Two details matter for the plan:
 
-- **Deepgram Nova-3 is called with `language=multi`** (`ai.py:360`) — chosen precisely because it
+- **Deepgram Nova-3 is called with `language=multi`** (`ai.py:220`) — chosen precisely because it
   transcribes mixed-language speech, which is what a workshop actually sounds like.
-- **Scribe v2 diarizes up to 32 speakers** (`ai.py:262-269`), and it is the long-form model because
+- **Scribe v2 diarizes up to 32 speakers** (`ai.py:151-154`), and it is the long-form model because
   "interviews run past an hour".
 
 So **Tier 3 diarization already exists and works.** What we are deferring is *offline* diarization,
@@ -29,7 +29,7 @@ it is **"move an existing capability offline, and keep the two agreeing about wh
 
 ### The craft vocabulary is the hidden asset
 
-`ai.py:118-138` boosts a craft-specific keyterm list, because a general model writes **"dabu"** —
+`ai.py:74-93` boosts a craft-specific keyterm list, because a general model writes **"dabu"** —
 a mud-resist printing technique — as **"double"**. That list is passed to Deepgram as keyterms and
 shapes every server transcription.
 

@@ -1,10 +1,3 @@
-"""The duplicate-artisan finder through the API: the form's check, the hold at save time, the admin
-queue, merge, undo and the merged-id redirect.
-
-Database-backed. Rows are seeded before the app starts; read-backs while the client is alive use a
-private Prisma client (the pattern of tests/test_aadhaar_fingerprint.py).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -57,8 +50,6 @@ def world():
                 })
             craft = await db.craft.create(data={"name": f"Dupes dabu {tag}"})
             loc = await db.location.create(data={"latitude": 26.8, "longitude": 75.5, "state": "Rajasthan", "district": "Jaipur"})
-            # Recorded before the Aadhaar was required: no fingerprint, so a create with a number of
-            # its own is not capped against it.
             existing = await db.artisan.create(data={
                 "name": f"Ramesh Prajapat {tag}", "place": "Bagru", "phone": "9829011111",
                 "createdById": people["designer"].id, "craftId": craft.id, "locationId": loc.id,
@@ -158,7 +149,6 @@ def test_check_caps_at_five_and_carries_no_identifier(world):
 def test_check_reads_through_the_record_read_rule(world, monkeypatch):
     from app.services import records
 
-    # The shared test database holds other runs' look-alikes too, so the rule here lets one row through.
     visible = world["crowd"][6]
 
     async def narrowed(user, owner_field="createdById"):
@@ -291,7 +281,6 @@ def test_admin_only_queue_preview_merge_redirect_and_undo(world):
     assert old.status_code == 404 and old.json()["detail"] == {
         "code": "artisan_merged", "message": "This artisan was merged into another record.", "survivorId": keep_id,
     }
-    # A product queued against the old id lands on the survivor.
     product = client.post("/api/products", headers=h, json={
         "craftName": "Dabu", "place": "Bagru", "artisanName": "Gopal", "productName": "Bedsheet",
         "artisanId": gone_id, "location": LOCATION,

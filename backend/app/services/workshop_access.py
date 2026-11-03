@@ -1,65 +1,3 @@
-"""Workshop linkage, assignment, and the late-submission approval gate.
-
-Every record type now carries an optional ``workshopId`` — the workshop it was documented at. Two
-rules ride on that link.
-
-**Assignment.** A WorkshopAssignment row says what ONE user may do in ONE workshop. It carries an
-``accessLevel`` (VIEW < CONTRIBUTE < EDIT) and a ``status`` (PENDING / GRANTED / DENIED / REVOKED),
-and the SAME row serves both directions of the conversation: an admin granting access, and a user
-asking for it. Only GRANTED confers anything — a PENDING request is not access — and DENIED/REVOKED
-rows are kept rather than deleted, so a refusal stays on the record instead of being silently
-re-requested away.
-
-WHAT "KEPT" HAS TO MEAN, because for a while it did not mean this: the ROW surviving is not the
-guarantee — ``decidedById``, ``decidedAt`` and ``decisionNote`` are the only record a decision has,
-and ``POST /workshops/access-requests`` used to null all three when the person who had been refused
-asked again. The row was kept and the decision was gone, which is the same audit hole with a
-survivor. Re-requesting now flips ``status`` back to PENDING (and clears ``assignedById``, which is
-about curation, not about the decision) and leaves the three decision columns standing, so the queue
-can say "denied by X on the 3rd — asked again on the 9th". Any future writer of this table inherits
-that rule: a request may be re-opened, a decision may not be erased by its subject.
-
-Whether a workshop is CURATED at all is a different question from whether it has rows, and getting
-that wrong locks people out of workshops they have always been able to use. The rule is:
-
-    a workshop is restricted only once an admin has deliberately put somebody on its roster —
-    that is, it has a GRANTED row with an ``assignedById``.
-
-Every other shape of row leaves the workshop open to everyone, exactly as it was before assignments
-existed:
-
-* no rows at all — every legacy workshop;
-* only PENDING requests — so *asking* for access can never lock out the people who already had it;
-* only DENIED rows — a refusal is not a lockdown either;
-* rows that began as self-requests and were approved: :func:`decide` records ``decidedById`` but
-  deliberately does NOT set ``assignedById``, because approving one person's request must not
-  silently 403 the rest of a team that was already working in that workshop;
-* an admin roster that has since been fully revoked. There is no "curated but empty" state to tell
-  apart from "never curated", and emptying the roster is how ``PUT /assignments`` has always
-  reopened a workshop — see :func:`set_workshop_assignments`.
-
-On an OPEN workshop everyone implicitly holds CONTRIBUTE, and an explicit grant can only RAISE that,
-never lower it: somebody granted VIEW on a workshop the whole team can already write to is not
-demoted for having asked. On a RESTRICTED workshop only a GRANTED row confers access, at its level.
-
-Assignments carry no date guard of their own: an admin may assign somebody long AFTER a workshop
-ended, and that is precisely how post-workshop access is granted.
-
-**Late submission.** A workshop is over once the whole of its ``endDate`` day has passed. A submission
-made outside ``[startDate, endDate]`` is still accepted, but it is
-
-  1. stamped into the record's ``extraMetadata.workshopSubmission`` as ``needsAdminApproval``, and
-  2. FORCED to ``PENDING`` regardless of the submitter's own status rights, so a professor or above
-     cannot self-approve their own late work.
-
-Only an ADMIN or MASTER_ADMIN can approve a record carrying that flag (enforced in the review routes),
-and approving it clears the flag. Clients can ask what a submission would mean before making it via
-``GET /workshops/{id}/submission-check``, which returns :meth:`WorkshopSubmissionCheck.payload`.
-
-Nothing here fires when a record carries no ``workshopId``: an omitted workshop behaves exactly as it
-always has.
-"""
-
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -82,14 +20,9 @@ def _iso(value: Any) -> str | None:
     return dt.isoformat() if dt else None
 
 
-# ------------------------------------------------------------------ access levels and statuses
-
-# Strictly increasing capability WITHIN one workshop, so a check is a rank comparison rather than a
-# set membership test and a new level can be slotted in without hunting down every call site.
 WORKSHOP_LEVELS: tuple[str, ...] = ("VIEW", "CONTRIBUTE", "EDIT")
 WORKSHOP_LEVEL_ORDER: dict[str, int] = {"VIEW": 1, "CONTRIBUTE": 2, "EDIT": 3}
 
-# Shown in the grant/request UIs so nobody has to guess what a level actually confers.
 WORKSHOP_LEVEL_DESCRIPTIONS: dict[str, str] = {
     "VIEW": "Read this workshop's data. Cannot create or change records in it.",
     "CONTRIBUTE": "Everything in View, plus create records in this workshop (the normal level).",
@@ -98,33 +31,24 @@ WORKSHOP_LEVEL_DESCRIPTIONS: dict[str, str] = {
 }
 
 WORKSHOP_STATUSES: tuple[str, ...] = ("PENDING", "GRANTED", "DENIED", "REVOKED")
-# Statuses an admin may hand down when deciding a row. PENDING is not one: only the requester
-# creates a PENDING row, so an admin cannot park somebody back in the queue.
 WORKSHOP_DECISIONS: tuple[str, ...] = ("GRANTED", "DENIED", "REVOKED")
 
-# The level every authenticated user implicitly holds on an UNCURATED workshop. It is CONTRIBUTE and
-# not EDIT: an open workshop means "anyone may add to it", never "anyone may rewrite anyone's work".
 OPEN_WORKSHOP_LEVEL = "CONTRIBUTE"
 
-# The level an admin hands out when they do not name one — the level the pre-levels PUT endpoint
-# effectively granted, which is what keeps the Android app's replace-the-set call behaving as before.
 DEFAULT_GRANT_LEVEL = "CONTRIBUTE"
 
 
 def enum_str(value: Any) -> str | None:
-    """Prisma may hand back an enum wrapper or a plain string depending on the column; normalize."""
     if value is None:
         return None
     return str(getattr(value, "value", value))
 
 
 def level_rank(level: Any) -> int:
-    """Rank of an access level; None/unknown ranks 0, below every real level."""
     return WORKSHOP_LEVEL_ORDER.get(enum_str(level) or "", 0)
 
 
 def level_at_least(level: Any, minimum: str) -> bool:
-    """True when ``level`` confers at least ``minimum``. A missing level never satisfies anything."""
     return level_rank(level) >= WORKSHOP_LEVEL_ORDER.get(minimum, 99)
 
 
@@ -134,15 +58,6 @@ def valid_level(level: Any) -> bool:
 
 @dataclass(frozen=True)
 class WorkshopAccess:
-    """What one user may do in one workshop, resolved from that workshop's assignment rows.
-
-    ``level`` is the EFFECTIVE level (None = no access at all), which is not the same thing as
-    ``rowLevel``: on an open workshop the implicit CONTRIBUTE wins over a lower granted level, and on
-    a restricted one a non-GRANTED row confers nothing at all. ``rowStatus``/``rowLevel`` are kept
-    alongside so a UI can explain WHY — "your request is still pending" reads very differently from
-    "you were never assigned".
-    """
-
     level: str | None = OPEN_WORKSHOP_LEVEL
     restricted: bool = False
     rowStatus: str | None = None
@@ -154,21 +69,10 @@ class WorkshopAccess:
 
 
 def workshop_is_curated(rows: Any) -> bool:
-    """True when an admin deliberately put somebody on this workshop's roster.
-
-    A GRANTED row with an ``assignedById`` is the ONLY thing that closes a workshop — see the module
-    docstring for why a pending, denied, or self-requested-and-approved row must not. Takes the rows
-    rather than an id so a caller that already loaded them does not query twice.
-    """
     return any(enum_str(r.status) == "GRANTED" and get_value(r, "assignedById") for r in rows)
 
 
 async def resolve_workshop_access(user: Any, workshop_id: str) -> WorkshopAccess:
-    """Resolve ``user``'s effective level in ``workshop_id`` from the assignment rows.
-
-    Admins are unrestricted and always resolve to EDIT: they are the approval authority, so gating
-    them behind their own grant would make a workshop un-administrable.
-    """
     rows = await db.workshopassignment.find_many(where={"workshopId": workshop_id})
     uid = get_value(user, "id")
     mine = next((r for r in rows if r.userId == uid), None)
@@ -181,7 +85,6 @@ async def resolve_workshop_access(user: Any, workshop_id: str) -> WorkshopAccess
     if restricted:
         level = granted
     else:
-        # Open workshop: the implicit level applies, and an explicit grant can only raise it.
         level = (
             granted
             if level_rank(granted) > level_rank(OPEN_WORKSHOP_LEVEL)
@@ -191,10 +94,6 @@ async def resolve_workshop_access(user: Any, workshop_id: str) -> WorkshopAccess
 
 
 async def workshop_assignee_ids(workshop_id: str) -> set[str]:
-    """The users who currently HOLD access to this workshop (GRANTED rows only).
-
-    Status-aware on purpose: a pending, denied, or revoked row must never read as membership.
-    """
     rows = await db.workshopassignment.find_many(
         where={"workshopId": workshop_id, "status": "GRANTED"}
     )
@@ -202,67 +101,6 @@ async def workshop_assignee_ids(workshop_id: str) -> set[str]:
 
 
 async def unreachable_workshop_ids(user: Any, minimum: str = DEFAULT_GRANT_LEVEL) -> list[str]:
-    """The workshops ``user`` cannot reach AT ``minimum`` — curated rosters they are not on, or are
-    on at a level below ``minimum``.
-
-    THE SET IS AN EXCLUSION LIST AND NOT AN INCLUSION LIST, and that is the whole design of this
-    function. "Which workshops may I use" cannot be answered by listing assignment rows, because on
-    an UNCURATED workshop every signed-in account already holds CONTRIBUTE and there is no row to
-    find (see the module docstring, and ``OPEN_WORKSHOP_LEVEL``). Almost every workshop in this
-    repository is uncurated, so an inclusion list would be a list of nearly the whole table
-    assembled row by row, and — far worse — a workshop nobody has ever assigned anybody to would be
-    ABSENT from it and therefore excluded. The only rows that actually narrow anything are the
-    curated ones the caller is not on, and that is what this returns.
-
-    THE CURATION RULE IS NOT RESTATED IN SQL. ``GET /workshops/requestable`` records at length why:
-    "a workshop is curated only once it has a GRANTED row with an ``assignedById``" is a rule with
-    six documented exceptions, and a second copy of it expressed as a Prisma predicate is a copy that
-    drifts silently — people locked out of workshops that were always open to them. So the GRANTED
-    rows are fetched and :func:`workshop_is_curated` — the one implementation — decides, in Python,
-    per workshop.
-
-    ONE QUERY, over GRANTED rows only. That is every row that can matter: curation is decided by
-    GRANTED rows and access is conferred by GRANTED rows, so PENDING, DENIED and REVOKED rows cannot
-    change either answer and are not fetched. The volume is the number of grants that exist across
-    the whole repository, not the number of workshops — grants are made by an admin, one roster at a
-    time, so this is tens of rows on this deployment. If a deployment ever curates everything, this
-    becomes a large ``not_in`` and the query to write instead is a join; there is nothing subtle to
-    preserve at that point beyond keeping ``workshop_is_curated`` as the only copy of the rule.
-
-    Admins get an EMPTY list, never a narrowing: :func:`resolve_workshop_access` resolves them to
-    EDIT on every workshop because they are the approval authority, and a list route that hid a
-    workshop from the person who grants access to it would make it un-administrable.
-
-    ── THE LEVEL IS PART OF THE QUESTION, AND LEAVING IT OUT SHIPPED THE BUG THIS SET EXISTS TO STOP
-
-    This used to test MEMBERSHIP ONLY: a workshop was excluded when the caller held no GRANTED row on
-    it, and ANY GRANTED row was enough to keep it in. ``accessLevel`` was never read. So a designer
-    holding ``WorkshopAssignment(status="GRANTED", accessLevel="VIEW")`` on a curated workshop was
-    still OFFERED that workshop by every picker composed from this set, and
-    :func:`enforce_workshop_submission` — which needs CONTRIBUTE — then refused the save with "your
-    access to this workshop is view-only, which does not allow this". That is precisely the failure
-    the narrowing was written to remove, arriving in precisely the place it was written to remove it
-    from: after a researcher has filled in a whole record. Three comments asserted the opposite in
-    writing ("the narrowing removes exactly the rows that would 403" — here, in
-    ``routes/workshops`` and in the web ``WorkshopSelect``), and the sentence was true of somebody
-    holding no row and false of everybody holding a VIEW row.
-
-    So the caller states the level it needs and this answers THAT question. ``minimum`` defaults to
-    :data:`DEFAULT_GRANT_LEVEL` (CONTRIBUTE) because the caller that exists is a picker offering a
-    workshop to SAVE into, and CONTRIBUTE is what ``enforce_workshop_submission`` demands on create —
-    the two have to name the same level or the list and the save disagree again, one level along. A
-    route that genuinely only needs read access passes ``minimum="VIEW"`` and gets the old
-    membership behaviour, which is the honest answer to a different question.
-
-    THE LEVEL IS ONLY EVER CONSULTED ON A CURATED WORKSHOP, and that ordering is the safety of it. On
-    an UNCURATED workshop every signed-in account implicitly holds :data:`OPEN_WORKSHOP_LEVEL` and an
-    explicit grant can only RAISE that (see :func:`resolve_workshop_access`), so somebody sitting at
-    VIEW on an open workshop is not demoted by their own row and must not be excluded — excluding
-    them would be the "locked out of a workshop that was always open to them" failure this module's
-    docstring is written against, reintroduced through the level instead of through the roster.
-    ``workshop_is_curated`` decides first and the level is read second, over the rows of curated
-    workshops only, which is the same order the resolver applies.
-    """
     if is_admin(user):
         return []
     uid = get_value(user, "id")
@@ -273,9 +111,6 @@ async def unreachable_workshop_ids(user: Any, minimum: str = DEFAULT_GRANT_LEVEL
     return sorted(
         workshop_id
         for workshop_id, workshop_rows in by_workshop.items()
-        # ``workshop_rows`` are GRANTED rows only — that is the one query above — so the status needs
-        # no second test here. The LEVEL does, and it is the level on THIS caller's own row: a
-        # workshop somebody else may edit is no more reachable for them than one nobody is on.
         if workshop_is_curated(workshop_rows)
         and not any(
             get_value(r, "userId") == uid and level_at_least(get_value(r, "accessLevel"), minimum)
@@ -287,42 +122,11 @@ async def unreachable_workshop_ids(user: Any, minimum: str = DEFAULT_GRANT_LEVEL
 async def accessible_workshops_where(
     user: Any, minimum: str = DEFAULT_GRANT_LEVEL
 ) -> dict[str, Any] | None:
-    """A Prisma ``where`` fragment narrowing a workshop list to the ones ``user`` may actually use at
-    ``minimum`` — CONTRIBUTE by default, the level a save into a workshop demands.
-
-    ``None`` — not ``{}`` — when nothing is excluded, so a caller composes with ``if clause:`` and an
-    admin's query is byte-for-byte the query it was before this existed. (``records.viewable_where``
-    returns ``{}`` for the same purpose; both are falsy, and both callers test for falsiness.)
-
-    THIS IS OPT-IN PER ROUTE AND MUST STAY THAT WAY. It is deliberately NOT folded into
-    ``records.viewable_where``, whose docstring invites exactly that: that function is applied to
-    every list route at once, so putting this there would narrow the data browser, the map, the
-    search page and the export at the same time. READING the repository is open on purpose
-    (``services/records`` documents the policy), and what this narrows is the set a client may OFFER
-    TO FILE AGAINST — a picker whose options are workshops the API will 403 on save. Those are two
-    different questions and this answers only the second.
-
-    "A PICKER WHOSE OPTIONS ARE WORKSHOPS THE API WILL 403 ON SAVE" IS ONLY TRUE OF THIS SET BECAUSE
-    ``minimum`` NAMES THE LEVEL THE WRITE GATE ASKS FOR. It was not true while this read membership
-    and ignored ``accessLevel`` — a VIEW-only grantee on a curated workshop survived the narrowing
-    and was refused after typing a record. :func:`unreachable_workshop_ids` carries the whole
-    argument. A caller passing a LOWER ``minimum`` makes the sentence false for its own list and owes
-    its own comment saying what that list is for.
-    """
     blocked = await unreachable_workshop_ids(user, minimum)
     return {"id": {"not_in": blocked}} if blocked else None
 
 
 async def workshop_edit_privilege(user: Any, workshop_id: str | None) -> bool:
-    """True when ``user`` may change OTHER people's records in this workshop (EDIT level or admin).
-
-    This is the workshop-scoped counterpart of the owner/admin/EDIT-grant test in
-    ``services.access.guard_record_edit``, which knows nothing about workshops. Call it alongside
-    that guard on any route that edits a workshop-linked record — see ``update_workshop`` — so an
-    EDIT assignee is treated as a co-owner of the workshop's data rather than as an outside
-    contributor who may only fill in blanks. Always pair it with ``record_revision`` so the elevation
-    never costs the edit audit.
-    """
     if not workshop_id:
         return False
     access = await resolve_workshop_access(user, workshop_id)
@@ -332,11 +136,6 @@ async def workshop_edit_privilege(user: Any, workshop_id: str | None) -> bool:
 async def assert_workshop_access(
     user: Any, workshop_id: str | None, minimum: str = "CONTRIBUTE"
 ) -> WorkshopAccess:
-    """Require at least ``minimum`` in ``workshop_id``, raising 403 with a reason that names the state.
-
-    A no-op for a missing ``workshop_id`` — a record with no workshop link is unconstrained, exactly
-    as before workshops carried access levels.
-    """
     if not workshop_id:
         return WorkshopAccess()
     access = await resolve_workshop_access(user, workshop_id)
@@ -348,7 +147,6 @@ async def assert_workshop_access(
 
 
 def access_denied_detail(access: WorkshopAccess, minimum: str) -> str:
-    """The 403 text for a refused workshop action, phrased so the user knows their next move."""
     if access.level is None:
         if access.rowStatus == "PENDING":
             return (
@@ -359,7 +157,6 @@ def access_denied_detail(access: WorkshopAccess, minimum: str) -> str:
             return "Your access request for this workshop was denied. Ask an admin if you need it reconsidered."
         if access.rowStatus == "REVOKED":
             return "Your access to this workshop was revoked. Request access again if you still need it."
-        # Unchanged wording for the original case — clients and the Android app surface it verbatim.
         return "You are not assigned to this workshop. Ask an admin to assign you to it."
     return (
         f"Your access to this workshop is {str(access.level).lower()}-only, which does not allow this. "
@@ -368,8 +165,6 @@ def access_denied_detail(access: WorkshopAccess, minimum: str) -> str:
 
 
 def merge_extra(data: dict[str, Any], fragment: dict[str, Any] | None) -> dict[str, Any]:
-    """Merge a metadata fragment into data['extraMetadata'] as a plain dict (call before provenance
-    merge, which later Json-wraps it)."""
     if not fragment:
         return data
     existing = data.get("extraMetadata")
@@ -381,14 +176,6 @@ def merge_extra(data: dict[str, Any], fragment: dict[str, Any] | None) -> dict[s
 
 @dataclass(frozen=True)
 class WorkshopSubmissionCheck:
-    """What submitting a record into one workshop means for one user, right now.
-
-    The default instance describes "no workshop named" — nothing enforced, nothing stamped, which is
-    the backwards-compatible path for every record submitted without a ``workshopId``.
-    ``unrestricted`` marks an admin submitter: they see the true window/assignment facts but are
-    neither blocked nor flagged, because they ARE the approval authority.
-    """
-
     workshopId: str | None = None
     title: str | None = None
     startDate: str | None = None
@@ -400,9 +187,6 @@ class WorkshopSubmissionCheck:
     canSubmit: bool = True
     submittedAt: str = ""
     unrestricted: bool = False
-    # --- access-level facts. accessLevel is the EFFECTIVE level (None = no access); requestStatus is
-    # the caller's own row status, which is what lets a UI say "still pending" rather than the flat
-    # "not assigned". restricted says whether the workshop is curated at all.
     accessLevel: str | None = OPEN_WORKSHOP_LEVEL
     requestStatus: str | None = None
     restricted: bool = False
@@ -410,7 +194,6 @@ class WorkshopSubmissionCheck:
 
     @property
     def metadata(self) -> dict[str, Any]:
-        """The ``extraMetadata`` fragment to stamp on the record; empty when there is nothing to say."""
         if not self.workshopId or self.unrestricted:
             return {}
         return {
@@ -420,15 +203,12 @@ class WorkshopSubmissionCheck:
                 "needsAdminApproval": self.needsAdminApproval,
                 "submittedAt": self.submittedAt,
                 "endDate": self.endDate,
-                # windowStart/windowEnd are the original key names; kept so anything reading records
-                # stamped before endDate joined the shape keeps working.
                 "windowStart": self.startDate,
                 "windowEnd": self.endDate,
             }
         }
 
     def payload(self) -> dict[str, Any]:
-        """The client-facing pre-flight answer, so a UI can confirm a late submission before sending."""
         return {
             "workshopId": self.workshopId,
             "title": self.title,
@@ -438,7 +218,6 @@ class WorkshopSubmissionCheck:
             "needsAdminApproval": self.needsAdminApproval,
             "assigned": self.assigned,
             "canSubmit": self.canSubmit,
-            # Added, not swapped in: the four keys above are what every existing client reads.
             "accessLevel": self.accessLevel,
             "requestStatus": self.requestStatus,
             "restricted": self.restricted,
@@ -449,15 +228,6 @@ class WorkshopSubmissionCheck:
 async def describe_workshop_submission(
     user: Any, workshop_id: str | None, *, when: datetime | None = None, need: str = "CONTRIBUTE"
 ) -> WorkshopSubmissionCheck:
-    """Describe — WITHOUT raising on a permission problem — what submitting into ``workshop_id`` means.
-
-    Raises 404 only when the workshop does not exist. Use this for the pre-flight endpoint; routes
-    that actually write a record use :func:`enforce_workshop_submission`, which is this plus the 403.
-
-    ``need`` is the level the intended action requires (CONTRIBUTE to create, EDIT to rewrite someone
-    else's work) and only affects ``canSubmit``; ``assigned`` stays "has any access at all", so a
-    VIEW-level user reads as assigned-but-unable-to-submit rather than as a stranger.
-    """
     now = when or datetime.now(UTC)
     if not workshop_id:
         return WorkshopSubmissionCheck(submittedAt=now.isoformat())
@@ -466,7 +236,6 @@ async def describe_workshop_submission(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workshop not found")
     start = _as_utc(workshop.startDate or workshop.date)
     end = _as_utc(workshop.endDate or workshop.date)
-    # Inclusive window: the whole of the end day counts as in-window.
     window_end = end + timedelta(days=1) if end else None
     is_over = bool(window_end and now >= window_end)
     out_of_window = bool(start and window_end and (now < start or now >= window_end))
@@ -494,17 +263,6 @@ async def describe_workshop_submission(
 async def enforce_workshop_submission(
     user: Any, workshop_id: str | None, *, when: datetime | None = None, need: str = "CONTRIBUTE"
 ) -> WorkshopSubmissionCheck:
-    """Authorize ``user`` creating/moving a record into ``workshop_id``.
-
-    Raises 403 when the caller's effective level in the workshop is below ``need`` — they hold no
-    GRANTED row on a curated workshop, or they hold one at VIEW and are trying to write. Otherwise
-    returns the check the route acts on: :func:`stamp_workshop_submission` writes its metadata, and
-    :func:`pin_pending_if_late` applies the approval gate. Admins and an empty ``workshop_id`` pass
-    through untouched.
-
-    The signature and return type are load-bearing: six record routes call this positionally and read
-    the returned check, so ``need`` is keyword-only with the create-time default.
-    """
     check = await describe_workshop_submission(user, workshop_id, when=when, need=need)
     if not check.canSubmit:
         raise HTTPException(
@@ -517,14 +275,12 @@ async def enforce_workshop_submission(
 
 
 def stored_submission_stamp(record: Any) -> dict[str, Any] | None:
-    """The ``workshopSubmission`` stamp already stored on a record, if any."""
     extra = get_value(record, "extraMetadata")
     stamp = extra.get("workshopSubmission") if isinstance(extra, dict) else None
     return stamp if isinstance(stamp, dict) else None
 
 
 def record_needs_admin_approval(record: Any) -> bool:
-    """True when this record was submitted late and no admin has approved it yet."""
     stamp = stored_submission_stamp(record)
     return bool(stamp and stamp.get("needsAdminApproval"))
 
@@ -532,28 +288,6 @@ def record_needs_admin_approval(record: Any) -> bool:
 def stamp_workshop_submission(
     data: dict[str, Any], check: WorkshopSubmissionCheck | None = None, record: Any = None
 ) -> dict[str, Any]:
-    """Put the workshop-submission stamp into ``data['extraMetadata']`` as a plain dict.
-
-    Call it AFTER ``guard_record_edit`` — the stamp is the API's own bookkeeping, and a contributor
-    must never be 403'd for "changing" a populated ``extraMetadata`` they never touched — and BEFORE
-    ``merge_field_provenance``, which Json-wraps the result.
-
-    ``check`` writes a fresh stamp for a create or a workshop re-link. ``record`` carries an existing
-    stamp forward on update: provenance rebuilds ``extraMetadata`` from the incoming payload, so an
-    un-carried stamp would vanish on the next edit — and the stamp is exactly what keeps a late record
-    pinned to PENDING until an admin approves it. A no-op when there is nothing to stamp or carry.
-
-    The stamp is SERVER-OWNED. A ``workshopSubmission`` key arriving in the caller's ``extraMetadata``
-    is never trusted: it is replaced by the authoritative value (fresh check, else the one already
-    stored on the record) and dropped when there is no authoritative value. Without that, a record's
-    own creator could clear their ``needsAdminApproval`` flag by PATCHing ``extraMetadata`` and then
-    self-approve — or have a non-admin reviewer approve — their late submission.
-
-    An unapproved late flag also SURVIVES a re-link. Re-pointing a record at a workshop that happens
-    to be in-window produces a fresh check saying "not late", which would otherwise launder the flag
-    away and leave the record freely approvable by a non-admin. Being moved does not make late work
-    on-time; only an admin's approval clears the flag.
-    """
     fragment = check.metadata if check is not None else {}
     if fragment:
         if record is not None and record_needs_admin_approval(record):
@@ -561,7 +295,6 @@ def stamp_workshop_submission(
                 "workshopSubmission": {
                     **fragment["workshopSubmission"],
                     "needsAdminApproval": True,
-                    # Keep why it was flagged: the new workshop is in-window, the old one was not.
                     "relinkedFrom": (stored_submission_stamp(record) or {}).get("workshopId"),
                 }
             }
@@ -581,15 +314,6 @@ def pin_pending_if_late(
     check: WorkshopSubmissionCheck | None = None,
     record: Any = None,
 ) -> dict[str, Any]:
-    """Force ``status`` to PENDING when this submission is — or already was — flagged as late.
-
-    Call it AFTER ``apply_status_policy_create`` / ``apply_status_policy_update`` so it OVERRIDES the
-    submitter's own status rights: a professor or above who documents a workshop after it ended cannot
-    approve their own record, and cannot later flip it to APPROVED by editing it either, because the
-    stamp is carried forward on every update. Only an admin's review clears the flag.
-
-    A no-op for admins (the approval authority) and for records with no status column (Craft).
-    """
     if is_admin(user):
         return data
     late = bool(check is not None and check.needsAdminApproval)
@@ -597,8 +321,6 @@ def pin_pending_if_late(
         late = record_needs_admin_approval(record)
     if not late:
         return data
-    # Only touch status on models that actually have the column: an existing record exposes it as an
-    # attribute, and a create payload always carries the client's requested status.
     if record is not None:
         if get_value(record, "status") is None:
             return data
@@ -609,12 +331,6 @@ def pin_pending_if_late(
 
 
 async def link_workshop_artisan(workshop_id: str | None, artisan_id: str) -> None:
-    """Mirror an artisan's explicit ``workshopId`` into the WorkshopArtisan join table.
-
-    The column is an ADDITIONAL link, not a replacement: every query that reads a workshop's artisans
-    through the join must keep seeing an artisan created/updated with a workshopId. Idempotent, and
-    never removes a link, so an admin-curated roster is only ever added to.
-    """
     if not workshop_id or not artisan_id:
         return
     existing = await db.workshopartisan.find_unique(
@@ -625,40 +341,12 @@ async def link_workshop_artisan(workshop_id: str | None, artisan_id: str) -> Non
     try:
         await db.workshopartisan.create(data={"workshopId": workshop_id, "artisanId": artisan_id})
     except UniqueViolationError:
-        # A concurrent request won the race; the link exists either way.
         pass
 
 
 async def sync_workshop_artisan(
     previous_workshop_id: str | None, next_workshop_id: str | None, artisan_id: str
 ) -> None:
-    """Move an artisan's mirrored join row FROM its old workshop TO the new one. Use this on edits.
-
-    THE ADD-ONLY MIRROR ABOVE MADE UNLINKING A LIE, ONE LAYER DOWN FROM WHERE IT WAS ALREADY FIXED
-    ONCE. ``workshopId`` is in ``records.CLEARABLE_KEYS`` precisely because stripping an explicit
-    ``null`` used to make "remove this artisan from this workshop" a silent no-op — 200, the form
-    redrew as unlinked, the column kept its old value. That fix cleared the COLUMN. The PATCH route
-    then called ``link_workshop_artisan(updated.workshopId, …)`` with the NEW value, which returns
-    immediately on a null, so the ``WorkshopArtisan`` row written when the artisan was first filed
-    survived untouched. Every read that honours the join — ``artisan_workshop_clause``'s roster arm,
-    ``GET /artisans?workshopId=``, the dataset export, the workshop's own roster screen — kept
-    returning the artisan under a workshop the artisan's own page says they left. Re-filing them
-    under a second workshop then added a second row without removing the first, so one artisan was
-    counted in two workshops at once.
-
-    IT DELETES ONLY THE EXACT ``(previous, artisan)`` PAIR, AND ONLY WHEN THE COLUMN ACTUALLY MOVED.
-    A PATCH that never mentions ``workshopId`` arrives here with ``previous == next`` and touches
-    nothing. The known cost of this — say it out loud rather than discover it later — is that a
-    roster row an ADMIN curated from the workshop form is indistinguishable from one this mirror
-    wrote, so if both the column and the admin's roster named the same workshop, clearing the column
-    takes the admin's row with it. That is the lesser of the two wrongs available today: the
-    alternative is telling a designer their unlink succeeded when it did not, on every single edit.
-    Making it selective needs a ``source`` column on the join table to tell the two apart — worth
-    doing, and a schema change rather than a fix to this function.
-
-    ``delete_many`` and not ``delete``: the row is absent for every artisan filed before the mirror
-    existed, and a missing row must be a no-op rather than a 500 on an ordinary save.
-    """
     if not artisan_id:
         return
     if previous_workshop_id and previous_workshop_id != next_workshop_id:
@@ -669,8 +357,6 @@ async def sync_workshop_artisan(
 
 
 async def link_workshop_craft(workshop_id: str | None, craft_id: str) -> None:
-    """Mirror a craft's explicit ``workshopId`` into the WorkshopCraft join table (see
-    :func:`link_workshop_artisan` — same contract, same idempotence)."""
     if not workshop_id or not craft_id:
         return
     existing = await db.workshopcraft.find_unique(
@@ -687,26 +373,6 @@ async def link_workshop_craft(workshop_id: str | None, craft_id: str) -> None:
 async def sync_workshop_craft(
     previous_workshop_id: str | None, next_workshop_id: str | None, craft_id: str
 ) -> None:
-    """The craft twin of :func:`sync_workshop_artisan` — same defect, same remedy, same caveat.
-
-    ``PATCH /crafts`` has the identical hole: the column clears, ``link_workshop_craft`` is handed
-    the new (null) value and returns, and ``craft_workshop_clause``'s join arm keeps the craft in
-    the workshop it was just removed from — which bites HARDER for crafts than for artisans,
-    because that clause's docstring records that on the live repository the join is the ONLY link
-    most crafts have.
-
-    It is defined here rather than inlined at the call site so the two halves of one rule cannot
-    drift. WIRED UP AND LIVE: ``update_craft`` (``api/routes/crafts.py``, the
-    ``sync_workshop_craft`` call at the end of the route) captures ``craft.workshopId`` into
-    ``previous_workshop_id`` BEFORE ``db.craft.update`` and passes it here afterwards, exactly as
-    ``update_artisan`` does for :func:`sync_workshop_artisan`. That is the only call site.
-
-    This paragraph used to say the call site was "owned by another change in flight" and describe
-    the wiring as still owed. It was true for about an hour and then was not, and a reader who
-    believed it would have gone looking for a one-line change that was already made — or, worse,
-    made it twice. If you move or rename the call site, correct this sentence in the same commit:
-    a helper whose docstring lies about who calls it is how the previous stale note happened.
-    """
     if not craft_id:
         return
     if previous_workshop_id and previous_workshop_id != next_workshop_id:

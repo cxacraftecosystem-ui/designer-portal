@@ -1,40 +1,3 @@
-"""What the AUDIT LOG holds after ``PATCH /api/processes/{id}`` is refused.
-
-THE FLAW IN A FIX, WHICH IS WHY THIS IS ITS OWN FILE. The BLOCKER fix of 2026-08-15 stopped a
-stranger deleting another person's process steps by planning the step change and calling
-``assert_can_contribute_relation`` BEFORE the row update, on the rule ``tools.assign_tool_artisans``
-states out loud: a rejected request must leave no partial state behind. It put the guard above the
-``db.process.update`` and no higher — and ``guard_record_edit``, which sits above both, ENDS in
-``record_revision``. So the refused request left exactly the trace the rule forbids, one layer up:
-
-    403 to the caller, the row untouched, and a committed RecordRevision saying
-    ``notes: {old: null, new: "This note must not survive the refusal."}`` authored by the
-    account that was just turned away.
-
-An audit trail that records edits which did not happen is worse than one with a gap in it. It is
-read by an admin reconstructing who did what to a record — ``GET /api/data-access/revisions`` is
-that surface — and it would name a value that was never stored as the newest one, and a refused
-caller as its author. The remedy is the same argument one step further along: the relation is now
-planned and refused ABOVE ``guard_record_edit``, so nothing that can answer 403 runs after the
-ledger is written.
-
-THE OTHER HALF IS EQUALLY LOAD-BEARING and half this file is spent on it: a fix that stopped
-writing the revision on the legitimate path would trade a spurious audit row for a MISSING one,
-which is strictly worse — the step revision is the only thing an admin can restore deleted steps
-from, including the ids the orphaned step photographs are linked to. So the legitimate edits are
-pinned here as tightly as the refusal: one revision, the right fields, the right author.
-
-THE STRANGER IS A DESIGNER ON PURPOSE. DESIGNER is rank 35 — above RESEARCHER, so
-``require_record_creator`` admits them and they are an ordinary colleague; below PROFESSOR, so they
-hold no rank privilege over somebody else's record. That is the account the hole was reachable from.
-
-These need Postgres: what is under test is which rows a refused request leaves behind. The module
-skips itself when ``DATABASE_URL`` does not point at a local database.
-
-    docker compose up -d postgres
-    cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
-"""
-
 import os
 import uuid
 
@@ -62,12 +25,6 @@ def anyio_backend():
 
 @pytest.fixture(scope="module")
 async def env():
-    """An owning designer, a stranger designer, and a product to hang processes off.
-
-    Rows are created here rather than inside a test because the Prisma client is shared with the
-    running app and bound to the TestClient's event loop; touching it from a test's own loop is the
-    kind of cross-loop use that fails intermittently rather than honestly.
-    """
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -90,9 +47,6 @@ async def env():
     finally:
         await db.disconnect()
 
-    # ONE TestClient, two tokens. Two nested clients each run the app's lifespan against the SAME
-    # module-level Prisma client, and the second teardown disconnects it under the first — which
-    # hangs rather than failing. The account is chosen per request instead.
     with TestClient(app) as client:
         yield {
             "client": client,
@@ -112,9 +66,6 @@ THREE_STEPS = [
 
 
 def _process(env, *, notes=None) -> dict:
-    """A fresh three-step process owned by the OWNER account. One per test, never shared: what is
-    under test is what a request leaves behind, so a shared row would make one test's result depend
-    on another's."""
     response = env["client"].post("/api/processes", json={
         "name": "Bagru printing sequence",
         "productId": env["product_id"],
@@ -126,7 +77,6 @@ def _process(env, *, notes=None) -> dict:
 
 
 def _resend(process: dict) -> list[dict]:
-    """The step list exactly as ``ProcessForm`` re-sends it on an ordinary save."""
     return [
         {
             "id": step["id"],
@@ -140,14 +90,6 @@ def _resend(process: dict) -> list[dict]:
 
 
 def _revisions(env, process_id: str) -> list[dict]:
-    """The record's whole edit history, read through the endpoint an admin actually uses.
-
-    Read through the API rather than through ``db`` directly, deliberately: the Prisma client is
-    shared with the running app and bound to the TestClient's event loop, so a query issued from a
-    test's own loop is the kind of cross-loop use that fails intermittently instead of honestly. It
-    also asserts the stronger thing — that the spurious row is (or is not) VISIBLE on the surface
-    built for reconstructing a record, not merely present in a table.
-    """
     response = env["client"].get(
         f"/api/data-access/revisions?recordType=process&recordId={process_id}",
         headers=env["owner"],
@@ -156,19 +98,8 @@ def _revisions(env, process_id: str) -> list[dict]:
     return response.json()
 
 
-# --------------------------------------------------------------------------------------
-# 1. The refusal, which must leave nothing at all — not the row, and not the ledger
-# --------------------------------------------------------------------------------------
-
 
 def test_a_refused_step_deletion_writes_no_revision_for_the_field_it_also_carried(env):
-    """THE FLAW, in the shape the verifier found it. One PATCH carrying one legal field fill and one
-    illegal step deletion: before this change it answered 403 with a RecordRevision already
-    committed for ``notes``.
-
-    All three assertions matter and the first two are the ORIGINAL BLOCKER, re-asserted here so this
-    file fails if a future rearrangement fixes the ledger by moving the guard back below the write.
-    """
     process = _process(env, notes=None)
 
     response = env["client"].patch(f"/api/processes/{process['id']}", json={
@@ -187,31 +118,6 @@ def test_a_refused_step_deletion_writes_no_revision_for_the_field_it_also_carrie
 
 
 def test_a_refused_step_deletion_names_nobody_as_an_editor(env):
-    """The same refusal read from the other end: not merely "no notes revision", but no revision
-    AUTHORED BY the account that was turned away. Written separately because the harm is the
-    attribution — an admin reading the history would see the stranger's name against an edit to a
-    record they were refused.
-
-    THIS PAYLOAD MUST CARRY ONLY FIELDS THE STRANGER IS ALLOWED TO FILL, AND THAT IS THE WHOLE
-    CRAFT OF THE TEST. It was first written with ``"name": "Renamed by somebody with no right to"``
-    in it, and passed against the UNFIXED ordering — which makes it worth spelling out, because it
-    is the exact way a guard test rots into a tautology. ``name`` is populated on every process
-    ``_process`` creates, so ``assert_can_contribute_fields`` raised 403 for the LOCKED FIELD
-    (deps.py: "Only the original contributor or an admin can change or clear populated field(s)")
-    while still inside ``guard_record_edit`` and BEFORE it reaches ``record_revision``. The 403 the
-    test asserted was real, the empty ledger it asserted was real, and neither had anything to do
-    with the relation guard or with where it sits: the request never got as far as the code under
-    test. Bite-checked 2026-08-16 by moving the relation guard back below ``guard_record_edit`` —
-    the version below FAILS with a revision authored by ``stranger_id``, the ``name``-carrying
-    version PASSED.
-
-    So: ``notes`` only, and ``notes`` is empty on this row by construction (``notes=None`` above).
-    An empty field is one an ordinary contributor MAY fill — that is the contribution model this
-    repository is built on — so the field guard passes, ``record_revision`` is reached, and the
-    ONLY thing left that can refuse is ``assert_can_contribute_relation`` on the emptied step list.
-    That is precisely the window the flaw lived in. If you ever add a field to this payload, check
-    first that it is empty on the created row, or you will silently disarm this test again.
-    """
     process = _process(env, notes=None)
 
     refused = env["client"].patch(f"/api/processes/{process['id']}", json={
@@ -219,25 +125,17 @@ def test_a_refused_step_deletion_names_nobody_as_an_editor(env):
         "steps": [],
     }, headers=env["stranger"])
     assert refused.status_code == 403, refused.text
-    # The refusal is the RELATION guard's, not the field guard's — otherwise the request stopped
-    # short of the reordering and this test is measuring nothing. Pinned, because the difference is
-    # invisible from the status code alone and is what the paragraph above is about.
     assert "steps" in refused.text, (
         f"expected the relation guard to be what refused; got {refused.text}"
     )
 
     authors = {row["editedById"] for row in _revisions(env, process["id"])}
     assert env["stranger_id"] not in authors, "a refused caller is recorded as having edited"
-    # ...and the steps the caller tried to delete are all still there, so the 403 was total.
     detail = env["client"].get(f"/api/processes/{process['id']}", headers=env["owner"]).json()
     assert [s["name"] for s in detail["steps"]] == [s["name"] for s in THREE_STEPS]
 
 
 def test_a_refused_locked_field_edit_leaves_no_revision_either(env):
-    """The OTHER refusal on this route, pinned so the reordering cannot have moved the problem.
-    ``assert_can_contribute_fields`` raises inside ``guard_record_edit`` BEFORE
-    ``record_revision`` runs, so overwriting a populated field somebody else recorded must also
-    leave the ledger empty. No steps in this payload at all, so only the field guard can answer."""
     process = _process(env, notes="The note the owner recorded.")
 
     refused = env["client"].patch(f"/api/processes/{process['id']}", json={
@@ -250,20 +148,8 @@ def test_a_refused_locked_field_edit_leaves_no_revision_either(env):
     assert detail["notes"] == "The note the owner recorded."
 
 
-# --------------------------------------------------------------------------------------
-# 2. The audit rows that MUST still be written
-#
-# A lost revision is worse than a spurious one: the step revision is the only thing an admin can
-# reconstruct deleted steps from. Every assertion below fails if the revision were simply moved
-# after the point of no return and dropped on the way.
-# --------------------------------------------------------------------------------------
-
 
 def test_a_legitimate_field_edit_still_writes_exactly_one_revision_with_the_right_author(env):
-    """One PATCH, one row, the right fields, the right editor. ``guard_record_edit`` is now called
-    twice on a steps-carrying PATCH — once with ``{}`` purely for the privilege verdict and once
-    with the real ``data`` — and the empty call must write NOTHING; if it ever started writing, this
-    would see two rows for one edit."""
     process = _process(env, notes=None)
 
     response = env["client"].patch(f"/api/processes/{process['id']}", json={
@@ -280,8 +166,6 @@ def test_a_legitimate_field_edit_still_writes_exactly_one_revision_with_the_righ
 
 
 def test_deleting_a_step_still_writes_the_step_revision_that_names_what_was_there(env):
-    """The row an admin restores from. Without it a process that lost three steps has nothing at all
-    to reconstruct from — not the names, and not the ids the orphaned step photographs hang off."""
     process = _process(env, notes=None)
     kept = _resend(process)[:1]
 
@@ -300,10 +184,6 @@ def test_deleting_a_step_still_writes_the_step_revision_that_names_what_was_ther
 
 
 def test_a_contributor_may_still_fill_an_empty_field_and_it_is_audited(env):
-    """The legitimate contribution the whole relation guard was written not to break, plus its
-    audit row. The step list is re-sent untouched, exactly as ``ProcessForm`` sends it, so the
-    privilege probe runs and the relation guard passes — and the revision is still written, under
-    the CONTRIBUTOR's name."""
     process = _process(env, notes=None)
 
     response = env["client"].patch(f"/api/processes/{process['id']}", json={

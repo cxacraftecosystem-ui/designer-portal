@@ -1,9 +1,3 @@
-"""C27 on the designer portal: lookup, link, refresh, unlink — and the switch that keeps it all off.
-
-No database and no network: the route module's ``db``, ``get_settings`` and ``peer_call`` are
-replaced by fakes; the client's signature check is driven against a fake ``requests``.
-"""
-
 from __future__ import annotations
 
 import json
@@ -152,7 +146,6 @@ def world(monkeypatch):
         "dateOfBirth": None,
         "pehchanCardAvailable": False,
         "pehchanCardNumber": None,
-        # As this release stores it: the fingerprint and the last four, never the number.
         "aadhaarNumber": None,
         "aadhaarFingerprint": aadhaar_fingerprint.fingerprint(AADHAAR, KEY),
         "aadhaarLast4": AADHAAR[-4:],
@@ -237,7 +230,6 @@ async def test_lookup_sends_the_code_never_the_number_and_maps_the_craft(world):
     match = out["match"]
     assert match["remoteArtisanId"] == "fr1"
     assert match["fields"]["name"] == "Meena Devi"
-    # Matched on the shared code (C26), so the local spelling is the one offered.
     assert match["craft"]["craftId"] == "c-local" and match["craft"]["craftName"] == "Bandhej"
     assert match["identityFields"] == list(cross_portal.IDENTITY_FIELDS)
 
@@ -262,8 +254,6 @@ async def test_link_re_derives_the_match_from_the_stored_numbers(world):
 
 
 async def test_link_sends_the_stored_fingerprint_when_the_number_is_not_kept(world):
-    """Since the fingerprint release a saved artisan holds aadhaarFingerprint and aadhaarNumber NULL.
-    The link sends that fingerprint as the code: it is the code, so nothing is recomputed."""
     row = world.db.artisan.rows[0]
     row["aadhaarNumber"] = None
     row["aadhaarFingerprint"] = cross_portal.aadhaar_code(AADHAAR, KEY)
@@ -282,8 +272,6 @@ async def test_lookup_and_link_are_off_without_the_fingerprint_key(world, monkey
 
 
 async def test_link_sends_the_stored_fingerprint_as_the_code(world):
-    """The register holds no number, so the link sends the fingerprint it stores, unchanged — which
-    under the one shared key IS the code the documentation portal compares with its own column."""
     await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
     stored = world.db.artisan.rows[0]["aadhaarFingerprint"]
     assert world.calls[0][2] == {"aadhaarCode": stored}
@@ -297,7 +285,6 @@ async def test_the_feature_is_off_without_the_fingerprint_key():
 
 
 async def test_a_link_the_other_side_refuses_is_never_written(world):
-    """Consent withdrawn between the lookup and the link: FR answers 409, and DP keeps no row."""
     world.answers[("POST", "/artisans/fr1/links")] = (409, {"linked": False})
     with pytest.raises(HTTPException) as exc:
         await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
@@ -357,7 +344,7 @@ async def test_refresh_copies_only_the_identity_fields(world):
     row = world.db.artisan.rows[0]
     assert row["name"] == "Meena Devi" and row["pehchanCardNumber"] == "PEH12345"
     assert row["dateOfBirth"] == datetime.fromisoformat("1980-05-01")
-    assert "phone" not in row and "place" not in row  # suggested once, never refreshed
+    assert "phone" not in row and "place" not in row
     assert set(out["changed"]) <= set(cross_portal.IDENTITY_FIELDS)
     assert out["link"]["lastRefreshedAt"] is not None
 
@@ -400,7 +387,6 @@ async def test_every_lookup_is_logged_and_limited_per_hour(world):
     with pytest.raises(HTTPException) as exc:
         await routes.lookup_artisan(routes.LookupIn(aadhaarNumber=AADHAAR, consent=True), OWNER)
     assert exc.value.status_code == 429
-    # Another account is not held to this one's count.
     other = SimpleNamespace(id="u2", role="DESIGNER")
     assert (await routes.lookup_artisan(routes.LookupIn(aadhaarNumber=AADHAAR, consent=True), other))["match"]
 
@@ -419,8 +405,6 @@ async def test_unlink_tells_the_other_side_and_removes_the_row(world):
     assert world.db.crossportalartisanlink.rows == []
     assert world.calls[-1][:2] == ("DELETE", "/artisans/fr1/links/dp1")
 
-
-# ── the client refuses an unsigned answer ─────────────────────────────────────────────────────
 
 
 class _Response:
@@ -488,7 +472,6 @@ def test_the_config_defaults_to_off():
     fields = Settings.model_fields
     assert fields["cross_portal_identity_enabled"].default is False
     assert fields["cross_portal_token"].default is None
-    # Aadhaar codes are made under the register's fingerprint key; there is no second key to drift.
     assert fields["aadhaar_fingerprint_key"].alias == "AADHAAR_FINGERPRINT_KEY"
     assert "cross_portal_aadhaar_hmac_key" not in fields
     assert fields["field_repository_api_url"].default is None

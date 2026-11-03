@@ -1,10 +1,3 @@
-"""The SES sender and the templates (``app/services/mailer.py``), with SES stubbed.
-
-No network and no database: ``_ses_client`` is replaced by a recorder, so what is asserted is the
-exact SESv2 request this module builds — the From and Reply-To headers, the region, the
-configuration set, both body parts — and how a refusal is classified for the outbox's retry rule.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -184,10 +177,6 @@ def test_the_ministry_pack_digest_names_each_scheme_and_links_the_page() -> None
 
     assert mailer.MINISTRY_PACKS_READY not in PREFERENCE_FOR_KIND, "subscribing is the opt-in"
 
-
-# --------------------------------------------------------------------------------------
-# Reserved, non-deliverable addresses (identical in both portals)
-# --------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

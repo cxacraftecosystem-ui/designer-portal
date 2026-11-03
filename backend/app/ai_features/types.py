@@ -1,35 +1,21 @@
-"""Value types shared by the four capabilities: what goes in, what comes back, what it cost.
-
-Everything here is a frozen dataclass with an ``as_dict()``, because the two plausible consumers
-are a background-queue job (which persists a JSON blob) and, eventually, an admin route (which
-returns one). Neither wants to reach into provider-specific structures.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
-if TYPE_CHECKING:  # never at runtime — see market_research.py on why app.services stays unimported
+if TYPE_CHECKING:
     from app.services.market_analysis import Distribution
 
 
 class Capability(StrEnum):
-    """The four things this package can do. Values double as env-var infixes and JSON keys."""
-
     BACKGROUND_REMOVAL = "background_removal"
     FOREGROUND_SEPARATION = "foreground_separation"
     VECTORISATION = "vectorisation"
     MARKET_RESEARCH = "market_research"
-    #: The one text capability: a summary, key quotes and an English translation of an interview
-    #: transcript (services/transcript_insights). Gated and probed here like the others, but its
-    #: calls go through the existing chat plumbing (ai._run_chat_verb) rather than a provider class.
     TRANSCRIPT_INSIGHTS = "transcript_insights"
 
 
-#: How a resource number was arrived at. Never label an unmeasured number MEASURED — the point of
-#: the field is that an operator sizing a box can tell a vendor's claim from our guess.
 ResourceBasis = Literal["VENDOR_STATED", "ESTIMATED", "MEASURED"]
 
 ProviderKind = Literal["local", "hosted"]
@@ -37,12 +23,6 @@ ProviderKind = Literal["local", "hosted"]
 
 @dataclass(frozen=True)
 class ResourceProfile:
-    """What running one image through a provider actually costs, and how we know.
-
-    ``peak_ram_mb`` is the number that decides whether a provider can live on the production box
-    at all: it has 1 GiB total, shared with uvicorn, the Prisma query engine and the queue worker.
-    """
-
     basis: ResourceBasis
     model_download_mb: float | None
     peak_ram_mb: float | None
@@ -63,16 +43,6 @@ class ResourceProfile:
 
 @dataclass(frozen=True)
 class ProviderDescriptor:
-    """Everything the probe needs to report on a provider WITHOUT importing it.
-
-    ``required_modules`` are checked with ``importlib.util.find_spec``, never an import, so asking
-    "is rembg available" costs a path lookup rather than 176 MB of ONNX weights.
-
-    ``implementation`` is a ``"module:ClassName"`` string rather than the class itself for the
-    same reason: the registry can describe every provider at import time while the module that
-    knows how to talk to onnxruntime stays unloaded until someone actually calls the feature.
-    """
-
     id: str
     label: str
     kind: ProviderKind
@@ -82,13 +52,9 @@ class ProviderDescriptor:
     resources: ResourceProfile
     summary: str
     implementation: str = ""
-    #: Modules one capability needs on top of ``required_modules``. Splitting a hosted cutout into
-    #: layers means compositing locally, which returning the cutout itself never has to do — so
-    #: "is separation available" and "is removal available" have genuinely different answers.
     extra_modules: tuple[tuple[Capability, tuple[str, ...]], ...] = ()
 
     def modules_for(self, capability: Capability) -> tuple[str, ...]:
-        """Every module this provider needs to serve one capability, in declaration order."""
         extra = next((mods for cap, mods in self.extra_modules if cap == capability), ())
         return self.required_modules + tuple(
             module for module in extra if module not in self.required_modules
@@ -109,12 +75,6 @@ class ProviderDescriptor:
 
 @dataclass(frozen=True)
 class ProviderReadiness:
-    """Whether one provider could serve one capability right now, and what is missing if not.
-
-    Produced by the registry from ``find_spec`` lookups and settings values alone, so both the
-    probe and the dispatcher answer the question the same way and neither has to import anything.
-    """
-
     provider: str
     capability: Capability
     ready: bool
@@ -135,14 +95,12 @@ class ProviderReadiness:
 
 @dataclass(frozen=True)
 class ImagePayload:
-    """A validated input image: bytes plus the facts we could establish from its header alone."""
-
     data: bytes
     mime_type: str
     extension: str
     width: int
     height: int
-    origin: str  # "bytes" or the filename it was read from — useful in logs and provider uploads
+    origin: str
 
     @property
     def byte_size(self) -> int:
@@ -154,7 +112,6 @@ class ImagePayload:
 
     @property
     def filename(self) -> str:
-        """A name to put in a multipart upload. Hosted providers sniff the extension."""
         return self.origin if self.origin != "bytes" else f"image.{self.extension}"
 
     def as_dict(self) -> dict[str, Any]:
@@ -184,8 +141,6 @@ class _BaseResult:
 
 @dataclass(frozen=True)
 class CutoutResult(_BaseResult):
-    """Capability 2: the subject on transparency. ``image`` is always a PNG with an alpha channel."""
-
     image: bytes = b""
     mime_type: str = "image/png"
 
@@ -197,16 +152,6 @@ class CutoutResult(_BaseResult):
 
 @dataclass(frozen=True)
 class SeparationResult(_BaseResult):
-    """Capability 1: the two layers plus the matte that relates them.
-
-    Both layers are the original pixels wearing opposite alpha: the foreground carries the matte,
-    the background carries its inverse. Compositing one over the other returns the original
-    exactly wherever the matte is fully 0 or fully 255, and darkens slightly in the soft band
-    between — the unavoidable arithmetic of splitting one image into two straight-alpha layers,
-    and the reason the ``matte`` is returned separately for callers that want to re-composite
-    their own way.
-    """
-
     foreground: bytes = b""
     background: bytes = b""
     matte: bytes = b""
@@ -227,8 +172,6 @@ class SeparationResult(_BaseResult):
 
 @dataclass(frozen=True)
 class VectorResult(_BaseResult):
-    """Capability 3: raster in, SVG out. ``svg`` is UTF-8 encoded markup, not a data URL."""
-
     svg: bytes = b""
     mime_type: str = "image/svg+xml"
 
@@ -238,41 +181,11 @@ class VectorResult(_BaseResult):
         return payload
 
 
-# ------------------------------------------------------------------------------------------------
-# Capability 4: market research. Nothing below is an image.
-# ------------------------------------------------------------------------------------------------
-
-#: The value stamped into ``market_analysis.PriceObservation.source`` for anything this package
-#: retrieved from the internet or from a catalogue file.
-#:
-#: THIS CONSTANT IS THE WHOLE PROVENANCE GUARANTEE, and it is a string rather than a flag because
-#: ``PriceObservation.source`` is already the field the analysis branches on: ``RESPONDENT`` is a
-#: person who was asked, ``COMPETITOR`` is a shelf a designer stood in front of. A scraped price is
-#: neither. Anything that filters for ``RESPONDENT`` — ``position_competitors`` does, and so does
-#: every respondent figure in ``analyse`` — therefore excludes retrieved prices without a line of
-#: new code, and anything that counts blindly gets a value it has never seen and cannot mistake for
-#: fieldwork. Feeding a retrieved number into a ministry report as though a respondent said it is
-#: the worst outcome this feature has; a distinct sentinel plus
-#: :func:`app.ai_features.market_research.assert_surveyed` is how it is prevented.
 RETRIEVED_SOURCE = "RETRIEVED_LISTING"
 
 
 @dataclass(frozen=True)
 class ResearchBrief:
-    """What to go and look for. The ONLY input to a market-research call.
-
-    Deliberately structured rather than free text. Every field here is something the workshop app
-    already holds — the craft, the product category, the materials, the district, the price band
-    the designer declared in stage 9 — and a structured brief is what lets the query be built
-    deterministically instead of inferred by a model. See the module docstring of
-    :mod:`app.ai_features.market_research` for where that line is drawn and why it sits here.
-
-    ``keyword`` is the one required field: the product a designer would type. A sentence is
-    accepted and reduced to its content words; a paragraph is accepted and truncated, because the
-    alternative — a model reading the paragraph — is the one part of this feature that would need
-    one.
-    """
-
     keyword: str
     craft: str = ""
     category: str = ""
@@ -299,16 +212,6 @@ class ResearchBrief:
 
 @dataclass(frozen=True)
 class RawListing:
-    """One row exactly as a provider handed it over, before this package interprets any of it.
-
-    THE PRICE IS STILL A STRING HERE, on purpose. ``"₹1,20,000.00"``, ``"Rs 1,299 - 1,999"`` and
-    ``"$45.99"`` are all things a shopping API returns in its price field, and the moment a
-    provider converts one to a float it has made a decision — which digit group is a separator,
-    which currency, which end of a range — that nobody can audit afterwards. Providers map vendor
-    key names (their only real job) and nothing else; :func:`market_research.parse_price` makes
-    every one of those decisions in one tested place and keeps ``price_text`` beside the answer.
-    """
-
     name: str
     seller: str
     price_text: str
@@ -321,14 +224,6 @@ class RawListing:
 
 @dataclass(frozen=True)
 class RetrievedProduct:
-    """One comparable product, parsed, with the two facts that make it auditable.
-
-    ``source_url`` and ``retrieved_at`` are not decoration. A price with neither is indistinguishable
-    from a price somebody made up, and six months later — when the listing has changed and the
-    report is being defended — they are the only way to say where the number came from and when it
-    was true.
-    """
-
     name: str
     seller: str
     price: float | None
@@ -354,21 +249,12 @@ class RetrievedProduct:
             "priceText": self.price_text,
             "relevance": round(self.relevance, 4),
             "notes": list(self.notes),
-            # Repeated in the wire form so a consumer that never reads this docstring still cannot
-            # merge these rows into surveyed ones by accident.
             "provenance": RETRIEVED_SOURCE,
         }
 
 
 @dataclass(frozen=True)
 class ResearchResult:
-    """What one market-research call found, what it threw away, and what it refuses to conclude.
-
-    ``rejected`` and ``cautions`` are as much of the answer as ``products`` is. A retrieval that
-    silently drops the eleven listings it could not parse and prints a median of the other four is
-    the failure mode this whole package is written against.
-    """
-
     provider: str
     brief: ResearchBrief
     queries: tuple[str, ...]
@@ -385,7 +271,6 @@ class ResearchResult:
 
     @property
     def priced(self) -> tuple[RetrievedProduct, ...]:
-        """The kept products that carry a usable price. The sample every figure describes."""
         return tuple(item for item in self.products if item.price is not None)
 
     def as_dict(self) -> dict[str, Any]:
@@ -395,8 +280,6 @@ class ResearchResult:
             "queries": list(self.queries),
             "retrievedAt": self.retrieved_at,
             "durationMs": self.duration_ms,
-            # Cautions first, for the reason market_findings_payload gives: a caution that has to
-            # be found is a caution that will not be read.
             "cautions": list(self.cautions),
             "provenance": RETRIEVED_SOURCE,
             "sampleSize": len(self.priced),
@@ -413,13 +296,6 @@ class ResearchResult:
 
 
 def _distribution_payload(dist: Distribution | None) -> dict[str, Any] | None:
-    """A :class:`~app.services.market_analysis.Distribution` as JSON.
-
-    Mirrors ``market_analysis._distribution_payload`` field for field. It is duplicated rather than
-    imported because that one is private — reaching into it would make a refactor of the analysis
-    module break a dormant package nobody was thinking about. ``test_market_research.py`` asserts
-    the two agree, so the duplication is checked rather than hoped for.
-    """
     if dist is None:
         return None
     return {

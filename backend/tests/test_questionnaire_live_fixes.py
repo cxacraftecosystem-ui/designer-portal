@@ -1,21 +1,3 @@
-"""Custom questionnaire fixes from the 21 Oct 2026 audit (AUDIT_DR_2026-10-21.md), against a database.
-
-* **M1** an admin's re-upload that drops a question with only BLANK answer rows deletes it (it used to
-  500 on the RESTRICT foreign key and leave the edit half applied);
-* **M2** one removal rule on every path: a question left out of a re-uploaded file is removed or
-  retired for the form's author or a content admin, and anybody else's re-upload is refused 403
-  (owner, 21 Oct 2026, amended 22 Oct: "the author should be able to edit/delete the questionnaire
-  apart from the admins"); taking a section out through PATCH follows the same rule;
-* **M3** answers typed into a re-uploaded workbook are counted and reported, not dropped in silence;
-* **M5** one retired question, or one answer somebody else wrote, is rejected on its own and the rest
-  of the batch is saved;
-* **M6** an empty answers batch is refused, and a PUT returns only the caller's own rows when the
-  caller may not read every sitting;
-* **M17** a notes-only answer counts as answered, so its question is retired and not deleted.
-
-Needs a LOCAL Postgres (``checks.yml``'s Backend integration tests job provides one); skips otherwise.
-"""
-
 import os
 import uuid
 from typing import Any
@@ -112,7 +94,6 @@ def _put(env, form, entry_id, answers, slug="owner"):
 
 
 def _reupload(env, form, keep: list[tuple[str, str]], slug: str, answers=None, labels=None):
-    """Upload a workbook naming only ``keep`` ([(question id, prompt)]) over ``form``."""
     workbook = build_questionnaire_workbook(
         title=form["title"],
         description=None,
@@ -144,8 +125,6 @@ def _read(env, form, slug="owner") -> dict[str, Any]:
     assert got.status_code == 200, got.text
     return {q["id"]: q for s in got.json()["sections"] for q in s["questions"]}
 
-
-# ── M2: one removal rule, re-upload included ─────────────────────────────────────────────────
 
 
 def test_the_authors_re_upload_removes_the_questions_it_leaves_out(env):
@@ -230,8 +209,6 @@ def test_the_author_or_an_admin_edits_the_form_and_nobody_else(env):
     assert by_admin.status_code == 200, by_admin.text
 
 
-# ── M1: a blank answer row no longer turns an admin's re-upload into a 500 ──────────────────
-
 
 def test_an_admins_re_upload_deletes_a_question_whose_only_answer_rows_are_blank(env):
     form = _form(env, ["How many looms?", "Tabbed past"])
@@ -244,8 +221,6 @@ def test_an_admins_re_upload_deletes_a_question_whose_only_answer_rows_are_blank
     assert response.json()["report"]["removed"] == 1
     assert ids["Tabbed past"] not in _read(env, form)
 
-
-# ── M17: notes are an answer ─────────────────────────────────────────────────────────────────
 
 
 def test_a_notes_only_answer_retires_its_question_on_every_removal_path(env):
@@ -278,8 +253,6 @@ def test_a_notes_only_answer_retires_its_question_on_every_removal_path(env):
     assert stored[ids["Declined on delete"]]["isActive"] is False
 
 
-# ── M3: answers in a re-uploaded file are reported ───────────────────────────────────────────
-
 
 def test_answers_typed_into_a_re_uploaded_file_are_reported_not_dropped_silently(env):
     form = _form(env, ["How many looms?"])
@@ -294,8 +267,6 @@ def test_answers_typed_into_a_re_uploaded_file_are_reported_not_dropped_silently
     assert report["answersNotImported"] == 1
     assert any("not imported" in p["reason"] for p in report["problems"])
 
-
-# ── M5: per-item rejections ──────────────────────────────────────────────────────────────────
 
 
 def test_a_retired_question_is_rejected_alone_and_the_rest_of_the_batch_is_saved(env):
@@ -359,8 +330,6 @@ def test_somebody_elses_answer_is_rejected_alone_and_an_identical_resend_is_fine
         (ids["How many looms?"], "ANSWER_OWNED_BY_OTHER")
     ]
 
-
-# ── M6: the answers PUT is not a read of somebody else's sitting ─────────────────────────────
 
 
 def test_an_empty_batch_is_refused_and_a_stranger_gets_only_their_own_rows_back(env):

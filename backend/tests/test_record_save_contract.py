@@ -1,28 +1,3 @@
-"""THE PARITY CONTRACT FOR SAVING A RECORD — R7, held against BOTH doors, on BOTH clients.
-
-Reads ``shared/record-save-contract.json`` and measures the tree against it. Nothing in this file
-decides anything: the contract is the declaration and this is the parser plus the assertions.
-
-── WHY IT IS NOT IN THE CLIENTS' OWN SUITES ──────────────────────────────────────────────────────
-
-Because the claim spans them. "The standalone record pages and the design-workshop integrated pages
-use the same endpoints and are saved in the same manner" is a statement about a TypeScript tree and
-a Kotlin tree at once, and neither `npx playwright test` nor `./gradlew testDebugUnitTest` can see
-the other half. A pair of one-sided tests is what the contract's own header calls two copies
-agreeing: evidence about each other, and none about the thing they both describe.
-
-`test_questionnaire_form_contract.py` sits here for the same reason and this file borrows its
-strippers rather than writing a second pair — a regex over raw source matches inside a paragraph and
-reports a control the screen has never drawn, and both of these trees put a great deal of prose
-around the code being read.
-
-── NO DATABASE, NO NETWORK, NO PRISMA ────────────────────────────────────────────────────────────
-
-Stdlib and the sibling contract's strippers. `import prisma` costs 108 s on a Windows dev machine
-(measured, and written down at `tests/test_conftest_database_gate.py:97`); a contract that reads
-source files has no business paying it. The whole module runs in under two seconds.
-"""
-
 from __future__ import annotations
 
 import json
@@ -58,7 +33,6 @@ def contract() -> dict:
 
 
 def read(rel: str) -> str:
-    """A file from the repository root, comment-stripped by the language its extension names."""
     path = _ROOT / rel
     assert path.exists(), (
         f"{CONTRACT_PATH.name} names {rel}, which is not in the tree. Every path in the contract is "
@@ -76,26 +50,8 @@ def line_of(source: str, offset: int) -> int:
     return source.count("\n", 0, offset) + 1
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# Kotlin: a function's body, located properly
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-
 
 def kotlin_fun_body(source: str, name: str) -> tuple[str, int]:
-    """``(body, offset)`` for ``fun <name>(…) { … }`` in a comment-stripped Kotlin file.
-
-    THE PARAMETER LIST IS BALANCED FIRST, and that is not fastidiousness — it is the difference
-    between reading a form and reading two lines of it. The obvious parse is "the first `{` after
-    the first `)`", which is what the sibling contract does and gets away with on the one function
-    it reads. It is wrong on every form in this file: `ArtisanForm`'s signature contains
-    `craftRegister: RegisterLoad = RegisterLoad()`, so the first `)` lands inside the DEFAULT of a
-    parameter, and the first `{` after it is the empty lambda of `onArtisanCreated: (Prefill) -> Unit
-    = {}` two lines further down. The "body" is then `{}` — two characters — and every assertion
-    that scans it passes by finding nothing, which is the failure mode this file is written against.
-
-    Measured: with the naive parse, four of the five Android record forms reported that they drew no
-    workshop control at all.
-    """
     found = re.search(rf"^(?:private |internal )?fun {name}\(", source, re.MULTILINE)
     assert found, (
         f"`fun {name}(` is no longer declared in the handset's source. The contract names it as a "
@@ -108,17 +64,6 @@ def kotlin_fun_body(source: str, name: str) -> tuple[str, int]:
 
 
 def kotlin_blocks(source: str, anchor: str) -> list[str]:
-    """Every brace-balanced block that starts at the first ``{`` at or after an occurrence of *anchor*.
-
-    A LIST AND NOT A BLOCK, because `is Screen.Create -> when (s.mode)` appears TWICE in
-    MainActivity.kt: once mapping the mode to a `NavDestination` for the nav rail, once mounting the
-    forms. Reading the first match alone reported that the create screen mounted no record form at
-    all — a green-by-finding-nothing that the caller's assertion could not tell from a real absence.
-
-    Every match is read and the caller requires that exactly ONE of them satisfies it, which is a
-    stronger check than a hand-tightened anchor: a second create screen mounting different forms
-    fails it, while a whitespace change in the surrounding `when` does not.
-    """
     blocks: list[str] = []
     at = source.find(anchor)
     while at >= 0:
@@ -131,38 +76,19 @@ def kotlin_blocks(source: str, anchor: str) -> list[str]:
 
 
 def calls(body: str, name: str) -> list[int]:
-    """Offsets of every call to *name* in *body*, never matching a longer identifier ending in it.
-
-    `RecordWorkshopField(` CONTAINS `WorkshopField(`, and the whole two-versus-three-box assertion
-    turns on telling them apart.
-    """
     return [m.start() for m in re.finditer(rf"(?<![A-Za-z0-9_]){name}\s*\(", body)]
 
 
 
 def android_records(spec: dict) -> list[dict]:
-    """The records the handset still draws a form for. A record whose Android half says ``retired``
-    (the global interview form, UNIFY 4.4) has no Android form to read."""
     return [record for record in spec["records"] if not record["android"].get("retired")]
-
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# 0. The guard that stops every assertion below from being vacuously green
-# ══════════════════════════════════════════════════════════════════════════════════════════════
 
 
 def web_records(spec: dict) -> list[dict]:
-    """The records with a web form. The interview's was retired with the global interview form
-    (UNIFY 4.4; see its `webRetired`): the shared questionnaire client writes sessions instead."""
     return [record for record in spec["records"] if record.get("web")]
 
 
 def test_the_contract_and_every_file_it_names_still_parse_to_something():
-    """Every assertion below is a search over a region. A region that parsed to nothing passes them.
-
-    This is the first test in the sibling contract for the same reason and it earns its place here
-    twice over, because this file reads FIVE Kotlin function bodies out of a twenty-thousand-line
-    file — see `kotlin_fun_body` for the parse that silently returned two characters.
-    """
     spec = contract()
     assert spec["contract"] == "record-save"
     assert spec["records"], "the contract declares no records at all"
@@ -181,19 +107,8 @@ def test_the_contract_and_every_file_it_names_still_parse_to_something():
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# 1. ONE ENDPOINT PER RECORD, AND BOTH DOORS GO THROUGH IT
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_each_web_record_form_has_exactly_one_write_and_it_is_the_declared_endpoint():
-    """R7's first half, structurally: one write per form, at the address the contract names.
-
-    A COUNT AND NOT A PRESENCE. "The form calls `saveOrQueue`" is satisfied by a form that calls it
-    once for its own page and `apiFetch("/artisans", {method: "POST"})` beside it for the embedded
-    case — which is precisely the drift R7 is about, and it would read as perfectly ordinary code in
-    a diff.
-    """
     spec = contract()
     call = spec["savePath"]["web"]["call"]
     for record in web_records(spec):
@@ -217,7 +132,6 @@ def test_each_web_record_form_has_exactly_one_write_and_it_is_the_declared_endpo
 
 
 def test_no_web_record_form_reaches_the_api_any_other_way():
-    """The negative half. A form that queues AND posts has two behaviours offline and one online."""
     spec = contract()
     for record in web_records(spec):
         rel = record["web"]["form"]
@@ -231,12 +145,6 @@ def test_no_web_record_form_reaches_the_api_any_other_way():
 
 
 def test_each_android_record_form_saves_through_the_repository_and_the_one_queue():
-    """The handset's half of the same claim, in its own vocabulary.
-
-    `trySaveOffline` answers null when the device is online and the form then calls the repository's
-    own create/update; `saveOrQueue` makes the same decision inside itself. Both are asserted to be
-    the ONLY door, which is the part that matters.
-    """
     spec = contract()
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
     spellings = spec["savePath"]["android"]["queueFunctions"]
@@ -244,12 +152,6 @@ def test_each_android_record_form_saves_through_the_repository_and_the_one_queue
         name = record["android"]["form"]
         body, at = kotlin_fun_body(android, name)
 
-        # THE CREATE, WHICH ONE FORM TAKES AS A PARAMETER. `QuestionnaireForm` is handed
-        # `onSubmit: suspend (QuestionnaireInterviewCreateRequest) -> String`, and its two mounts supply
-        # two DIFFERENT things: the create screen supplies `repository.createQuestionnaireInterview`,
-        # and `InterviewEditLoader` supplies an `error(…)` because an open edit must PATCH. Declared per
-        # record as `createVia` / `mountSupplies` / `mountRefuses`, so both halves are read off the
-        # contract rather than special-cased here by name.
         assert record["android"]["createCall"] in body, (
             f"the handset's `{name}` (MainActivity.kt:{line_of(android, at)}) no longer calls "
             f"`{record['android']['createCall']}`. The contract declares it as this record's one "
@@ -262,12 +164,6 @@ def test_each_android_record_form_saves_through_the_repository_and_the_one_queue
                 "so a mount that supplies something else is a second save path in the one shape "
                 "this contract cannot see from inside the form."
             )
-            # AND THE OTHER MOUNT MUST REFUSE, which is the half that only exists because the
-            # opposite shipped. `InterviewEditLoader` always passes `editing`, so the form routes
-            # every save to `updateQuestionnaireInterview` and its `onSubmit` is unreachable — which
-            # is precisely why holding a create there was dangerous rather than merely dead. Pinned
-            # separately from `mountSupplies` so that turning one back into the other is two red
-            # tests and not a contract that still passes on the surviving half.
             refuses = record["android"].get("mountRefuses")
             if refuses:
                 assert refuses in android, (
@@ -278,10 +174,6 @@ def test_each_android_record_form_saves_through_the_repository_and_the_one_queue
                     "where it does not."
                 )
 
-        # THE QUEUE. Which spelling is a property of the form's MEDIA and not of its save: the short
-        # form builds the media specs itself, and a tool (grid shots in the same list), a process
-        # (media per numbered step) and an interview (a clip per question) cannot be described that
-        # way. Both spellings land in `WorkshopRepository.queueOffline`.
         declared = record["android"]["queueVia"]
         assert declared in spellings, (
             f"{CONTRACT_PATH.name} says `{name}` queues via `{declared}`, which is not one of "
@@ -300,13 +192,6 @@ def test_each_android_record_form_saves_through_the_repository_and_the_one_queue
 
 
 def test_no_record_creating_route_exists_under_design_workshops():
-    """THE MEASUREMENT BEHIND THE WHOLE CONTRACT, kept as an assertion rather than as a sentence.
-
-    R7 would be unsatisfiable if a design workshop had its own way of minting an artisan. It does
-    not: every POST under `/design-workshops` is a dictation, an AI layer, a report or an export.
-    This is the check that notices the day somebody adds `POST /design-workshops/{id}/artisans`,
-    which is a perfectly natural-looking route to add and is the end of the parity.
-    """
     source = (_ROOT / "backend" / "app" / "api" / "routes" / "design_workshops.py").read_text(
         encoding="utf-8"
     )
@@ -323,30 +208,15 @@ def test_no_record_creating_route_exists_under_design_workshops():
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# 2. THE INTEGRATED DOOR MOUNTS THE REAL FORM
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_the_web_integrated_hosts_mount_the_real_record_forms():
-    """The parity is by CONSTRUCTION and this is the assertion that keeps it that way.
-
-    Both hosts render `InlineRecordForm`, which imports the four components from
-    `@/components/forms/…`. A "quick create" with four boxes would be a second answer to what an
-    artisan is — an Aadhaar checksum, a deduplication key, a mandatory location, the Do's and
-    Don'ts — and the records it made would be the ones missing the fields nobody could see were
-    missing. Both hosts' headers argue that at length and nothing enforced it until this test.
-    """
     spec = contract()
     integrated = spec["theTwoDoors"]["web"]["integrated"]
     dialog = read(integrated["files"][0])
     for record in web_records(spec):
         if record["key"] == "interview":
-            continue  # no stage field points at one — see the record's own note
+            continue
         component = pathlib.PurePath(record["web"]["form"]).stem
-        # Either spelling of "this module IS the real form": a static import, or — since 2026-10-17,
-        # when the four forms stopped riding in the script every stage waits for — `next/dynamic`
-        # over the very same module. A host-local copy would match neither.
         assert (
             f'from "@/components/forms/{component}"' in dialog
             or f'import("@/components/forms/{component}")' in dialog
@@ -368,12 +238,6 @@ def test_the_web_integrated_hosts_mount_the_real_record_forms():
 
 
 def test_the_android_integrated_dialog_mounts_the_same_composables_as_the_create_screen():
-    """The handset's half. One extra thing is asserted: the EDIT path is the app's own loader.
-
-    `DwInlineRecordDialog` calls `EditScreen` rather than re-implementing "fetch the record, choose
-    the form" — "which is one place for that decision rather than two that can disagree", in its own
-    words. That is the sentence this test holds.
-    """
     spec = contract()
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
     dialogs = kotlin_blocks(android, spec["theTwoDoors"]["android"]["integrated"]["anchors"][0])
@@ -400,7 +264,7 @@ def test_the_android_integrated_dialog_mounts_the_same_composables_as_the_create
         name = record["android"]["form"]
         assert calls(create, name), f"Screen.Create no longer mounts `{name}`."
         if record["key"] == "interview":
-            continue  # no stage field points at one — see the record's own note
+            continue
         assert calls(dialog, name), f"DwInlineRecordDialog no longer mounts `{name}`."
     assert calls(dialog, "EditScreen"), (
         "DwInlineRecordDialog no longer reuses `EditScreen` for the edit case. Re-implementing "
@@ -408,18 +272,8 @@ def test_the_android_integrated_dialog_mounts_the_same_composables_as_the_create
     )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# 3. THE PAYLOAD KEYS, AND THE KEY THAT MUST NOT BE THERE
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_every_record_body_carries_both_workshop_keys_and_reads_them_off_one_control():
-    """R1 keeps two nullable columns; R2 gives one control; R3 decides which column it fills.
-
-    BOTH KEYS ARE ALWAYS SENT and that is the half that looks redundant: the update routes dump with
-    `exclude_unset=True`, so an omitted key means "leave the stored value alone" and the single edit
-    that could never be saved would be the one that UN-FILES a record.
-    """
     spec = contract()
     keys = spec["payloadKeys"]
     for record in web_records(spec):
@@ -442,16 +296,6 @@ def test_every_record_body_carries_both_workshop_keys_and_reads_them_off_one_con
 
 
 def test_no_record_body_carries_the_type_of_workshop():
-    """R3's other half, as a negative. THE TYPE IS NOT STORED ON THE RECORD.
-
-    The workshop a researcher picks already carries its own type, so a copy beside the record could
-    disagree with its own source the first time somebody corrects a workshop's type — and nothing
-    anywhere would read the two together to notice. No foreign key points at `WorkshopTypeOption`
-    from any record table and none should.
-
-    ASSERTED OVER THE PAYLOAD OBJECT AND NOT THE WHOLE FILE, because `workshopKind` is a real column
-    on `DesignWorkshop` and these files legitimately discuss it.
-    """
     spec = contract()
     call = spec["savePath"]["web"]["call"]
     for record in web_records(spec):
@@ -476,18 +320,8 @@ def test_no_record_body_carries_the_type_of_workshop():
             )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# 4. THE DESTINATION RULE (R3), DECLARED ONCE PER CLIENT
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_the_destination_rule_is_written_exactly_once_on_each_client():
-    """Type is Design & Prototype -> `designWorkshopId`; any other type -> `workshopId`.
-
-    IN THE PICKER AND NOWHERE ELSE, which is what makes the two doors identical for free: a form
-    reads two ids off one control and writes them into two keys. A form that re-derived the routing
-    would be a sixth copy of this rule and the integrated host would be the seventh.
-    """
     spec = contract()
     rule = spec["destinationRule"]
 
@@ -505,7 +339,6 @@ def test_the_destination_rule_is_written_exactly_once_on_each_client():
             f"the handset no longer decides the destination as `{expression}`."
         )
 
-    # And no record form re-derives it.
     for record in web_records(spec):
         source = read(record["web"]["form"])
         assert "routesToDesignWorkshop ?" not in source, (
@@ -516,14 +349,6 @@ def test_the_destination_rule_is_written_exactly_once_on_each_client():
 
 
 def test_the_routing_of_an_existing_record_is_pinned_by_its_stored_columns():
-    """(c) — opening an EXISTING record must not re-default its workshop to the newest one.
-
-    "The most recent workshop this account can reach" is R4's rule for a NEW record. Applying it to
-    an old one re-files historic records under whatever is newest, invisibly, on the next save of a
-    form somebody merely opened — and nothing on screen would say a link had moved.
-
-    Both clients derive the routing from the two STORED ids and both name the function.
-    """
     spec = contract()
     pinned = spec["destinationRule"]["existingRecordIsPinned"]
 
@@ -539,8 +364,6 @@ def test_the_routing_of_an_existing_record_is_pinned_by_its_stored_columns():
         f"{pinned['android']['file']} no longer declares `{pinned['android']['symbol']}`."
     )
 
-    # The forms pass the record's stored ids in, which is the other half: a picker that is never
-    # told the record's columns cannot pin anything.
     for record in web_records(spec):
         if record["web"]["update"] is None:
             continue
@@ -552,18 +375,8 @@ def test_the_routing_of_an_existing_record_is_pinned_by_its_stored_columns():
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# 5. TWO BOXES, NEVER THREE (R2) — the shape itself
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_every_web_record_form_mounts_exactly_one_picker_and_neither_half_directly():
-    """(a) on the browser. The count is the assertion; the labels come next.
-
-    A form that reaches `WorkshopSelect` or `DesignWorkshopSelect` directly has bypassed the type
-    box, so its workshop lands in a column nothing on screen chose. That is how the third dropdown
-    comes back: not as a third box, but as a second control beside the picker.
-    """
     spec = contract()
     controls = spec["workshopControls"]["web"]
     for rel in controls["forms"]:
@@ -582,7 +395,6 @@ def test_every_web_record_form_mounts_exactly_one_picker_and_neither_half_direct
 
 
 def test_every_android_record_form_mounts_exactly_one_picker_and_neither_half_directly():
-    """(a) on the handset, and the parse this file exists to get right — see `kotlin_fun_body`."""
     spec = contract()
     controls = spec["workshopControls"]["android"]
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
@@ -601,14 +413,6 @@ def test_every_android_record_form_mounts_exactly_one_picker_and_neither_half_di
 
 
 def test_both_clients_draw_the_same_two_labels_in_the_same_order():
-    """The two words, in order, read out of the components that write them.
-
-    A researcher uses both devices in one day. Two boxes in one sequence on a laptop and the other
-    on a handset is a form they have to re-learn in a courtyard with an artisan waiting.
-
-    READ FROM SOURCE ON BOTH SIDES, never from this file's own copy of the strings: a test that
-    compared the contract to itself would be green over a client that says something else.
-    """
     spec = contract()
     expected = spec["workshopControls"]["labels"]
 
@@ -649,12 +453,6 @@ def test_both_clients_draw_the_same_two_labels_in_the_same_order():
 
 
 def test_the_retired_third_control_is_gone_from_both_trees():
-    """Deleted, not merely unmounted. An unmounted component is one the next form will find.
-
-    `DesignWorkshopCascade` drew a `WORKSHOP_KIND` box whose own hint read "Narrows the workshops
-    below. It is not saved on this record." — a control that changed a list and saved nothing,
-    borrowed from the vocabulary that answers stage 1 of a design workshop's own questionnaire.
-    """
     spec = contract()
     for deleted in spec["workshopControls"]["deletedComponents"]:
         assert not (_ROOT / deleted["path"]).exists(), (
@@ -662,10 +460,6 @@ def test_the_retired_third_control_is_gone_from_both_trees():
         )
 
     forbidden = spec["workshopControls"]["forbiddenSymbols"]
-    # SOURCE, NOT THE SPECS. `e2e/workshop-picker-unit.spec.ts` names the retired components inside a
-    # string literal precisely in order to forbid them, and a sweep that counted that would force the
-    # one test guarding the ruling to be deleted to make this one green — which is the worst possible
-    # trade. What is swept is the application tree: app/, components/ and lib/.
     web_tree = [
         path
         for folder in ("app", "components", "lib")
@@ -689,7 +483,6 @@ def test_the_retired_third_control_is_gone_from_both_trees():
             f"`{name}` is back on the handset. It was the kind box's own vocabulary."
         )
 
-    # And no record form narrows WITHIN a table by the stage registry's own token.
     for record in web_records(spec):
         source = read(record["web"]["form"])
         for name in forbidden["inRecordFormsOnly"]:
@@ -701,17 +494,8 @@ def test_the_retired_third_control_is_gone_from_both_trees():
             )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# 6. VALIDATION AND THE OFFLINE QUEUE
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_every_record_form_runs_the_submission_pre_flight_before_it_writes():
-    """The same gate on both doors, because it lives in the picker rather than in the host.
-
-    BEFORE AND NOT MERELY PRESENT: a pre-flight after the POST is a confirmation dialog about work
-    that is already saved.
-    """
     spec = contract()
     web = spec["validation"]["web"]
     for record in web_records(spec):
@@ -747,12 +531,6 @@ def test_every_record_form_runs_the_submission_pre_flight_before_it_writes():
 
 
 def test_the_offline_queue_has_one_shape_per_client_and_both_doors_write_it():
-    """R7 includes the queue, and the queue is the half a reviewer skips.
-
-    A record made in a courtyard with no signal is serialised, banked and replayed hours later. If
-    the integrated door queued a different shape — or did not queue at all — the two doors would
-    agree online and diverge in exactly the conditions this application exists for.
-    """
     spec = contract()
     web = spec["offlineQueue"]["web"]
     source = read(web["file"])
@@ -780,7 +558,6 @@ def test_the_offline_queue_has_one_shape_per_client_and_both_doors_write_it():
             "them either destroys a stored link or invents a clearance nobody made."
         )
 
-    # The dialog says a queued save happened, because its banner is unreachable behind the overlay.
     dialog = read(spec["theTwoDoors"]["web"]["integrated"]["files"][0])
     assert web["queuedNotice"] in dialog, (
         f"the integrated dialog no longer takes `{web['queuedNotice']}`. Inside a dialog the outbox "
@@ -790,21 +567,8 @@ def test_the_offline_queue_has_one_shape_per_client_and_both_doors_write_it():
     )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# 7. THE DECLARED DIFFERENCES, AND THE CONTRACT'S OWN HYGIENE
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-
 
 def test_every_declared_difference_is_still_a_difference():
-    """THE RATCHET, TURNED THE OTHER WAY UP FROM THE SIBLING CONTRACT'S `openDrifts`.
-
-    There a row names a defect that must stop being true. Here a row names a difference that is
-    ALLOWED to be true, and this asserts it still is. Either way the row cannot rot: converge the
-    two sides and the assertion fails, saying to delete the row.
-
-    A list of licensed exceptions that nothing checks reads as a considered account of the product
-    long after the product has moved — and the next person widens it.
-    """
     spec = contract()
     android = read(str(ANDROID_MAIN.relative_to(_ROOT)).replace("\\", "/"))
 
@@ -862,12 +626,6 @@ def test_every_declared_difference_is_still_a_difference():
 
 
 def test_every_artisan_create_says_which_likely_duplicates_it_was_shown():
-    """The duplicate finder's key, on the one artisan form each client has, and on no edit.
-
-    A create that sends a list is one the server may hold as a likely duplicate; a create that sends
-    nothing is an older build. Both doors mount the same form, so the form carrying the key is both
-    doors carrying it, and the queued body is the same object the online save sends.
-    """
     spec = contract()["artisanCreateKeys"]
     key = spec["key"]
 
@@ -898,7 +656,6 @@ def test_every_artisan_create_says_which_likely_duplicates_it_was_shown():
 
 
 def test_the_contract_is_internally_consistent():
-    """The declaration held to itself, because every assertion above trusts it completely."""
     spec = contract()
     keys = [record["key"] for record in spec["records"]]
     assert len(keys) == len(set(keys)), f"{CONTRACT_PATH.name} declares a record key twice: {keys}"

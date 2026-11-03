@@ -1,11 +1,3 @@
-"""THE COVERAGE MAP (designer portal): the folds, the filters, the gaps, the peer merge and the doors.
-
-The first part needs no database: ``services/coverage`` folds already-read rows, so the counting
-rules are asserted over a hand-built ``Corpus``. The last part seeds a private database and asks the
-routes as each post, because "a regional director sees only their states" and "only the master admin
-and the Ministry Admin map a place" are only true if the route says so.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -119,10 +111,6 @@ def _payload(corpus: coverage.Corpus, filters: coverage.Filters | None = None, *
     return coverage.build_payload(fold, is_admin=admin, boundaries={"shapesVersion": "x"}, catalogue={})
 
 
-# --------------------------------------------------------------------------------------------
-# Counts
-# --------------------------------------------------------------------------------------------
-
 
 def test_counts_per_unit_for_each_bucket():
     payload = _payload(_barmer_corpus())
@@ -138,7 +126,6 @@ def test_counts_per_unit_for_each_bucket():
     assert barmer["polygon"] == "OWN" and barmer["state"] == "Rajasthan" and barmer["district"] == "Barmer"
     jaipur = _unit(payload, JAIPUR)
     assert jaipur["counts"]["workshops"] == 1
-    # The alias "Kutch" resolves to Kachchh.
     assert _unit(payload, KACHCHH)["counts"]["plannedWorkshops"] == 1
 
 
@@ -171,10 +158,6 @@ def test_markers_use_the_pin_then_the_centroid():
         assert any(m["kind"] == "CLUSTER" for m in payload["markers"])
 
 
-# --------------------------------------------------------------------------------------------
-# Filters
-# --------------------------------------------------------------------------------------------
-
 
 def test_scheme_filter_narrows_design_workshops_and_leaves_field_records_out():
     payload = _payload(_barmer_corpus(), coverage.Filters(schemes=("SKILL_UPGRADATION",)))
@@ -189,7 +172,7 @@ def test_craft_filter():
     payload = _payload(corpus, coverage.Filters(craft_codes=(AJRAKH,)))
     barmer = _unit(payload, BARMER)
     assert barmer["counts"]["designWorkshops"] == 2
-    assert barmer["counts"]["media"] == 0  # the photo carries no craft
+    assert barmer["counts"]["media"] == 0
     assert barmer["counts"]["artisans"] == 1
 
 
@@ -201,8 +184,8 @@ def test_craft_name_reaches_its_code_through_an_admin_spelling():
 
 
 def test_financial_year_turns_at_midnight_ist_on_1_april():
-    last_minute = datetime(2026, 3, 31, 18, 29, tzinfo=UTC)  # 23:59 IST, 31 March
-    first_minute = datetime(2026, 3, 31, 18, 30, tzinfo=UTC)  # 00:00 IST, 1 April
+    last_minute = datetime(2026, 3, 31, 18, 29, tzinfo=UTC)
+    first_minute = datetime(2026, 3, 31, 18, 30, tzinfo=UTC)
     assert coverage.fy_of(last_minute) == 2025
     assert coverage.fy_of(first_minute) == 2026
     assert coverage.fy_label(2025) == "2025-26" and coverage.fy_label(2099) == "2099-00"
@@ -245,10 +228,6 @@ def test_parse_filters_refuses_nonsense_and_accepts_comma_joined():
             coverage.parse_filters(**args)
 
 
-# --------------------------------------------------------------------------------------------
-# Gaps
-# --------------------------------------------------------------------------------------------
-
 
 def test_crafts_never_documented_excludes_a_code_documented_in_any_bucket():
     never = {c["code"] for c in _payload(_barmer_corpus())["gaps"]["craftsNeverDocumented"]}
@@ -260,7 +239,6 @@ def test_crafts_never_documented_excludes_a_code_documented_in_any_bucket():
 
 def test_districts_without_workshop_is_795_minus_covered():
     gaps = _payload(_barmer_corpus())["gaps"]
-    # Barmer (design workshops) and Jaipur (a field workshop) are covered; a plan alone covers nothing.
     assert gaps["districtsWithoutWorkshop"]["count"] == 795 - 2
     rajasthan = next(r for r in gaps["districtsWithoutWorkshop"]["byState"] if r["stateLgd"] == RAJASTHAN)
     names = {row["name"] for row in rajasthan["without"]}
@@ -285,19 +263,14 @@ def test_unmatched_spellings_are_counted_and_sampled_for_admins_only():
     corpus = _barmer_corpus()
     corpus.design_workshops.append(_dw(9, "Rajasthan", "Kachchh"))
     payload = _payload(corpus)
-    # Kachchh written under Rajasthan is unmatched; "Atlantis" with no state or district is unplaced.
     assert payload["unmatched"]["count"] == 1 and payload["unmatched"]["unplaced"] == 1
     assert "sample" not in payload["unmatched"]
     sample = _payload(corpus, admin=True)["unmatched"]["sample"]
     assert {"model": "DesignWorkshop", "rawState": "Rajasthan", "rawDistrict": "Kachchh", "rows": 1} in sample
     suggestion = coverage.suggestion_for("Rajasthan", "Kachchh")
     assert suggestion["districtLgd"] == KACHCHH and suggestion["stateLgd"] == GUJARAT
-    assert coverage.suggestion_for("Rajasthan", "Kachhh") is None  # no fuzzing
+    assert coverage.suggestion_for("Rajasthan", "Kachhh") is None
 
-
-# --------------------------------------------------------------------------------------------
-# Names only
-# --------------------------------------------------------------------------------------------
 
 FORBIDDEN_KEY = re.compile(r'"(aadhaar\w*|pehchan\w*|phone\w*|address\w*|village|pincode|street)"', re.IGNORECASE)
 
@@ -314,10 +287,6 @@ def test_no_payload_carries_identity_or_address_keys():
     for columns in coverage.FIELD_COLUMNS.values():
         assert not any(FORBIDDEN_KEY.search(f'"{c}"') for c in columns)
 
-
-# --------------------------------------------------------------------------------------------
-# The Field Repository's counts
-# --------------------------------------------------------------------------------------------
 
 
 def _settings(**overrides: Any) -> Any:
@@ -372,7 +341,7 @@ def test_peer_ok_is_a_separate_row_never_summed(monkeypatch: pytest.MonkeyPatch)
     assert payload["peer"]["status"] == "OK" and payload["peer"]["unknownUnits"] == 1
     barmer = _unit(payload, BARMER)
     assert barmer["peer"] == {"workshops": 1, "artisans": 9, "products": 2, "tools": 1, "media": 12}
-    assert barmer["counts"]["artisans"] == 1  # this portal's own, unchanged
+    assert barmer["counts"]["artisans"] == 1
     if cross_portal_codes.is_known_code("bagru"):
         assert "bagru" not in {c["code"] for c in payload["gaps"]["craftsNeverDocumented"]}
 
@@ -428,10 +397,6 @@ def test_peer_href_carries_the_unit_and_filters():
     assert coverage.peer_href(_settings(field_repository_web_url=None), coverage.Filters(), 8, 0) is None
 
 
-# --------------------------------------------------------------------------------------------
-# The unit panel
-# --------------------------------------------------------------------------------------------
-
 
 def test_unit_records_pages_each_bucket(monkeypatch: pytest.MonkeyPatch):
     corpus = _corpus(design_workshops=[_dw(i, "Rajasthan", "Barmer") for i in range(coverage.PAGE_SIZE + 3)])
@@ -456,10 +421,6 @@ def test_unit_records_pages_each_bucket(monkeypatch: pytest.MonkeyPatch):
                                               cursor=None, settings=_settings()))
     assert wrong is None
 
-
-# --------------------------------------------------------------------------------------------
-# The doors, against a database
-# --------------------------------------------------------------------------------------------
 
 
 def _auth(user_id: str) -> dict[str, str]:
@@ -490,9 +451,6 @@ def doors():
     raw_state = f"Marwar {stamp}"
     facts: dict[str, Any] = {"users": {}}
 
-    # ``connect_db``, not a bare ``db.connect()``: on a loaded machine the query engine's first
-    # reach for the database can time out (P1001) once earlier modules have run, and the app's own
-    # retry with backoff is what every other caller already relies on.
     async def seed() -> None:
         await connect_db()
         try:
@@ -537,8 +495,6 @@ def doors():
             answers[f"unmatched-{actor}"] = call("GET", "/coverage/unmatched", actor)
         body = {"rawState": raw_state, "rawDistrict": "Somewhere", "stateLgd": RAJASTHAN, "districtLgd": BARMER}
         answers["alias-designer"] = call("POST", "/coverage/aliases", "designer", json=body)
-        # An ADMIN maps places since 2026-10-20 (content admins); sent to the wrong state so the gate is
-        # proved passed (422 from validation) without writing the alias the rows below create.
         answers["alias-admin"] = call("POST", "/coverage/aliases", "admin", json={**body, "stateLgd": GUJARAT})
         answers["alias-wrong-state"] = call("POST", "/coverage/aliases", "ma", json={**body, "stateLgd": GUJARAT})
         answers["alias-ok"] = call("POST", "/coverage/aliases", "ma", json=body)
@@ -610,7 +566,7 @@ def test_alias_writes_are_checked_and_audited(doors):
     assert answers["alias-again"].status_code == 409
     assert answers["delete-ok"].status_code == 204
     assert doors["facts"]["alias_left"] is None
-    assert len(doors["facts"]["revisions"]) == 2  # the write and the delete
+    assert len(doors["facts"]["revisions"]) == 2
 
 
 @needs_db

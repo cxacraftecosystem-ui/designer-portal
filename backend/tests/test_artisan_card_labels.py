@@ -1,5 +1,3 @@
-"""Where a card event says it came from, and what a printed card file is called."""
-
 import re
 from types import SimpleNamespace
 

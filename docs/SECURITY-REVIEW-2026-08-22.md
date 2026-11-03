@@ -196,7 +196,7 @@ the failure. The cap is pinned to the "Trace resolution" slider's ceiling in
 ### F4 — LOW. The identity mask reveals the last four of a *malformed short* value, and only the docs were corrected
 
 `docs/SECURITY.md` was corrected tonight to state the real threshold, and the correction is right —
-I verified the code rather than the prose. `backend/app/services/artisan_identity.py:195-197`:
+I verified the code rather than the prose. `backend/app/services/artisan_identity.py:96-98`:
 
 ```python
 if len(normalized) < 4:
@@ -243,7 +243,7 @@ pytest tests/test_design_ratings_api.py -rf -q
   1 failed, 25 passed, 3 warnings in 793.43s (0:13:13)
 ```
 
-The failing assertion is `backend/tests/test_design_ratings_api.py:695`,
+The failing assertion is `backend/tests/test_design_ratings_api.py:417`,
 `assert second.json()["replayed"] is True` — a second, byte-identical delivery of one offline
 capture was **not** recognised as a replay and was applied as an UPDATE.
 
@@ -881,11 +881,11 @@ about exactly this.
 behaviours no test asserts against — if somebody adds `can_run_design_workshops` to
 `load_workshop_or_404`, nothing in this document will change and nothing will tell a later reader."*
 
-That is true of F1. It is false of F2. `backend/tests/test_design_workshop_gate.py:189` carries
+That is true of F1. It is false of F2. `backend/tests/test_design_workshop_gate.py:100` carries
 `("POST", "/{workshop_id}/exports")` inside `UNGATED_WRITES`, and
-`test_the_designer_gate_still_stands_where_this_docstring_says_it_does` (:219) asserts
-`ungated == UNGATED_WRITES` (:252) and `(len(writes), len(gated), len(via_verb_gate)) == (22, 11, 5)`
-(:248), with a failure message that reads *"the set of writes OUTSIDE the designer set changed. A new
+`test_the_designer_gate_still_stands_where_this_docstring_says_it_does` (:123) asserts
+`ungated == UNGATED_WRITES` (:141) and `(len(writes), len(gated), len(via_verb_gate)) == (22, 11, 5)`
+(:138), with a failure message that reads *"the set of writes OUTSIDE the designer set changed. A new
 one is a permission decision, not a refactor"*. Gate F2's route and that test fails until the
 docstring and the set are updated in the same commit — which is precisely the rot detector the
 paragraph says does not exist.
@@ -952,7 +952,7 @@ it and it holds" is a different statement from silence, and only the first is a 
 
 ### R5 — Minor: three citations no longer land, and the scope line is stale
 
-Substance is right in each case; the pointer is not. `backend/app/core/config.py:104`
+Substance is right in each case; the pointer is not. `backend/app/core/config.py:39`
 (`jwt_expires_minutes`) is now **:165** — it was correct at `HEAD` 72bb087, but another wave inserted
 ~61 lines above it at 23:21, before this file's 23:41 write. `records.mask_identity_number` ":147" is
 **:152**, and the `return mask_aadhaar(value)` cited as ":155" is **:160**.
@@ -989,13 +989,13 @@ environment, not the code. **F5's diagnosis was right and the fix works. Strike 
 `record_device_export`'s `for_edit=True`-only gate; the router parse (**42 routes, 22 non-GET**, and
 the ungated set is exactly the eleven decorators this document lists); `deps.py`'s SCOPED TOKENS
 quote (:507–:510); `stage_definitions.py` :404/:469/:470/:473/:474; `design_workshops.py` :1265 and
-the Aadhaar docstring at :4128; `artisan_identity.py:195–197`'s `< 4`; `design_ratings.py:248`
+the Aadhaar docstring at :4128; `artisan_identity.py:96–197`'s `< 4`; `design_ratings.py:248`
 `LEDGER_CLOCK_RESOLUTION` and the `reviewerId`-by-omission at :881;
 the single `NOT_FOUND` constant and `_not_found()` helper at the top of
 `backend/app/api/routes/design_ratings.py`; all seven named tests present, 26
-collected, and the failing assertion at `test_design_ratings_api.py:695`; `_reference_photos`'
+collected, and the failing assertion at `test_design_ratings_api.py:417`; `_reference_photos`'
 `_PHOTO_PARENT_COLUMNS` and `isidentifier()` vetting and its three-column `SELECT`;
-`tasks.assert_all_assignable` iterating the caller's list (:189); `require_admin` on all three viewer
+`tasks.assert_all_assignable` iterating the caller's list (:95); `require_admin` on all three viewer
 routes; `layout.tsx:52`; `decodeToPixels` capping **after** `createImageBitmap(file)` (:152 → :159)
 and the 48 MB-versus-67 MB header inconsistency; **all 46 manifest hashes, zero mismatches**; 48
 `.ts` / 50 files / 17,744 lines; the network/storage/eval sweep empty; all four `for(;;)` loops at

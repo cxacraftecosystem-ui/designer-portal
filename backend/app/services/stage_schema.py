@@ -1,41 +1,3 @@
-"""The field registry: one declaration of the 22 workshop stages, read by everything.
-
-The source requirements document defines a Design & Prototype Workshop as 22 stages, each
-capturing fields at three tiers — *Basic* (minimum required), *Standard* (desirable for most
-workshops) and *Advanced* (where facilities and expertise permit). That is on the order of two
-and a half thousand fields. Three surfaces have to agree about every one of them: the capture
-form, the validator that decides whether a stage is complete, and the report that prints it.
-
-Writing those out three times, in three languages, would guarantee drift — and writing them as
-two and a half thousand database columns would make every schema change a migration. So the
-fields are *data*, declared once here:
-
-    STAGES  ->  a form (web + Android)
-            ->  validation and the completeness gate
-            ->  the report (labels become table headers and key-value captions)
-            ->  the research export (stable keys and units)
-
-The storage side follows from that. Each stage's answers live in a ``DwStageEntry`` row whose
-``data`` is a JSON object keyed by ``FieldSpec.key``; the handful of fields a researcher will
-actually filter and sort on are *also* denormalised onto typed columns of ``DesignWorkshop``
-(see ``promoted_columns``). That hybrid is deliberate: a pure-JSON store cannot answer "every
-workshop on Ikat in Odisha in 2026" without a table scan, and a pure-column store cannot absorb
-a new Standard-tier field without a migration in the middle of a workshop season.
-
-Three rules keep the registry honest, and :func:`validate_registry` (run by the tests and at
-import time in debug) enforces all three:
-
-1. **Keys are permanent.** A field key is what the research data is indexed by, what the phone
-   wrote into a draft two weeks ago, and what a saved report template refers to. Renaming one
-   silently orphans data. Fields are deprecated, never renamed — see :attr:`FieldSpec.replaced_by`.
-2. **Every enum has a canonical option list.** Six stages ask for a material and six independent
-   authors will spell it six ways; a shared :data:`ENUMS` table is what makes "cotton" the same
-   answer in stage 5 and stage 17.
-3. **Only Basic-tier fields may be required.** The tiers exist so a workshop held in a village
-   without power can still produce a complete report. A required Standard field would make the
-   completeness gate unsatisfiable exactly where the app is most needed.
-"""
-
 from __future__ import annotations
 
 import math
@@ -61,8 +23,6 @@ from app.services.text_format import by_count
 
 
 class Tier(str, Enum):
-    """Which capture tier a field belongs to, straight from the source matrix."""
-
     BASIC = "BASIC"
     STANDARD = "STANDARD"
     ADVANCED = "ADVANCED"
@@ -73,36 +33,26 @@ class Tier(str, Enum):
 
 
 class FieldType(str, Enum):
-    """How a value is captured, validated, stored and printed.
-
-    The set is deliberately small. Every extra type costs a branch in the web form, a Composable
-    on Android, a validator here and a renderer in the report builder, so a new one has to earn
-    its place four times over.
-    """
-
-    TEXT = "TEXT"  # single line
-    LONG_TEXT = "LONG_TEXT"  # textarea; becomes report prose
-    # A structured document (app/services/rich_text.py), never HTML. Stored as JSON in the
-    # stage entry exactly like any other value, and rendered by every surface from the same
-    # block list — see that module for why the storage form is not markup.
+    TEXT = "TEXT"
+    LONG_TEXT = "LONG_TEXT"
     RICH_TEXT = "RICH_TEXT"
     INT = "INT"
     DECIMAL = "DECIMAL"
-    MONEY = "MONEY"  # INR, stored as a decimal string
+    MONEY = "MONEY"
     PERCENT = "PERCENT"
-    DATE = "DATE"  # ISO-8601 date, no time
-    TIME = "TIME"  # HH:MM
+    DATE = "DATE"
+    TIME = "TIME"
     BOOL = "BOOL"
-    ENUM = "ENUM"  # one option from a canonical list
-    MULTI_ENUM = "MULTI_ENUM"  # several options from a canonical list
-    TAGS = "TAGS"  # free-form list; no canonical list exists
-    IMAGE = "IMAGE"  # one media id
-    IMAGE_LIST = "IMAGE_LIST"  # gallery
-    FILE = "FILE"  # a sanction order, a questionnaire PDF
+    ENUM = "ENUM"
+    MULTI_ENUM = "MULTI_ENUM"
+    TAGS = "TAGS"
+    IMAGE = "IMAGE"
+    IMAGE_LIST = "IMAGE_LIST"
+    FILE = "FILE"
     AUDIO = "AUDIO"
     VIDEO = "VIDEO"
-    GEO = "GEO"  # {lat, lon, accuracy}
-    REF = "REF"  # a foreign id: an Artisan, a Craft, another stage entry
+    GEO = "GEO"
+    REF = "REF"
     URL = "URL"
     PHONE = "PHONE"
     EMAIL = "EMAIL"
@@ -123,71 +73,22 @@ class FieldType(str, Enum):
 
     @property
     def is_multi(self) -> bool:
-        """Whether the stored value is a list."""
         return self in {FieldType.MULTI_ENUM, FieldType.TAGS, FieldType.IMAGE_LIST}
 
 
 class ReportRole(str, Enum):
-    """Where a field lands in the generated report.
-
-    A field with no role is captured and retained but never printed — which is a legitimate
-    outcome for internal bookkeeping, and much better than the alternative of printing every
-    field and burying the narrative.
-    """
-
-    NARRATIVE = "NARRATIVE"  # a prose paragraph
-    KEY_VALUE = "KEY_VALUE"  # a label/value pair
-    TABLE_COLUMN = "TABLE_COLUMN"  # a column when the entity is a collection
-    CAPTION = "CAPTION"  # the caption of the media field beside it
-    GALLERY = "GALLERY"  # a photo grid
-    COVER_FIELD = "COVER_FIELD"  # a row of the cover-page table
-    METRIC = "METRIC"  # a headline number
-    BULLETS = "BULLETS"  # a bulleted list
+    NARRATIVE = "NARRATIVE"
+    KEY_VALUE = "KEY_VALUE"
+    TABLE_COLUMN = "TABLE_COLUMN"
+    CAPTION = "CAPTION"
+    GALLERY = "GALLERY"
+    COVER_FIELD = "COVER_FIELD"
+    METRIC = "METRIC"
+    BULLETS = "BULLETS"
     HIDDEN = "HIDDEN"
 
 
 class TextFormat(str, Enum):
-    """THE SHAPE A SCALAR TEXT FIELD'S VALUE MUST HAVE, declared once and enforced by the server.
-
-    ── THE DEFECT THIS ENDS ────────────────────────────────────────────────────────────────────
-    A stage row mirrors a record page's fields, and every one of the record page's validators was
-    present and working two inches away — attached to the box nobody prints. The value the REPORT
-    prints is the stage copy, and for that copy ``coerce_value`` checked a length and nothing
-    else: EMAIL, PHONE and TEXT all went through one scalar-text arm. So "hello world 1234" typed
-    into ``participant.aadhaarNumber`` passed a 20-character bound, was masked by
-    :attr:`FieldSpec.store_masked` to "XXXX XXXX 1234", and was printed as a national identity
-    number in a document submitted to a ministry. A nine-digit phone saved. An unbounded,
-    unchecked string saved as an email address, on the web, while the SAME registry field on
-    Android was refused by the handset's own port. Three implementations, three answers.
-
-    ── WHY THE REGISTRY AND NOT ``FieldInput.tsx`` ──────────────────────────────────────────────
-    Four reasons, in order of weight:
-
-    1. THE SERVER IS THE ONLY PATH BOTH CLIENTS SHARE, AND THE ONLY ONE THAT CAN RE-REFUSE WHAT
-       IS ALREADY STORED. ``validate_entry`` re-coerces EVERY field on EVERY save — the same
-       property that made ``store_masked`` retroactive. A format declared today starts refusing
-       the garbage already sitting in ``DwStageEntry.data`` the next time its stage is saved. A
-       client-side check cannot reach one stored byte.
-    2. A WEB-ONLY FIX LEAVES THE CLIENT THAT ALREADY DISAGREES UNTOUCHED, and produces a fourth
-       answer rather than one.
-    3. DIRECT API CALLERS AND OLDER BUILDS. ``validate_entry``'s docstring is explicit that a
-       phone one release ahead is a supported caller; a client-side rule is advisory by
-       construction.
-    4. THIS REPOSITORY HAD ALREADY WRITTEN DOWN THAT THE DECLARATION IS THE RIGHT END STATE.
-       ``frontend/components/designworkshop/stageFieldRoles.ts``, unprompted: "THE HONEST END
-       STATE IS A DECLARATION … this is the stopgap until the registry carries it, and it is
-       written as one key list in one file so that the day it does, one function dies."
-
-    ── WHAT A MEMBER MEANS, AND WHY THE COUNTRY IS IN THE NAME ──────────────────────────────────
-    ``PHONE_IN`` rather than ``PHONE``: the rule is "+91 takes exactly ten digits", which is a
-    fact about India and not about telephones. The same reasoning as ``ENUMS``' ``INDIAN_STATE``.
-    A second country's rule would be a second member, not an argument.
-
-    Each member must have an entry in :data:`_FORMATS` — the module refuses to import otherwise
-    (see the assertion under that table). A published format nothing enforces is the exact silent
-    failure this whole feature exists to end.
-    """
-
     NONE = ""
     EMAIL = "EMAIL"
     PHONE_IN = "PHONE_IN"
@@ -197,79 +98,20 @@ class TextFormat(str, Enum):
 
 
 def _no_format_error(_text: str) -> str | None:
-    """:attr:`TextFormat.NONE` — every field that declares nothing, which is nearly all of them."""
     return None
 
 
 def _email_format_error(text: str) -> str | None:
-    """The record page's own email rule, on the path the record page never reached.
-
-    ``contact_formats`` had to be WRITTEN rather than reused: there was no server-side email rule
-    anywhere in this repository, including on the record path. See that module's header.
-    """
     return email_error(normalize_email(text))
 
 
 def _aadhaar_format_error(text: str) -> str | None:
-    """A real Aadhaar number or a mask this repository produced — and nothing else.
-
-    THE MASK HAS TO BE AN ACCEPTED ANSWER, WHICH IS THE WHOLE DIFFICULTY. ``hydrate_entries``
-    writes ``mask_identity_number(...)`` into ``participant.aadhaarNumber`` and ``validate_entry``
-    re-coerces every field on every save, so a predicate that knew only ``aadhaar_error`` would
-    paint a red error on that box on every save, for ever, on a row nobody touched — naming a
-    fault the designer cannot fix because the digits are not theirs to see.
-
-    AND IT IS ACCEPTED BY SHAPE, NOT BY THE PRESENCE OF AN X. See ``aadhaar_or_mask_error`` for
-    why ``is_masked_aadhaar`` is the wrong accept-arm HERE while being right where it is used:
-    that one is applied where the masked value is DROPPED before the write, and whatever this one
-    accepts is STORED and then masked.
-
-    A value that normalises to nothing at all (a box holding only dashes) is refused rather than
-    accepted: ``coerce_value`` has already established the box is non-empty, so answering "no
-    number here, nothing to check" would store the dashes under a declared format.
-
-    ── WHAT THIS DOES *NOT* CLOSE, MEASURED AND WRITTEN DOWN RATHER THAN LEFT TO BE FOUND AGAIN ──
-    A designer can TYPE OR PASTE "XXXX XXXX 1234" into this box and it is accepted, because that is
-    byte-for-byte what hydration writes and this function cannot tell the two apart. ``mask_aadhaar``
-    is idempotent, so it stores unchanged, and the report prints it indistinguishably from a real
-    masked number — an identity number in a ministry document whose digits nobody ever read off a
-    card. The exposure is NARROWED from what it was (before ``store_masked`` was qualified, any
-    fourteen characters ending in four digits became a well-formed mask) to exactly this: eight
-    upper-case X's and four digits, typed by hand.
-
-    IT CANNOT BE CLOSED HERE, AND THE REASON IS STRUCTURAL. The only thing that separates a
-    hydrated mask from a typed one is what the row held BEFORE the save — accept the mask when it
-    equals ``previous[key]``, refuse it otherwise — and ``coerce_value`` is handed one field's value
-    and nothing else. ``previous`` lives two layers up in ``save_stage``, and threading it into the
-    one door every save goes through is a signature change to ``coerce_value`` and ``validate_entry``
-    that only this one field would read. ``entry_provenance``'s hydration stamp is the other
-    discriminator and ``report_builder`` does not consult it. Both are owner-sized calls, so what is
-    here instead is: the client says on the box that only four digits are kept (``FieldInput``, and
-    it now says so over a mask as well), and this paragraph so the next reader does not have to
-    re-derive that the gap is deliberate rather than missed.
-    """
     if normalize_aadhaar(text) is None:
         return aadhaar_error(text)
     return aadhaar_or_mask_error(text)
 
 
 def _pehchan_format_error(text: str) -> str | None:
-    """The record path's Pehchan rule: alphanumeric, 4-32 characters, one spelling per card.
-
-    DECLARED ON NO FIELD TODAY, DELIBERATELY, AND THIS PARAGRAPH IS THE REASON — do not read the
-    entry in :data:`_FORMATS` as an invitation to attach it to ``participant.artisanCardNo``.
-    That box carries a MASK from hydration ("XXXX XXXX 3456"), and ``pehchan_error`` ACCEPTS a
-    mask: separators come off, fourteen alphanumerics remain, comfortably inside the 4-32 window,
-    and there is no checksum to fail. ``schemas/records.py`` records that this exact acceptance
-    once stored a mask over a real card number — 200 OK, revision recorded, regulated identifier
-    gone. So a ``PEHCHAN`` format on that field would be a no-op that LOOKS like protection,
-    which is worse than the gap it appears to close.
-
-    Attaching it needs its own mask-aware predicate (the ``aadhaar_or_mask_error`` shape) and an
-    owner decision about ``IdentityCardCapture kind="PEHCHAN"``, whose entire purpose is to write
-    full numbers into that box. Pinned by
-    ``test_the_pehchan_predicate_accepts_a_mask_which_is_why_no_field_declares_it``.
-    """
     normalised = normalize_pehchan(text)
     if normalised is None:
         return pehchan_error(text)
@@ -277,24 +119,12 @@ def _pehchan_format_error(text: str) -> str | None:
 
 
 def _pincode_format_error(text: str) -> str | None:
-    """``address.pincode_error``: six ASCII digits, never a leading zero.
-
-    Checked against the NORMALISED value, which is what makes this safe to declare on boxes that
-    already hold "768 029" — typed exactly that way by somebody reading a card aloud, and named
-    in ``participant.pincode``'s own comment as the value a tighter rule would start refusing on
-    a stage a designer is trying to submit. Separators come off before the check and the STORED
-    string is left as typed, so nothing already in the column changes shape.
-    """
     normalised = normalize_pincode(text)
     if normalised is None:
         return pincode_error(text)
     return pincode_error(normalised)
 
 
-#: WHICH FUNCTION ENFORCES WHICH FORMAT. Three of the five reuse the record path's own validator
-#: rather than restating its rule, which is the entire point: Aadhaar and Pehchan come from
-#: ``artisan_identity``, the PIN code from ``address``. Only email and phone had to be written,
-#: because the record path had no server-side rule for either (``contact_formats``).
 _FORMATS: dict[TextFormat, Callable[[str], str | None]] = {
     TextFormat.NONE: _no_format_error,
     TextFormat.EMAIL: _email_format_error,
@@ -304,11 +134,6 @@ _FORMATS: dict[TextFormat, Callable[[str], str | None]] = {
     TextFormat.PINCODE: _pincode_format_error,
 }
 
-# AT IMPORT, NOT AT THE FIRST SAVE THAT HAPPENS TO USE IT. A member with no entry here would
-# serialise to both clients as a declared format, be published in the digest, appear in the
-# bundled Android asset — and enforce nothing, which is the silent failure this feature exists to
-# end, rebuilt inside the feature. `validate_registry` catches a field declaring one too, but only
-# the tests run that; this runs on every process that imports the registry, including the server.
 _unenforced = [member.name for member in TextFormat if member not in _FORMATS]
 if _unenforced:
     raise RuntimeError(
@@ -320,37 +145,16 @@ if _unenforced:
 
 
 class Cardinality(str, Enum):
-    SINGLETON = "SINGLETON"  # one per workshop: the stage's own fields
-    COLLECTION = "COLLECTION"  # many per workshop: sketches, prototypes, respondents
+    SINGLETON = "SINGLETON"
+    COLLECTION = "COLLECTION"
 
 
-# How wide a REF field's picker casts its net. Declared as plain strings rather than an Enum
-# because the value crosses the wire to three clients and back, and a token is easier to keep
-# identical in Kotlin and TypeScript than an enum member is.
-#
-# WORKSHOP means "only records already linked to the Workshop this design workshop belongs to".
-# That is what turns the artisan picker from a scroll through a cluster's several hundred
-# documented artisans into the dozen who are actually in the room — which is the difference
-# between a dropdown a designer uses and one they give up on and retype around.
-#
-# ALL means the whole table. Stage 3 is deliberately ALL: it is where the roster is BUILT, so
-# narrowing it to the roster would be circular and a designer could never add the artisan who
-# turned up on day two.
-#: ``FieldSpec.auto_number`` for an INT that numbers 1, 2, 3 … rather than ``PREFIX-NN``.
 AUTO_NUMBER_SEQUENCE = "#"
 
-#: What a ``computed_kind`` field counts.
-#:   ROSTER_COUNT      participant rows on stage 3
-#:   ROSTER_WOMEN      of those, the ones whose gender reads as female
-#:   ATTENDANCE_DAYS   the workshop days the participant was not marked absent on
-#:   ROSTER_COMPLETED  participants present on every workshop day
-#:   SURVEY_RESPONSES  stage 8 response rows plus the sittings of the workshop's market-survey forms
 COMPUTED_KINDS = frozenset(
     {"ROSTER_COUNT", "ROSTER_WOMEN", "ATTENDANCE_DAYS", "ROSTER_COMPLETED", "SURVEY_RESPONSES"}
 )
 
-#: ``FieldSpec.widget`` values. ATTENDANCE: the day numbers a participant was absent on, edited
-#: through stage 3's daily tick-list ("All present" by default).
 FIELD_WIDGETS = frozenset({"ATTENDANCE"})
 
 REF_SCOPE_WORKSHOP = "WORKSHOP"
@@ -365,188 +169,32 @@ class FieldSpec:
     type: FieldType
     tier: Tier = Tier.STANDARD
     required: bool = False
-    #: ONE short line under the box: only what the person needs to fill it (owner, 2026-10-17).
-    #: ``test_every_help_line_is_one_short_sentence`` holds it to 120 characters and one sentence.
     help: str = ""
-    #: Optional extra guidance, drawn behind a collapsed "i" disclosure beside the label on both
-    #: clients. Whatever is useful but not needed to fill the box goes here, never on ``help``.
-    #: Like ``help`` it is outside ``registry_version()``: rewording it invalidates no draft.
     details: str = ""
     unit: str = ""
-    enum: str = ""  # name of the shared list in ENUMS, for ENUM/MULTI_ENUM
-    ref_model: str = ""  # for REF: "Artisan", "Craft", or a Dw entity name
-    # THE TWO HALVES OF A CASCADING PICKER, and the reason a designer stops retyping records
-    # that are already in the database.
-    #
-    # ``ref_filter_by`` names another field OF THE SAME ENTITY whose chosen value narrows this
-    # one. ``existingProduct.productRef`` filters by ``artisanRef``, so once the artisan is
-    # picked the product dropdown holds that artisan's products and nothing else. Without it the
-    # product picker on a cluster with three hundred documented products is a list nobody reads
-    # to the end, and the designer types the product name in by hand — which is precisely the
-    # behaviour that leaves the report with a name and no join key, and the research data with
-    # no way to connect a workshop's baseline to the product record it was measured from.
-    #
-    # ``ref_scope`` is one of :data:`REF_SCOPES`. See the note there for why WORKSHOP and ALL
-    # are both needed and which stages want which.
+    enum: str = ""
+    ref_model: str = ""
     ref_filter_by: str = ""
     ref_scope: str = ""
     max_length: int = 0
-    #: For a multi-valued type (IMAGE_LIST, TAGS, MULTI_ENUM): how many entries it may hold.
-    #: 0 means ``DEFAULT_MAX_ITEMS``, which is what 35 of the registry's 37 multi-valued fields
-    #: still use; the two exceptions are stage 4's motif galleries, which declare 25. (This line
-    #: read "which is what every field in the registry uses today" until those two arrived — the
-    #: count is stated so the next reader can re-measure it instead of trusting it.) See that
-    #: constant for why an unbounded array is a permanent write amplified on every later read of
-    #: the stage. On a scalar field it is inert; ``max_length`` is that field's bound. On a multi
-    #: field ``max_length`` bounds ONE ENTRY, not the joined string.
     max_items: int = 0
-    #: For a multi-valued type: how many entries it must hold before the stage counts as COMPLETE.
-    #: 0 — every field in the registry but stage 4's two motif galleries — means no minimum.
-    #:
-    #: ── WHERE IT IS ENFORCED, AND THE THREE PLACES IT DELIBERATELY IS NOT ───────────────────────
-    #:
-    #: A minimum is scored in :func:`stage_completeness` and NOWHERE ELSE. It is not in
-    #: :func:`coerce_value`, not in :func:`validate_entry`, and therefore not on any save path —
-    #: which is the opposite of how ``max_items`` works one line up, and the asymmetry is the whole
-    #: design rather than an omission.
-    #:
-    #: A CEILING CAN REFUSE A SAVE BECAUSE THE DESIGNER CAN ALWAYS COMPLY WITH IT — they hold 21
-    #: photographs and the field takes 20, so there is a body the server will accept. A FLOOR
-    #: CANNOT: a designer with twenty photographs and five still to shoot has no body that
-    #: satisfies a minimum of twenty-five, so a floor on the write path is not a validation rule,
-    #: it is an instruction to lose the twenty. And it would be lost, twice over:
-    #:
-    #:   * Android's ``saveOrQueue`` does not queue a 4xx. A body the server refuses is a record
-    #:     DROPPED, not retried, so a designer in a village with no signal loses the stage.
-    #:   * On the ``submit=true`` path the loss is silent even with a connection. ``validate_entry``
-    #:     omits a field it errored on, and ``design_workshops.save_stage`` then restores that key
-    #:     from ``previous`` ("a rejected field must not destroy the value already stored under
-    #:     it") — so a minimum enforced there would REVERT the gallery to its last-saved contents
-    #:     and answer 422 after the transaction had already committed.
-    #:
-    #: Stage 4 is the fourth of twenty-two stages, so either failure blocks the whole workshop from
-    #: ever being saved. "Required" therefore means what it means everywhere else in this file: the
-    #: stage is not COMPLETE, the field is named in ``missing`` with its shortfall, the readiness
-    #: screen lists it and the report warns about it. Work in progress is never at risk.
-    #:
-    #: ── IT MAKES THE FIELD COUNT AS REQUIRED AT WHATEVER TIER IT SITS ───────────────────────────
-    #:
-    #: :func:`stage_completeness` counts a field declaring a minimum toward ``required_total``, so
-    #: ``is_complete`` goes false at 24 of 25. That is a DELIBERATE, NARROW EXCEPTION to
-    #: :func:`validate_registry`'s Rule 3 ("only BASIC fields may be required, or a workshop
-    #: without facilities can never complete"): the two galleries that declare one are STANDARD
-    #: tier and stay STANDARD, because promoting them would move the digest AND splice fifty
-    #: photographs into COMPACT_SUMMARY, whose whole description is "Basic-tier fields only". The
-    #: exception is safe only because a minimum is an owner's instruction about ONE NAMED GALLERY
-    #: rather than a tier-wide capture expectation — see ``validate_registry``, which refuses a
-    #: minimum it cannot satisfy, and ``StageCompleteness.percent``, whose docstring records that
-    #: the count is no longer BASIC-only.
     min_items: int = 0
     min_value: float | None = None
     max_value: float | None = None
     report_role: ReportRole = ReportRole.KEY_VALUE
-    column_width_pct: float = 0.0  # hint for TABLE_COLUMN; 0 means share the remainder
-    caption_for: str = ""  # this field captions that media field
-    #: HOW THIS FIELD COMPUTES ITSELF when the designer leaves it blank, and the field keys it
-    #: computes FROM. Declared here rather than implemented in a client because several fields
-    #: already PROMISED it in their help text — "Leave blank to derive it from the start and end
-    #: dates" — and nothing anywhere kept the promise: the value stayed empty, in a report, with
-    #: the form having said it would be filled in.
-    #:
-    #: One declaration, read by the web form, the Android form and the server's own save path, so
-    #: the number a designer watches appear is the number that is stored. See ``derive_value``.
-    derived_kind: str = ""  # DAYS_BETWEEN | PRODUCT | SUM
+    column_width_pct: float = 0.0
+    caption_for: str = ""
+    derived_kind: str = ""
     derived_from: tuple[str, ...] = ()
-    #: THIS FIELD MAY ONLY EVER STORE THE MASK OF AN IDENTITY NUMBER, WHATEVER IS POSTED TO IT.
-    #:
-    #: ── THE DEFECT THIS ENDS, WHICH WAS A DECISION ENFORCED BY A HELP SENTENCE ──────────────────
-    #:
-    #: The owner decided on 2026-08-24 that both of an artisan's identity numbers cross into a
-    #: design report MASKED TO THEIR LAST FOUR DIGITS, and ``participant.aadhaarNumber`` was added
-    #: to carry the Aadhaar half. The carry itself was masked correctly — ``hydrate_entries`` copies
-    #: ``mask_identity_number(...)`` — but nothing anywhere refused an unmasked value in the box
-    #: AFTERWARDS, and one client actively produced one: Android's ``DwIdentityOcr`` matches
-    #: identity fields PER FIELD, ``identityKindFor`` answers AADHAAR for this key, and its bundled
-    #: Verhoeff-checked recogniser wrote a bare twelve-digit number into ``DwStageEntry.data`` in a
-    #: single tap. The registry's own help text INVITED the same by hand on every client ("If you
-    #: hold the full number you can type it in over the mask; your answer is kept"), and a design
-    #: workshop's stage reads do NOT pass through ``records._redact_sensitive``, so what landed was
-    #: a permanent unmasked copy of a national identifier — hydration copies at save time and the
-    #: report never re-resolves — readable by every ``DesignWorkshopViewer`` grantee. The decision
-    #: said "masked"; the code guaranteed it only for the value the SERVER wrote.
-    #:
-    #: ── WHY A MASK AND NOT A REFUSAL ────────────────────────────────────────────────────────────
-    #:
-    #: The other candidate was to refuse any value ``artisan_identity.aadhaar_error`` accepts as a
-    #: full number. That would contradict the second half of the same instruction — "the designer
-    #: must be able to fill it when it is absent … a designer entitled to the full number can type
-    #: over the mask" — by making the one entry route a 422. Masking honours both sentences at once:
-    #: the box takes what the designer types, and what is STORED is the four digits the report was
-    #: ever going to print. The box therefore visibly changes to ``XXXX XXXX 9012`` on the save, and
-    #: the help text says so before a digit is typed rather than after.
-    #:
-    #: ── WHERE IT IS APPLIED, AND WHERE IT DELIBERATELY IS NOT ───────────────────────────────────
-    #:
-    #: Applied in :func:`coerce_value`'s scalar-text branch, which is the one door every save goes
-    #: through (``validate_entry`` re-coerces EVERY field on EVERY save), AFTER the ``max_length``
-    #: check so an over-long answer still gets the field's own refusal rather than being silently
-    #: shortened into a mask. ``mask_identity_number`` is idempotent, so the mask hydration wrote
-    #: survives re-coercion unchanged.
-    #:
-    #: ``participant.artisanCardNo`` is deliberately NOT declared this way, and it is not an
-    #: oversight. The Pehchan card number has a capture control built for it on both clients
-    #: (``IdentityCardCapture kind="PEHCHAN"``) whose whole purpose is to write the full number a
-    #: designer is holding, and masking it would un-ship that control rather than enforce a
-    #: decision — no decision has been made about it. The asymmetry between the two boxes is
-    #: therefore real and is written down at both fields.
-    #:
-    #: PUBLISHED to the clients as ``storeMasked`` and PART OF :func:`registry_version`, because it
-    #: is behaviour rather than wording: a phone with no signal that did not know about the flag
-    #: would go on letting a designer type twelve digits believing they were kept.
     store_masked: bool = False
-    #: WHAT SHAPE THIS FIELD'S VALUE MUST HAVE — an email address, an Indian phone number, an
-    #: Aadhaar number, a PIN code. One declaration, enforced by :func:`coerce_value` (the one door
-    #: every save goes through), published to both clients as ``format``, and part of
-    #: :func:`registry_version`.
-    #:
-    #: See :class:`TextFormat` for the defect this ends and for why the declaration lives here
-    #: rather than in a client. In short: the report prints the STAGE copy of a mirrored fact, and
-    #: for that copy the server checked a length and nothing else — so a typo in the shape of a
-    #: government identity number reached a ministry document, an unbounded string saved as an
-    #: email address, and the same registry field was refused by Android and accepted by the web.
-    #:
-    #: ENFORCED BEFORE :attr:`store_masked` MASKS, WHICH IS FORCED AND NOT MERELY TIDY.
-    #: ``mask_aadhaar`` takes the last four characters of ANYTHING once separators come off, so
-    #: masking first would MANUFACTURE the defect this is here to prevent: the value is a
-    #: well-formed mask by the time anybody looks at it, and nothing downstream can tell it from a
-    #: real one. ``validate_registry`` refuses ``store_masked`` without ``AADHAAR`` for that
-    #: reason — the flag on its own is ``mask(anything)``.
-    #:
-    #: May only be declared on a type that reaches the branch enforcing it (TEXT, LONG_TEXT, URL,
-    #: PHONE, EMAIL); ``validate_registry`` refuses the rest, for the same reason and in the same
-    #: words as the ``store_masked`` rule beside it.
     text_format: TextFormat = TextFormat.NONE
-    phase_note: str = ""  # a reviewer comment from the source document
+    phase_note: str = ""
     deprecated: bool = False
     replaced_by: str = ""
-    #: NUMBERING A NEW ROW (owner, 2026-10-17: "S-01", "P-01", "D-01" per row type). A prefix
-    #: numbers a TEXT code as ``PREFIX-NN``; :data:`AUTO_NUMBER_SEQUENCE` numbers an INT. Both
-    #: clients fill it when a row is ADDED and never touch an existing row, so a number a designer
-    #: typed or a row that already exists is never renumbered. Still editable. See
-    #: :func:`next_auto_number`, which both clients port.
     auto_number: str = ""
-    #: Number within the rows that share this sibling's value (iterations per prototype).
     auto_number_within: str = ""
-    #: A DATE that a new row takes from the workshop's start date and the day number held in this
-    #: sibling INT field (stage 3's schedule). Editable like any date.
     auto_date_from_day: str = ""
-    #: A count the server works out from other rows and STORES ON SAVE, replacing the typed box —
-    #: see :data:`COMPUTED_KINDS` and ``app.services.stage_computed``. Clients draw it read-only.
-    #: When nothing can be counted (no roster yet) the stored value is left as it was, so a box
-    #: typed on an older workshop stays readable.
     computed_kind: str = ""
-    #: Drawn by a dedicated control rather than the generic box (:data:`FIELD_WIDGETS`). Clients
-    #: that do not know the widget fall back to the ordinary box for the field's type.
     widget: str = ""
 
     @property
@@ -560,21 +208,14 @@ class FieldSpec:
 
 @dataclass(frozen=True, slots=True)
 class EntitySpec:
-    """One record shape within a stage.
-
-    A stage's SINGLETON entity holds its one-per-workshop answers. Its COLLECTION entities are
-    the repeating records — every sketch, every prototype, every survey respondent — each stored
-    as its own row so they can be counted, filtered and joined rather than buried in an array.
-    """
-
-    key: str  # stable storage key, e.g. "sketch"
-    name: str  # PascalCase display/model name, e.g. "DwSketch"
+    key: str
+    name: str
     cardinality: Cardinality
     title: str
     fields: tuple[FieldSpec, ...]
-    parent: str = ""  # parent entity key, for nesting (iteration under prototype)
+    parent: str = ""
     description: str = ""
-    label_field: str = ""  # which field titles a row in a list; defaults to the first text
+    label_field: str = ""
 
     @property
     def required_fields(self) -> tuple[FieldSpec, ...]:
@@ -586,13 +227,13 @@ class EntitySpec:
 
 @dataclass(frozen=True, slots=True)
 class StageSpec:
-    number: int  # 1-22, the source document's own numbering
-    key: str  # UPPER_SNAKE, stable
+    number: int
+    key: str
     title: str
     purpose: str
     entities: tuple[EntitySpec, ...]
     notes: str = ""
-    optional_stage: bool = False  # the reviewer marked this one as possibly droppable
+    optional_stage: bool = False
 
     @property
     def singleton(self) -> EntitySpec | None:
@@ -606,52 +247,7 @@ class StageSpec:
         return next((e for e in self.entities if e.key == key), None)
 
 
-# --------------------------------------------------------------------------------------
-# Canonical enumerations
-# --------------------------------------------------------------------------------------
-
-# Shared so that "cotton" recorded against a raw material in stage 5 is the same token as the
-# one in a stage 17 cost sheet. Values are UPPER_SNAKE; the label shown to a designer and
-# printed in the report is the dict value, because a report that says "TIE_AND_DYE" is not a
-# report anyone will submit to a ministry.
 ENUMS: dict[str, dict[str, str]] = {
-    # WHAT KIND OF WORKSHOP THIS IS — the first controlled vocabulary in this registry that
-    # classifies the RECORD rather than something inside it, and the reason it did not exist until
-    # 2026-08-30 is worth writing down so nobody concludes it was an oversight in the other
-    # direction.
-    #
-    # ── WHY `DesignWorkshop` HAD NO TYPE AT ALL ────────────────────────────────────────────────
-    #
-    # There IS a `workshopType` in this product and it is on the OTHER table. `Workshop` — the
-    # legacy field-documentation visit — carries `enum WorkshopType { DESIGN_PROTOTYPE, OTHER }`
-    # (`schema.prisma:76`), and its own column comment says what it is for: deciding whether a
-    # legacy row appears in the design-workshop prefill picker. Two members, one narrow job. It was
-    # never a taxonomy of workshop kinds, and reading it as one is the mistake this entry exists to
-    # stop the next reader making. It is also PROFESSOR-gated by `can_manage_workshops`, so a
-    # DESIGNER — rank 35 — cannot operate the only type control the product had.
-    #
-    # ── WHY THESE SIX ─────────────────────────────────────────────────────────────────────────
-    #
-    # Owner's decision, 2026-08-30, from four options put to them. The list is scheme-shaped
-    # because that is how these workshops are actually commissioned and how stage 1's `schemeName`
-    # already describes them in its own help text ("The scheme funding the workshop, e.g. National
-    # Handicrafts Development Programme"). `schemeName` stays: it is the free-text name of the
-    # specific sanctioning scheme, and this is the closed kind the sanction falls under. One is
-    # countable and the other is quotable, and collapsing them would lose whichever half was
-    # dropped.
-    #
-    # OTHER IS PRESENT AND IS NOT A HEDGE. Unlike `PROBLEM_TYPE` — which is closed with no OTHER
-    # on the stated grounds that its three members ARE the categories — this list is a sample of a
-    # space that keeps growing as schemes are announced, and a designer whose workshop is none of
-    # the five must be able to file it truthfully rather than pick the nearest wrong one. A
-    # workshop parked under OTHER is still findable; one mis-filed under "Skill Upgradation" is
-    # not.
-    #
-    # ── IT IS PROMOTED, SO IT IS FILTERABLE ───────────────────────────────────────────────────
-    #
-    # `PROMOTED_COLUMNS` copies it onto `DesignWorkshop.workshopKind`, which is what lets the
-    # workshop list narrow by it without opening every stage document. That map's own header says
-    # adding an entry is a migration — one shipped with this change.
     "WORKSHOP_KIND": {
         "DESIGN_PROTOTYPE_DEVELOPMENT": "Design & Prototype Development",
         "SKILL_UPGRADATION": "Skill Upgradation",
@@ -684,23 +280,6 @@ ENUMS: dict[str, dict[str, str]] = {
         "CHEMICAL_DYE": "Chemical dye",
         "OTHER": "Other",
     },
-    # The material family's opposite number, and the list stage 5 had been missing.
-    #
-    # `tool.toolType` beside it has been free TEXT since the registry was written, and the eleven
-    # rows in this repository that filled the box in hold six different spellings — "Hand tool",
-    # "Loom", "Loom accessory", "Hand frame", "Hand-turned warping frame", "Vessel over a
-    # firewood hearth" — of which four are two categories under four names. So "how many clusters
-    # weave on a pit loom" was unanswerable across two workshops, which is exactly the failure
-    # rule 2 in this module's docstring describes.
-    #
-    # EVERY MEMBER IS TRACEABLE TO SOMETHING THE REPOSITORY ALREADY HOLDS, not to a taxonomy of
-    # world crafts invented at this keyboard: FIVE of them generalise the six spellings a designer
-    # actually typed — FRAME covers both "Hand frame" and "Hand-turned warping frame", which is the
-    # collapse the whole list exists to make — and KILN and MOULD are the two remaining categories
-    # `toolType`'s own help text has been asking for without ever offering, it having read, in full,
-    # "Hand tool, loom, kiln, mould, and so on." before this change.
-    # Nothing is guessed at for a craft this database has never documented — OTHER, plus the free
-    # text field that stays beside this one, carries those without pretending to classify them.
     "TOOL_TYPE": {
         "HAND_TOOL": "Hand tool",
         "LOOM": "Loom",
@@ -711,23 +290,6 @@ ENUMS: dict[str, dict[str, str]] = {
         "MOULD": "Mould / die / block",
         "OTHER": "Other",
     },
-    # THE SOURCE RECORD'S OWN QUESTION, WHICH IS NOT THIS REGISTRY'S QUESTION.
-    #
-    # A mirror of the Prisma `ProductType` enum, member for member, and the only list in `ENUMS`
-    # that exists to receive a value from outside rather than to be answered by a designer. It was
-    # added because `PRODUCT_CATEGORY` below could not honestly receive four of ProductType's six
-    # members: a FINISHED_GOOD may be a saree or a bag, and a SAMPLE is a saree that happens not to
-    # be for sale, so `_PRODUCT_TYPE_TO_CATEGORY` maps them to nothing. Before this list existed
-    # that meant the record's answer was simply lost at the picker.
-    #
-    # THE TWO LISTS ARE NOT REDUNDANT AND MUST NOT BE MERGED. "What kind of thing is this record?"
-    # and "what IS this product?" are different questions with different answers, and a workshop
-    # row now carries both: `existingProduct.recordType` from the record, `existingProduct.category`
-    # from the designer (hydrated only for the two tokens that genuinely mean the same thing).
-    # Merging them would re-create the guess this arrangement exists to avoid.
-    #
-    # Keep the tokens identical to `prisma/schema.prisma`'s `enum ProductType`. `test_reference_
-    # carry.py` reads the schema file and fails if they drift.
     "PRODUCT_TYPE": {
         "FINISHED_GOOD": "Finished good",
         "SAMPLE": "Sample",
@@ -736,15 +298,6 @@ ENUMS: dict[str, dict[str, str]] = {
         "PACKAGING": "Packaging",
         "OTHER": "Other",
     },
-    # Who made the tool, mirroring Prisma's `MakerType` member for member — the same arrangement
-    # and the same rule as `PRODUCT_TYPE` above.
-    #
-    # NOT the same question as `tool.source` ("Where obtained"), which is why that box keeps its
-    # own free text and is NOT filled in from a chosen record: a loom bought second-hand from a
-    # cooperative was made by a carpenter, and answering "where obtained: carpenter" would be a
-    # plausible wrong sentence in a submitted report. `ToolDocumentation` has no column for where a
-    # tool was obtained, and inventing an answer from the nearest column is exactly the failure the
-    # translation tables in `design_workshops` are written to refuse.
     "MAKER_TYPE": {
         "ARTISAN": "The artisan themselves",
         "LOCAL_BLACKSMITH": "Local blacksmith",
@@ -774,26 +327,8 @@ ENUMS: dict[str, dict[str, str]] = {
     "TRADITION_TYPE": {
         "TRADITIONAL": "Traditional",
         "CONTEMPORARY": "Contemporary",
-        # The owner's wording (2026-10-19), the same three labels as the tool form's shared list
-        # in app/data/standard_values.json.
         "TRANSITIONAL": "Transitional (Hybrid)",
     },
-    # Whether a step is one step in the sequence or a BRACKET around several of them, mirroring
-    # Prisma's `ProcessStepType` member for member — the same arrangement as `PRODUCT_TYPE` and
-    # `MAKER_TYPE` above, and the labels are the ones the record page's own "Add Another Step"
-    # popover prints ("Sequential" / "Group of activities") so the two surfaces read the same words.
-    #
-    # THE DISTINCTION IS LOAD-BEARING FOR A READER COUNTING STEPS, which is why `_step_lines` appends
-    # " (group)" to a documented group's line. Until `processStep.stepType` existed, the only place it
-    # landed was inside that flattened string on the HYDRATED singleton: a designer who observed
-    # three parallel activities bracketed together at the workshop had no box to say so, and "how
-    # many clusters group their dyeing activities" was unanswerable across workshops — the same
-    # failure written out above `TOOL_TYPE`.
-    #
-    # A DESIGNER-ANSWERED FIELD AND NOT A CARRY, deliberately: `processStep.processRef` points at a
-    # Process, a Process has MANY steps, and hydration cannot choose which source step a row
-    # corresponds to. It is the same reason `processStep.name` receives the process's name and not a
-    # step's, and it is why no mapping pair exists for this list.
     "PROCESS_STEP_TYPE": {
         "SEQUENTIAL": "Sequential",
         "GROUP": "Group of activities",
@@ -829,26 +364,6 @@ ENUMS: dict[str, dict[str, str]] = {
         "REVISE": "Revise and resubmit",
         "PENDING": "Pending review",
     },
-    # WHICH AUDIENCE PASSED JUDGEMENT, which is a different question from what they decided and
-    # was previously unanswerable. A sketch or a prototype is reviewed twice by design: first by
-    # the people who were in the room — the workshop's own designers, the master craftsperson,
-    # the artisans who made it — and again by the whole pool of designers on the platform, most of
-    # whom have never seen the cluster. Both write a review row into the same entity, and until
-    # this list existed the two were indistinguishable, so a report could not say whether
-    # "Selected" was the room's verdict or the pool's, and a mean score could not be computed over
-    # one round without silently including the other.
-    #
-    # THE SECOND ROUND OPENS PER PIECE, on `sketch.peerRoundClosedAt` or
-    # `prototype.peerRoundClosedAt` — the one column `design_ratings.pool_is_open` reads off
-    # whichever row it was handed. This note used to say the pool round begins "once prototypes are
-    # finalised"; that was the owner's phrase for when the second level generally starts, not a
-    # gate anything in the code reads, and stated as fact it is false of a sketch: a sketch set
-    # aside and never prototyped reaches the pool on its own date, with no prototype in existence.
-    #
-    # TWO MEMBERS AND NO "OTHER". A review is filed by somebody standing in one of exactly two
-    # relations to the workshop, and the server knows which — an OTHER member would only ever be
-    # filled in by a client that had failed to work out the answer, and would then poison the very
-    # split the field exists to make. A third round, if one is ever wanted, is a new token here.
     "REVIEW_ROUND": {
         "PEER": "Workshop peers",
         "POOL": "All designers",
@@ -915,28 +430,13 @@ ENUMS: dict[str, dict[str, str]] = {
         "A4": "A4",
         "LETTER": "Letter",
     },
-    # Built from :data:`app.services.report_theme.ACCENT_PRESETS` rather than written out here,
-    # because the twelve names and the twelve hex values must not be able to disagree: a swatch
-    # labelled "Maroon" that stores a token this registry knows and the theme module does not
-    # would validate, save, and then generate a report in the default indigo with no error
-    # anywhere. One list, one place. The import is safe in this direction — ``report_theme``
-    # imports only ``report_model``, which imports nothing of ours.
     "REPORT_ACCENT_PRESET": dict(ACCENT_PRESET_ENUM),
-    # Same rule, same file: one typeface list, read by both forms and the validator.
     "REPORT_FONT": dict(FONT_PRESET_ENUM),
     "SEVERITY": {
         "LOW": "Low",
         "MEDIUM": "Medium",
         "HIGH": "High",
     },
-    # What an iteration was fighting, from the source document's own three words: it lists stage
-    # 14's Standard capture as "material/process/design problem".
-    #
-    # CLOSED, WITH NO "OTHER", which is a departure from every open-ended list above and is the
-    # honest reading of the requirement: these three are not a sample of the categories, they are
-    # the categories, and an OTHER member would simply invite the free text back into the one
-    # field the whole point was to make countable. A problem that is genuinely none of the three
-    # is described in `problemType` beside it, which is still there and still free text.
     "PROBLEM_TYPE": {
         "MATERIAL": "Material",
         "PROCESS": "Process",
@@ -953,40 +453,14 @@ ENUMS: dict[str, dict[str, str]] = {
 
 
 def enum_label(enum_name: str, value: str) -> str:
-    """The printable label for a stored token, falling back to the token itself.
-
-    Falling back rather than raising is deliberate: a draft written by a phone one release ahead
-    of the server can carry a token this build has never heard of, and printing the raw token in
-    the report is better than failing the export a designer is waiting on in the field.
-    """
     return ENUMS.get(enum_name, {}).get(value, value)
 
 
-# --------------------------------------------------------------------------------------
-# Promoted columns — the hybrid store's queryable half
-# --------------------------------------------------------------------------------------
-
-# Fields copied onto typed columns of DesignWorkshop whenever a stage is saved. These are the
-# axes a researcher actually filters and sorts on, and the ones a workshop list has to show
-# without opening every JSON document. Everything else stays in the stage's JSON.
-#
-# Keyed by "entityKey.fieldKey", not by field key alone. Field keys are unique only WITHIN an
-# entity — `startDate` is legitimately both the workshop's and a prototype's, `designerName` is
-# both the workshop's designer and the person credited on a final product — so an unscoped map
-# has two possible sources for one column and will silently pick whichever entity is saved last.
-#
-# Adding an entry here is a migration; removing one is not. Keep the list short on purpose:
-# this is an index, not a second copy of the data.
 PROMOTED_COLUMNS: dict[str, str] = {
     "workshopSetup.workshopTitle": "title",
-    # ADDED 2026-08-30 WITH MIGRATION `20260830150000_design_workshop_kind`. It is promoted for the
-    # one reason this map exists — the workshop list has to narrow by it without opening every JSON
-    # document — and it is the axis the owner asked for a dropdown on, so it will be narrowed by.
     "workshopSetup.workshopKind": "workshopKind",
     "workshopSetup.schemeName": "scheme",
     "workshopSetup.craftName": "craftName",
-    # ADDED 2026-10-20 WITH MIGRATION `20261104090000_craft_master_list`: the master-list craft the
-    # workshop is about, so the list, the coverage map and search can follow the link, not the text.
     "workshopSetup.craftRef": "craftId",
     "workshopSetup.clusterName": "clusterName",
     "workshopSetup.state": "state",
@@ -1002,11 +476,6 @@ PROMOTED_COLUMNS: dict[str, str] = {
 
 
 def promoted_values(entity_key: str, data: dict[str, Any]) -> dict[str, Any]:
-    """The typed-column updates implied by saving ``entity_key``'s data.
-
-    Returns ``{column name: value}``. An entity that promotes nothing yields an empty dict, so
-    the caller can apply this unconditionally on every stage save.
-    """
     out: dict[str, Any] = {}
     for path, column in PROMOTED_COLUMNS.items():
         source_entity, _, field_key = path.partition(".")
@@ -1015,61 +484,7 @@ def promoted_values(entity_key: str, data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# --------------------------------------------------------------------------------------
-# Reference hydration — which display fields a chosen record copies onto the row
-# --------------------------------------------------------------------------------------
-
-# WHICH FIELDS A CHOSEN RECORD WRITES ONTO THE ENTRY, keyed by "entityKey.refFieldKey" and
-# mapping the reference's own data keys to the entity's field keys. The two vocabularies are
-# deliberately not assumed to match: a tool's `usedFor` comes from `processUsedIn`, a product's
-# single photograph seeds a gallery, and a participant's `specialisation` is really the craft
-# they are documented under.
-#
-# THIS IS DENORMALISATION, ON PURPOSE, AND IT IS NOT A CACHE.
-#
-# A workshop report is a historical document. It is generated months after the workshop, often
-# years after, and submitted to an office that keeps it. The artisan record it was built from is
-# live data in a different part of this system: it gets corrected, merged into a duplicate
-# discovered later, or deleted outright when a researcher cleans up a double entry. If the
-# report resolved the name through the id at render time, every one of those perfectly ordinary
-# edits would silently rewrite a submitted document — and a deletion would render it as a blank
-# cell in a participant table, which is worse than useless because the table is the proof of who
-# attended.
-#
-# So the name is COPIED onto the entry at save time and the report prints the copy. The id stays
-# beside it and is never removed: it is the join key, and it is what makes "every workshop this
-# artisan has attended" and "did the products we prototyped in 2026 still sell in 2028"
-# answerable at all. The copy is what the document says; the id is what the research follows.
-# Losing either one loses a different half of the record.
-#
-# ── WHY IT LIVES IN THE REGISTRY AND NOT BESIDE `hydrate_entries` ──────────────────────────
-#
-# It was declared in ``design_workshops``, next to the code that applies it, which put it out of
-# reach of two things that need it. ``validate_registry`` below now refuses a mapping whose
-# target is not a field of the entity — a rename that used to hydrate NOTHING, silently, because
-# ``hydrate_entries`` skips a target it cannot resolve. And ``field_to_dict`` now PUBLISHES the
-# mapping to the clients, so the picker on a handset fills the row in by the server's rule
-# instead of by matching key names. Matching names is not a smaller version of this table, it is
-# a different and wrong one: on ``existingProduct`` the reference's ``data["name"]`` is the
-# ARTISAN's name under ``artisanRef`` and the PRODUCT's name under ``productRef``, and the entity
-# has a ``name`` field of its own that means the product — so a name-matching client writes a
-# participant's name into a ministry report's product table, and the only-fill-blanks rule then
-# refuses to correct it for ever.
 REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
-    # ── THE CRAFT RECORD, IN FULL ────────────────────────────────────────────────────────────
-    #
-    # Two of the five things the crafts page collects used to cross. The argument for refusing the
-    # other three is written out, and answered, above `REFERENCE_MODELS["Craft"].data` — the short
-    # version is that "this value must not overwrite the designer's four cover fields" is a reason
-    # for a box of its own, not a reason for silence, and the tool and product mappings had been
-    # carrying a record's free-text place beside the workshop's own answers all along.
-    #
-    # `craftDescription` lands on `documentedCraftNotes` and NOT on stage 4's `craftIntroduction`,
-    # for the reason `documentedProcessNotes` exists: `craftIntroduction` is the REQUIRED narrative
-    # the designer writes about the cluster's craft as they observed it, and this is what a
-    # researcher wrote about the craft months earlier somewhere else. Only-fill-blanks would put the
-    # second where the first belongs on every workshop whose designer had not typed yet, and no
-    # reader of the .docx could tell which author they were reading.
     "workshopSetup.craftRef": {
         "craftName": "craftName",
         "craftLocalName": "craftLocalName",
@@ -1077,54 +492,15 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "craftPlace": "craftPlace",
         "craftDescription": "documentedCraftNotes",
         "craftDocumentedOn": "craftDocumentedOn",
-        # WHERE the craft was documented, beside WHEN. `craftRef` is ALL_SCOPE, so a linked craft may
-        # belong to another cluster's study — which is legitimate reuse and only readable if it is
-        # printed. See the `workshop` include on `REFERENCE_MODELS["Craft"]`.
         "craftDocumentedAtWorkshop": "craftDocumentedAtWorkshop",
-        # How much footage the craft record carries. A sentence counting the files, never the ids:
-        # `_media_note` gives both reasons (the gallery rule, and per-file entitlement).
         "craftMediaNote": "craftMediaNote",
         "craftPhoto": "craftPhoto",
         "craftPhotoCaption": "craftPhotoCaption",
     },
-    # ── THE ARTISAN RECORD, IN FULL ──────────────────────────────────────────────────────────
-    #
-    # This mapping carried eight of the artisan record's twenty-seven answerable facts, and the
-    # nineteen it dropped were not obscure ones: the artisan's address, their email, their PM
-    # Vishwakarma card, the do's and don'ts a researcher wrote down about how to work with them,
-    # and every part of the stated address except the village. A designer picked the artisan from
-    # the picker and then typed those back in from a printout — which is the behaviour the whole
-    # reference feature exists to end, arriving one level further in than anybody had looked.
-    #
-    # Read `REFERENCE_MODELS["Artisan"].data` in `design_workshops` alongside this: it carries the
-    # reasoning for the three carries that were decisions rather than transcriptions — the MASKED
-    # Pehchan card number, the STATED-not-provenance address and subject pin, and the two fields
-    # (`age`, `experienceYears`) that have no column on `Artisan` at all and are therefore blank on
-    # every record created since the artisan form stopped writing free metadata.
-    #
-    # `aadhaarNumber` USED TO BE THE ONE COLUMN DELIBERATELY NOT HERE IN ANY FORM, and that
-    # sentence stood on this line until 2026-08-24. The owner reversed it on that date, having been
-    # shown that a workshop's stage reads do not pass through `records._redact_sensitive`, that a
-    # DesignWorkshopViewer is a grantee, and that a hydrated entry is a permanent copy. BOTH
-    # identity numbers now cross, BOTH masked to their last four digits by the same helper. The
-    # earlier reasoning is kept rather than deleted — at `REFERENCE_MODELS["Artisan"].data` and in
-    # full above `participant.aadhaarNumber` in `stage_definitions` — because a decision whose
-    # argument has been erased reads as though nobody ever weighed it.
     "participant.artisanRef": {
         "name": "name",
         "localName": "localName",
         "specialisation": "specialisation",
-        # THE FEEDER AND THE FIGURE, IN THAT ORDER. `craftStartDate` is the date the artisan began
-        # practising, `experienceYears` is the whole years since it — derived in the Artisan data
-        # lambda, not here, and not by `derive_value` either: this derivation reads a column on
-        # another model, and `save_stage` runs sibling-field derivation BEFORE hydration, so a
-        # registry derivation would print a blank for anybody who submitted on the same save that
-        # picked the artisan. See the precedence written out at that key.
-        #
-        # Both cross, deliberately, and this is where `age` differs: the workshop asks for an age
-        # and there is no birthday box on the participant entry, so `dateOfBirth` reaches the report
-        # only as the derived number. Here there IS a box for the date, because a derived figure in
-        # a submitted report whose basis is stated nowhere is worse than one that names it.
         "craftStartDate": "craftStartDate",
         "experienceYears": "experienceYears",
         "age": "age",
@@ -1133,19 +509,6 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "email": "email",
         "pehchanCardAvailable": "pehchanCardAvailable",
         "pehchanCardNumber": "artisanCardNo",
-        # THE SECOND MASKED NUMBER, added 2026-08-24 on the owner's reversal. Source key and
-        # target key are the SAME word on purpose: `records._IDENTITY_KEYS` recognises
-        # `aadhaarNumber` by name, so an entry that ever reached `public_encode` would be re-masked
-        # rather than passed through, and `mask_identity_number` is idempotent so that second pass
-        # costs nothing. The target is KEY_VALUE and can never be promoted to a column — the
-        # participant table's six widths already total exactly 100.
-        #
-        # AND THE TARGET DECLARES ``store_masked``, WHICH IS THE HALF THIS TABLE CANNOT GUARANTEE.
-        # A hydration mapping decides what the SERVER copies in; it says nothing about what a client
-        # writes over it afterwards, and only-fill-blanks means a client can. For one revision that
-        # was the whole gap between the decision and the code — Android's card reader supplying a bare
-        # twelve digits into the same box in one tap. ``coerce_value`` masks it on every save, so the
-        # mask now holds against both routes.
         "aadhaarNumber": "aadhaarNumber",
         "village": "village",
         "state": "state",
@@ -1157,35 +520,11 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "dos": "dos",
         "donts": "donts",
         "documentedOn": "documentedOn",
-        # THE OTHER HALF OF `documentedOn`'S OWN JOB. This is the one artisan picker declared
-        # ALL_SCOPE — a roster legitimately holds artisans documented at other workshops — so a
-        # printed roster could say when a row was documented and never where. See the `workshop`
-        # include on `REFERENCE_MODELS["Artisan"]`.
         "documentedAtWorkshop": "documentedAtWorkshop",
-        # What the record has attached beyond the single photograph below: audio introductions,
-        # video, documents. A sentence and never the ids — see `_media_note` for both reasons.
         "recordMediaNote": "recordMediaNote",
         "photo": "photo",
         "photoCaption": "photoCaption",
     },
-    # ── THE TOOL RECORD, IN FULL ─────────────────────────────────────────────────────────────
-    #
-    # Six of twenty-six. What a documented tool actually holds and this mapping used to drop: its
-    # English name, how many years it has been in use, who made it, whether it is traditional or
-    # modern, the improvements the artisan suggested for it, the remarks, the craft and place and
-    # artisan it was documented against, and every one of its measurements — eight of them since
-    # 2026-08-27, counted off the targets below: three converted from inch columns
-    # (`lengthCm`/`breadthCm`/`heightCm`) and five carried as recorded. Three of those five —
-    # thickness, weight, radius — the record states no unit for at all; the other two, height and
-    # width, are centimetres for any row saved since the tool form's cm/inch pairing and unknown for
-    # anything older, which is why the boxes still declare no unit and say so in their help text.
-    #
-    # `source` ("Where obtained") is NOT in this mapping and must not be added to it. It used to be
-    # declared with `fromref()`, whose help text promises the designer it will be filled in from
-    # the linked record — and `ToolDocumentation` has no column that answers it, so the promise was
-    # never kept and nothing anywhere noticed. The field is now declared with plain `f()`. Filling
-    # it from `maker` or from `place` instead would be a plausible wrong sentence in a submitted
-    # report; see `ENUMS["MAKER_TYPE"]` for that argument in full.
     "tool.toolRef": {
         "name": "name",
         "localName": "localName",
@@ -1203,252 +542,41 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "remarks": "remarks",
         "lengthCm": "lengthCm",
         "breadthCm": "breadthCm",
-        # THE THIRD CONVERTED FIGURE, 2026-08-27, AND THE PAIR WITHOUT WHICH IT IS COMPUTED AND
-        # THROWN AWAY. `ToolDocumentation.heightInches` did not exist until that day, so `heightCm`
-        # on this entity was a workshop-only box and this mapping stopped at two. The column landed
-        # (additive migration `20260827120000_tool_height_inches`) and `design_workshops`'s tool
-        # carry converts it; a produced key that no mapping consumes is exactly the orphan
-        # `validate_reference_carry` reports — "computed on every picker call and lands nowhere".
-        # `heightAsRecorded` below is a DIFFERENT column, the old unit-less `height`, which is why
-        # the tool has two heights here and the product has one.
         "heightCm": "heightCm",
-        # HOW THE THREE CONVERTED FIGURES ABOVE WERE ARRIVED AT. A sentence about the RECORD's own
-        # columns, not a label on the boxes — see `design_workshops._measurement_method_note` for why
-        # only that claim survives the only-fill-blanks rule, and `record_fields.METHOD_CLAUSES` for
-        # the two phrases it may use. Without it a vision model's estimate of a tool's length arrived
-        # on the entry stamped with the name of whoever saved the record.
         "measurementMethodNote": "measurementMethodNote",
         "heightAsRecorded": "heightAsRecorded",
         "widthAsRecorded": "widthAsRecorded",
         "thicknessAsRecorded": "thicknessAsRecorded",
         "weightAsRecorded": "weightAsRecorded",
         "radiusAsRecorded": "radiusAsRecorded",
-        # Every artisan the tool is ASSIGNED to, which the denormalised `artisanName` above cannot
-        # answer. See `_linked_artisan_names` for why both are carried.
-        # The record's own STATED address, in four boxes of its own. The free-text `place` above
-        # is the denormalised column and is unchanged; these are what the record page collects and
-        # what a reader needs to see that the thing was documented somewhere other than this
-        # cluster. Provenance coordinates never cross — see the model's `include`.
         "recordState": "recordState",
         "recordDistrict": "recordDistrict",
         "recordVillage": "recordVillage",
         "recordPincode": "recordPincode",
-        # The SUBJECT pin, which is the half of invariant 4 the stated-address carry left behind.
-        # The device's own fix is not here and never will be — see `_subject_point`.
         "subjectLocation": "recordSubjectLocation",
-        # The ordered making sequence and everything else on file, as a sentence. Never the ids.
         "recordMediaNote": "recordMediaNote",
         "usedByArtisans": "usedByArtisans",
         "documentedOn": "documentedOn",
         "photo": "photo",
         "photoCaption": "photoCaption",
     },
-    # ── THE DOCUMENTED PROCESS AS A WHOLE, WHICH IS NOT A ROW ────────────────────────────────
-    #
-    # Stage 5's `traditionalProcess` is the one-per-workshop overview above the steps table, and it
-    # is the home the note on `processStep.processRef` below identified for the two things a
-    # per-step row must not receive: the source process's own ordered sub-steps, and its
-    # pre-process flag. That note ends "The right home is the `traditionalProcess` singleton … but
-    # a singleton has no ref field to hydrate from" — so the singleton was given one, and this is
-    # it. The sequence prints ONCE, where a reader wants it, instead of inside every step or
-    # nowhere at all.
-    #
-    # `notes` lands on `documentedProcessNotes` and NOT on `processOverview`. `processOverview` is
-    # a REQUIRED rich-text narrative the designer writes about the cluster's process as they
-    # observed it at the workshop; the record's notes are what a researcher wrote about it months
-    # earlier somewhere else. Only-fill-blanks would put the second where the first belongs on
-    # every workshop whose designer had not typed yet, and no reader of the .docx could tell which
-    # they were reading.
     "traditionalProcess.processRef": {
-        # How much footage the record carries. A sentence rather than the ids — the gallery rule
-        # forbids seeding the designer's own photographs, and the record's files are gated per file.
         "recordMediaNote": "recordMediaNote",
         "name": "documentedProcessName",
         "notes": "documentedProcessNotes",
-        # STILL HERE, AND IT IS NOW THE SECOND WRITER OF `documentedFor` RATHER THAN THE ONLY ONE.
-        # `traditionalProcess.productRef` below writes the same box from the PARENT the designer
-        # actually picked. Two things made keeping this pair mandatory rather than tidy:
-        #
-        #  1. REMOVING `productName` FROM `Process.data` WOULD FALSE-FLAG THE WHOLE ARCHIVE.
-        #     `entry_provenance.canonical_divergence` re-resolves a stamped field by calling
-        #     `spec.data(rec, photo)` and reading `source.get(stamp["refKey"])`. Every
-        #     `documentedFor` hydrated before today carries `refModel="Process"`,
-        #     `refKey="productName"` — so a lambda that stopped producing that key would answer
-        #     `canonical=None` against a populated `stored` and report EVERY such entry as
-        #     `diverged` to an admin, for ever. That is the failure `_media_note`'s docstring and the
-        #     divergence view's own comment each record ("an audit that flags everything flags
-        #     nothing"), and it is unrecoverable without a data migration over stamps.
-        #  2. `validate_reference_carry` REFUSES A PRODUCED-BUT-UNCONSUMED KEY, and `_CARRY_EXEMPT`
-        #     is empty and staying that way.
-        #
-        # TWO WRITERS IS SAFE HERE FOR THE REASON IT IS SAFE ON `existingProduct.artisanName`, and
-        # `hydrate_entries` has TWO rules rather than one — WHICH OF THEM APPLIES DECIDES WHICH
-        # WRITER WINS. This was described here as "the parent lands first and this pass leaves the
-        # filled box alone" until it was measured, and that is only half of it:
-        #
-        #  * ONLY-FILL-BLANKS, when `processRef` is UNCHANGED (or blank, or the client is an older
-        #    build sending no `productRef`). Hydration walks the entity's fields in DECLARATION order
-        #    and `productRef` is declared immediately before `processRef` in both stage-5 entities, so
-        #    the product's own answer lands first and this pass finds a filled box and leaves it
-        #    alone. The designer's pick wins.
-        #  * CLEAR-AND-REWRITE, when `processRef` was RE-POINTED — which is the CASCADE'S ORDINARY
-        #    PATH, because changing the product clears the process and the designer then re-picks it,
-        #    so one save carries two re-pointed refs. `processRef`'s clear pops every single-valued
-        #    target of its own mapping, `documentedFor` included, and rewrites it from `productName`.
-        #    Declaration order decides who writes first; the re-point decides who writes LAST.
-        #  * AND THE THIRD CASE IS THE HALF-DONE CASCADE, which is the one this table got wrong.
-        #    Between clearing the product and re-picking the process — one autosave is enough —
-        #    `processRef` is BLANK, and a blank ref hydrated nothing AND popped nothing, so the six
-        #    boxes below stayed A's while `productRef` rewrote `documentedFor` to B.
-        #    `design_workshops._clear_cascade_orphans` runs before hydration and pops this mapping's
-        #    single-valued targets in exactly that state, so the parent's write lands in an empty box
-        #    rather than beside six stale ones. Read that function before changing any of the three.
-        #
-        # THAT IS LEFT ALONE RATHER THAN FIXED, because both writers name the same product whenever
-        # the stored pair is consistent and the cascade is what keeps it consistent. Two things do
-        # differ: the provenance stamp reads `Process`/`productName` rather than
-        # `ProductDocumentation`/`name`, and on a pair that is NOT consistent — `reference_options`
-        # refuses to offer one, nothing refuses to store one — the box prints the PROCESS's parent,
-        # i.e. not the product the designer chose. Making the parent win would mean teaching
-        # `hydrate_entries` not to clear a box another ref answered in the same save, which changes
-        # the artisan cascade on `existingProduct.artisanName` too. All five cases are pinned by
-        # executing tests in `backend/tests/test_reference_carry.py` (see the block comment above
-        # `test_exactly_three_boxes_have_two_writers`), so the next reader gets the rule from
-        # assertions rather than from this paragraph.
         "productName": "documentedFor",
         "steps": "documentedSteps",
         "preProcessAvailable": "preProcessAvailable",
         "documentedOn": "documentedOn",
     },
-    # ── THE PRINTED PRODUCT NAME HANGS OFF THE PICK THE DESIGNER MADE, NOT OFF ITS CHILD ─────────
-    #
-    # `processRef` is now narrowed by `productRef` (`stage_definitions`, both stage-5 entities), and
-    # `ref_filter_by` names a field OF THE SAME ENTITY — so the sibling is not optional and THREE
-    # representations of one fact necessarily coexist:
-    #
-    #   1. `Process.productId` — non-nullable, the canonical fact.
-    #   2. `documentedFor` — the product's NAME, copied onto the stage row at save time and never
-    #      re-resolved.
-    #   3. `productRef` — the designer's pick, an id.
-    #
-    # They can disagree three ways, and only one of them is audited. TRANSIENTLY, AND THE WINDOW IS
-    # NOW EMPTIED RATHER THAN LEFT FURNISHED: change the product and the cascade clears `processRef`,
-    # so the row holds `productRef=B` and `processRef=null` until it is re-picked. This paragraph used
-    # to say `documentedFor` held "A" through that window and it did not — the parent's own pair
-    # rewrote it to B while the six boxes copied from A's process stood, which is a row describing
-    # A's process under B's name with no ref left to re-resolve it by, and nothing in the repository
-    # can flag that (see `design_workshops._clear_cascade_orphans`, which now empties the child's
-    # copied values whenever a re-pointed parent will rewrite one of them). What the window holds is a
-    # box the designer has been asked to answer, not a sentence about another product.
-    # BY CANONICAL DRIFT:
-    # `Process.productId` is re-pointed on the record page after the row was saved, which is the
-    # never-re-resolve rule working as intended and is what `entry_provenance.canonical_divergence`
-    # exists for — but that audit only covers fields carrying a `reference` provenance stamp, and a
-    # plain `f()` REF field is not hydrated and carries none. BY A STALE FORM: `reference_options`
-    # refuses to OFFER a mismatched pair; nothing refuses to STORE one.
-    #
-    # Hydrating the name from `productRef` — FIRST, because it is declared first — NARROWS the window
-    # in which representation (3) is a write-only shadow of (2), and does not close it. Measured, and
-    # the distinction is the one this table got wrong once: the parent wins whenever `processRef` is
-    # unchanged, blank, or absent, and LOSES whenever `processRef` was re-pointed in the same save,
-    # because a re-pointed ref clears and rewrites its own targets rather than only filling blanks.
-    # The cascade makes that the ordinary path. The values agree unless the stored pair does not, so
-    # what the parent's pair actually buys is: the box is answered when only the product is chosen,
-    # and it is answered from the product the designer picked in every save that does not re-pick the
-    # process. See the note on `processRef` above for the whole rule, and
-    # `test_a_stale_pair_prints_the_processs_parent` for the case that is left open.
-    # It is added BESIDE the pair on `processRef` rather than replacing it:
-    # see the note there for why removing `productName` from `Process.data` would report the whole
-    # archive as diverged. The alternative — a save-time equality refusal — was rejected:
-    # `validate_entry` does no I/O, so it would have to live beside `hydrate_entries`, and it turns a
-    # stale form into a save the designer cannot complete without re-picking.
-    #
-    # THE SOURCE KEY IS `name`, NOT `productName`, and the difference is not cosmetic:
-    # `REFERENCE_MODELS["ProductDocumentation"].data` produces `name` for the product's own name —
-    # `productName` is `REFERENCE_MODELS["Process"].data`'s key for its PARENT's name. Writing
-    # `productName` here hydrates nothing at all, silently, on every save; `validate_reference_carry`
-    # is what says so, and it said so about exactly this line before it was corrected. The identical
-    # shape is already in this table at `prototype.productRef`: `{"name": "productName"}`.
     "traditionalProcess.productRef": {"name": "documentedFor"},
-    # THE DOCUMENTED PROCESS IS THE STAGE'S SUBSTANTIVE NARRATIVE, and it used to contribute a
-    # single word. The `Process` table holds five things — a name, free-text notes, a
-    # pre-process flag, the product it hangs off, and its own sub-steps — and three of the five
-    # are copied here:
-    #
-    #  * `notes` -> `description`. The registry calls that box "What happens", which is what a
-    #    process's notes ARE. This is the copy that turns a one-word row into a paragraph.
-    #  * `productName` -> `documentedFor`. Pure provenance, and the reason it is not optional:
-    #    `processStep.processRef` is deliberately WORKSHOP-scoped (see the note on the field)
-    #    because "Tie and dye" at Bagru and "Tie and dye" at Bhuj are two different sequences
-    #    under one name, and the picker's only way of telling them apart on screen is the
-    #    product name in its sublabel. Copying it is what lets the PRINTED report make the same
-    #    distinction the designer made when choosing.
-    #
-    # The two that are NOT copied, so that the omission is a decision rather than an oversight:
-    #
-    #  * `steps`. A `Process` owns an ordered list of sub-steps, and `processStep` IS the
-    #    workshop's own ordered list of steps — so copying one into a row of the other would
-    #    print a whole sequence inside one of its own steps, and print it again on every row
-    #    that names the same process.
-    #  * `preProcessAvailable`. It is a property of the whole process, not of the step in front
-    #    of the reader; "Pre-process available: Yes" under step 3 of 7 answers a question nobody
-    #    asked of that row.
     "processStep.processRef": {
         "name": "name",
         "notes": "description",
-        # THE SECOND WRITER OF `documentedFor`, and `processStep.productRef` below is the first. The
-        # paragraph two bullets up — "`productName` -> `documentedFor`. Pure provenance, and the
-        # reason it is not optional" — is still why the value crosses at all. What changed is that
-        # the PARENT the designer picks now answers it too, and answers it first. Keeping this pair
-        # is not optional: see the same note on `traditionalProcess.processRef` for the archive-wide
-        # false divergence that dropping `Process.data["productName"]` would cause.
         "productName": "documentedFor",
     },
-    # Source key `name` and not `productName` — the product model's own key for its own name. See
-    # `traditionalProcess.productRef` above, which is the same pair on the other stage-5 entity.
     "processStep.productRef": {"name": "documentedFor"},
-    # NOT WIDENED, AND THE REASON IS NOT THE PHOTOGRAPH RULE. `report_builder.ReferencedRecord`
-    # explains why hydration must never seed these two entities' galleries; that reasoning covers
-    # the photograph and nothing else, so the rest was decided on its own terms:
-    #
-    #  * `existingProduct.artisanRef` copies the artisan's NAME because the row has a "Made by"
-    #    box for it. It copies no village, phone or specialisation because the entity declares no
-    #    box for any of them — this row documents a PRODUCT — and the roster row at stage 3
-    #    already carries all three against the same artisan. A second copy here could only ever
-    #    disagree with the first.
-    #  * `prototype.productRef` copies the product's NAME into "Developed from" and stops there.
-    #    A prototype is defined by how it DIFFERS from the product it derives from, so the
-    #    fields that look symmetrical with `existingProduct` are exactly the ones the workshop
-    #    exists to change: `materials` is a required answer about what the prototype is actually
-    #    made of, and the product's `price` is a SELLING price with nothing on the prototype to
-    #    receive it but `materialCost` and `labourCost`, which are costs. Worse, the
-    #    only-fill-blanks rule would leave any of those standing untouched and indistinguishable
-    #    from an answer the designer gave.
     "existingProduct.artisanRef": {"name": "artisanName"},
-    # ── THE PRODUCT RECORD, IN FULL ──────────────────────────────────────────────────────────
-    #
-    # Six of twenty-four, and the six were the cheap ones. Everything MEASURABLE about the product
-    # — three dimensions, the free-text size, the cost of making, the time to make it, the market
-    # demand — stopped at the picker, along with its local name, its craft, its place, the tools
-    # it is made with and the researcher's remarks. Stage 17's cost sheet asks for a cost of making
-    # that the product record already held.
-    #
-    # THREE OF THESE PAIRS ARE NOT TRANSCRIPTIONS AND THE COMMENTS ON THEM ARE LOAD-BEARING.
-    # `lengthCm`/`widthCm`/`heightCm` come from columns measured in INCHES and are converted; see
-    # `_inches_to_cm`, which explains why a silent copy would put "12 cm" in a ministry report for
-    # a saree 30.48 cm long and why the only-fill-blanks rule makes that unrecoverable.
-    # `recordType` exists because four of ProductType's six members have no honest category.
-    # `productionTimeNote` is free text and is deliberately NOT parsed into `productionTimeDays`.
-    #
-    # `artisanName` HAS TWO WRITERS, and that is the reason it is safe rather than a reason to
-    # worry. `existingProduct.artisanRef` above also writes it. The order works out: hydration
-    # walks the entity's fields in declaration order, `artisanRef` comes first, and each ref only
-    # CLEARS-and-rewrites the row when that ref itself was re-pointed. So whichever picker the
-    # designer just changed is the one whose answer lands, and the other pass sees a filled box and
-    # leaves it alone. The two can only disagree if the product record's denormalised
-    # `artisanName` is stale relative to the artisan record — and `productRef` is filtered by
-    # `artisanRef`, so the picker can only ever offer that same artisan's products. Adding it is
-    # what fills "Made by" for a designer who picks only the product, which is the common case.
     "existingProduct.productRef": {
         "name": "name",
         "localName": "localName",
@@ -1466,56 +594,21 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "lengthCm": "lengthCm",
         "widthCm": "widthCm",
         "heightCm": "heightCm",
-        # HOW THOSE THREE WERE ARRIVED AT. See the same pair on `tool.toolRef` above and
-        # `design_workshops._measurement_method_note`. `dimensionsNote` below is free text and carries
-        # no method; nothing here invents one for it.
         "measurementMethodNote": "measurementMethodNote",
         "dimensionsNote": "dimensionsNote",
         "productionTimeNote": "productionTimeNote",
         "remarks": "remarks",
-        # The record's own STATED address, in four boxes of its own. The free-text `place` above
-        # is the denormalised column and is unchanged; these are what the record page collects and
-        # what a reader needs to see that the thing was documented somewhere other than this
-        # cluster. Provenance coordinates never cross — see the model's `include`.
         "recordState": "recordState",
         "recordDistrict": "recordDistrict",
         "recordVillage": "recordVillage",
         "recordPincode": "recordPincode",
-        # The SUBJECT pin. The artisan mapping has carried its own since it was written; this side
-        # carried the four stated strings and not the one coordinate that is about the village rather
-        # than about the desk. See `_subject_point`.
         "subjectLocation": "recordSubjectLocation",
-        # An audio note explaining the piece, a video of it being finished — the record holds them
-        # and one IMAGE could not say so. A sentence; see `_media_note`.
         "recordMediaNote": "recordMediaNote",
         "documentedOn": "documentedOn",
         "photo": "productPhotos",
         "photoCaption": "productPhotosCaption",
     },
     "prototype.productRef": {"name": "productName"},
-    # ── THE BASELINE CITATION: A SITTING, SUMMARISED, AND NOT ONE WORD ANYBODY SAID ──────────────
-    #
-    # Stage 6 is titled "Existing Products & Artisan Baseline" and had no entity for the artisan
-    # half. `artisanBaseline` is that entity and this is the whole of what it receives: what the
-    # sitting was, when, where, in what language, how many people, how much of the instrument was
-    # answered, when it was last answered, what is attached, and where the record came from. Ten
-    # boxes plus the REF field itself, every one KEY_VALUE — on a singleton `TABLE_COLUMN` is not
-    # merely unsafe but meaningless, since there is no table for a column to be in.
-    #
-    # WHAT IS DELIBERATELY ABSENT, BECAUSE THIS IS THE TABLE A WIDENING WOULD BE WRITTEN INTO.
-    # `QuestionnaireResponse.answerText` and `.notes` never cross, in any form, at any masking, in
-    # any count-with-sample. Four independent reasons, each sufficient: a design workshop's stage
-    # reads do not pass through `records._redact_sensitive` and a `DesignWorkshopViewer` is a
-    # grantee; the schema cannot say WHO in a group answered, so an answer copied onto a page naming
-    # one artisan attributes a sentence to a person who may not have said it, unfalsifiably; the copy
-    # is permanent and one-way, so a withdrawal of consent or a rejected review retracts it from
-    # nothing; and the WORDING is mutable — `QuestionnaireQuestion.supersededById` exists because
-    # "How many looms?" answered "12" was reworded to "How many weavers?" and a ministry report then
-    # stated there were twelve weavers. The prompts and section titles are excluded with them:
-    # prompts without answers answer nothing, prompts with answers are the thing forbidden. Only the
-    # COUNTS cross. The five `_interview_*` helpers in `design_workshops` carry the rest of the
-    # argument, and the per-column refusals are ledgered by name in
-    # `backend/tests/test_reference_carry.py`.
     "artisanBaseline.interviewRef": {
         "interviewTitle": "interviewTitle",
         "interviewDate": "interviewDate",
@@ -1525,173 +618,16 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
         "interviewSectionsCovered": "interviewSectionsCovered",
         "interviewQuestionsAnswered": "interviewQuestionsAnswered",
         "interviewLastAnsweredOn": "interviewLastAnsweredOn",
-        # A sentence counting the files and never the ids — the gallery rule, and the per-file
-        # entitlement gate. On this model it is the only thing that can say the AUDIO RECORDING of
-        # the sitting exists: `_reference_photos` resolves one IMAGE and no non-image row at all.
         "interviewMediaNote": "interviewMediaNote",
         "interviewDocumentedOn": "interviewDocumentedOn",
         "interviewDocumentedAtWorkshop": "interviewDocumentedAtWorkshop",
     },
-    # ── THE INSTRUMENT'S TITLE, AND DELIBERATELY NOTHING ELSE (2026-09-03) ────────────────────────
-    #
-    # ``surveyPlan.questionnaireRef`` points at a ``Questionnaire`` — the FORM, not a sitting on it —
-    # and one key crosses. The refusal above is the argument in its strongest form and applies
-    # unchanged: this model's rows are sections, questions and answers, a reference carries a FLAT
-    # dict, and the copy is permanent and printed. ``REFERENCE_MODELS["Questionnaire"]`` therefore
-    # declares no ``include`` at all, so no respondent's answer is fetched into the API process, let
-    # alone written onto a stage.
-    #
-    # THE TITLE IS WHAT THE REPORT PRINTS WHEN THE FORM IS GONE. A questionnaire may be retired
-    # (``isActive: false`` is this API's delete) years before somebody re-opens the workshop's file,
-    # and ``FROM_REF``'s rule is that the id stays the join key while the copied text is what
-    # survives it.
     "surveyPlan.questionnaireRef": {"name": "questionnaireName"},
-    # ══════════════════════════════════════════════════════════════════════════════════════════
-    # THE WORKSHOP'S OWN ROWS — THE INTERNAL CARRY, ADDED 2026-09-03
-    # ══════════════════════════════════════════════════════════════════════════════════════════
-    #
-    # Every mapping above copies from a SHARED RECORD in another table, resolved through a Prisma
-    # delegate named on ``design_workshops.REFERENCE_MODELS``. The two below copy from ANOTHER ROW
-    # OF THIS SAME WORKSHOP — a ``DwStageEntry`` the designer filled in at an earlier stage —
-    # resolved by ``hydrate_entries``' internal path, which reads ``dwstageentry`` scoped to the
-    # workshop being saved and respecting ``deletedAt``. Nothing else differs: the same
-    # only-fill-blanks rule, the same clear-and-rewrite on a re-pointed ref, the same
-    # ``coerce_value``, the same provenance stamp, the same publication to both clients through
-    # ``field_to_dict``'s ``refHydration``. The LOADING is the only branch.
-    #
-    # WHAT WAS HAPPENING WITHOUT THEM. A prototype is described once at stage 13 — its materials,
-    # its five dimensions, its weight, how long it took to make, the process followed — and stage 16
-    # asks a designer to catalogue that same object again, in boxes of the same names. The
-    # ``prototypeRef`` picker stored the id and nothing else, so the designer retyped, and the two
-    # copies then drifted: the prototypes table and the final-products table of one report printed
-    # different materials and different dimensions for one physical piece, with nothing in the
-    # document saying which was measured. That is the defect the whole reference feature exists to
-    # end, arriving on the workshop's own rows rather than on a repository record.
-    #
-    # ── THE RULE FOR AN INTERNAL CARRY, WHICH IS NARROWER THAN THE EXTERNAL ONE ────────────────
-    #
-    # THE TWO BOXES MUST ASK THE SAME QUESTION ABOUT THE SAME PHYSICAL SUBJECT. The external rule
-    # can be looser — an artisan record IS the artisan, so anything it holds is about her — but
-    # inside a workshop the rows are stages of a process, and two stages asking about "the length"
-    # are frequently asking about different moments. A drawing's intended length and the made
-    # object's measured length are not the same fact, and copying one into the other would put a
-    # number in a ministry report under a heading that claims it was measured.
-    #
-    # ── THE FOURTEEN INTERNAL REFS THIS RULE LEAVES UN-HYDRATED, EACH BY NAME ──────────────────
-    #
-    # Written out rather than merely absent, because "no mapping here" and "nobody looked at this
-    # one" are the same silence, and this table is the evidence that they are different. Sixteen
-    # live REF fields point at a ``Dw…`` model; two are below and these are the other fourteen.
-    #
-    #  * ``sketch.supersedesSketch`` — a successor sketch EXISTS because something changed, so the
-    #    predecessor's dimensions, materials and colours are exactly the answers that must not be
-    #    pre-filled. Its identity fields are worse: ``sketchNo`` and ``version`` are this drawing's
-    #    own, and ``isTentative`` is a working state the picker deliberately keeps off the wire
-    #    (see ``design_workshops._in_record_options``, and ``DwReferenceOption.tentative`` on the
-    #    handset, whose comment names this very field as the reason).
-    #  * ``sketchReview.sketchRef`` — the review's boxes are the REVIEWER's verdict (decision,
-    #    reason, feasibility, estimates). Not one of them re-asks a fact the sketch states.
-    #  * ``prototype.sketchRef`` — the sketch is a DRAWING and the prototype is an OBJECT. Their
-    #    ``materials`` and their three dimensions look symmetrical and are not: the sketch says what
-    #    was intended and the prototype says what was made, and the gap between the two is what
-    #    stages 13-15 exist to record. This is the same refusal ``prototype.productRef`` already
-    #    carries one line up, for the same reason, one source further back.
-    #  * ``prototype.artisanRef``, ``finalProduct.artisanRef``, ``certificate.participantRef`` —
-    #    NO FIELD MAPS. None of the three receiving entities declares a box for a participant's
-    #    name, village, phone or craft; they hold a maker's id and print the roster's own name
-    #    through it. Adding boxes so that something could be copied into them would be a second
-    #    copy of the roster that could only ever disagree with the first — the argument
-    #    ``existingProduct.artisanRef`` above makes for capping itself at the name.
-    #  * ``prototypeStageLog.prototypeRef`` — a log row is one day's work (date, stage name, what
-    #    was done, hours). No prototype fact is re-asked.
-    #  * ``materialUsage.prototypeRef`` — ``material`` is ONE material and ``prototype.materials``
-    #    is a LIST, so hydration cannot choose which. Identical in shape to the ``steps`` refusal on
-    #    ``processStep.processRef`` above, and refused for the identical reason.
-    #  * ``prototypeIteration.prototypeRef`` — an iteration records the CHANGE, not the prototype:
-    #    what was altered, why, what it cost in time and money, and the before/after frames. The
-    #    two IMAGE boxes are the strongest case against a carry here rather than for one — "before"
-    #    for iteration 3 is not the prototype's first photograph, and seeding it would caption a
-    #    picture with a claim about a moment it does not show.
-    #  * ``costSheet.productRef`` — stage 17's own note is the refusal: "The cost sheet stores the
-    #    quantities and rates you enter, not only the totals, so any figure printed in the report
-    #    can be traced back to the line items it came from." Seeding ``expectedPrice`` from stage
-    #    16's asserted ``sellingPrice`` would hand the sheet its answer before the arithmetic, which
-    #    is the one thing the stage was built not to do.
-    #  * ``costMaterialLine.costSheetRef``, ``costLabourLine.costSheetRef`` — a line item is an
-    #    item, a quantity, a unit and a rate. The sheet holds none of those; it holds their totals.
-    #  * ``plannedFollowUp.productRef`` — a planned visit is a due date and an interval; nothing it
-    #    holds is a property of the product.
-    #  * ``followUp.productRef`` — a follow-up is what happened to the product MONTHS LATER (units
-    #    made, units sold, revenue, adoption). Nothing it asks is a property of the product.
-    #
-    # ── AND THE TWO THINGS THAT CROSS ON NEITHER MAPPING BELOW ─────────────────────────────────
-    #
-    #  * MEDIA NEVER CROSSES ON AN INTERNAL CARRY. ``prototypePhotos`` -> ``finalPhotos`` is the
-    #    tempting pair and it is refused: both rows live in ONE workshop, so the copy would not be a
-    #    denormalised second picture but the SAME media ids under two headings, and
-    #    ``report_builder``'s image pass dedupes by media id across rows it has already collected —
-    #    the report would print the working shots as the catalogue plate, or print one twice. The
-    #    external mappings carry a photograph because the source record is in another table and its
-    #    file would otherwise be unreachable; here it is already in the document.
-    #  * THE COSTS DO NOT CROSS, AND THAT IS AN ARITHMETIC LIMIT RATHER THAN A DECISION ABOUT THE
-    #    VALUE. ``prototype`` holds ``materialCost`` and ``labourCost``; ``finalProduct`` holds one
-    #    ``costPrice``. A mapping is one source key to one target key and cannot sum two heads, and
-    #    synthesising the sum here would assert that a product's cost is materials plus labour when
-    #    stage 17 lists four more heads. The place that arithmetic belongs is ``costSheet.totalCost``
-    #    which already declares ``derived_kind="SUM"`` over all six. Written down because "costs are
-    #    retyped" was part of the report this lane answers, and this half of it is NOT closed.
-    #
-    # THE ACCEPTED COST OF BOTH MAPPINGS, STATED ONCE: a hydrated value is a PERMANENT copy taken at
-    # save time, so correcting the prototype's length at stage 13 next week does NOT rewrite the
-    # boxes it filled here. That is the same promise every mapping above makes and the reason the
-    # whole feature exists — but it is worth restating for an internal carry, where both rows are on
-    # screens the same designer owns and the instinct is to expect them to track each other. The
-    # divergence is visible: ``fieldProvenance`` stamps every hydrated box with the row and column it
-    # came from. (``entry_provenance.canonical_divergence`` does NOT re-resolve an internal stamp —
-    # it is gated on ``model in REFERENCE_MODELS`` — so an admin audit shows the stamp and not the
-    # comparison. Named here as a known limit rather than left to be discovered.)
-    #
-    # THE PROTOTYPE, AS THE VALIDATION ROW MEASURES IT. Three boxes and no more: stage 15's other
-    # nineteen fields are the reviewers' own — five quality ratings, a decision, a reason, two
-    # approvals, buyer feedback, a checklist — and a validation row is a JUDGEMENT of a prototype
-    # rather than a second description of it.
-    #
-    # THE COUNTER-ARGUMENT, KEPT BECAUSE IT IS THE ONE THAT WOULD REVERSE THIS. The three boxes are
-    # labelled "Final length/width/height", so a reader could take a carried figure as a measurement
-    # taken AFTER validation when it was taken at making. What answers it is that the workshop has
-    # only ever held ONE statement of the prototype's size — stage 13's row, which a designer
-    # updates when the piece changes, because it is the same object — so the carry propagates the
-    # workshop's single answer rather than inventing a second. The alternative on the table was two
-    # hand-typed numbers that disagree, which is what the report was printing.
     "prototypeValidation.prototypeRef": {
         "lengthCm": "finalLengthCm",
         "widthCm": "finalWidthCm",
         "heightCm": "finalHeightCm",
     },
-    # THE ACCEPTED PROTOTYPE, CATALOGUED. Stage 16's purpose line is "The catalogue record of each
-    # accepted product: its name and code, its final photographs, dimensions, materials, technique
-    # and description" — and every one of those except the code, the photographs, the technique and
-    # the description is a fact stage 13 already recorded about the same piece.
-    #
-    # ``productCode`` IS NOT ``prototypeCode`` AND MUST NOT BE FILLED FROM IT. They are two
-    # identifiers with two lifetimes: a prototype tag is printed the afternoon the piece is made
-    # (``workshopCodeIdForRow``) and a product code goes on a catalogue. Copying one into the other
-    # would make the catalogue claim the workshop's internal tag, and only-fill-blanks would then
-    # keep it.
-    #
-    # ``artisanRef`` -> ``artisanRef`` IS REFUSED THOUGH IT IS THE SAME QUESTION. "Made by" on the
-    # final product is the person who made the prototype, so the fact carries; the BOX does not. It
-    # is a REF, and ``finalProduct`` declares no name box for a hydrated participant to resolve
-    # through, so the picker would show a chosen id with nothing readable beside it — the artisan
-    # dropdown defect this repository already shipped once. Give ``finalProduct`` an ``artisanName``
-    # box and this pair becomes ordinary.
-    #
-    # ``processSummary`` -> ``makingProcess`` is the one RICH_TEXT pair here, and it is asymmetric
-    # between the surfaces ON PURPOSE: both clients' hydration guards accept only JSON scalars, so a
-    # rich-text document is skipped at the keyboard and written by the server at save. Skipping is
-    # the fail-closed direction — the box fills a moment later rather than holding a flattened
-    # version of a formatted narrative — and ``coerce_value``'s RICH_TEXT arm normalises the copy
-    # through the rich-text model exactly as it does a typed one.
     "finalProduct.prototypeRef": {
         "name": "name",
         "materials": "materials",
@@ -1706,13 +642,6 @@ REFERENCE_HYDRATION: dict[str, dict[str, str]] = {
 }
 
 
-#: ONE-TAP SUGGESTIONS FROM A CHOSEN IN-WORKSHOP RECORD (owner, C10, 2026-10-17). Unlike
-#: :data:`REFERENCE_HYDRATION` nothing here is written without the designer's tap: the client shows
-#: "Use from the sketch" beside the picker while a mapped box is blank, and applies only blanks.
-#: ``hint`` pairs are shown as placeholder text and never copied — the sketch's intended size is
-#: not the prototype's measured one (the argument recorded above ``prototype.sketchRef``).
-#: ``finalProduct.prototypeRef`` -> ``artisanRef`` carries the maker BY REFERENCE: the same roster
-#: row's id, never a copy of the name.
 REFERENCE_SUGGESTIONS: dict[str, dict[str, dict[str, str]]] = {
     "prototype.sketchRef": {
         "fill": {"name": "name", "materials": "materials"},
@@ -1726,68 +655,27 @@ REFERENCE_SUGGESTIONS: dict[str, dict[str, dict[str, str]]] = {
 
 
 def reference_suggestions_for(entity_key: str, field_key: str) -> dict[str, dict[str, str]]:
-    """The suggestion mapping one REF field offers, or an empty dict."""
     return REFERENCE_SUGGESTIONS.get(f"{entity_key}.{field_key}", {})
 
 
 def reference_hydration_for(entity_key: str, field_key: str) -> dict[str, str]:
-    """The mapping one REF field hydrates through, or an empty dict when it hydrates nothing.
-
-    Empty is the FAIL-CLOSED answer and clients must treat it that way: a field with no entry
-    writes nothing, the designer types one box, and the server fills it at save regardless. A
-    guessed entry costs a wrong value nobody can see is wrong.
-    """
     return REFERENCE_HYDRATION.get(f"{entity_key}.{field_key}", {})
 
 
-# --------------------------------------------------------------------------------------
-# The registry
-# --------------------------------------------------------------------------------------
-
-# Populated by stage_definitions.py, which holds the 22 StageSpec declarations. Splitting the
-# data out of the machinery keeps this module reviewable: the rules live here, the two and a
-# half thousand fields live there.
 STAGES: tuple[StageSpec, ...] = ()
 
 
 def _install(stages: tuple[StageSpec, ...]) -> None:
-    """Bind the stage declarations. Called once, from stage_definitions."""
     global STAGES
     STAGES = stages
 
 
 def stages() -> tuple[StageSpec, ...]:
-    """The 22 stages, loading the declarations on first use.
-
-    CALL THIS RATHER THAN IMPORTING ``STAGES``. ``from app.services.stage_schema import STAGES``
-    binds the empty tuple that exists at import time, and :func:`_install` rebinds this module's
-    global without ever reaching that copy — so the importing module keeps an empty registry for
-    the life of the process. Under uvicorn that meant ``GET .../stages/WORKSHOP_SETUP`` answered
-    404 "Unknown stage" while ``GET .../schema`` on the very same server returned all 22, which
-    is about as confusing as a symptom gets. A function cannot be captured that way.
-
-    ``STAGES`` remains for the declaration site and for tests that import the module rather than
-    a name out of it.
-    """
     _ensure_installed()
     return STAGES
 
 
 def _ensure_installed() -> None:
-    """Load the stage declarations the first time anything asks for them.
-
-    THE BUG THIS EXISTS FOR. ``STAGES`` starts empty and is filled by importing
-    :mod:`app.services.stage_definitions`, which calls :func:`_install`. Nothing in ``app/``
-    imported it — the tests did, explicitly, which is exactly why the suite could be entirely
-    green while a real server was broken. Under uvicorn the registry stayed empty, so
-    ``GET /design-workshops/schema`` answered ``stages: 0``, every client rendered a form with
-    no fields, every stage save dropped its whole payload as an unknown stage, and every report
-    printed nothing. Nothing raised; the API returned 200 throughout.
-
-    Importing inside the function rather than at module scope is what breaks the cycle:
-    ``stage_definitions`` imports this module for its ``FieldSpec``/``EntitySpec`` types, so a
-    top-level import here would be circular.
-    """
     if not STAGES:
         import app.services.stage_definitions  # noqa: F401  - importing installs the registry
 
@@ -1813,18 +701,8 @@ def all_entities() -> tuple[tuple[StageSpec, EntitySpec], ...]:
     return tuple((s, e) for s in STAGES for e in s.entities)
 
 
-# --------------------------------------------------------------------------------------
-# Validation of the registry itself
-# --------------------------------------------------------------------------------------
-
 
 def validate_registry() -> list[str]:
-    """Return every rule violation in the registry. An empty list means it is sound.
-
-    Run by the tests. The checks are ordered by how expensive the mistake is to discover late:
-    a duplicate key silently overwrites research data, while a missing help string is cosmetic.
-    """
-
     _ensure_installed()
     problems: list[str] = []
     seen_stage_keys: set[str] = set()
@@ -1847,9 +725,6 @@ def validate_registry() -> list[str]:
             problems.append(f"stage {spec.key} declares more than one SINGLETON entity")
 
         for entity in spec.entities:
-            # Entity keys are globally unique because a stage entry row is addressed by
-            # (workshopId, entityKey, ordinal) alone — scoping by stage as well would make the
-            # storage key wider for no gain and let one collection be defined twice.
             if entity.key in seen_entity_keys:
                 problems.append(f"duplicate entity key {entity.key!r} (stage {spec.key})")
             seen_entity_keys.add(entity.key)
@@ -1879,32 +754,11 @@ def validate_registry() -> list[str]:
                 if not f.label:
                     problems.append(f"field {where} has no label")
 
-                # Rule 3: the tiers only work if Basic alone can satisfy the gate.
                 if f.required and f.tier is not Tier.BASIC:
                     problems.append(
                         f"field {where} is required but tier {f.tier.value}; only BASIC fields "
                         "may be required, or a workshop without facilities can never complete"
                     )
-                # Rule 2: every enum resolves to a shared list.
-                #
-                # ── A MULTI_ENUM DRAWS ITS OPTIONS FROM ONE OF TWO PLACES, AND EXACTLY ONE ──────
-                #
-                # An authored vocabulary in ``ENUMS`` (five of the registry's seven MULTI_ENUM boxes
-                # on 2026-09-03 — counted, not remembered, and re-countable with
-                # ``[f for _s, e in all_entities() for f in e.fields if f.type is
-                # FieldType.MULTI_ENUM]``),
-                # or the REPOSITORY, by naming a ``ref_model`` — which is how ``processStep
-                # .toolsUsed`` and ``prototype.toolsUsed`` stopped being free-text TAGS on
-                # 2026-09-03 and became a multi-select over documented ``ToolDocumentation`` rows.
-                # Both clients have rendered the second shape for months (Android's
-                # ``DwReferenceMultiSelectField``, the browser's ``ReferenceMultiSelect``); this
-                # rule was the last thing refusing to let the registry declare one.
-                #
-                # NEITHER is refused, and so is BOTH. Neither leaves a closed list with no members,
-                # which on a required field is a stage nobody can ever submit — the failure the
-                # browser's own arm is written around. Both is worse than either: ``coerce_value``
-                # would have to decide whether a token is an enum member or a record id, and the
-                # two clients would each draw a different control from the same declaration.
                 if f.type in (FieldType.ENUM, FieldType.MULTI_ENUM):
                     records_backed = f.type is FieldType.MULTI_ENUM and bool(f.ref_model)
                     if not f.enum and not records_backed:
@@ -1924,27 +778,12 @@ def validate_registry() -> list[str]:
 
                 if f.type is FieldType.REF and not f.ref_model:
                     problems.append(f"field {where} is REF but names no ref_model")
-                # ``ref_model`` ON ANYTHING ELSE IS A PICKER NOBODY DRAWS. Both clients dispatch on
-                # the field TYPE and only the REF and MULTI_ENUM arms read ``refModel``, so a
-                # ``ref_model`` on a TEXT box is a silent no-op that reads, in the registry, like a
-                # link that was made.
                 if f.ref_model and f.type not in (FieldType.REF, FieldType.MULTI_ENUM):
                     problems.append(
                         f"field {where} names a ref_model but is {f.type.value}; only REF and "
                         "MULTI_ENUM draw a picker"
                     )
 
-                # THE CASCADE HAS TO RESOLVE HERE OR IT RESOLVES NOWHERE.
-                #
-                # A ``ref_filter_by`` naming a field that does not exist in the entity is
-                # invisible at every later point: the registry serialises it happily, the web
-                # form reads `row[refFilterBy]`, gets `undefined`, and asks the resolver for
-                # every record in the table — so the product picker silently stops being
-                # filtered by the artisan and starts offering the whole cluster's catalogue.
-                # Nothing errors, nothing logs, and the only symptom is a designer picking the
-                # wrong artisan's product into a ministry report. Renaming the field the cascade
-                # points at is how it happens, which is exactly the sort of edit that gets made
-                # without opening this file, so the registry has to refuse it.
                 if f.ref_filter_by:
                     if f.type is not FieldType.REF:
                         problems.append(
@@ -1958,12 +797,6 @@ def validate_registry() -> list[str]:
                             f"field {where} is filtered by {f.ref_filter_by!r}, which is not a "
                             f"field of {entity.key!r}"
                         )
-                # A SCOPE IS A PROPERTY OF THE PICKER, NOT OF THE ARITY. Both picker types send it
-                # straight back on ``GET .../references`` — see ``field_to_dict``, which has always
-                # emitted ``refScope`` for any field naming a ``ref_model`` whatever its type — so
-                # the record-backed MULTI_ENUM added on 2026-09-03 has exactly the same need of it
-                # as a REF: ``processStep.toolsUsed`` is ALL because a pit loom is a type of object
-                # and workshop-scoping it would empty the list.
                 if f.ref_scope:
                     if f.type not in (FieldType.REF, FieldType.MULTI_ENUM):
                         problems.append(f"field {where} names ref_scope but is {f.type.value}")
@@ -1988,27 +821,6 @@ def validate_registry() -> list[str]:
                         problems.append(
                             f"field {where} captions {f.caption_for!r}, which is not a media field"
                         )
-                # ── A MINIMUM MUST BE SATISFIABLE, OR THE STAGE CAN NEVER BE COMPLETE ──────────
-                #
-                # THE COST OF GETTING THIS WRONG IS UNBOUNDED AND HAS NO ERROR PATH. A minimum is
-                # scored in `stage_completeness` and refuses no save (see `FieldSpec.min_items`),
-                # so a floor nothing can reach does not fail, log or 422 anywhere: it makes
-                # `is_complete` permanently false for every workshop that will ever exist, the
-                # readiness screen permanently lists an item the designer cannot clear, and the
-                # report warns for ever. There is no way out of it from the app — only a deploy.
-                #
-                # Two shapes are refused, and both are one keyword away from each other:
-                #
-                #   * ON A SCALAR FIELD IT IS INERT. `_meets_minimum` tests `len(value)`, so a
-                #     minimum on a TEXT or INT box would be published to both clients, counted as
-                #     required by nothing, and would draw a "0 of 25" progress bar under a
-                #     one-line input. The mirror of the `max_items` note above it.
-                #   * ABOVE THE CEILING IT IS UNREACHABLE. `coerce_value` REFUSES an array longer
-                #     than `max_items` (or `DEFAULT_MAX_ITEMS` when none is declared) rather than
-                #     trimming it, so a floor above that ceiling asks the designer for a body the
-                #     save path will not accept. The ceiling is compared against its EFFECTIVE
-                #     value, not against `f.max_items`, because 0 there means 200 and not
-                #     "unbounded" — reading it as unbounded is what would let a min of 500 past.
                 if f.min_items:
                     if not f.type.is_multi:
                         problems.append(
@@ -2024,16 +836,6 @@ def validate_registry() -> list[str]:
                                 f"ceiling of {ceiling}; coerce_value refuses an array longer "
                                 "than the ceiling, so the stage could never be completed"
                             )
-                # A `store_masked` FLAG THAT NOTHING APPLIES IS THE SILENT FAILURE THIS WHOLE
-                # FEATURE EXISTS TO END, so the registry refuses to carry one.
-                #
-                # `coerce_value` applies the mask inside its scalar-text branch and nowhere else,
-                # because the mask is a string transform and there is no such thing as a masked
-                # INT, DATE or IMAGE_LIST. Declared on any other type the flag would serialise to
-                # the clients, be published in the digest, appear in the asset — and do absolutely
-                # nothing on the way in, which is a field whose help text promises a mask over a
-                # column holding a full identity number. RICH_TEXT is excluded for the same
-                # reason from the other side: it never reaches that branch at all.
                 if f.store_masked and f.type not in (
                     FieldType.TEXT,
                     FieldType.LONG_TEXT,
@@ -2046,14 +848,6 @@ def validate_registry() -> list[str]:
                         "scalar text field passes through the branch that applies the mask, so "
                         "the flag would be published and never enforced"
                     )
-                # ── A DECLARED FORMAT MUST BE ENFORCEABLE, AND ``store_masked`` MUST HAVE ONE ──
-                #
-                # THE SAME SENTENCE AND THE SAME REASON as the ``store_masked`` rule directly
-                # above: ``coerce_value`` applies a format inside its scalar-text branch and
-                # nowhere else, so declared on any other type the format would serialise to both
-                # clients, be published in the digest, appear in the bundled asset — and refuse
-                # nothing on the way in. RICH_TEXT is excluded from the other side, as there: it
-                # never reaches that branch at all.
                 if f.text_format is not TextFormat.NONE:
                     if f.type not in (
                         FieldType.TEXT,
@@ -2069,21 +863,10 @@ def validate_registry() -> list[str]:
                             "never enforced"
                         )
                     if f.text_format not in _FORMATS:
-                        # Reachable only from a hand-written spec whose ``text_format`` is a bare
-                        # string rather than a member — which the dataclass cannot refuse, and
-                        # which would raise inside ``coerce_value`` on a designer's save rather
-                        # than here.
                         problems.append(
                             f"field {where} declares text_format {f.text_format!r}, which has no "
                             "entry in _FORMATS and therefore enforces nothing"
                         )
-                # ``store_masked`` WITHOUT A FORMAT IS ``mask(anything)``, AND THAT IS EXACTLY HOW
-                # A TYPO BECAME A GOVERNMENT IDENTITY NUMBER IN A MINISTRY DOCUMENT. ``mask_aadhaar``
-                # strips separators and takes the last four characters of whatever it is handed, so
-                # "hello world 1234" was stored — and printed — as "XXXX XXXX 1234". The pairing is
-                # enforced here rather than trusted to the one field that declares the flag today,
-                # so any future field declaring it inherits the guard by construction instead of by
-                # somebody remembering this paragraph.
                 if f.store_masked and f.text_format is not TextFormat.AADHAAR:
                     problems.append(
                         f"field {where} declares store_masked without text_format=AADHAAR; the "
@@ -2091,8 +874,6 @@ def validate_registry() -> list[str]:
                         "a typo is stored in the shape of an identity number"
                     )
                 if f.deprecated and not f.replaced_by:
-                    # A deprecated field with no successor leaves a form with a dead input and
-                    # no migration path for the data already stored under it.
                     problems.append(f"field {where} is deprecated with no replaced_by")
                 if (
                     f.min_value is not None
@@ -2103,9 +884,6 @@ def validate_registry() -> list[str]:
                 if f.column_width_pct and not 0 < f.column_width_pct <= 100:
                     problems.append(f"field {where} column_width_pct out of range")
 
-    # Rule 1 across entities: every promoted path must resolve to exactly one real field, and
-    # no two paths may target the same column — either mistake gives the denormalisation two
-    # possible sources, and they will disagree the first time both are edited.
     columns_seen: dict[str, str] = {}
     for path, column in PROMOTED_COLUMNS.items():
         entity_key, _, field_key = path.partition(".")
@@ -2124,23 +902,6 @@ def validate_registry() -> list[str]:
             )
         columns_seen[column] = path
 
-    # EVERY HYDRATION TARGET MUST BE A REAL FIELD OF A REAL ENTITY, and this check is the only
-    # thing standing between a rename and a report with a hole in it. ``hydrate_entries`` looks
-    # the target up with ``entity.field(target_key)`` and SKIPS a target it cannot resolve — no
-    # error, no log — so a mapping that names a field somebody renamed copies nothing at all, on
-    # every save, for ever, and the first symptom is a submitted document whose process table has
-    # a name and no description. The source key of an EXTERNAL mapping is deliberately NOT checked
-    # here: it names a key of a ``REFERENCE_MODELS`` data lambda, which lives with the database code
-    # and is the one half of the pair this module must not import —
-    # ``design_workshops.validate_reference_carry`` is that half.
-    #
-    # AN INTERNAL MAPPING'S SOURCE KEY *IS* CHECKABLE HERE, AND IS CHECKED, which is the one place
-    # the internal carry is better guarded than the external one rather than worse. A ``Dw…``
-    # ref_model names an ENTITY OF THIS REGISTRY, so its fields are two lines away — no import, no
-    # database, no probe row. ``hydrate_entries`` reads the source row's ``data`` by key and skips a
-    # key that is absent, silently and identically to a source row that simply has not been filled
-    # in, so a typo or a rename on the source side would hydrate NOTHING for ever with no symptom
-    # but a blank box in a submitted catalogue. This is that symptom made into a failing test.
     entities_by_model = {e.name: e for _s, e in all_entities()}
     for path, mapping in REFERENCE_HYDRATION.items():
         entity_key, _, ref_field_key = path.partition(".")
@@ -2174,11 +935,6 @@ def validate_registry() -> list[str]:
                     "declare, so it copies nothing"
                 )
             elif source_field.deprecated:
-                # A deprecated source is worse than a missing one: ``entity_to_dict`` drops it from
-                # the wire and ``validate_entry`` rebuilds ``cleaned`` from the live specs, so the
-                # key is deleted from the source row on its next ordinary save. The carry would work
-                # until somebody opened the source stage, and then stop, which is the hardest shape
-                # of failure to attribute to anything.
                 problems.append(
                     f"hydration {path}[{source_key!r}] reads {source_entity.key}.{source_key}, "
                     "which is deprecated and is dropped from the row on its next save"
@@ -2192,7 +948,6 @@ _AUTO_PREFIX = re.compile(r"^[A-Z]{1,3}$")
 
 
 def _behaviour_problems() -> list[str]:
-    """The rules for numbering, computed counts, widgets and one-tap suggestions."""
     problems: list[str] = []
     for stage_spec, entity in all_entities():
         for spec in entity.fields:
@@ -2237,85 +992,19 @@ def _behaviour_problems() -> list[str]:
     return problems
 
 
-# --------------------------------------------------------------------------------------
-# Value coercion and validation
-# --------------------------------------------------------------------------------------
-
 _TRUE = {"true", "yes", "y", "1", "on"}
 _FALSE = {"false", "no", "n", "0", "off"}
 
 
-#: The largest number of metres a GPS accuracy may claim, in metres.
-#:
-#: Half the earth's circumference: no two points on the surface are further apart than this, so an
-#: error bar wider than it excludes nowhere and is not a measurement. The bound exists so that a
-#: reading a device could not have produced is refused HERE, with the field's name on it, rather
-#: than by the JSON column as a 500 the designer is shown as a lost connection.
 _MAX_ACCURACY_M = 20_037_508.0
 
 
-#: How many entries a multi-valued field may hold when its own ``FieldSpec`` declares no bound.
-#:
-#: EVERY MULTI-VALUED FIELD USED TO BE UNBOUNDED IN BOTH DIRECTIONS — no cap on the number of
-#: entries and no cap on the length of any one of them — because the ``is_multi`` branch of
-#: :func:`coerce_value` returns before the scalar-text branch where ``max_length`` is applied. The
-#: envelope bounds in ``schemas/design_workshops`` do not help: ``MAX_STAGE_ROWS`` counts rows and
-#: ``MAX_FIELD_KEYS`` counts keys per entry, and one KEY may hold an arbitrarily long array.
-#: MULTI_ENUM's allow-list does not help either, because duplicates of an allowed token pass the
-#: unknown-token check, so ``["COTTON"] * 1_000_000`` was accepted and stored. There is no
-#: request-size middleware in ``app/main.py``; only the compression middleware reads
-#: content-length.
-#:
-#: What that costs is not one bad save. An Android build with a bug in its gallery picker, or a
-#: retry loop that appends rather than replaces, writes tens of thousands of media ids into one
-#: ``stepPhotos`` array; the blob then lands in a jsonb column that ``GET /{id}/stages`` — the
-#: feature's most frequent read, made on every stage-index open by every designer who can see the
-#: workshop — serialises IN FULL, for ever, with no path that trims it and no error recording it.
-#:
-#: MEASURED RATHER THAN GUESSED, so the cap cannot refuse an honest answer: the registry declares
-#: 37 multi-valued fields (20 IMAGE_LIST, 12 TAGS, 5 MULTI_ENUM); the largest option list any
-#: MULTI_ENUM draws on is PRODUCT_CATEGORY at 15 entries, and the largest list in ``ENUMS`` at all
-#: is MATERIAL_FAMILY at 17. 200 is more than ten times the widest legitimate "select them all",
-#: and far past any gallery a designer photographs onto ONE row of a stage that already admits 500
-#: rows.
-#:
-#: RE-MEASURED, AND THE COUNT IS THE ONLY PART THAT MOVED: this read "35 multi-valued fields (18
-#: IMAGE_LIST …)" when it was first taken, and two more IMAGE_LIST fields have been declared since.
-#: The conclusion does not depend on that number — 200 is judged against the widest OPTION LIST,
-#: not against how many fields there are — so the count is restated rather than dropped, for the
-#: next reader who needs to know whether it is a live measurement or an old one.
-#:
-#: A field that needs a DIFFERENT ceiling, in either direction, says so with ``max_items`` on its
-#: own ``FieldSpec``. Two do, and both go DOWN rather than up: stage 4's motif galleries cap at 25
-#: because the owner asked for 25, which is the case this constant is a fallback for and not an
-#: override of. (They were 20 until 2026-08-28. Raising a cap is a WIDENING and cannot break a
-#: shipped client — ``coerce_value`` refuses rather than trims, so a higher ceiling only turns
-#: refusals into acceptances.) Those same two are the only fields declaring a ``min_items`` floor,
-#: which this constant deliberately has no counterpart for: there is no default minimum, because a
-#: floor nobody asked for makes a stage permanently incomplete with no error anywhere.
 DEFAULT_MAX_ITEMS = 200
 
-#: How long ONE entry of a multi-valued field may be when the field declares no ``max_length``.
-#:
-#: The items are media ids (a cuid is 25 characters), enum tokens, and designer-typed tags. 300 is
-#: generous for all three and still refuses the megabyte string that reaches the same jsonb column
-#: and the same read amplification as an over-long array. Bounded per ITEM rather than over the
-#: joined length so the message can name the field and the designer can find the offending entry.
 DEFAULT_MAX_ITEM_CHARS = 300
 
 
 def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
-    """Coerce one submitted value to its stored form. Returns ``(value, error)``.
-
-    Coercion is forgiving on purpose. Three clients write these values — a web form that sends
-    strings, an Android draft that sends typed JSON, and a bulk import — and rejecting "12" for
-    an INT because it arrived as a string would fail whole stages on a formatting difference.
-    What is *not* forgiven is a value that cannot be read as the declared type at all, because
-    that silently becomes a blank cell in a report someone submits to a ministry.
-
-    A blank value is always accepted here and returns ``None``; whether blank is *allowed* is
-    :func:`validate_entry`'s question, not this one's.
-    """
     if raw is None:
         return None, None
     if isinstance(raw, str) and not raw.strip() and spec.type is not FieldType.LONG_TEXT:
@@ -2324,11 +1013,6 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
     t = spec.type
     try:
         if t is FieldType.RICH_TEXT:
-            # Normalised through the rich-text model rather than stored as the client sent it.
-            # That is what stops a client's own editor state — selection ranges, undo history, an
-            # unrecognised mark from a newer build — reaching the JSON column and, three months
-            # later, the report renderer. A plain string is accepted and read as unformatted
-            # prose, which is how a field promoted from LONG_TEXT keeps the text already under it.
             from app.services.rich_text import from_json, is_empty, to_json
 
             if is_empty(raw):
@@ -2339,24 +1023,9 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
             if not isinstance(raw, (list, tuple)):
                 return None, f"{spec.label} must be a list"
             items = [str(v).strip() for v in raw if str(v).strip()]
-            # BOTH BOUNDS ARE APPLIED HERE BECAUSE THIS BRANCH RETURNS, and that early return is
-            # the whole defect: it never reached the scalar-text branch below, where
-            # ``spec.max_length`` lives, so a declared bound on a multi field was a silent no-op
-            # and there was no item cap anywhere in the codebase. See DEFAULT_MAX_ITEMS above for
-            # what an unbounded array costs on every subsequent read of the stage.
-            #
-            # A REFUSAL, NOT A TRUNCATION. Silently keeping the first 200 of an array the client
-            # believes it stored is the shape of failure this module refuses everywhere else: the
-            # designer is told "Stage saved" and the photographs are gone. A refused field is
-            # reported per-field in ``errors``, keeps whatever the row already held (``save_stage``
-            # restores rejected keys from ``previous``), and does not cost the other twenty fields
-            # of the entry.
             limit = spec.max_items or DEFAULT_MAX_ITEMS
             if len(items) > limit:
                 return None, f"{spec.label} may hold at most {limit} entries"
-            # ``max_length`` PER ITEM, which is the only reading that makes sense for a list and
-            # is what a field declaring one would mean by it. No field declares one today, so the
-            # default below is what actually bounds every TAGS box in the registry.
             item_limit = spec.max_length or DEFAULT_MAX_ITEM_CHARS
             if any(len(v) > item_limit for v in items):
                 return None, (f"{spec.label}: one entry is longer than {item_limit} characters")
@@ -2368,30 +1037,6 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
                         f"{spec.label}: unknown {by_count(len(unknown), 'option', 'options')} "
                         f"{', '.join(unknown)}"
                     )
-            # A RECORD-BACKED MULTI_ENUM IS NOT CHECKED AGAINST ANYTHING HERE, AND THAT IS THE
-            # SAME ANSWER ``REF`` HAS ALWAYS GIVEN. (2026-09-03)
-            #
-            # ── WHY NOT ──────────────────────────────────────────────────────────────────────
-            # The allow-list for these tokens is a TABLE, and this function is pure and has no
-            # database: ``ENUMS.get(spec.enum, {})`` is the EMPTY map for a field whose options
-            # come from ``ToolDocumentation``, so the branch above would have answered "unknown
-            # option(s) cmsik2jg8000eh8xc1lcy661a" to every save the picker ever made. The REF
-            # branch further down stores whatever string it is handed for exactly this reason
-            # and lets ``ReportBuilder._value`` resolve it at render time, where the repository
-            # is reachable; this is that rule, applied to a list of them.
-            #
-            # ── AND IT IS WHAT KEEPS A FIELDED HANDSET WRITING ───────────────────────────────
-            # ``processStep.toolsUsed`` and ``prototype.toolsUsed`` were TAGS until 2026-09-03,
-            # so every 0.0.7 APK in a village — and every cached web bundle — still draws a
-            # free-text tag box for them and submits ``["pit loom", "bobbin winder"]``. Those
-            # saves arrive at a registry that now calls the field MULTI_ENUM. Refusing them
-            # would not degrade the field, it would refuse the WRITE: ``save_stage`` restores a
-            # rejected key from ``previous``, and Android's ``saveOrQueue`` does not retry a
-            # 4xx, so a designer on one bar would lose the stage and be told a field they can
-            # see on their screen holds an unknown option. Both shapes are therefore accepted
-            # and stored verbatim — the ids the new picker writes and the prose the old box
-            # wrote — and the report resolves what it can and prints the rest as typed. The
-            # registry declares the id shape; the store holds whichever one it was given.
             return items, None
 
         if t in (
@@ -2406,100 +1051,16 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
             FieldType.AUDIO,
             FieldType.VIDEO,
         ):
-            # `clean_text` ON THE WAY IN, not only on the way to the renderer.
-            #
-            # It drops the codepoints no document part and no Postgres text column can carry:
-            # the C0 controls, U+FFFE/FFFF and — the one that was actually failing — the
-            # surrogate block. A lone surrogate is not exotic: JSON permits it as a bare \\udXXX
-            # escape, and ANY client that truncates a string at a UTF-16 index produces one by
-            # cutting an emoji or an astral glyph in half. It reached the driver, raised
-            # UnicodeEncodeError, and 500'd the WHOLE stage save — which the stage editor reads
-            # through `isTransient` as "no connection", so a permanently un-saveable stage looked
-            # like bad signal and retried forever with nothing ever told to the designer.
-            # `rich_text` has passed every string through this same function since it was written
-            # ("a lone surrogate from a phone that cut an emoji in half"), and RICH_TEXT fields
-            # were therefore safe while the plain-text ones beside them were not.
-            #
-            # Dropped rather than rejected, and measured AFTER the drop: the client already lost
-            # that character when it cut the pair, so losing one glyph is the honest outcome and
-            # a 422 would be a rejection the designer cannot act on — the text looks fine on
-            # their screen.
             text = clean_text(str(raw)).strip()
             if not text:
                 return None, None
             if spec.max_length and len(text) > spec.max_length:
                 return None, f"{spec.label} is longer than {spec.max_length} characters"
-            # ── THE DECLARED SHAPE, BETWEEN THE BOUND AND THE MASK ─────────────────────────────
-            #
-            # See :class:`TextFormat` for what was wrong and why the rule is declared in the
-            # registry rather than in a form. The ORDER of these three steps is the whole of the
-            # correctness here:
-            #
-            #   1. ``max_length`` first, unchanged: an over-long answer keeps its own refusal
-            #      rather than being quietly shortened into a plausible mask (the argument already
-            #      written at ``FieldSpec.store_masked``).
-            #   2. THE FORMAT, HERE. Refused per field, so the designer keeps the other twenty
-            #      answers of the entry — ``save_stage`` restores a rejected key from ``previous``
-            #      and reports the message against this exact box.
-            #   3. the mask last.
-            #
-            # 2 BEFORE 3 IS FORCED. ``mask_aadhaar`` strips separators and takes the last four
-            # characters of ANYTHING, so with the order reversed a typed "hello world 1234" —
-            # fourteen characters, comfortably inside this field's bound of 20 — becomes
-            # "XXXX XXXX 1234" and is STORED, and printed as a national identity number in a
-            # document submitted to a ministry. Nothing downstream could tell it from a real one.
-            # That is not hypothetical: it is what this branch did until this block existed.
-            #
-            # The message is the record page's own sentence, verbatim, and is NOT prefixed with
-            # the label: ``aadhaar_error``'s four sentences, ``pincode_error``'s three and
-            # ``PhoneField``'s two all name their field already ("Aadhaar number must be…"), and
-            # a designer reading "Aadhaar number: Aadhaar number must be…" learns nothing from the
-            # first half. The other refusals in this function prefix the label because their
-            # messages are generic ("must be a list").
-            #
-            # ``.get`` AND NOT A SUBSCRIPT, WHICH IS THE DIFFERENCE BETWEEN A NO-OP AND A 500.
-            # ``_validate_registry`` already refuses a field whose ``text_format`` has no entry
-            # here, and the module refuses to import if a ``TextFormat`` member has none — but
-            # both of those see ENUM members, and the one case neither covers is the one that
-            # reaches this line: a hand-written spec built with ``text_format="EMAIL"`` as a bare
-            # string. ``TextFormat`` is a ``str`` Enum, so that spec passes every ``is not
-            # TextFormat.NONE`` test written against it while ``_FORMATS["EMAIL"]`` raises
-            # ``KeyError`` — a 500 out of the one door every save goes through, which the stage
-            # editor's ``isTransient`` reads as "no connection". A permanently un-saveable stage
-            # that looks like bad signal is exactly the failure the lone-surrogate paragraph forty
-            # lines above exists to prevent, so the fallback is the same one an unknown format gets
-            # on both clients: enforce nothing, and let the registry check be the thing that shouts.
             format_error = _FORMATS.get(spec.text_format, _no_format_error)(text)
             if format_error:
                 return None, format_error
             if spec.store_masked:
-                # THE ONE DOOR EVERY SAVE GOES THROUGH, WHICH IS WHY THE MASK IS APPLIED HERE.
-                #
-                # See ``FieldSpec.store_masked`` for the decision and the exposure it closes. In
-                # short: the owner decided a design report carries an artisan's Aadhaar number
-                # masked to its last four digits, and until this line the guarantee held only for
-                # the value the server's own hydration wrote. Android's card reader wrote a bare
-                # twelve digits into the same box in one tap, the help text invited the same by
-                # hand, and a design workshop's stage reads never pass through
-                # ``records._redact_sensitive`` — so the full number became a permanent copy on a
-                # grantee-readable row. ``validate_entry`` re-coerces every field on every save, so
-                # putting it here also masks numbers that landed BEFORE this line existed, the next
-                # time their stage is saved.
-                #
-                # AFTER the length check above, on purpose: an over-long answer keeps the field's
-                # own refusal rather than being quietly shortened into a plausible-looking mask.
-                #
-                # ``mask_aadhaar`` AND NOT ``records.mask_identity_number``, WHICH IS THE SAME
-                # FUNCTION. ``mask_identity_number`` is a one-line delegation to this, so the two
-                # spellings are the same rule and one artisan's number reads identically on every
-                # surface — but ``records`` imports ``app.core.db``, and this module is imported by
-                # the DB-free registry tests and by the on-device report path. Reaching for the pure
-                # module keeps that true.
                 masked = mask_aadhaar(text)
-                # ``mask_aadhaar`` answers None for a value that normalises to nothing, which
-                # ``text`` cannot be (it is non-empty and stripped) — but reading its None as a
-                # cleared field rather than as "unchanged" is the direction that loses data, so it
-                # is spelled out instead of assumed.
                 return (masked or text), None
             return text, None
 
@@ -2526,29 +1087,10 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
         if t in (FieldType.DECIMAL, FieldType.MONEY, FieldType.PERCENT):
             value = float(str(raw).strip().replace(",", "").replace("₹", ""))
             if not math.isfinite(value):
-                # `float()` HAPPILY READS "NaN", "Infinity", "inf" AND ANY RUN OF MORE THAN 308
-                # DIGITS, and every one of those boxes is a plain <input type="text"> (the web
-                # keeps trailing zeros that way), so a designer can type one. `_range_checked`
-                # cannot catch them: every comparison against NaN is False, so `nan < 0` passes
-                # the min-0 floor, and `inf` passes any floor there is. The consequences differed
-                # only in how quietly they failed. MONEY stringifies, so `f"{nan:.2f}"` stored
-                # the literal "nan" behind a 200 with `errors: {}` — the designer is told "Stage
-                # saved" — and `report_builder.format_value` printed "₹ nan." on the cover
-                # preview, in the .docx submitted to the ministry and in the on-device report,
-                # while the cost charts silently dropped the row (`_as_number` rejects
-                # non-finite) so the totals disagreed with the table with nothing to say why.
-                # DECIMAL stores the float raw, so it reached the Postgres JSON column, Prisma
-                # refused it, and the WHOLE STAGE SAVE 500'd — which the stage editor reads
-                # through `isTransient` as "no connection", so the designer is told to wait for
-                # signal while a permanently un-writable value retries forever.
-                #
-                # One guard, at the single point all three clients validate through.
                 return None, f"{spec.label} is not a valid number"
             checked, error = _range_checked(spec, value)
             if error:
                 return None, error
-            # Money is stored as a string so it survives the JSON round trip without picking up
-            # a binary-float artefact: 1250.10 must not come back as 1250.0999999999999.
             if t is FieldType.MONEY:
                 return f"{checked:.2f}", None
             return checked, None
@@ -2557,7 +1099,7 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
             from datetime import date
 
             text = str(raw).strip()[:10]
-            date.fromisoformat(text)  # raises if malformed
+            date.fromisoformat(text)
             return text, None
 
         if t is FieldType.TIME:
@@ -2572,18 +1114,11 @@ def coerce_value(spec: FieldSpec, raw: Any) -> tuple[Any, str | None]:
                 return None, f"{spec.label} must be a coordinate"
             lat = float(raw.get("lat"))
             lon = float(raw.get("lon"))
-            # NaN fails this too, and deliberately reads that way round: every comparison
-            # against NaN is False, so `not (...)` is True and the coordinate is refused.
             if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 return None, f"{spec.label} is not a valid coordinate"
             out: dict[str, Any] = {"lat": lat, "lon": lon}
             if raw.get("accuracy") is not None:
                 accuracy = float(raw["accuracy"])
-                # ACCURACY HAD NO CHECK OF ANY KIND while lat and lon had one, so it was the way
-                # a non-finite float still got into the JSON column — where Prisma refuses it and
-                # the entire stage save comes back as a bare 500 that the stage editor reports to
-                # the designer as "no connection". A range as well as a finiteness test, because
-                # a negative error bar is not a reading and neither is one larger than the planet.
                 if not math.isfinite(accuracy) or not (0 <= accuracy <= _MAX_ACCURACY_M):
                     return None, f"{spec.label}: {raw['accuracy']!r} is not a GPS accuracy"
                 out["accuracy"] = accuracy
@@ -2605,18 +1140,6 @@ def _range_checked(spec: FieldSpec, value: float) -> tuple[Any, str | None]:
 def validate_entry(
     entity: EntitySpec, data: dict[str, Any], *, enforce_required: bool = True
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    """Coerce and validate a whole entry against its entity.
-
-    Returns the cleaned data and a ``{field key: message}`` map of errors. Unknown keys are
-    DROPPED rather than rejected — deliberately, and unlike the rest of this codebase, whose
-    ``APIModel`` sets ``extra="forbid"``. A phone one release ahead of the server carries fields
-    this build has never heard of, and 422-ing the whole stage would mean a designer in a
-    village cannot save two weeks of work because of a field they never filled in. The dropped
-    keys are returned to the caller to log.
-
-    ``enforce_required`` is off while a stage is a draft and on at submission: the whole point
-    of the app is that a stage can be left half-filled overnight.
-    """
     cleaned: dict[str, Any] = {}
     errors: dict[str, str] = {}
 
@@ -2629,23 +1152,9 @@ def validate_entry(
             errors[spec.key] = error
             continue
         if spec.widget == "ATTENDANCE" and isinstance(raw, list) and not raw:
-            # "ALL PRESENT" IS AN ANSWER, NOT A BLANK. An empty tick-list list is what tells a row
-            # the attendance card counted apart from one whose days were typed on an older
-            # workshop (`stage_computed.is_legacy_attendance`); dropping it would turn every
-            # all-present row into a legacy one on its next save.
             cleaned[spec.key] = []
             continue
         if value is None or (isinstance(value, list) and not value):
-            # BLANK AND DERIVABLE MEANS COMPUTE IT, which is what the field's own help text has
-            # been promising. `durationDays` says "Leave blank to derive it from the start and end
-            # dates" and nothing derived it — the value simply stayed empty, and the cover page of
-            # a submitted report carried a blank where the form had said a number would appear.
-            #
-            # Derived from the INCOMING row rather than from the stored one, so a designer who
-            # changes the end date gets a duration that follows it. The clients compute the same
-            # value live from the same declaration (`derive_value`), so what they watch appear is
-            # what lands here; this branch is what makes it true for the Android app, for an older
-            # build, and for anything talking to the API directly.
             derived = derive_value(spec, data)
             if derived is not None:
                 cleaned[spec.key] = derived
@@ -2659,29 +1168,12 @@ def validate_entry(
     return cleaned, errors
 
 
-#: Fields that become required once another field on the same entity is filled in, as
-#: ``entity key -> (dependent field, the fields that trigger it)``.
-#:
-#: ONE ENTRY SO FAR, and the shape is deliberately narrow rather than a general rule engine: the
-#: registry declares fields, and a conditional requirement is the one thing a flat field list
-#: cannot express. ``countOverrideReason``'s help has said "Required if either count above is
-#: filled in" since it was written and nothing enforced it, so a designer could state that the
-#: workshop produced 24 designs where the record holds 10 and give no reason at all — and that
-#: number now WINS on the report's front page (see ``report_builder._output_count``), which is
-#: exactly when the reason stops being a nicety.
 _CONDITIONALLY_REQUIRED: dict[str, tuple[str, tuple[str, ...]]] = {
     "outcomes": ("countOverrideReason", ("designsCountOverride", "prototypesCountOverride")),
 }
 
 
 def _check_conditional(entity: EntitySpec, cleaned: dict[str, Any], errors: dict[str, str]) -> None:
-    """Apply the requirements that depend on another answer, at every tier and on every save.
-
-    NOT gated on ``enforce_required``: unlike a Basic-tier field, which a designer is entitled to
-    leave empty overnight, this one is only ever triggered by a value they have just typed. A
-    figure that overrides the record needs its reason in the same breath, not at submit time
-    three weeks later when the record it disagrees with has moved on.
-    """
     rule = _CONDITIONALLY_REQUIRED.get(entity.key)
     if rule is None:
         return
@@ -2697,10 +1189,6 @@ def _check_conditional(entity: EntitySpec, cleaned: dict[str, Any], errors: dict
     errors[dependent] = f"{spec.label} is required once {' or '.join(labels)} is filled in."
 
 
-# --------------------------------------------------------------------------------------
-# Completeness — the "completeness check" the source document asks for at stage 20
-# --------------------------------------------------------------------------------------
-
 
 @dataclass(frozen=True, slots=True)
 class StageCompleteness:
@@ -2711,28 +1199,10 @@ class StageCompleteness:
     optional_total: int
     optional_filled: int
     collection_counts: dict[str, int]
-    #: Labels of unfilled required fields — and of any field short of its declared ``min_items``,
-    #: which carries its count ("Traditional motif photographs (20 of 25)") because "not recorded"
-    #: about a gallery holding twenty photographs reads as data loss. See ``_shortfall_label``.
     missing: tuple[str, ...]
 
     @property
     def percent(self) -> int:
-        """Progress across the required fields — BASIC tier, PLUS any field declaring a floor.
-
-        THE SECOND CLAUSE IS NEW AND THIS LINE USED TO READ "BASIC-tier fields only", which was
-        true because ``validate_registry``'s Rule 3 refuses ``required`` on anything but BASIC, so
-        the two sets were the same set. ``min_items`` breaks that identity on purpose: stage 4's
-        two motif galleries are STANDARD tier, the owner made all twenty-five of each mandatory,
-        and promoting their tier to keep the sentence true would have moved fifty photographs into
-        COMPACT_SUMMARY — a template whose entire description is "Basic-tier fields only". So the
-        exception is taken here, in the arithmetic, rather than hidden in a tier change nobody
-        asked for. See ``FieldSpec.min_items``.
-
-        A stage with no required fields at all (stage 22 follow-up, for instance) reads as
-        complete rather than as 0%, because dividing by zero to decide whether a designer may
-        submit is how a stage becomes permanently unsubmittable.
-        """
         if self.required_total == 0:
             return 100
         return round(100 * self.required_filled / self.required_total)
@@ -2748,10 +1218,6 @@ def _is_filled(value: Any) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
     if isinstance(value, dict):
-        # A rich-text document of empty paragraphs is not a filled field. An editor that was
-        # focused and then left alone still saves {"blocks":[{"kind":"PARAGRAPH","spans":[]}]},
-        # and counting that as filled would let a designer submit a report whose introduction is
-        # blank while the gate reads 100%.
         if "blocks" in value:
             from app.services.rich_text import is_empty
 
@@ -2763,13 +1229,6 @@ def _is_filled(value: Any) -> bool:
 
 
 def _meets_minimum(spec: FieldSpec, value: Any) -> bool:
-    """Whether a declared ``min_items`` floor is reached. True for every field that declares none.
-
-    A NON-LIST IS SHORT, NOT EXEMPT. A gallery holding a single bare media id rather than a list
-    is a client bug, and answering True for it would report a stage of one photograph as twenty-five
-    complete — the one wrong answer this predicate must never give. ``_is_filled`` is asked
-    separately and first, so "empty" and "short" stay distinguishable to the caller.
-    """
     if not spec.min_items:
         return True
     if not isinstance(value, (list, tuple)):
@@ -2778,27 +1237,6 @@ def _meets_minimum(spec: FieldSpec, value: Any) -> bool:
 
 
 def _shortfall_label(spec: FieldSpec, value: Any) -> str:
-    """The name this field goes into ``missing`` under — with its count, when it declares a floor.
-
-    "Traditional motif photographs (20 of 25)" and not the bare label, because the bare label is a
-    lie by omission here: every other entry in ``missing`` means "nothing was recorded", and a
-    designer reading that sentence about a gallery holding twenty photographs concludes the app has
-    lost them. This is the string the report's warning prints, the completeness annexure's
-    Outstanding column prints and both readiness screens list, so it is the only place the number
-    can be said.
-
-    TWO CONSEQUENCES THE CLIENT PORTS INHERIT, both of which are the reason this is a named function
-    rather than an f-string at two call sites:
-
-      * ``missing`` IS DE-DUPLICATED BY LABEL. A collection field declaring a floor would file one
-        entry per DISTINCT count rather than one per field, so eleven rows at eleven different
-        counts are eleven items. No collection field declares one today — both are singleton
-        galleries — and the count is worth more than the collapsing when one does, but a future
-        floor on a repeating row should read this before assuming the old shape.
-      * THE READINESS ADDRESS WALK MATCHES BY THIS EXACT STRING. ``scoreStageData`` and
-        ``computeStageCompleteness`` must decorate identically, or their address lookup misses and
-        the item degrades to a stage-level link instead of scrolling to the gallery.
-    """
     if not spec.min_items:
         return spec.label
     held = len(value) if isinstance(value, (list, tuple)) else 0
@@ -2814,51 +1252,6 @@ def stage_completeness(
     custom_fields: Sequence[Any] = (),
     custom_values: dict[str, Any] | None = None,
 ) -> StageCompleteness:
-    """Score one stage against its declaration, and against the designer's own questions.
-
-    A COLLECTION entity contributes its required fields once per existing row, and contributes
-    nothing when it is empty *unless* the entity itself sits behind a required singleton field —
-    an empty sketch list is a legitimate state on day one of a workshop, not an error.
-
-    **THIS IS THE ONLY PLACE A ``min_items`` FLOOR IS ENFORCED, AND THAT IS THE FEATURE.** A
-    gallery declaring one counts as required here and is not "filled" until it holds that many, so
-    the stage is not complete, the readiness screens list it and the report warns — while every
-    save path stays exactly as forgiving as it was. A designer with twenty of twenty-five
-    photographs and no signal saves twenty. See ``FieldSpec.min_items`` for the two ways a floor on
-    the write path would have destroyed that work instead.
-
-    ``custom_fields`` AND ``custom_values`` ARE THE DESIGNER-DEFINED FIELDS OF THIS STAGE, AND
-    THIS IS THE ONE PLACE THEY ARE SCORED. Every other reader — the readiness screen, the stage
-    index, the submission gate's echo, the report's completeness annexure and its per-stage export
-    warnings — reads this function rather than counting for itself, which is what stops two
-    arithmetics appearing inside one document. (Plan §4: a custom required field counts toward the
-    percentage, for the workshop that defines it.)
-
-    THEY ARRIVE AS PLAIN DATA AND ARE TYPED ``Any`` ON PURPOSE. The concrete class is
-    ``services/custom_sections.CustomFieldSpec``, and that module reads the database — which this
-    one must never do, because it is the module the Kotlin and TypeScript ports mirror line for
-    line and the module whose digest a bundled 119 KB asset is checked against. What is read here
-    is four attributes and nothing else: ``key``, ``label``, ``required`` and ``retired``.
-
-    ``custom_values`` is the ``_custom`` row's ``data`` for this stage — flat, keyed by custom field
-    key. **It is scored KEY BY KEY and the container is never tested as a whole**, which is not a
-    style preference: :func:`_is_filled` returns ``bool(value)`` for a dict, so a container holding
-    twenty blank answers reads as filled and a stage would report itself complete on the strength of
-    the container existing.
-
-    ``ref_resolves`` ANSWERS "does this id still point at something?", and without it a required
-    REF counts as filled whenever it holds a non-empty string. That is what made one submitted
-    document disagree with itself: the completeness annexure read "13. Prototype Development |
-    144/144 | 100% | Complete" while eighteen pages earlier the same report printed "Prototype |
-    Not recorded." in all 18 prototypeStageLog tables and all 18 materialUsage tables — 36 times,
-    identically in the .docx and the PDF. The renderer blanks an id it cannot resolve (a deleted
-    parent row) and the scorer never checked, so the two halves of one document counted the same
-    field differently.
-
-    Left as ``None`` where nothing can resolve — the stage form scores itself on the phone with no
-    database — so the argument is what the REPORT passes, and the report is where the
-    contradiction was visible.
-    """
     required_total = required_filled = 0
     optional_total = optional_filled = 0
     missing: list[str] = []
@@ -2866,26 +1259,12 @@ def stage_completeness(
     def _counts_as_filled(f: FieldSpec, value: Any) -> bool:
         if not _is_filled(value):
             return False
-        # A GALLERY BELOW ITS DECLARED FLOOR IS NOT FILLED, and this is the ONLY place in the
-        # codebase where that sentence is true — a minimum is scored and never validated, so
-        # nothing on any save path can refuse the twenty photographs a designer has so far. See
-        # `FieldSpec.min_items` for why a floor on the write path would drop the stage on Android
-        # and revert the gallery on a `submit=true`.
         if not _meets_minimum(f, value):
             return False
         if f.type is not FieldType.REF or ref_resolves is None:
             return True
         return bool(ref_resolves(value))
 
-    # A DECLARED FLOOR MAKES THE FIELD REQUIRED, WHATEVER TIER IT SITS AT.
-    #
-    # Without this the whole feature scores nothing: both motif galleries are optional fields, so a
-    # minimum would only move `optional_filled` and `is_complete` — which is `required_filled >=
-    # required_total` and nothing else — would stay true at twenty-four of twenty-five.
-    #
-    # `or` AND NOT A SEPARATE COUNTER, so a field that is both `required` and floored is counted
-    # ONCE. Neither of the two is today; a future one counted twice would make its stage report
-    # 49/50 with one box outstanding.
     def _is_required(f: FieldSpec) -> bool:
         return f.required or bool(f.min_items)
 
@@ -2906,23 +1285,6 @@ def stage_completeness(
                 optional_total += 1
                 optional_filled += int(filled)
 
-    # THE DESIGNER'S OWN QUESTIONS, SCORED BETWEEN THE STAGE'S SINGLETON AND ITS COLLECTIONS.
-    #
-    # Between, and not after, so that `missing` reads in the order a designer meets the questions on
-    # the form: the stage's own fields, then the block they added to it, then the repeating rows.
-    # THE ORDER IS NOT COSMETIC: the phone's report screen prints `missing.take(3)` per stage and the
-    # completeness annexure prints the same three in its Outstanding column, so whatever this list
-    # puts first is what a designer and a ministry officer actually read.
-    #
-    # FILED UNDER THE BARE LABEL, like a singleton field and unlike a collection field — which files
-    # `f"{entity.title}: {label}"`. That is what makes a duplicate label a definition-time refusal
-    # rather than a document that disagrees with itself: two required fields filing the same string
-    # collapse into one row through `dict.fromkeys` below while `required_total` still counts two.
-    # See `custom_sections.validate_definition`, which refuses exactly the pair that could collapse.
-    #
-    # A RETIRED FIELD IS SKIPPED, exactly as `if f.deprecated: continue` skips a superseded registry
-    # field three lines up and for the same reason: it is no longer asked, so counting it would make
-    # a stage permanently incomplete because of a question the designer corrected.
     values = custom_values or {}
     for cf in custom_fields:
         if getattr(cf, "retired", False):
@@ -2966,23 +1328,12 @@ def stage_completeness(
         optional_total=optional_total,
         optional_filled=optional_filled,
         collection_counts=counts,
-        missing=tuple(dict.fromkeys(missing)),  # de-duplicated, order preserved
+        missing=tuple(dict.fromkeys(missing)),
     )
 
 
-# --------------------------------------------------------------------------------------
-# Serialisation for the clients
-# --------------------------------------------------------------------------------------
-
 
 def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
-    """One field as the clients read it.
-
-    ``entity_key`` is what makes ``refHydration`` emittable at all: the hydration table is keyed
-    by ``"entityKey.fieldKey"`` because field keys are unique only within an entity. It is
-    optional so a field can still be serialised on its own — a caller that omits it gets a field
-    with no mapping, which is the same fail-closed answer as a field that has none.
-    """
     out: dict[str, Any] = {
         "key": f.key,
         "label": f.label,
@@ -2990,8 +1341,6 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
         "tier": f.tier.value,
         "required": f.required,
     }
-    # Only non-default keys are emitted: the whole registry crosses the wire on every app
-    # start, and the empty strings are most of its bulk.
     if f.help:
         out["help"] = f.help
     if f.details:
@@ -3003,19 +1352,7 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
         out["options"] = [{"value": v, "label": lbl} for v, lbl in ENUMS[f.enum].items()]
     if f.ref_model:
         out["refModel"] = f.ref_model
-        # Emitted for EVERY ref field, defaulted rather than omitted, because a client that has
-        # to supply its own default for the scope is a client that will eventually supply a
-        # different one from the server's. The picker sends this value straight back on
-        # ``GET .../references``, so server and client agree on how wide the net is by
-        # construction instead of by both remembering the same rule.
         out["refScope"] = f.ref_scope or REF_SCOPE_ALL
-        # WHICH BOXES THIS PICKER FILLS IN, AND WHICH OF THE RECORD'S VALUES GOES IN EACH.
-        #
-        # Published rather than left for each client to work out, because the obvious way to work
-        # it out is to match key names and that is actively wrong — see the long note above
-        # REFERENCE_HYDRATION for the participant's name landing in the product's name box.
-        # Omitted entirely when the field hydrates nothing, so a client that reads it can fail
-        # closed on the absence instead of guessing.
         hydration = reference_hydration_for(entity_key, f.key)
         if hydration:
             out["refHydration"] = dict(hydration)
@@ -3029,82 +1366,12 @@ def field_to_dict(f: FieldSpec, entity_key: str = "") -> dict[str, Any]:
         out["refFilterBy"] = f.ref_filter_by
     if f.max_length:
         out["maxLength"] = f.max_length
-    # WHAT THE SERVER WILL ACTUALLY KEEP, SAID TO THE CLIENT THAT RENDERS THE BOX.
-    #
-    # ``coerce_value`` replaces this field's value with the mask of an identity number on every
-    # save, so a client that does not know about the flag shows a box, accepts twelve digits, and
-    # is silently overruled — which on Android is a card reader writing a Verhoeff-checked number
-    # into a draft that syncs as four digits, with nothing on screen having said so. Both clients
-    # read this to word the control and (on Android) to mask at the point of capture, so what the
-    # designer proofreads and what is stored cannot differ. See ``FieldSpec.store_masked``.
     if f.store_masked:
         out["storeMasked"] = True
-    # THE SHAPE THE SERVER WILL REFUSE THIS BOX FOR, SAID TO THE CLIENT THAT DRAWS IT.
-    #
-    # Published for the same reason as ``storeMasked`` beside it, and with one addition: the
-    # clients render a PREVIEW of the rule so the ordinary mistake never costs a round trip, and a
-    # preview is only honest if it is the server's own rule that is previewed. A client that does
-    # not know a field gained a format shows no error, the designer saves, and the refusal arrives
-    # from the server against a box whose control said nothing — which on a fleet often on one bar
-    # is a save that appears to have silently reverted.
-    #
-    # ``format`` and not ``textFormat``: it is the name both clients already use for the concept
-    # in their own field types, and the key is what crosses the wire.
     if f.text_format is not TextFormat.NONE:
         out["format"] = f.text_format.value
-    # THE ASSET MOVES FOR THIS KEY AND THE VERSION DOES NOT, AND THAT ASYMMETRY IS THE WHOLE NOTE.
-    #
-    # This is the line somebody reads before deciding whether a changed cap owes a re-dump of
-    # `android/app/src/main/assets/design-workshop-schema.json` and a re-cut APK, so it has to be
-    # right about both halves. It used to say that no field in today's registry emitted the key, so
-    # neither the bundled asset nor `registry_version()` moved for it. That was true when written
-    # and is now false in its first two clauses: stage 4's two motif galleries declare
-    # `max_items=25` (`stage_definitions.py`, `motifPhotos` and `contemporaryMotifPhotos`), so
-    # `maxItems` crosses the wire twice and appears twice in the bundled asset. The third clause is
-    # the load-bearing one and is still true.
-    #
-    #   * THE ASSET MOVES. It is a by-value dump of `registry_to_dict()`, which serialises this
-    #     function's output verbatim, so a cap added, changed or removed here leaves the shipped
-    #     copy disagreeing with the server until somebody re-dumps it.
-    #   * THE VERSION DOES NOT. `registry_version()` below digests key, type, tier, required, enum,
-    #     deprecated, derivation, hydration, `store_masked` and `text_format` — and NOT
-    #     `max_items`. A cap change leaves that digest character for character identical. THE FLOOR
-    #     BESIDE IT IS THE OPPOSITE — `min_items` IS digested — so do not read this bullet as
-    #     covering both bounds; see the note under `minItems` below for why they differ.
-    #
-    #     (Which is what made the 20 → 25 widening of 2026-08-28 a good measurement of this note:
-    #     the cap moved and the digest did not, and it was the FLOOR declared in the same edit that
-    #     moved it. Had that edit raised the cap alone, the version test would have gone on
-    #     reporting agreement over a stale asset, exactly as this note warns.)
-    #
-    # Which is why `tests/test_controlled_vocabularies.py` carries TWO asset tests and not one: on
-    # a cap change the version test (`..._matches_the_registry_it_was_dumped_from`) reports
-    # agreement and only the content test (`..._is_the_registry_it_claims_to_be`) fails. Reading
-    # the green version test as "the asset is fresh" is the defect this note exists to prevent, and
-    # what it costs is specific rather than cosmetic: `DwMediaCapture.kt` computes its cap as
-    # `if (multiple && field.maxItems > 0) field.maxItems else null`, so a handset rendering off a
-    # stale asset gets `null` — an UNCAPPED picker — while `coerce_value` above REFUSES the
-    # twenty-first entry rather than trimming it. The designer learns the number by losing a save.
-    #
-    # Both clients ignore keys they do not know, so a new bound is safe for an OLD build that never
-    # fetched it; it is the BUNDLED copy of the build being cut that has to be re-dumped.
     if f.max_items:
         out["maxItems"] = f.max_items
-    # THE FLOOR, PUBLISHED SO THE NUMBER LIVES IN ONE PLACE INSTEAD OF THREE.
-    #
-    # Emitted only where declared, exactly as ``maxItems`` above is, and read by both clients for
-    # two things they would otherwise each hard-code: the "20 of 25" progress bar under the picker,
-    # and their own ports of ``stage_completeness`` (``scoreStageData``,
-    # ``computeStageCompleteness``), which must count this field as required or a stage reads 100%
-    # on the phone and incomplete on the server.
-    #
-    # UNLIKE ``maxItems``, THIS ONE IS IN ``registry_version()``. A cap is advice a client renders;
-    # a floor decides whether a stage is COMPLETE, and a handset that has never fetched since the
-    # floor was declared scores the stage green at twenty photographs, tells the designer they are
-    # finished, and lets them leave the cluster. That is the same class of silent disagreement as
-    # ``storeMasked`` and ``format``, both of which were put in the digest for it — see
-    # ``registry_version``. So the version moves, the refetch fires, and the bundled asset owes a
-    # re-dump.
     if f.min_items:
         out["minItems"] = f.min_items
     if f.min_value is not None:
@@ -3162,40 +1429,6 @@ def stage_to_dict(s: StageSpec) -> dict[str, Any]:
 
 
 def registry_to_dict() -> dict[str, Any]:
-    """The whole registry, as the clients fetch it from ``GET /design-workshops/schema``.
-
-    The version is derived from the content rather than hand-maintained, because a
-    hand-maintained one is a version that stops changing.
-
-    WHAT A CHANGED VERSION ACTUALLY DOES, PER CLIENT — measured on 2026-08-13 rather than
-    assumed, because the sentence that used to stand here ("a changed version is what tells an
-    Android draft store to run its migration") is FALSE, and it is false about the exact
-    mechanism a reviewer auditing this digest would come here to check:
-
-      * THE BROWSER keys its IndexedDB registry store by this string and stores the draft's own
-        ``registryVersion`` beside it, so ``stageSpecFor`` can render a stage through the registry
-        it was captured against (``frontend/lib/designWorkshopStore.ts``). This is the one client
-        that genuinely uses the version as an identity.
-      * THE SERVER stamps it onto the workshop row on every stage save, which is what
-        ``reportDiff``'s ``schemaVersionChanged`` compares between two report runs.
-      * ANDROID DOES NOT MIGRATE ON IT AND HAS NO DRAFT-LEVEL RECORD OF IT. Its draft store's
-        ladder is a separate integer, ``WORKSHOP_DRAFT_SCHEMA_VERSION`` (currently 2, stored as
-        ``schemaVersion`` in ``draft.json``), which moves only when the ON-DISK DRAFT FORMAT
-        changes — never when this digest does. ``StageSchemaStore.store`` computes a "the version
-        moved" boolean and its only caller discards it; ``StageSchemaStore.cachedVersion`` has no
-        callers at all. A moved digest therefore rewrites the phone's cache file and does nothing
-        else: verified on an SM-M325F by pointing its cached registry at a bogus digest and
-        re-fetching, after which the draft was byte-for-byte identical (sha256 unchanged), no
-        migration ran, nothing was re-keyed, nothing was quarantined and nothing was said.
-
-    That is SAFE rather than lossy, and for reasons that are load-bearing rather than lucky:
-    draft values are ``JsonElement`` maps that carry keys this build has never heard of through a
-    round trip untouched, ``requiredKeys`` is recomputed from the live registry on every persist
-    rather than trusted from disk, and the drift a designer actually needs to hear about is the
-    server's own ``droppedKeys`` at save time. Do not add an Android migration keyed to this
-    string without first giving a draft somewhere to record which digest it was written against.
-    """
-
     _ensure_installed()
     return {
         "version": registry_version(),
@@ -3207,49 +1440,10 @@ def registry_to_dict() -> dict[str, Any]:
     }
 
 
-#: What :func:`registry_version` last digested, and what it digested to: ``(fingerprint, digest)``,
-#: or ``None`` before the first call. Written by :func:`registry_version` and by nothing else.
-#:
-#: A PLAIN GLOBAL AND NOT A LOCK. Every writer stores the same two-tuple computed from the same
-#: registry, and a rebinding of one name is atomic under CPython, so the worst a second thread can
-#: do is compute a digest that was about to be handed to it. There is no state here that can be
-#: observed half-written. (2026-09-03)
 _VERSION_MEMO: tuple[tuple[Any, ...], str] | None = None
 
 
 def _registry_fingerprint() -> tuple[Any, ...]:
-    """Every input :func:`registry_version` digests, read once and UNFORMATTED.
-
-    THIS IS THE MEMO KEY, AND IT IS WHY THE MEMO CANNOT GO STALE. The obvious memoisation —
-    compute the digest at install time, or ``lru_cache`` it and clear the cache from
-    :func:`_install` — is wrong here, and the tests say so before production would. The registry is
-    module-level state that three tests in ``tests/test_stage_schema.py`` mutate IN PLACE through
-    ``object.__setattr__`` on a frozen, slotted ``FieldSpec`` (``_swapped_attrs``), by rebuilding an
-    ``EntitySpec.fields`` tuple (``_swapped_field``), or by monkeypatching
-    :data:`REFERENCE_HYDRATION` — none of which goes anywhere near ``_install``. A cache keyed on
-    installation would hand all three the pre-mutation digest, and each of those tests exists
-    because a digest that fails to move is how a stale bundled Android asset reports agreement with
-    a registry it no longer matches. So the key has to be the CONTENT.
-
-    AND THE DIGEST IS COMPUTED FROM THIS, NEVER FROM THE REGISTRY DIRECTLY — see
-    :func:`_registry_digest`. That is the whole safety argument: there is no way to add an input to
-    the digest without adding it here, because here is the only thing the digest can read. A key
-    that merely *listed* the same attributes would drift the first time somebody widened the version
-    (which the docstring below records happening four separate times), and a version that silently
-    stops moving is the exact failure every one of those paragraphs was written about.
-
-    WHAT IT COSTS, MEASURED ON THIS REGISTRY (22 stages, 640 fields) ON 2026-09-03. The old
-    unmemoised call was 1.00 ms; building this fingerprint and comparing it against the memo is
-    0.25 ms, so a hit is ~4x cheaper and a miss is within noise of what the call cost before.
-    That is worth having because of WHERE the call sites are, not because a millisecond matters
-    anywhere on its own: workshop detail, the stage list, every report row, and TWICE per stage save
-    — once of them inside the open transaction, where it is a millisecond of held locks on the write
-    a designer is standing there waiting for.
-
-    THE HYDRATION TABLE IS SNAPSHOT WHOLE RATHER THAN PER FIELD, and that is most of the saving.
-    :func:`reference_hydration_for` builds an ``f"{entity}.{field}"`` key per call, so asking it 640
-    times costs more than copying all eleven entries of the mapping once.
-    """
     return (
         tuple((path, tuple(mapping.items())) for path, mapping in REFERENCE_HYDRATION.items()),
         tuple(
@@ -3277,17 +1471,6 @@ def _registry_fingerprint() -> tuple[Any, ...]:
 
 
 def _registry_digest(fingerprint: tuple[Any, ...]) -> str:
-    """The version string for one fingerprint. The ONLY place it is built.
-
-    Reads nothing but its argument — no module global, no registry — which is what makes
-    :func:`_registry_fingerprint` a complete cache key rather than a hopeful one.
-
-    The per-field part strings are byte-for-byte what this function has always produced. They have
-    to be: ``android/.../assets/design-workshop-schema.json`` carries a copy of the digest, and
-    ``test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from`` compares the two
-    strings, so a formatting change here would stale every handset's bundled asset and demand a
-    re-cut APK for a refactor nobody asked for. (2026-09-03)
-    """
     import hashlib
 
     hydration_table = {path: dict(pairs) for path, pairs in fingerprint[0]}
@@ -3309,8 +1492,6 @@ def _registry_digest(fingerprint: tuple[Any, ...]) -> str:
             min_items,
             behaviour,
         ) = field
-        # In DECLARATION order, not sorted: the mapping's order is what decides which
-        # source key wins if two ever named one target, so a reordering is a change.
         hydration = ",".join(
             f"{src}>{dst}"
             for src, dst in hydration_table.get(f"{entity_key}.{field_key}", {}).items()
@@ -3320,94 +1501,12 @@ def _registry_digest(fingerprint: tuple[Any, ...]) -> str:
             f"{int(required)}:{enum}:{int(deprecated)}:"
             f"{derived_kind}:{','.join(derived_from)}:{hydration}:"
             f"{int(store_masked)}:{text_format}:{min_items}"
-            # Appended only when a field declares one, so every older field's part string — and
-            # therefore the digest of a registry without them — is byte-for-byte unchanged.
             + (f":{'/'.join(behaviour)}" if any(behaviour) else "")
         )
     return hashlib.sha256("|".join(sorted(parts)).encode("utf-8")).hexdigest()[:16]
 
 
 def registry_version() -> str:
-    """A short stable digest of every key, type, tier, DERIVATION and HYDRATION in the registry.
-
-    Deliberately insensitive to labels and help text: retitling a field must not invalidate
-    every cached draft on every phone, but adding, removing or retyping one must.
-
-    THE DERIVATION IS PART OF THE DIGEST BECAUSE IT IS PART OF THE BEHAVIOUR. It was not, once,
-    and the failure was silent in the worst way: `android/.../assets/design-workshop-schema.json`
-    — the copy a handset runs off before it has ever reached the network — carried two derived
-    fields where the registry had five, missing exactly the three cost-sheet ones. Because the
-    digest covered key/type/tier/required/enum/deprecated and nothing else, the stale asset's
-    version string matched the live registry's CHARACTER FOR CHARACTER, so the staleness check
-    that exists precisely to catch this reported agreement. A field that silently stops computing
-    is indistinguishable, on the phone, from a field the designer forgot to fill in.
-
-    ``store_masked`` IS HERE FOR THE SAME REASON, ONE FEATURE LATER AGAIN. It decides what a save
-    actually STORES — the mask of an identity number rather than the digits posted — and both
-    clients read it to say so on the box before a designer types. A phone that has never reached the
-    network and does not know a field has gained the flag offers a full-number box under a promise
-    ("your answer is kept") the server will no longer keep, which is the same class of silent
-    disagreement as a derivation that stopped computing. Labels and help text stay out; behaviour
-    goes in.
-
-    ``text_format`` IS HERE FOR THE SAME REASON, ONE FEATURE LATER AGAIN — and it is the clearest
-    case of the rule this docstring already states, "labels and help text stay out; behaviour goes
-    in". A format decides what a save REFUSES. A handset that has never reached the network and
-    does not know a field has gained one goes on accepting values the server will now reject, shows
-    the designer no error where the browser shows one, and reports the refusal only after a save it
-    presented as complete. That is the same class of silent disagreement as a derivation that
-    stopped computing. Pinned by ``test_the_version_changes_when_a_field_gains_a_format``.
-
-    THE HYDRATION MAPPING IS HERE FOR THE SAME REASON, ONE FEATURE LATER. ``field_to_dict`` now
-    publishes :data:`REFERENCE_HYDRATION` as ``refHydration`` so the clients fill a row in by the
-    server's rule instead of by matching key names — matching names is what wrote an artisan's
-    name into a ministry report's product column. That makes the mapping a client contract, and a
-    contract outside the digest is a contract that cannot be re-delivered: correcting a wrong
-    mapping touches no key, type, tier or derivation, so the version would not move, the bundled
-    asset would stay stale with `test_the_bundled_android_asset_matches_the_registry_it_was_dumped_from`
-    reporting agreement (it compares the version, not the content), and a handset that has never
-    reached the network would go on hydrating by the mapping the correction was written to end.
-    Pinned by ``test_the_version_changes_when_a_hydration_mapping_changes``.
-
-    ``min_items`` IS HERE FOR THE SAME REASON, ONE FEATURE LATER AGAIN — AND ITS TWIN IS NOT, WHICH
-    IS THE PART WORTH READING. ``max_items`` is deliberately OUT of this digest: a ceiling is advice
-    a picker renders, and a client that has not heard about it still saves a legal body, because
-    ``coerce_value`` refuses the over-long array on the server either way. A MINIMUM HAS NO SUCH
-    BACKSTOP. It is scored in ``stage_completeness`` and nowhere else — deliberately, so a partial
-    save is never refused (see ``FieldSpec.min_items``) — so the only thing that makes it true on a
-    handset is the handset knowing about it. A phone that has never fetched since the floor was
-    declared scores stage 4 complete at twenty photographs, its readiness screen lists nothing, and
-    the designer leaves the cluster believing the gallery is finished; the server disagrees silently
-    until a report is built. Labels and help text stay out; behaviour goes in, and "is this stage
-    complete" is the most behavioural answer this registry gives.
-
-    THE COST IS PAID, AND IT WAS MEASURED RATHER THAN ASSUMED. Moving this digest does not
-    invalidate a draft on either client. On Android nothing compares it to anything (``cachedVersion``
-    has no callers and a ``WorkshopDraft`` names no registry), measured on an SM-M325F on 2026-08-13
-    by swapping the cached digest for a bogus one: the draft was byte-for-byte identical afterwards.
-    In the browser it is a KEY into the IndexedDB registry store, so a stage captured before the
-    deploy is still sent under the field list it was captured with, and ``stageSpecFor`` falls back
-    to the registry this browser holds when that document is gone. What a moved version actually
-    costs is a re-dump of the bundled Android asset and a re-cut APK — see ``field_to_dict``.
-
-    ── IT IS MEMOISED NOW, AND THE CACHE IS KEYED ON THE REGISTRY'S CONTENT ──────────────────────
-
-    This used to re-derive 640 part strings and a SHA-256 on every call, and the call sites are not
-    occasional: workshop detail, the stage list, every report row, and twice per stage save — one of
-    those twice inside the open transaction, where the millisecond is spent holding write locks.
-    :func:`_registry_fingerprint` now reads the same inputs unformatted, and the digest is recomputed
-    only when that fingerprint differs from the memo (1.00 ms → 0.25 ms on a hit, measured
-    2026-09-03).
-
-    **MEMOISING ON INSTALLATION WOULD HAVE BEEN WRONG, AND WOULD HAVE BEEN CAUGHT BY THIS FILE'S OWN
-    TESTS RATHER THAN IN PRODUCTION.** The registry is module-level state, and the three tests that
-    hold this docstring's promises — the derivation test, the hydration test and the format test —
-    mutate it IN PLACE, never through ``_install``. A cache cleared from ``_install`` would answer
-    all three with the pre-mutation digest, which is precisely the "the staleness check reported
-    agreement" failure the paragraphs above are about. Keying on the content instead makes the memo
-    invisible: every caller, and every test, sees exactly the value it saw before.
-    """
-
     _ensure_installed()
     global _VERSION_MEMO
     fingerprint = _registry_fingerprint()
@@ -3420,16 +1519,6 @@ def registry_version() -> str:
 
 
 def derive_value(spec: FieldSpec, row: dict[str, Any]) -> Any:
-    """What ``spec`` computes to from ``row``, or ``None`` when it cannot be computed.
-
-    THE ONE DEFINITION. `frontend/lib/derivedFields.ts` and the Android renderer are ports of it,
-    and the reason all three exist rather than the server alone is that the value has to appear
-    while the designer is typing: a duration that only materialises after a save is a number they
-    cannot check against the sanction order in front of them.
-
-    Returns None rather than 0 for "not computable". A start date with no end date has no
-    duration, and writing 0 would put "0 days" onto a cover page.
-    """
     if not spec.derived_kind or not spec.derived_from:
         return None
 
@@ -3441,9 +1530,6 @@ def derive_value(spec: FieldSpec, row: dict[str, Any]) -> Any:
             end = date.fromisoformat(str(row.get(spec.derived_from[1]) or "")[:10])
         except (TypeError, ValueError):
             return None
-        # INCLUSIVE of both days: a workshop that runs the 12th to the 14th is three days long,
-        # which is what its attendance register and its utilisation certificate both say. The
-        # exclusive reading would report two and disagree with every other document in the file.
         days = (end - start).days + 1
         return days if days > 0 else None
 
@@ -3457,17 +1543,9 @@ def derive_value(spec: FieldSpec, row: dict[str, Any]) -> Any:
                 total *= float(str(raw).replace(",", ""))
             except (TypeError, ValueError):
                 return None
-        # MONEY is stored as a fixed-2 string so it survives the JSON round trip without picking
-        # up a binary-float artefact — the same rule ``coerce_value`` follows.
         return f"{total:.2f}" if spec.type is FieldType.MONEY else round(total, 4)
 
     if spec.derived_kind == "SUM":
-        # BLANK MEANS ZERO HERE, and that is the difference from PRODUCT, which returns None the
-        # moment one factor is missing. A cost sheet's total is the sum of six heads of which
-        # four are optional: requiring all six would mean `totalCost` stayed empty for every
-        # workshop that had no packaging or transport cost, which is most of them. But a row with
-        # NONE of them filled has no total — it is an empty row, not a zero-rupee product — and
-        # printing "₹ 0.00" into a cost sheet a ministry reads is a claim, not a blank.
         total = 0.0
         seen = False
         for key in spec.derived_from:
@@ -3486,25 +1564,12 @@ def derive_value(spec: FieldSpec, row: dict[str, Any]) -> Any:
     return None
 
 
-# --------------------------------------------------------------------------------------
-# Numbering a new row
-# --------------------------------------------------------------------------------------
-
 
 def format_auto_number(prefix: str, number: int) -> str:
-    """``S-01``, ``P-12``, ``D-103`` — two digits at least, so a list of codes sorts as it reads."""
     return f"{prefix}-{number:02d}"
 
 
 def next_auto_number(spec: FieldSpec, rows: Sequence[dict[str, Any]], scope: Any = None) -> Any:
-    """The number a NEW row of ``rows``' entity takes in ``spec``, or ``None`` if it numbers nothing.
-
-    THE ONE DEFINITION; ``frontend/lib/autoNumber.ts`` and Android's ``DwAutoNumber`` are ports.
-    One past the highest number already used — or past the row count, when earlier rows carry
-    codes in some other spelling — so a typed "Sk3" never makes the next row collide with it.
-    ``scope`` is the new row's value of ``auto_number_within`` (its prototype), and only rows that
-    share it are counted.
-    """
     if not spec.auto_number:
         return None
     considered = [

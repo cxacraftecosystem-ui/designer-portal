@@ -1,5 +1,3 @@
-"""THE MINISTRY PACK'S PDF: a real PDF, one or two pages, and the month-to-date banner when owed."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime

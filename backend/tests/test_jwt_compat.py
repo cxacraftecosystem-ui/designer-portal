@@ -1,16 +1,3 @@
-"""A TOKEN python-jose MINTED IS STILL ACCEPTED, AND PyJWT MINTS THE SAME BYTES.
-
-On 2026-10-09 ``app/core/security.py`` moved from python-jose to PyJWT. Every browser and handset in
-the field holds a bearer token, so the swap had to be invisible in BOTH directions: tokens minted
-before the deploy must keep working after it, and — for a rollback — tokens minted after it must be
-ones the old code accepts. The strongest form of that is byte identity, and that is what is held here.
-
-The three tokens below were MINTED BY THE OLD CODE — commit 4b1bc44's ``create_access_token`` under
-python-jose 3.5.0 — at the frozen instant :data:`MINTED_AT`, with a lifetime of a century so this
-test never ages out. They cover the three shapes in use: a session (email, role and the ``cred``
-password fingerprint), a dataset token (``scope``), and a pre-2026-10-09 session with no ``cred``.
-"""
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -41,7 +28,6 @@ JOSE_TOKENS = {
     ),
 }
 
-#: What the old code's decode_access_token returned for each, in claim order.
 JOSE_CLAIMS = {
     "session": {
         "sub": "cmabc123def456",
@@ -85,7 +71,6 @@ def test_a_token_jose_minted_decodes_to_the_same_claims(harness_secret, kind):
 
 
 def test_pyjwt_mints_the_bytes_jose_minted(harness_secret, monkeypatch):
-    """Same second, same inputs, same string — header, claim order, timestamps and HMAC alike."""
     monkeypatch.setattr(security, "datetime", _Frozen)
     minted = {
         "session": security.create_access_token(
@@ -107,11 +92,6 @@ def test_pyjwt_mints_the_bytes_jose_minted(harness_secret, monkeypatch):
 @pytest.mark.parametrize(
     "token",
     [
-        # An unsigned `alg: none` token carrying a valid-looking payload, and junk. The 2026-10-09
-        # comparison went further — seventeen hand-built tokens (HS512 under the HS256 secret, a
-        # forged payload, a wrong secret, no `exp`, no `sub`, a non-string `sub`, an unexpected
-        # `aud`, a future `nbf`, a non-string `jti`, …) got identical verdicts from jose and PyJWT in
-        # both directions; these are the cheap ones to keep running.
         "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhY2N0LTEiLCJpYXQiOjE3OTE1MDQwMDAsImV4cCI6NDk0NTEwNDAwMH0.",
         "not-a-token",
         "",
@@ -123,8 +103,6 @@ def test_what_jose_refused_is_refused(harness_secret, token):
 
 
 def test_a_future_iat_is_still_accepted_as_jose_accepted_it(harness_secret, monkeypatch):
-    """PyJWT's own `iat` check refuses a token issued "in the future"; jose never did, and a box whose
-    clock steps backwards after a sign-in must not sign that person out. Only integrality is kept."""
     import jwt
 
     now = int(datetime.now(UTC).timestamp())

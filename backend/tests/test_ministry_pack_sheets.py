@@ -1,11 +1,3 @@
-"""THE MINISTRY PACK'S SHEETS, WITHOUT A DATABASE.
-
-``services/ministry_pack_sheets`` is pure: rows in, sheet dicts out. These tests hold what a file that
-leaves the product must and must not say — Summary first, one sheet per register, no contact details,
-no twelve-digit runs, no links, no soft-deleted workshops, UNSTATED counted, a truncation note when
-the cap was hit — and that the workbook it renders opens cleanly.
-"""
-
 from __future__ import annotations
 
 import re
@@ -101,11 +93,11 @@ def test_counts_come_from_real_timestamps_inside_the_period() -> None:
     rows = [
         _workshop(
             1, status="DRAFT", createdAt=datetime(2026, 8, 31, 19, 0, tzinfo=UTC)
-        ),  # 1 Sep IST
+        ),
         _workshop(2, status="APPROVED", approvedAt=datetime(2026, 9, 30, 18, 29, tzinfo=UTC)),
         _workshop(
             3, status="APPROVED", approvedAt=datetime(2026, 9, 30, 18, 31, tzinfo=UTC)
-        ),  # 1 Oct IST
+        ),
         _workshop(
             4,
             status="SUBMITTED",
@@ -216,7 +208,6 @@ def test_draft_and_in_progress_workshops_are_in_the_register_without_stage_answe
     )
     register = next(s for s in built if s["name"] == "Workshops")
     assert {r[11] for r in register["rows"]} == {"DRAFT", "IN_PROGRESS"}
-    # The pack carries registers only: no sheet is built from stage answers.
     assert all(
         s["name"]
         in {
@@ -286,4 +277,4 @@ def test_the_workbook_opens_cleanly_with_summary_first() -> None:
     assert wb.sheetnames[0] == "Summary"
     assert "Overview" not in wb.sheetnames
     register = wb["Workshops"]
-    assert register.cell(row=2, column=2).data_type == "s"  # the "=" title stayed text
+    assert register.cell(row=2, column=2).data_type == "s"

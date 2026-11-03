@@ -1,19 +1,3 @@
-"""THE REDACTED ACCESS LINE, AS A REAL UVICORN SERVER WRITES IT — NOT AS A TEST REBUILDS IT.
-
-``app.main.AccessLogRedaction`` keys on the exact call uvicorn makes for its access line: five
-arguments, the path third. The tests beside it in test_auth_identity_and_password_links.py build that
-record with uvicorn's own helpers and make that call themselves — which is exactly what they cannot
-notice changing. If a uvicorn release adds an argument, reorders them or logs through ``extra=``, the
-filter stops matching, passes the line through untouched, and the set-password token is back in the
-service's journal while every one of those tests still passes.
-
-So this module starts uvicorn — the installed version, on both HTTP implementations production can
-pick — with the logging production gets (uvicorn's own LOGGING_CONFIG, applied before the
-application installs its filter, as ``uvicorn app.main:app`` does), sends a link check through a real
-socket, and reads the line uvicorn wrote. Needs no database: the ASGI app here answers every request
-with 200 and is not the product's.
-"""
-
 import io
 import logging
 import socket
@@ -46,8 +30,6 @@ async def _answer_everything(scope, receive, send):
 
 @pytest.fixture
 def uvicorn_logging_restored():
-    """uvicorn's dictConfig rewrites three loggers' handlers, levels and propagation for the whole
-    process; put them back so no other test inherits a server's logging."""
     names = ("uvicorn", "uvicorn.error", "uvicorn.access")
     saved = {
         name: (
@@ -77,10 +59,6 @@ def test_a_running_uvicorn_writes_the_link_check_with_its_token_redacted(http, u
     listener.bind(("127.0.0.1", 0))
     port = listener.getsockname()[1]
 
-    # PRODUCTION'S ORDER: building the Config applies uvicorn's LOGGING_CONFIG (dictConfig replaces
-    # the access logger's handlers and keeps its filters), and only then does the application's
-    # import put the filter on the logger. app.main was imported above, so this re-asserts it the way
-    # that import does — idempotently.
     config = uvicorn.Config(
         _answer_everything,
         http=http,

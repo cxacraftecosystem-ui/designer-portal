@@ -1,10 +1,3 @@
-"""What one record becomes in the search index (services/search_index; docs/SEARCH.md).
-
-Against a real database: the builders read relations, and the shareable rule reads the cross-portal
-link. Every type is built from one seeded world; identity values are seeded on purpose and must
-reach no title, subtitle or body.
-"""
-
 from __future__ import annotations
 
 import uuid
@@ -17,7 +10,6 @@ from search_support import SECRETS, every_record, new_stamp, seed
 from app.core.db import db
 from app.services import search_index
 
-# One event loop for the module: `world` connects `db` once and every test awaits it.
 pytestmark = [needs_db, pytest.mark.asyncio(loop_scope="module")]
 
 
@@ -64,11 +56,9 @@ async def test_shareable_follows_the_artisan_link(world):
     assert docs[("artisans", world.unlinked.id)]["shareable"] is False
     assert docs[("products", world.product_title.id)]["shareable"] is True
     assert docs[("products", world.product_body.id)]["shareable"] is False
-    # Named only as free text: never shareable.
     assert docs[("products", world.product_free.id)]["shareable"] is False
     assert docs[("tools", world.tool.id)]["shareable"] is True
     assert docs[("interviews", world.interview.id)]["shareable"] is True
-    # Names no artisan.
     assert docs[("crafts", world.craft.id)]["shareable"] is True
     assert docs[("workshops", world.workshop.id)]["shareable"] is True
 
@@ -149,7 +139,6 @@ async def _file(world, **link):
 async def test_a_file_takes_the_artisans_of_the_record_it_hangs_off(world):
     on_product = await _file(world, productId=world.product_body.id)
     on_interview = await _file(world, questionnaireInterviewId=world.interview.id)
-    # Tagged only, the typed column never filled: the tag still names the record.
     tagged_free = await _file(
         world, linkedRecordType="product", linkedRecordId=world.product_free.id
     )
@@ -161,9 +150,7 @@ async def test_a_file_takes_the_artisans_of_the_record_it_hangs_off(world):
             doc = await search_index.build(kind, on_interview.id)
             assert doc["artisanIds"] == [world.linked.id], kind
             assert doc["shareable"] is True, kind
-            # The product names its artisan only as free text: never shareable.
             assert (await search_index.build(kind, tagged_free.id))["shareable"] is False, kind
-        # A change to the artisan or the product reaches the file.
         on_artisan = await search_index.dependents_of_artisan(world.unlinked.id)
         assert ("media", on_product.id) in on_artisan
         assert ("transcripts", on_product.id) in on_artisan

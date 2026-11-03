@@ -1,11 +1,3 @@
-"""The Monday summary against a real database: who gets one, once per week, the opt-out, mail off,
-an empty week, the kill switch, counts that match the badges, the owner-only read and retention.
-
-Each test runs its whole story inside one private ``asyncio.run`` (connect, seed, act, read back),
-the order ``conftest.py`` prescribes. Every account is fresh, so a database shared with other suites
-changes nothing here; the estate-wide figures are compared with the function the badge itself calls.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -46,8 +38,6 @@ def _private(work: Any) -> Any:
 
 
 def _target_now() -> datetime:
-    """Monday 09:00 IST of the week whose "this week" holds the real present, so rows seeded now
-    are "new this week" in the summary under test."""
     real = datetime.now(UTC)
     monday = weekly_digest.week_start_for(real)
     if weekly_digest.window_for(monday).end <= real:
@@ -116,8 +106,6 @@ def _line(payload: dict[str, Any], section: str, key: str) -> int:
     return 0
 
 
-# ── Who ───────────────────────────────────────────────────────────────────────────────────────────
-
 
 def test_eligibility_follows_the_role_or_an_inspection_post() -> None:
     async def story() -> dict[str, bool]:
@@ -160,8 +148,6 @@ def test_eligibility_follows_the_role_or_an_inspection_post() -> None:
         "professor listed": False,
     }
 
-
-# ── Once per person per week ─────────────────────────────────────────────────────────────────────
 
 
 def test_two_passes_and_two_concurrent_passes_send_once() -> None:
@@ -236,10 +222,8 @@ def test_a_crash_after_the_insert_is_repaired_once(monkeypatch: pytest.MonkeyPat
         with pytest.raises(RuntimeError):
             await weekly_digest.deliver_one(approver, WEEK, now=NOW, settings=settings)
         stuck = await _rows(approver.id)
-        # Within 15 minutes a second pass leaves it alone ...
         await weekly_digest._repair(WEEK, datetime.now(UTC), settings, _tally(), {})
         early = await _rows(approver.id)
-        # ... after 15 minutes it is reclaimed and delivered, once.
         await db.weeklydigest.update_many(
             where={"userId": approver.id},
             data={"updatedAt": datetime.now(UTC) - timedelta(minutes=20)},
@@ -261,8 +245,6 @@ def test_a_crash_after_the_insert_is_repaired_once(monkeypatch: pytest.MonkeyPat
 def _tally() -> dict[str, Any]:
     return dict.fromkeys(("delivered", "empty", "optedOut", "existing", "failed", "repaired"), 0)
 
-
-# ── Opt-out, mail off, empty, kill switch ────────────────────────────────────────────────────────
 
 
 def test_opted_out_mail_off_and_empty_weeks() -> None:
@@ -301,8 +283,6 @@ def test_an_empty_week_sends_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     async def nothing(*_args: Any, **_kwargs: Any) -> int:
         return 0
 
-    # The shared database holds other suites' pending records; an inspector with no posts and no
-    # records beneath them has an empty week.
     monkeypatch.setattr(review_queue, "pending_count", nothing)
 
     async def story() -> dict[str, Any]:
@@ -331,8 +311,6 @@ def test_the_kill_switch_sends_nothing() -> None:
     assert not answer["rows"]["digests"] and not answer["rows"]["notices"]
 
 
-# ── The counts match the badges, inside the person's own scope ───────────────────────────────────
-
 
 def test_counts_match_the_badges_and_respect_scope() -> None:
     async def story() -> dict[str, Any]:
@@ -340,10 +318,9 @@ def test_counts_match_the_badges_and_respect_scope() -> None:
         designer = await _person("DESIGNER", tag)
         approver = await _person("MINISTRY_ADMIN", tag)
         director = await _person("ASSISTANT_DIRECTOR", tag)
-        inspector = await _person("DESIGNER", tag)  # a designer holding inspection posts
+        inspector = await _person("DESIGNER", tag)
 
         await _handed_in(designer, f"{tag}-queue", days_ago=10)
-        # The inspector's two posts: one still to review, one already reviewed this round.
         todo = await _handed_in(designer, f"{tag}-todo", days_ago=9)
         done = await _handed_in(designer, f"{tag}-done")
         for workshop in (todo, done):
@@ -358,7 +335,6 @@ def test_counts_match_the_badges_and_respect_scope() -> None:
                 "actorId": inspector.id,
             }
         )
-        # Overdue stages: one posted to the director, one nobody posted them to.
         ended = datetime.now(UTC) - timedelta(days=30)
         posted = await _workshop(designer, f"{tag}-posted", status="IN_PROGRESS", endDate=ended)
         await _workshop(designer, f"{tag}-unposted", status="IN_PROGRESS", endDate=ended)
@@ -369,7 +345,6 @@ def test_counts_match_the_badges_and_respect_scope() -> None:
                 "capacity": "ASSISTANT_DIRECTOR",
             }
         )
-        # A sanction order still waiting on its setup, recorded three weeks ago.
         ordered = await _workshop(designer, f"{tag}-ordered", status="DRAFT")
         await db.sanctionorder.create(
             data={
@@ -400,25 +375,20 @@ def test_counts_match_the_badges_and_respect_scope() -> None:
     assert _line(approver, "waiting", "toHandOn") == answer["badge"]["toHandOn"]
     assert _line(director, "waiting", "sanctions") == answer["sanction badge"]
     assert _line(director, "overdue", "sanctions") >= 1
-    # The director sees the one workshop they were posted to, never the other.
     assert _line(director, "overdue", "stages") == 1
     overdue_items = next(s for s in director["sections"] if s["key"] == "overdue")["items"]
     assert [item["link"] for item in overdue_items] == [f"/officers/monitored/{answer['posted']}"]
     assert "approvals" not in {line["key"] for s in director["sections"] for line in s["lines"]}
-    # The inspector's queue leaves out what they already reviewed this round.
     assert _line(inspector, "waiting", "inspections") == 1
     assert _line(inspector, "overdue", "reviews") == 1
     waiting_items = next(s for s in inspector["sections"] if s["key"] == "waiting")["items"]
     assert [item["link"] for item in waiting_items] == [
         f"/design-workshop-inspections/{answer['todo']}"
     ]
-    # Lines with a zero count are left out, and the coverage names its scope.
     assert all(line["count"] > 0 for s in director["sections"] for line in s["lines"])
     assert director["coverage"]["scope"] == "Workshops you oversee"
     assert director["coverage"]["of"] == 1 and director["coverage"]["value"] == 0
 
-
-# ── The routes: the switch and the owner-only read ───────────────────────────────────────────────
 
 
 def _app(user: Any) -> FastAPI:
@@ -493,8 +463,6 @@ def test_the_switch_and_the_owner_only_read() -> None:
         == "The weekly summary is for reviewers and officials."
     )
 
-
-# ── Retention ────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_summaries_older_than_26_weeks_are_purged() -> None:

@@ -1,12 +1,3 @@
-"""F14: filing a correction suggestion, and sending a report back, each tell the designers by e-mail.
-
-Drives the two route functions directly with their database seams replaced — the loader, the plan
-writer and the answer builder — so what is asserted is the one thing this module is about: that
-each door calls ``email_outbox.notify_review_note`` once, with the right kind, AFTER its write,
-and that a send-back the transaction refuses notifies nobody. The notice itself (recipients,
-opt-out, templates) is ``test_email_outbox.py``.
-"""
-
 from __future__ import annotations
 
 import asyncio

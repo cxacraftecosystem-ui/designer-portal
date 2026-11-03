@@ -1,43 +1,3 @@
-"""**THE STATUS CHECK ON A SEND-BACK IS ADVISORY; THE ONE ON THE WRITE IS NOT.**
-
-``POST /api/design-workshop-inspections/{id}/send-back`` reads the workshop OUTSIDE any transaction,
-validates its status with ``_under_review_or_422`` and ``transition_refusal`` — and then applied a
-write plan whose WHERE was the primary key alone. Between the read and the commit there are three
-round trips (building the plans, BEGIN, the feedback INSERT), and the workshop can leave the set the
-check validated against inside them.
-
-It is not a hypothetical window. The ONLY header edit ``patchable_from("PRE_SUBMISSION")`` offers is
-``-> IN_PROGRESS``; the web record page ships it as a literal button labelled "Withdraw from
-inspection"; and the review graph's own commentary instructs designers to take it ("Withdraw it
-first (-> IN_PROGRESS)"). So:
-
-    officer presses "Send the report back"  ─┐
-                                             ├─ the designer's PATCH commits first
-    designer presses "Withdraw from …"  ─────┘
-    → the officer's UPDATE re-evaluates a predicate that is the id, and writes NEEDS_REVISION
-      over IN_PROGRESS
-
-``IN_PROGRESS -> NEEDS_REVISION`` is not an edge ``LEGAL_TRANSITIONS`` contains at all — this very
-module's ``transition_refusal`` rejects it even with ``by_decision_route=True`` — so the workshop
-lands in a state the graph declares unreachable. Three consequences follow, and the third is the
-expensive one:
-
-* a ``ReviewLog`` row asserts a decision on a report that had already left review;
-* the designer's deliberate withdrawal is silently reverted with nothing saying so;
-* their NEXT content-changing stage save trips ``design_workshops``'
-  ``NEEDS_REVISION and _content_changed`` arm, which applies ``presubmission_header`` — silently
-  RESUBMITTING the report to the officers and spending a submission round, which permanently
-  mis-stamps every later ``DwInspectionFeedback.round`` (that column is copied at write time and
-  never recomputed).
-
-``save_stage``'s twin write closes exactly this shape with ``update_many(where={"id": …, "status":
-"NEEDS_REVISION"})``; this path did not.
-
-**NO DATABASE.** The whole defect is the shape of one WHERE clause, so the delegate is a recorder
-and the assertion is over what was issued. A DB-backed version would have to interleave two
-transactions to prove the same sentence.
-"""
-
 from __future__ import annotations
 
 import ast
@@ -60,12 +20,6 @@ def anyio_backend():
 
 
 def _body_without_docstring(func: Any) -> str:
-    """A function's statements without its prose, so a docstring cannot answer a source assertion.
-
-    The same device ``tests/test_workshop_oversight_unit.py`` uses. Without it, a paragraph
-    EXPLAINING that the predicate must not be a literal satisfies a test looking for the absence of
-    that literal — the assertion passes on the words rather than on the code.
-    """
     tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
     definition = tree.body[0]
     body = definition.body
@@ -80,14 +34,6 @@ def _body_without_docstring(func: Any) -> str:
 
 
 class _Recorder:
-    """A Prisma delegate that records the one call and answers a chosen count.
-
-    NOT A MOCK LIBRARY AND NOT A FAKE THAT ACCEPTS ANY METHOD, for the reason
-    ``test_designer_prefill_contract._StubProfileTable`` gives: a stub this small fails loudly if
-    the function under test starts doing something else — a second query, a different table, an
-    ``update`` where an ``update_many`` was meant — rather than absorbing it silently.
-    """
-
     def __init__(self, written: int) -> None:
         self._written = written
         self.calls: list[dict[str, Any]] = []
@@ -113,13 +59,6 @@ def _plans():
 
 
 async def test_the_send_back_write_carries_the_status_in_its_where_clause() -> None:
-    """The fix, stated as the statement that is issued.
-
-    Under READ COMMITTED an ``UPDATE … WHERE id = ?`` waits on the designer's row lock and then
-    re-evaluates its predicate. With the id alone that predicate is still true and the write lands
-    on whatever status the designer just committed; with the status term in it, the row no longer
-    matches and nothing is written.
-    """
     client = _Client(written=1)
     assert await routes._apply_while_under_review(client, _plans().workshop) == 1
 
@@ -133,15 +72,6 @@ async def test_the_send_back_write_carries_the_status_in_its_where_clause() -> N
 
 
 async def test_the_guard_still_lets_a_second_officer_send_back_an_already_sent_back_report() -> None:
-    """**THE ``NEEDS_REVISION`` MEMBER OF THE SET IS DELIBERATE AND MUST STAY.**
-
-    The route documents this case as a 200 and a row rather than a refusal — "Two officers reading
-    one report at the same time is the ordinary case, and refusing the second would lose their
-    correction to a race" — and ``UNDER_REVIEW`` is ``{PRE_SUBMISSION, NEEDS_REVISION}``, so a
-    predicate derived from it keeps that promise. A narrower guard spelled ``"status":
-    "PRE_SUBMISSION"`` would look like a tightening and would silently drop the second officer's
-    decision.
-    """
     client = _Client(written=1)
     await routes._apply_while_under_review(client, _plans().workshop)
     [issued] = client.designworkshop.calls
@@ -150,24 +80,12 @@ async def test_the_guard_still_lets_a_second_officer_send_back_an_already_sent_b
 
 
 async def test_a_workshop_that_left_review_writes_nothing_and_is_answered_as_such() -> None:
-    """Zero rows means somebody moved it first, and the count is the only signal there is.
-
-    ``update_many`` answers a count rather than a record, which is precisely why the caller cannot
-    simply carry on: a handler that ignored it would pass every test, write the feedback row and the
-    audit row, and answer 200 about a decision that never landed.
-    """
     client = _Client(written=0)
     assert await routes._apply_while_under_review(client, _plans().workshop) == 0
     assert len(client.designworkshop.calls) == 1
 
 
 def test_the_status_predicate_is_derived_from_the_review_loop_and_not_typed_out() -> None:
-    """A literal here is a guard that a ninth status silently walks past.
-
-    ``_CLOSED_STATUSES`` in the oversight service was a literal for exactly one wave and was wrong
-    by the end of it; the same mistake in this predicate would let a send-back land on a state the
-    graph had since taken out of review.
-    """
     body = _body_without_docstring(routes._apply_while_under_review)
     assert "UNDER_REVIEW" in body
     assert '"PRE_SUBMISSION"' not in body, body
@@ -175,21 +93,10 @@ def test_the_status_predicate_is_derived_from_the_review_loop_and_not_typed_out(
 
 
 def test_the_send_back_refuses_inside_the_transaction_so_the_suggestion_rolls_back_too() -> None:
-    """**THE ORDER OF THE THREE WRITES IS WHAT MAKES THE REFUSAL SAFE.**
-
-    The feedback row is written first, so a refusal raised after it has to roll it back — a
-    correction filed against a round that is no longer open would sit in the register naming a cycle
-    nobody can answer, because ``round`` is copied at write time and never recomputed. Raising
-    inside ``async with db.tx()`` does that; raising after the block would not, and neither would
-    answering 200 and skipping the log.
-
-    Read at the source, because what is asserted is where a ``raise`` sits relative to a ``with``.
-    """
     source = inspect.getsource(routes.send_workshop_back_for_revision)
     tx = source.index("async with db.tx()")
     feedback = source.index("_apply(tx, plans.feedback)")
     guarded = source.index("_apply_while_under_review(tx, plans.workshop)")
-    # `review_closed_refusal` since 2026-10-10: the sentence now depends on where the report went.
     refusal = source.index("review_closed_refusal", guarded)
     log = source.index("_apply(tx, plans.log)")
 

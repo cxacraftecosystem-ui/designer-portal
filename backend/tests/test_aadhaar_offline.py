@@ -1,12 +1,3 @@
-"""Aadhaar OFFLINE verification: the Secure QR and the Paperless Offline e-KYC ZIP.
-
-No database. Every document is built by ``tests/aadhaar_support.py`` and signed with a TEST key that
-the ``trust`` fixture adds to the trusted list through AADHAAR_EXTRA_TRUSTED_CERTS — the same door
-an operator uses to rotate in UIDAI's next certificate — so the production pinning is exercised
-alongside. The one official artefact used is the V1 sample number from UIDAI's 2019 Secure QR
-specification, which decodes but is signed by no published certificate.
-"""
-
 from __future__ import annotations
 
 import io
@@ -37,7 +28,6 @@ from app.services.aadhaar.offline_xml import extract_xml, verify_offline_xml, ve
 from app.services.aadhaar.secure_qr import decompress, verify_secure_qr
 
 NOW = datetime.now(UTC)
-#: UIDAI's own sample from "Secure QR Code Specification, Version 0, March 2019" (archived).
 UIDAI_SAMPLE_V1 = Path(__file__).parent / "data" / "uidai_secure_qr_sample_v1_2019.txt"
 
 
@@ -54,8 +44,6 @@ def trust(uidai_test, tmp_path, monkeypatch):
     monkeypatch.setattr(get_settings(), "aadhaar_secure_qr_max_age_days", 0.0)
     return uidai_test
 
-
-# ── the pinned certificates ──────────────────────────────────────────────────────────────────
 
 
 def test_every_pinned_certificate_matches_its_manifest_fingerprint_and_names_its_source():
@@ -85,8 +73,6 @@ def test_a_certificate_swapped_on_disk_is_refused(tmp_path, monkeypatch):
         certs.clear_cache()
 
 
-# ── Secure QR ────────────────────────────────────────────────────────────────────────────────
-
 
 def test_v2_secure_qr_verifies_and_yields_only_storable_fields(trust):
     now = datetime.now(UTC)
@@ -98,7 +84,6 @@ def test_v2_secure_qr_verifies_and_yields_only_storable_fields(trust):
     assert identity.birth_year == 1987
     assert identity.gender == "F"
     assert abs((identity.signed_at - now).total_seconds()) < 5
-    # The dataclass has no field that could carry an address, a photograph or the number.
     assert set(vars(identity)) == {
         "method", "last4", "name", "dob", "birth_year", "gender", "signed_at", "txn",
         "uidai_name_match",
@@ -118,7 +103,7 @@ def test_a_year_only_date_of_birth_is_kept_as_a_year(trust):
 def test_tampered_qr_is_refused(trust):
     signed = bytearray(sign_qr(secure_qr_payload(), trust.key))
     index = signed.find(TEST_NAME.encode())
-    signed[index] = ord("X")  # "Xamla Devi…": one byte changed after signing
+    signed[index] = ord("X")
     with pytest.raises(AadhaarError) as refused:
         verify_secure_qr(qr_text(bytes(signed)), now=NOW)
     assert refused.value.code == "signature_invalid"
@@ -139,7 +124,6 @@ def test_anything_that_is_not_a_secure_qr_is_refused_as_such(trust, text):
 
 
 def test_a_qr_longer_than_pythons_int_parsing_cap_still_decodes(trust):
-    # A real photograph does not compress, which is what makes a real QR's number this long.
     text = build_secure_qr(trust.key, photo=__import__("os").urandom(3000))
     assert len(text) > 4300
     assert verify_secure_qr(text, now=NOW).name == TEST_NAME
@@ -157,13 +141,11 @@ def test_qr_age_limit_applies_only_when_configured(trust, monkeypatch):
 def test_uidais_official_2019_sample_decodes_but_is_signed_by_no_published_certificate():
     text = UIDAI_SAMPLE_V1.read_text()
     data = decompress(text)
-    assert data[:2] == b"2\xff"  # unversioned layout, indicator 2
+    assert data[:2] == b"2\xff"
     with pytest.raises(AadhaarError) as refused:
         verify_secure_qr(text, now=NOW)
     assert refused.value.code == "signature_invalid"
 
-
-# ── Offline e-KYC ZIP ────────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("packer", [zipcrypto_zip, aes_zip], ids=["zipcrypto", "winzip-aes"])

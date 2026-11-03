@@ -1,19 +1,3 @@
-"""The 2026-10-17 limitations, against Postgres: the version claim, roster names, sign-in times.
-
-``test_interview_version`` and ``test_roster_names_and_sign_ins`` pin the same behaviour with fake
-delegates, which answer questions of ORDER directly. These answer the other question — does it hold
-on the real database:
-
-* two PATCHes carrying the same ``expectedUpdatedAt``: the first lands, the second is the 409
-  ``record_changed``, and a PATCH carrying the version the first one ANSWERED with lands (so the exact
-  comparison does not refuse a client's own version);
-* the access and designer roster lists, and a single-row write, carry ``addedByName`` /
-  ``decidedByName``;
-* a sign-in moves ``lastLoginAt`` every time and ``firstLoginAt`` once.
-
-Skips itself without a LOCAL ``DATABASE_URL``, as ``test_questionnaire_artisan_set_scope`` does.
-"""
-
 import asyncio
 import os
 import uuid
@@ -50,9 +34,6 @@ def anyio_backend():
 
 @pytest.fixture(scope="module")
 async def env():
-    """An admin who added and decided one access row and empanelled one designer, and the admin's
-    sign-in times read after two sign-ins. Rows are written on this module's own connection BEFORE
-    the TestClient opens, for the cross-loop reason ``test_questionnaire_artisan_set_scope`` gives."""
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -119,7 +100,6 @@ async def test_a_version_claimed_once_cannot_be_claimed_again(env):
     assert second.status_code == 409, second.text
     assert second.json()["detail"]["code"] == "record_changed"
 
-    # The version the first PATCH answered with is the stored one, to the millisecond.
     third = client.patch(
         url, json={"notes": "third", "expectedUpdatedAt": first.json()["updatedAt"]}, headers=_auth(env)
     )

@@ -1,10 +1,3 @@
-"""``GET /records/completeness-rules``: the record completeness table, as the clients bundle it.
-
-Both clients ship a copy of ``shared/record-completeness.json`` and swap it for this answer when its
-``version`` is higher, so a rule change reaches an installed app without a release. The ETag lets
-the web cache it in localStorage and Android's read cache revalidate it for a few bytes.
-"""
-
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response

@@ -12,8 +12,6 @@ from app.services.design_workshop_inspectors import holds_any_inspection
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
 
-# Every persisted preference echoed straight back to the client. Kept as one list so the
-# serializer and the upsert stay in lockstep.
 PREFERENCE_FIELDS = (
     "theme",
     "reducedMotion",
@@ -35,9 +33,6 @@ def _serialize(row: Any) -> dict[str, Any]:
 
 @router.get("/me")
 async def my_preferences(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """The current user's saved preferences, or an empty object when they have never saved any.
-    The client reads that emptiness as "this account has no opinion yet" and keeps the choices it
-    already applied from localStorage, seeding the server with them."""
     preferences = await db.userpreference.find_unique(where={"userId": current_user.id})
     return _serialize(preferences) if preferences else {}
 
@@ -47,7 +42,6 @@ async def upsert_my_preferences(
     payload: PreferencesUpdateRequest,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Create or update the current user's preferences — every signed-in user owns their own row."""
     fields = {field: getattr(payload, field) for field in PREFERENCE_FIELDS}
     preferences = await db.userpreference.upsert(
         where={"userId": current_user.id},
@@ -59,7 +53,6 @@ async def upsert_my_preferences(
     return _serialize(preferences)
 
 
-#: The e-mail choices, each opt-out (a missing row reads as the default).
 NOTIFICATION_DEFAULTS: dict[str, Any] = {
     "emailReviewNotes": True,
     "emailWorkshopUpdates": True,
@@ -69,8 +62,6 @@ NOTIFICATION_DEFAULTS: dict[str, Any] = {
 
 
 async def _reviews_hand_ins(user: Any) -> bool:
-    """Whether this account hears of hand-ins at all: the approving authority, or anybody holding an
-    inspection post. The clients draw the hand-in choice only then."""
     if can_approve_design_workshops(user):
         return True
     if role_value(user) == "INSPECTOR":
@@ -92,13 +83,6 @@ async def _notification_payload(row: Any, user: Any) -> dict[str, Any]:
 async def my_notification_preferences(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Whether this deployment sends e-mail at all, and this person's choices.
-
-    ``available`` is what both clients read before drawing ANY e-mail control. False means they draw
-    none of it and say nothing about it. ``reviewsHandIns`` says whether the hand-in choice applies
-    to this account (an inspector or the approving authority). Readable by every signed-in account
-    because it says nothing secret.
-    """
     row = await db.userpreference.find_unique(where={"userId": current_user.id})
     return await _notification_payload(row, current_user)
 
@@ -108,8 +92,6 @@ async def update_my_notification_preferences(
     payload: NotificationPreferencesUpdate,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Save this person's e-mail choices — only the fields sent. Stored even while mail is off, so a
-    choice made once still holds when mail is turned on."""
     fields = {
         field: getattr(payload, field)
         for field in NOTIFICATION_DEFAULTS

@@ -1,24 +1,3 @@
-"""The four defects the record write path shares, all provable without a database.
-
-Every one of them was a 200 that lied — the API reported a save that did not happen, or reported a
-save that quietly destroyed something the caller never mentioned:
-
-* ``merge_field_provenance`` rebuilt ``extraMetadata`` from the request body, so a PATCH of one
-  column deleted every other key stored on it. ``extraMetadata`` is the FIRST entry in
-  ``access.REVISION_SKIP_FIELDS``, so no ``RecordRevision`` recorded the loss either: no undo, and
-  no trace.
-* ``clean_data`` stripped every ``None`` that was not one of ten global keys, so clearing any other
-  nullable scalar was a no-op that answered 200.
-* Offset paging over ``createdAt`` alone is a non-total order, so rows are handed over twice or not
-  at all — and a page with the right number of rows on it looks complete.
-* A body naming one question twice built two INSERTs against a unique constraint: a 500 out of a
-  schema-valid request.
-
-The provenance, clean and paging helpers are pure dict work, and the two answer-batch savers are
-driven here with a recording stub in place of ``db`` — so this whole module runs on a laptop with no
-Postgres, which is where these regressions would otherwise be caught only in production.
-"""
-
 import asyncio
 from types import SimpleNamespace
 from typing import Any
@@ -38,43 +17,20 @@ def _saver():
 
 
 class _Row:
-    """A stored record. Answers ``None`` for every column a test did not set, because the provenance
-    loop asks a record for whichever columns the payload carries and a ``SimpleNamespace`` would
-    raise on the ones a test does not care about."""
-
     def __init__(self, **columns):
         self.__dict__.update(columns)
 
-    def __getattr__(self, name):  # only reached for names __init__ did not set
+    def __getattr__(self, name):
         return None
 
 
 def _stored_extra(new_data: dict[str, Any]) -> dict[str, Any]:
-    """The ``extraMetadata`` value bound for Prisma, unwrapped from its ``Json`` wrapper.
-
-    Unwrapped deliberately rather than indexed through: the column is a Json column and
-    ``merge_field_provenance`` assigns ``Json(base_extra)``, so indexing the wrapper would assert on
-    prisma's ``__getitem__`` instead of on what is stored.
-    """
     wrapper = new_data["extraMetadata"]
     return getattr(wrapper, "data", wrapper)
 
 
-# --------------------------------------------------------------------------------------
-# B2 — every record update silently destroyed the rest of extraMetadata
-# --------------------------------------------------------------------------------------
-
 
 def test_a_patch_of_one_field_keeps_every_other_extra_metadata_key():
-    """**THE DEFECT, PINNED AS FIXED.**
-
-    The three keys below are the real ones: ``design_workshops.REFERENCE_MODELS``'s Artisan ``data``
-    lambda reads the legacy ``specialisation`` / ``experienceYears`` / ``age`` spellings off
-    ``extraMetadata`` to fill the report's participant table, and says that read "must not be
-    deleted" because it is the only remaining record for the artisans the column migration refused
-    to guess at. Editing the phone number used to write back an ``extraMetadata`` holding the
-    provenance blob and nothing else, and nothing on any screen or in any revision log said so.
-    """
     previous = _Row(
         id="art_1",
         phone="9000000000",
@@ -93,15 +49,10 @@ def test_a_patch_of_one_field_keeps_every_other_extra_metadata_key():
     assert stored["specialisation"] == "Block printing"
     assert stored["experienceYears"] == "30+"
     assert stored["age"] == "about 55"
-    # And the provenance still moves, which is the thing this function is FOR.
     assert stored["fieldProvenance"]["phone"]["by"] == "usr_7"
 
 
 def test_the_server_owned_workshop_stamp_is_not_resurrected_from_the_stored_row():
-    """``workshop_access.stamp_workshop_submission`` is the SINGLE WRITER of ``workshopSubmission``
-    and it runs immediately before this function. When it deliberately drops the stamp — a record
-    being unlinked from its workshop — seeding the stored value back in here would undo that
-    decision, and an unapproved late submission would stop needing an admin."""
     previous = _Row(
         id="prod_1",
         extraMetadata={
@@ -109,7 +60,6 @@ def test_the_server_owned_workshop_stamp_is_not_resurrected_from_the_stored_row(
             "workshopSubmission": {"workshopId": "wsh_1", "needsAdminApproval": True},
         },
     )
-    # What the single writer left behind: it removed the key from the payload entirely.
     new_data: dict[str, Any] = {"remarks": "corrected"}
 
     merge_field_provenance(new_data, _saver(), previous=previous)
@@ -120,8 +70,6 @@ def test_the_server_owned_workshop_stamp_is_not_resurrected_from_the_stored_row(
 
 
 def test_the_authoritative_workshop_stamp_in_the_payload_is_kept():
-    """The other half of the same rule: the stamp the single writer DID put in the payload is the
-    authoritative one, and it travels to the database untouched."""
     previous = _Row(id="prod_1", extraMetadata={"workshopSubmission": {"workshopId": "wsh_OLD"}})
     new_data: dict[str, Any] = {
         "remarks": "corrected",
@@ -134,12 +82,6 @@ def test_the_authoritative_workshop_stamp_in_the_payload_is_kept():
 
 
 def test_a_client_cannot_write_its_own_field_provenance():
-    """``fieldProvenance`` is dropped from BOTH sides — the stored seed and the incoming body.
-
-    Who filled in each field is this function's answer to give. A caller able to send its own blob
-    could put a colleague's name against every column on the record, and the provenance panel this
-    repository built to answer "who recorded this" would report it as fact.
-    """
     previous = _Row(id="art_1", name="Ramesh", extraMetadata={"pincode": "302012"})
     new_data: dict[str, Any] = {
         "name": "Ramesh Kumar",
@@ -154,13 +96,10 @@ def test_a_client_cannot_write_its_own_field_provenance():
     stored = _stored_extra(new_data)
     assert stored["fieldProvenance"]["name"]["by"] == "usr_7"
     assert stored["fieldProvenance"]["name"]["byName"] == "R. Menon"
-    # An ordinary key the client DID send still wins over the stored one — only the provenance blob
-    # and the workshop stamp are refused.
     assert stored["pincode"] == "302013"
 
 
 def test_a_create_is_unchanged_by_the_seed():
-    """``previous`` is None on a create, so there is nothing to carry and nothing to exclude."""
     new_data: dict[str, Any] = {"name": "Ramesh", "extraMetadata": {"pincode": "302012"}}
 
     merge_field_provenance(new_data, _saver(), previous=None)
@@ -171,7 +110,6 @@ def test_a_create_is_unchanged_by_the_seed():
 
 
 def test_a_previous_row_with_no_metadata_at_all_still_works():
-    """The overwhelmingly common shape, and the one a seeding bug would break loudly."""
     previous = _Row(id="art_1", name="Ramesh")
     new_data: dict[str, Any] = {"name": "Ramesh Kumar"}
 
@@ -180,14 +118,8 @@ def test_a_previous_row_with_no_metadata_at_all_still_works():
     assert list(_stored_extra(new_data)) == ["fieldProvenance"]
 
 
-# --------------------------------------------------------------------------------------
-# B11 — a field could not be cleared, and the API reported success
-# --------------------------------------------------------------------------------------
-
 
 def test_a_nullable_scalar_named_by_the_caller_survives_the_clean():
-    """RETRACTING PII IS THE CASE WITH NO WORKAROUND. There is no empty string to send instead when
-    the column is a nullable ``String?`` and the subject has asked for the number to be removed."""
     payload = {"phone": None, "email": None, "notes": None, "place": "Bagru"}
 
     cleaned = clean_data(payload, clearable=("phone", "email", "notes"))
@@ -199,8 +131,6 @@ def test_a_nullable_scalar_named_by_the_caller_survives_the_clean():
 
 
 def test_a_null_the_caller_did_not_declare_clearable_is_still_stripped():
-    """The default is unchanged, which is what keeps CREATE paths safe: they dump every unset
-    optional as ``None`` and must not start writing explicit NULLs for boxes nobody filled in."""
     cleaned = clean_data({"phone": None, "name": "Ramesh"}, clearable=("notes",))
 
     assert "phone" not in cleaned
@@ -208,7 +138,6 @@ def test_a_null_the_caller_did_not_declare_clearable_is_still_stripped():
 
 
 def test_the_global_set_still_applies_when_a_caller_names_its_own():
-    """Union, never replacement: a route naming its own scalars must not lose ``workshopId``."""
     cleaned = clean_data({"workshopId": None, "notes": None}, clearable=("notes",))
 
     assert cleaned["workshopId"] is None
@@ -216,26 +145,17 @@ def test_the_global_set_still_applies_when_a_caller_names_its_own():
 
 
 def test_the_global_clearable_set_stays_small_and_holds_no_email():
-    """THE TRAP THIS GUARDS. ``clean_data`` does not know which model a payload is bound for, so a
-    name added to the global set is clearable on ALL of them: ``email`` is NOT NULL on User,
-    DesignerRoster and AccessRoster, and a global entry would trade one silent no-op for a
-    constraint violation on three tables. Per-model scalars go through ``clearable`` instead."""
     assert "email" not in CLEARABLE_KEYS
     assert "phone" not in CLEARABLE_KEYS
     assert "notes" not in CLEARABLE_KEYS
 
 
 def test_clearing_and_title_casing_compose():
-    """The clean still title-cases, and a cleared name-like column is not turned into a string."""
     cleaned = clean_data({"place": None, "village": "bagru"}, clearable=("place",))
 
     assert cleaned["place"] is None
     assert cleaned["village"] == "Bagru"
 
-
-# --------------------------------------------------------------------------------------
-# Item 8 — offset pagination over a non-total order
-# --------------------------------------------------------------------------------------
 
 
 def test_the_id_tiebreaker_is_appended_in_the_direction_of_the_sort():
@@ -244,7 +164,6 @@ def test_the_id_tiebreaker_is_appended_in_the_direction_of_the_sort():
 
 
 def test_a_multi_clause_order_keeps_its_clauses_and_their_order():
-    """The tiebreak goes LAST or it is not a tiebreak — first, it would be the primary sort."""
     assert with_id_tiebreak([{"sortOrder": "asc"}, {"createdAt": "asc"}]) == [
         {"sortOrder": "asc"},
         {"createdAt": "asc"},
@@ -253,9 +172,6 @@ def test_a_multi_clause_order_keeps_its_clauses_and_their_order():
 
 
 def test_an_order_that_already_names_id_is_returned_unchanged():
-    """``feedback.list_feedback`` and the designer directory already spell this out by hand.
-    Appending a second ``id`` clause is at best noise and at worst an error from the query
-    builder."""
     assert with_id_tiebreak([{"updatedAt": "desc"}, {"id": "desc"}]) == [
         {"updatedAt": "desc"},
         {"id": "desc"},
@@ -264,29 +180,19 @@ def test_an_order_that_already_names_id_is_returned_unchanged():
 
 
 def test_the_helper_does_not_mutate_the_order_it_was_given():
-    """Several routes hold their order in a module-level constant — ``search._ORDER`` is one — and a
-    helper that mutated its argument would compound a clause per request."""
     order = {"createdAt": "desc"}
     with_id_tiebreak(order)
     assert order == {"createdAt": "desc"}
 
 
 def test_the_search_route_pages_five_buckets_over_a_total_order():
-    """``search`` pages all five buckets from one offset and bypasses ``count_and_page``, so it
-    carries the tiebreak in its own module constant."""
     from app.api.routes import search
 
     assert search._ORDER == [{"createdAt": "desc"}, {"id": "desc"}]
 
 
-# --------------------------------------------------------------------------------------
-# Item 13 — a duplicate question id in one body was a 500
-# --------------------------------------------------------------------------------------
-
 
 class _Delegate:
-    """One Prisma model delegate, recording what was written to it."""
-
     def __init__(self, rows: list[Any] | None = None):
         self.rows = rows or []
         self.created: list[list[dict[str, Any]]] = []
@@ -303,21 +209,6 @@ class _Delegate:
 
 
 class _Client(SimpleNamespace):
-    """The fake Prisma client, with an ``async with db.tx()`` that hands back itself (2026-09-03).
-
-    ``update_interview`` now wraps its edit guard, its row update and (since the relation writes were
-    threaded) its artisan links and response batch in ONE ``db.tx()``, so a plain ``SimpleNamespace``
-    standing in for ``db`` no longer answers the route — it has no ``tx``. Handing back ``self`` is
-    the shortcut ``tests/test_design_workshop_provisional_isolation`` documents, with the same
-    caveat: NOTHING HERE SIMULATES A TRANSACTION, and no assertion in this module is about rollback.
-    What it does preserve is that every write the route issues lands on the recording delegates
-    above, whether the route reaches them through ``db`` or through ``tx``.
-
-    The two ``merge_into_interview`` drives use it as well even though that function opens no
-    transaction of its own. A fold that grew one would otherwise fail with an AttributeError about
-    ``tx`` rather than about the metadata column these tests are actually about.
-    """
-
     def tx(self) -> Any:
         client = self
 
@@ -331,34 +222,8 @@ class _Client(SimpleNamespace):
         return _Tx()
 
 
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-# A REJECTED CREATE MUST LEAVE NOTHING BEHIND
-#
-# `create_interview` used to validate nothing before writing: it computed `artisanSetKey` from the
-# raw payload, INSERTED the interview with that key, and only then called
-# `replace_interview_artisans` (which asks whether the artisans exist) and `upsert_responses` (which
-# asks the same of the question ids). Both raise 404, and nothing on that path is in a transaction —
-# so the refusal left a committed interview with no artisans, no answers, and a CLIENT-AUTHORED
-# value occupying a slot in a repository-wide UNIQUE index. Retrying made another.
-#
-# These drives are deliberately white-box and PURE — no database, no `@needs_db` — because the only
-# job that can stop a deploy (`GATING_JOBS` in deploy-backend.yml) runs with DATABASE_URL pointed at
-# `ci.invalid` and skips every database test. A guard against writing to the database is worth
-# nothing if it is asserted only where a deploy cannot see it.
-#
-# What is asserted is the ABSENCE of a write, which is why `create` raises rather than records: if
-# the route ever reaches it on a rejected body, the test fails with that call rather than with a
-# missing assertion.
-# ────────────────────────────────────────────────────────────────────────────────────────────────
-
 
 class _CreateBody(SimpleNamespace):
-    """A `QuestionnaireInterviewCreate` stand-in that survives as far as the INSERT.
-
-    `model_dump` is the one method the route needs off it and the one a bare `SimpleNamespace` does
-    not have — see the note in `_drive_rejected_create` about why reaching the insert matters here.
-    """
-
     def __init__(self, *, artisan_ids, responses):
         super().__init__(
             artisanIds=artisan_ids,
@@ -372,12 +237,9 @@ class _CreateBody(SimpleNamespace):
 
 
 def _drive_rejected_create(monkeypatch, *, artisans_found, questions_found, payload):
-    """Drive `create_interview` with a body whose ids do not all resolve. Returns what it raised."""
     from app.api.routes import questionnaire
 
     class _Exploding:
-        """Any write through this is the bug: a refused create must not reach the database."""
-
         async def create(self, **_kwargs):
             raise AssertionError(
                 "create_interview INSERTED an interview for a body it went on to refuse. That row "
@@ -400,13 +262,6 @@ def _drive_rejected_create(monkeypatch, *, artisans_found, questions_found, payl
     async def _attach_location(data):
         return data
 
-    # EVERYTHING BETWEEN THE GUARD AND THE INSERT IS STUBBED OUT, and that is the point rather than
-    # over-stubbing. The first cut of these drives passed a payload too thin to get that far, so
-    # removing the guard failed them with `SimpleNamespace has no attribute 'model_dump'` — red, but
-    # red for the wrong reason, and the `_Exploding.create` message explaining the actual defect
-    # never fired. A test whose failure does not name the bug is a tripwire nobody can act on. With
-    # these in place the route runs all the way to the INSERT, so deleting the guard produces that
-    # message and nothing else.
     monkeypatch.setattr(questionnaire, "default_interview_date", lambda data: data)
     monkeypatch.setattr(questionnaire, "attach_location", _attach_location)
     monkeypatch.setattr(questionnaire, "stamp_workshop_submission", lambda *_a, **_kw: None)
@@ -415,7 +270,6 @@ def _drive_rejected_create(monkeypatch, *, artisans_found, questions_found, payl
     monkeypatch.setattr(questionnaire, "apply_status_policy_create", lambda *_a, **_kw: None)
     monkeypatch.setattr(questionnaire, "pin_pending_if_late", lambda *_a, **_kw: None)
     async def _no_merges(ids, **_kw):
-        # The merged-artisan redirect (services/artisan_merge) reads its own table; nothing is merged.
         return ids
 
     monkeypatch.setattr(questionnaire, "redirect_ids", _no_merges)
@@ -431,9 +285,6 @@ def _drive_rejected_create(monkeypatch, *, artisans_found, questions_found, payl
     )
     monkeypatch.setattr(questionnaire, "enforce_workshop_submission", _no_workshop_check)
     monkeypatch.setattr(questionnaire, "assert_may_file_under", _may_file)
-    # The create gate runs BEFORE the check under test and is not what these drives are about — see
-    # `assert_referenced_records_exist` for why that order is deliberate. Stubbed so the 404 they
-    # assert is the record check refusing, and never the rank gate refusing first.
     monkeypatch.setattr(questionnaire, "assert_can_create_records", lambda _user: None)
 
     try:
@@ -444,17 +295,10 @@ def _drive_rejected_create(monkeypatch, *, artisans_found, questions_found, payl
 
 
 def test_a_create_naming_an_unknown_artisan_is_refused_before_anything_is_written(monkeypatch):
-    """The artisan half. The id is also what the unique key is built from, so this is two bugs.
-
-    `artisanIds` is `list[str]` with no format check, so `["a|b"]` was a value a client could put
-    into a column whose `|` separators are load-bearing — and migration 20260920100000's premise is
-    that no stored key contains one. Refusing unknown ids before the key exists is what makes that
-    premise true rather than hoped for.
-    """
     payload = _CreateBody(artisan_ids=["cartisanreal", "does-not-exist"], responses=None)
     raised = _drive_rejected_create(
         monkeypatch,
-        artisans_found=[_Row(id="cartisanreal")],  # one of the two asked for
+        artisans_found=[_Row(id="cartisanreal")],
         questions_found=[],
         payload=payload,
     )
@@ -462,34 +306,19 @@ def test_a_create_naming_an_unknown_artisan_is_refused_before_anything_is_writte
 
 
 def test_a_create_naming_an_unknown_question_is_refused_before_anything_is_written(monkeypatch):
-    """The answers half, which reaches the same hole one frame further along.
-
-    `upsert_responses` raises the identical 404 for an unknown question id, and it runs AFTER the
-    interview row is inserted — and after the fold's `update` on the `merge_into_interview` path.
-    """
     payload = _CreateBody(
         artisan_ids=["cartisanreal"], responses=[SimpleNamespace(questionId="no-such-question")]
     )
     raised = _drive_rejected_create(
         monkeypatch,
         artisans_found=[_Row(id="cartisanreal")],
-        questions_found=[],  # the question does not resolve
+        questions_found=[],
         payload=payload,
     )
     assert raised.status_code == 404
 
 
 def test_a_duplicate_question_in_one_body_is_saved_once_last_wins(monkeypatch):
-    """AN AUTHENTICATED CALLER MUST NOT BE ABLE TO TURN A SCHEMA-VALID BODY INTO A 500.
-
-    ``QuestionnaireResponse`` is UNIQUE on ``(interviewId, questionId)``. The validation pass already
-    collapsed the ids with ``sorted({...})`` while the build loop did not, so two INSERTs went out
-    for one question and the unique violation escaped as a server error.
-
-    LAST WINS, matching the update branch — where two entries for one stored row simply run two
-    updates and the later one stands. ``skip_duplicates`` would have dropped an answer somebody
-    typed; first-wins would have made the two branches disagree about the same body.
-    """
     from app.api.routes import questionnaire
 
     responses = _Delegate(rows=[])
@@ -497,7 +326,6 @@ def test_a_duplicate_question_in_one_body_is_saved_once_last_wins(monkeypatch):
     monkeypatch.setattr(
         questionnaire,
         "db",
-        # The interview delegate takes the version bump an answer write now makes (2026-10-17).
         SimpleNamespace(questionnaireresponse=responses, questionnairequestion=questions,
                         questionnaireinterview=_Delegate()),
     )
@@ -515,8 +343,6 @@ def test_a_duplicate_question_in_one_body_is_saved_once_last_wins(monkeypatch):
 
 
 def test_a_duplicate_over_an_answer_that_already_exists_updates_rather_than_inserting(monkeypatch):
-    """The other half: with a stored row present both entries take the update branch and the later
-    value stands — the behaviour the create branch now matches."""
     from app.api.routes import questionnaire
 
     stored = SimpleNamespace(
@@ -527,7 +353,6 @@ def test_a_duplicate_over_an_answer_that_already_exists_updates_rather_than_inse
     monkeypatch.setattr(
         questionnaire,
         "db",
-        # The interview delegate takes the version bump an answer write now makes (2026-10-17).
         SimpleNamespace(questionnaireresponse=responses, questionnairequestion=questions,
                         questionnaireinterview=_Delegate()),
     )
@@ -544,8 +369,6 @@ def test_a_duplicate_over_an_answer_that_already_exists_updates_rather_than_inse
 
 
 def test_the_custom_form_answer_batch_dedupes_the_same_way(monkeypatch):
-    """``QuestionnaireFormAnswer`` carries the identical ``@@unique([entryId, questionId])`` and
-    ``save_answers`` is modelled on ``upsert_responses``, so it had the identical defect."""
     from app.services import questionnaire_forms
 
     answers_delegate = _Delegate(rows=[])
@@ -580,28 +403,8 @@ def test_the_custom_form_answer_batch_dedupes_the_same_way(monkeypatch):
     assert answers_delegate.created[0][0]["answerText"] == "second"
 
 
-# --------------------------------------------------------------------------------------
-# B2, the second doorway — the fold path, which reaches the same column by another route
-# --------------------------------------------------------------------------------------
-
 
 def test_folding_a_create_into_an_existing_interview_keeps_its_stored_metadata(monkeypatch):
-    """THE SEED IN ``merge_into_interview`` IS NOT A DUPLICATE OF THE ONE IN PROVENANCE.
-
-    The B2 repair put a seed inside ``merge_field_provenance``, which made the hand-rolled seed in
-    the interview PATCH route redundant — but NOT this one. ``merge_into_interview`` never calls
-    ``merge_field_provenance`` at all: it builds ``fill`` fresh from the incoming body, hands it to
-    ``stamp_workshop_submission``, and writes it. That path reaches the column through
-    ``workshop_access.merge_extra``, which bases its result on ``data["extraMetadata"]`` — the
-    PAYLOAD — and never reads the record. Delete the seed as a duplicate and the update writes
-    ``{"workshopSubmission": ...}`` over a live row's whole metadata column: the same unrevisioned
-    deletion B2 was, reached by posting a create for an artisan set that already has an interview
-    rather than by editing one.
-
-    It is a real doorway, not a theoretical one. ``POST /questionnaire/interviews`` folds into the
-    canonical row for EVERY client, and this branch fires exactly when the fold is what first names
-    the workshop — which is the same request that stamps the submission.
-    """
     from app.api.routes import questionnaire
     from app.services.workshop_access import WorkshopSubmissionCheck
 
@@ -615,27 +418,10 @@ def test_folding_a_create_into_an_existing_interview_keeps_its_stored_metadata(m
         return None
 
     interviews.update = _update
-    # STUBBED FOR THE SAME REASON ``products.py`` AND ``tools.py`` STUB IT, and the same way.
-    # Since 2026-09-20 the fold and the patch both end
-    # ``public_encode(row, viewer, media_urls=await media_url_owners(viewer))`` so a fold stops
-    # stripping the clips off the entry it folded into. ``media_url_owners`` QUERIES — it reads the
-    # viewer's data-access grants — and this driver has no database, so without the stub the
-    # argument is evaluated first and the test dies with ``ClientNotConnectedError`` before reaching
-    # the column it is about.
-    #
-    # ``set()`` IS NOT "the viewer's own uploads" — it is NOBODY'S, strictly narrower than anything
-    # the real function returns (its narrowest answer is ``{viewer.id, *granted}``, records.py). It
-    # is the right value here only because ``public_encode`` is stubbed to identity on the line
-    # below, so nothing ever consumes it. A later test that stops stubbing ``public_encode`` in
-    # order to assert a media node keeps its ``url`` must NOT inherit this value: with the node's
-    # own uploader missing from the set, ``_redact_sensitive`` strips the url and the test would
-    # pin the withheld shape as though it were the entitled one.
     async def _no_media_urls(_viewer):
         return set()
 
     monkeypatch.setattr(questionnaire, "db", _Client(questionnaireinterview=interviews))
-    # The fold's last two steps read relations and shape a response; neither touches the column
-    # under test, and both would need a database.
     monkeypatch.setattr(questionnaire, "hydrate_relations", _no_relations)
     monkeypatch.setattr(questionnaire, "media_url_owners", _no_media_urls)
     monkeypatch.setattr(questionnaire, "public_encode", lambda row, _viewer=None, **_kw: row)
@@ -668,36 +454,13 @@ def test_folding_a_create_into_an_existing_interview_keeps_its_stored_metadata(m
     assert len(interviews.updated) == 1
     written = interviews.updated[0][1]
     stored = getattr(written["extraMetadata"], "data", written["extraMetadata"])
-    # The stamp is written — that is what this branch is for...
     assert stored["workshopSubmission"]["workshopId"] == "ws_1"
-    # ...and it did not arrive by flattening everything else that was on the row.
     assert stored["specialisation"] == "Block printing"
     assert stored["fieldProvenance"]["title"]["byName"] == "A. Rao"
 
 
-# --------------------------------------------------------------------------------------
-# B11, at the route — the argument that does the work, which nothing above asserts
-# --------------------------------------------------------------------------------------
-
 
 def test_the_interview_patch_route_actually_declares_its_nullable_scalars(monkeypatch):
-    """THE HELPER TESTS ABOVE ALL PASS WITH THE ROUTE'S ``clearable=`` DELETED.
-
-    Every other test in the B11 block drives the helper directly and hands it its own ``clearable``,
-    so the argument could be dropped from ``update_interview`` in a refactor and the suite would stay
-    green while every nullable scalar on ``QuestionnaireInterview`` went back to a 200 that changed
-    nothing. That is the exact silent shape B11 was, so the route is driven here instead of the
-    helper, with only the collaborators that need a database replaced.
-
-    This was the FIRST production call site and, for one wave, the only one — the four record PATCH
-    routes and the four questionnaire-form PATCHes belonged to other agents that hour and shipped
-    without it. They are covered the same way now, in ``tests/test_record_patch_clearing``; this test
-    stays here because ``update_interview`` lives in a different module and is nobody else's to
-    assert.
-
-    All four columns, one drive each, because the failure is per-name: dropping ``notes`` from the
-    tuple and leaving the other three would pass a test that only checked one.
-    """
     from app.api.routes import questionnaire
 
     editor = _Row(id="usr_7", name="R. Menon", role="RESEARCHER")
@@ -725,9 +488,6 @@ def test_the_interview_patch_route_actually_declares_its_nullable_scalars(monkey
             return _stored
 
         async def _guard(_record, _user, _data, _kind, *, client=None):
-            # ``guard_record_edit`` takes ``client=tx`` since 2026-09-03 so its RecordRevision joins
-            # the caller's transaction. Accepted and ignored: this stub writes no revision, and
-            # ``False`` (an ordinary contributor) is the verdict the clearing assertion below needs.
             return False
 
         async def _status_policy(_user, _record, _data):
@@ -746,8 +506,6 @@ def test_the_interview_patch_route_actually_declares_its_nullable_scalars(monkey
             return set()
 
         monkeypatch.setattr(questionnaire, "hydrate_relations", _no_relations)
-        # See the note at the first of these three drivers: the patch route now ends in
-        # ``media_url_owners``, which queries, and this loop has no database.
         monkeypatch.setattr(questionnaire, "media_url_owners", _no_media_urls)
         monkeypatch.setattr(questionnaire, "public_encode", lambda row, _viewer=None, **_kw: row)
 
@@ -769,20 +527,6 @@ def test_the_interview_patch_route_actually_declares_its_nullable_scalars(monkey
 
 
 def test_folding_a_create_onto_a_flagged_row_does_not_launder_the_late_flag(monkeypatch):
-    """A RE-LINK BY FOLD IS STILL A RE-LINK, AND BEING MOVED DOES NOT MAKE LATE WORK ON-TIME.
-
-    ``stamp_workshop_submission`` carries an unapproved late flag across a re-link on purpose — its
-    docstring says so — but only when it is handed the ``record``. This fold path used to call it
-    with ``check=`` alone, so the record-aware branch could not fire and the flag was rebuilt from
-    the fresh check as ``False``.
-
-    The reachable route: PATCH ``workshopId: null`` produces an empty check, so the flagged stamp is
-    CARRIED onto a row that is now unlinked. ``POST /questionnaire/interviews`` for the same artisan
-    set then folds into that row, ``existing.workshopId`` is empty so ``workshopId`` enters ``fill``,
-    and an in-window workshop would have cleared ``needsAdminApproval`` — which is the flag
-    ``review.record_needs_admin_approval(record) and not is_admin(reviewer)`` consults, so the late
-    interview would have become approvable by a reviewer who is not an admin.
-    """
     from app.api.routes import questionnaire
     from app.services.workshop_access import WorkshopSubmissionCheck
 
@@ -796,21 +540,6 @@ def test_folding_a_create_onto_a_flagged_row_does_not_launder_the_late_flag(monk
         return None
 
     interviews.update = _update
-    # STUBBED FOR THE SAME REASON ``products.py`` AND ``tools.py`` STUB IT, and the same way.
-    # Since 2026-09-20 the fold and the patch both end
-    # ``public_encode(row, viewer, media_urls=await media_url_owners(viewer))`` so a fold stops
-    # stripping the clips off the entry it folded into. ``media_url_owners`` QUERIES — it reads the
-    # viewer's data-access grants — and this driver has no database, so without the stub the
-    # argument is evaluated first and the test dies with ``ClientNotConnectedError`` before reaching
-    # the column it is about.
-    #
-    # ``set()`` IS NOT "the viewer's own uploads" — it is NOBODY'S, strictly narrower than anything
-    # the real function returns (its narrowest answer is ``{viewer.id, *granted}``, records.py). It
-    # is the right value here only because ``public_encode`` is stubbed to identity on the line
-    # below, so nothing ever consumes it. A later test that stops stubbing ``public_encode`` in
-    # order to assert a media node keeps its ``url`` must NOT inherit this value: with the node's
-    # own uploader missing from the set, ``_redact_sensitive`` strips the url and the test would
-    # pin the withheld shape as though it were the entitled one.
     async def _no_media_urls(_viewer):
         return set()
 
@@ -843,7 +572,6 @@ def test_folding_a_create_onto_a_flagged_row_does_not_launder_the_late_flag(monk
             "workshopId": "ws_open",
         },
     )
-    # The fresh check says "in window, nothing to approve" — which is exactly what must NOT win.
     check = WorkshopSubmissionCheck(workshopId="ws_open", submittedAt="2026-08-22T09:00:00+00:00")
     assert check.metadata["workshopSubmission"]["needsAdminApproval"] is False
 

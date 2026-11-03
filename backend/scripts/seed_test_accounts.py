@@ -1,25 +1,3 @@
-"""One local account per role, so a refusal can actually be tested.
-
-WHY THIS EXISTS. Every permission on this repository is a pair — a predicate in
-``app/core/deps.py`` and its mirror in ``frontend/lib/permissions.ts`` — and the failure mode that
-matters is not the allow path but the REFUSE path: a UI guard over an open endpoint hides the link
-and leaves the URL, the API and the Android client wide open. That exact bug shipped twice this
-season (the designer profile, and the design-workshop write routes), and both times the reason it
-survived was the same: the only local credential was the master admin, so nobody could open the app
-AS a researcher and find the page still there.
-
-These accounts make that a two-minute check instead of a code review.
-
-    cd backend && ./.venv/Scripts/python.exe scripts/seed_test_accounts.py
-
-Idempotent: run it as often as you like. It UPDATES an existing row rather than failing on the
-unique email, so it also serves as "I have forgotten the test password again".
-
-NOT FOR PRODUCTION, and it refuses to run against one. The guard is the same one the DB-backed test
-modules use — a DATABASE_URL that does not point at localhost is refused outright, because seeding
-ten known-password accounts into a live repository would be handing out ten ways in.
-"""
-
 import asyncio
 import os
 import sys
@@ -30,55 +8,21 @@ from app.core.deps import invalidate_cached_user
 from app.core.security import hash_password
 from app.services import access_roster
 
-#: The shared password. Deliberately obvious: these are throwaway local accounts and a memorable
-#: password is the whole point. Nothing here is ever created against a remote database.
 PASSWORD = "LocalDev123!"
 
-#: One per tier of the ladder in ``deps.ROLE_RANK``, plus DESIGNER — which is not a rung anybody
-#: reaches by promotion but a set member (see ``can_run_design_workshops``), and is therefore the
-#: one role whose absence hides the most. INSPECTOR is here for the mirror-image reason: it is a
-#: rung, it outranks the set member, and it is refused by the same set.
-#:
-#: THE THREE DIRECTORATE TIERS (42/45/48) ARE HERE FOR A THIRD REASON, AND IT IS THE STRONGEST
-#: YET. DESIGNER is here because it is a set member rather than a rung; INSPECTOR because it
-#: outranks the set member and is refused by the same set. These three are the first tiers ever
-#: added ABOVE the Professor floor, so each of them SILENTLY acquired the authority to rewrite a
-#: professor's, an inspector's and a designer's records, plus the craft taxonomy, the workshop
-#: table, the questionnaire builder, the dataset download and the user table — through code that
-#: names no tier. "Sign in as one and watch what is on screen" is the only cheap check that the
-#: widening is the one that was intended. None of the three needs a roster row: ``roster_allows``
-#: gates DESIGNER only.
-#: ``@example.org`` and NOT ``@test.local``. The login body is validated by pydantic's EmailStr,
-#: which runs ``email-validator`` and refuses ``.local`` — it is not a public TLD. The first
-#: version of this script used it and produced six accounts that were created successfully and
-#: could not sign in, with a 422 on the EMAIL FIELD rather than anything about the password. The
-#: DB-backed test modules already use example.org for exactly this reason.
 ACCOUNTS: tuple[tuple[str, str, str], ...] = (
     ("volunteer@example.org", "CROWDSOURCE_VOLUNTEER", "Test Volunteer"),
     ("contributor@example.org", "FIELD_CONTRIBUTOR", "Test Field Contributor"),
     ("researcher@example.org", "RESEARCHER", "Test Researcher"),
     ("designer@example.org", "DESIGNER", "Test Designer"),
-    # The tier whose refusals are the hardest to reason about without an account to hold: it
-    # OUTRANKS the designer above it and is refused everywhere on the design-workshop surface, so
-    # "log in and watch it fail" is the only cheap way to check a workshop gate has not quietly
-    # become a rank floor. It needs no roster row — ``roster_allows`` gates DESIGNER only.
     ("inspector@example.org", "INSPECTOR", "Test Inspector"),
     ("professor@example.org", "PROFESSOR", "Test Professor"),
     ("assistantdirector@example.org", "ASSISTANT_DIRECTOR", "Test Assistant Director"),
     ("regionaldirector@example.org", "REGIONAL_DIRECTOR", "Test Regional Director"),
-    # The account whose NAME is the test. ``is_admin`` is set membership on MASTER_ADMIN and ADMIN,
-    # and a Ministry Admin provisions accounts WITHOUT being an admin (``ACCOUNT_PROVISIONER_ROLES``,
-    # the owner's decision of 2026-10-09). So this account must find /users OPEN — creating accounts,
-    # temporary passwords, "require a new password", password links and name or address corrections,
-    # on tiers below its own — and the design-workshop controls open (``DESIGN_WORKSHOP_ROLES``), as
-    # are crafts, workshops, the questionnaire builder, the dataset and the review queue. It must find
-    # deleting an account, granting a capability, the access roster, the key store and the /admin tree
-    # CLOSED; if any of THOSE opens, somebody has widened ``is_admin``.
     ("ministryadmin@example.org", "MINISTRY_ADMIN", "Test Ministry Admin"),
     ("admin2@example.org", "ADMIN", "Test Admin"),
 )
 
-#: The one account that also needs a roster row — see the note where it is written.
 DESIGNER_EMAIL = "designer@example.org"
 
 
@@ -102,15 +46,6 @@ async def main() -> None:
                 "name": name,
                 "role": role,
                 "passwordHash": hash_password(PASSWORD),
-                # THE PASSWORD IS FINAL, ON CREATE AND ON EVERY RESEED. Since 2026-10-09 the API
-                # refuses an account carrying ``mustChangePassword`` on every route but the
-                # change-password screen's own (``deps.refuse_while_password_change_pending``), so a
-                # seeded account left flagged — or one a dev database had flagged before this run —
-                # would sign in and then be refused the very pages it exists to test. Stamping
-                # ``passwordSetAt`` keeps "has a password" distinguishable from "signs in with
-                # Google", which is what that column is for. Every reseed writes a FRESH hash (bcrypt
-                # salts it), and since 2026-10-09 a new hash ends every session opened with the old
-                # one (``deps._user_from_bearer``): sign these accounts in again after a reseed.
                 "mustChangePassword": False,
                 "passwordSetAt": datetime.now(UTC),
             }
@@ -121,24 +56,8 @@ async def main() -> None:
             else:
                 row = await db.user.create(data={**data, "email": email, "authProvider": "LOCAL"})
                 verb = "created"
-            # Every module that writes a User row invalidates the identity cache — the contract
-            # ``tests/test_user_identity_cache.py`` audits mechanically, for the reason set out in
-            # ``seed_admin.py``. It is a no-op here, because this runs as its own process and the
-            # API's cache lives in the API's memory. It matters anyway: this script REWRITES THE
-            # ROLE of an existing account, and the whole purpose of these accounts is to sign in as
-            # each role and watch a refusal. Re-seeding while the API is up and testing within the
-            # TTL would otherwise check the OLD role's permissions and quietly report a pass.
             if row is not None:
                 invalidate_cached_user(row.id)
-            # AND THE PLATFORM ALLOW-LIST, or none of these ten can sign in at all.
-            #
-            # Same class of trap as the designer roster row below, one level up: since the
-            # allow-list arrived, `auth.assert_access_admits` refuses any account with no ACTIVE row
-            # — it fails closed on purpose — and an account written straight into the User table has
-            # taken neither of the two paths that admit somebody. Without this, running this script
-            # produces ten accounts that look perfect in Settings > Users and answer every sign-in
-            # with "your access request is awaiting administrator approval", which is the single
-            # most misleading state a test bench can be in.
             await access_roster.admit(
                 email,
                 admit_role=role,
@@ -148,12 +67,6 @@ async def main() -> None:
             )
             print(f"  {verb:<8} {role:<22} {email}")
 
-        # THE DESIGNER ALSO NEEDS A ROSTER ROW, or they cannot sign in at all.
-        #
-        # `User.role = DESIGNER` is NOT what admits a designer: `DesignerRoster` is the sign-in gate,
-        # and an account with the role but no active roster row is refused with "your access has
-        # been suspended". Seeding the role alone would produce the single most confusing possible
-        # test account — one that looks right in the user table and cannot log in.
         roster = await db.designerroster.find_unique(where={"email": DESIGNER_EMAIL})
         row = {
             "fullName": "Test Designer",
@@ -169,9 +82,6 @@ async def main() -> None:
     finally:
         await disconnect_db()
 
-    # WHERE THE PASSWORD IS WRITTEN DOWN, NOT THE PASSWORD (2026-10-09; CodeQL alert #20). A terminal
-    # ends up in CI logs and screen shares like any other log, and this line used to print it there.
-    # Whoever needs it finds it at either place named: the browser suite signs in with it.
     print(
         "\nAll ten share one password: PASSWORD at the top of this script, and E2E_PASSWORD on the "
         "last line of 'The sequence' in docs/TESTING-E2E-LOCAL.md."

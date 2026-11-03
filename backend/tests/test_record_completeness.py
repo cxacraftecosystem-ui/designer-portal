@@ -1,21 +1,3 @@
-"""RECORD COMPLETENESS — one rules table, the same answer from the meter and from the list filter.
-
-``shared/record-completeness.json`` declares, per record kind, which fields a complete record holds.
-``services/completeness`` evaluates it on every record the API returns and turns it into the Prisma
-clause behind the lists' ``completeness=`` filter. The web and Android clients run ports of the same
-evaluator over the same file, so this module holds:
-
-* the evaluator and the sentence to the shared vectors, plus the edge cases the vectors leave out;
-* THE KEY PROPERTY: for every kind and every mode, the filter selects exactly the rows whose meter
-  says so — first against an in-memory interpreter of the generated clause over hundreds of rows,
-  then against Postgres when a local database is running;
-* the rules to the artisan form contract (a "required" item is one the form refuses to save without)
-  and to data protection (no prose, no identity or contact column, no column the schema lacks);
-* the page cost (one query per count source, whatever the page size);
-* the four committed copies of the file to each other, and to the sibling portal's when present;
-* the routes: the parameter, the 422, the block on GET / POST / PATCH, the masked viewer, the ETag.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -52,10 +34,6 @@ def table() -> dict[str, Any]:
     return json.loads(_text(SHARED))
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# The evaluator and the sentence
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-
 
 def test_the_shared_vectors_hold():
     vectors = table()["vectors"]
@@ -81,9 +59,7 @@ def test_the_block_shape_is_the_contract():
 @pytest.mark.parametrize(
     ("record", "counts", "sentence", "percent"),
     [
-        # Nothing at all: five required items lead, then the two recommended, in file order.
         ({}, {}, "7 fields left: date of birth, craft start date, craft, +4 more", 0),
-        # One left: singular.
         (
             {"dateOfBirth": "1970-01-01", "craftStartDate": "1990-01-01", "craftId": "c", "dos": "d",
              "donts": "n", "locationId": "l"},
@@ -91,7 +67,6 @@ def test_the_block_shape_is_the_contract():
             "1 field left: photo",
             85,
         ),
-        # Everything: "Complete" and 100.
         (
             {"dateOfBirth": "1970-01-01", "craftStartDate": "1990-01-01", "craftId": "c", "dos": "d",
              "donts": "n", "locationId": "l"},
@@ -99,7 +74,6 @@ def test_the_block_shape_is_the_contract():
             "Complete",
             100,
         ),
-        # Blank after trim is missing; a recommended item stays behind every required one.
         (
             {"dateOfBirth": "1970-01-01", "craftStartDate": "1990-01-01", "craftId": "c", "dos": "  ",
              "donts": "n"},
@@ -122,13 +96,6 @@ def test_zero_is_present_and_unknown_is_not():
     assert [m["key"] for m in block["missing"]] == ["marketDemand"]
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# THE KEY PROPERTY: the filter and the meter agree, row for row
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-
-# A row in the interpreter is the record's scalars plus its relation lists, named as Prisma names
-# them. Counts are derived from those lists by the definitions in the JSON's "counts" block, which is
-# what ``counts_for`` computes in SQL.
 _RELATIONS = {
     "artisan": ("media",),
     "product": ("media",),
@@ -184,7 +151,6 @@ def _match_scalar(value: Any, cond: Any) -> bool:
 
 
 def matches(row: dict[str, Any], where: dict[str, Any]) -> bool:
-    """A Prisma ``where`` over one in-memory row — the subset ``missing_where`` emits, and no more."""
     for key, cond in where.items():
         if key == "AND":
             ok = all(matches(row, c) for c in (cond if isinstance(cond, list) else [cond]))
@@ -209,7 +175,6 @@ def matches(row: dict[str, Any], where: dict[str, Any]) -> bool:
 
 
 def _value_pool(kind: str, path: str, item: dict[str, Any]) -> list[Any]:
-    """Values a column of that type can hold: a blank string only where the column is a string."""
     if item["check"] == "notIn":
         return [*list(item["empty"]), "HIGH", "ARTISAN", "TRADITIONAL"]
     if path in rc.STRING_COLUMNS[kind]:
@@ -234,7 +199,6 @@ def _rows(kind: str, n: int, seed: int) -> list[dict[str, Any]]:
             else:
                 row[relation] = rng.sample(["p", "q", "r"], rng.choice([0, 0, 1, 2]))
         rows.append(row)
-    # And the two corners random choice may miss: everything filled, nothing filled.
     full = {"id": f"{kind}-full"}
     empty = {"id": f"{kind}-empty"}
     for item in rc.rules_for(kind):
@@ -265,8 +229,6 @@ def test_the_filter_selects_exactly_the_rows_the_meter_flags(kind, mode):
         want = _expected(kind, mode, block)
         assert matches(row, where) == want, (kind, mode, row, block)
         seen[want] += 1
-    # Both sides exercised, or the agreement is vacuous (``required`` on a kind with no required
-    # rule is empty by definition).
     if not (mode == "required" and not any(i["level"] == "required" for i in rc.rules_for(kind))):
         assert seen[True] and seen[False], (kind, mode, seen)
 
@@ -282,14 +244,8 @@ def test_a_bad_mode_is_refused():
     assert rc.filter_or_422("artisan", None) is None
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# The rules themselves
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-
 
 def test_every_required_rule_is_one_the_artisan_form_already_refuses_without():
-    """The meter reports; it never invents a requirement. A ``required`` item is either one of the
-    contract's two dates or a field ``ArtisanCreate`` / the form already demands."""
     from pydantic import ValidationError
 
     from app.schemas.records import ArtisanCreate
@@ -307,7 +263,6 @@ def test_every_required_rule_is_one_the_artisan_form_already_refuses_without():
                 assert item.get("source") == "artisan-form-contract", item
                 words = {d["field"]: d["words"] for d in contract["requiredDates"]}
                 assert item["words"] == words[item["path"]], item
-    # The three validators the claim leans on are really there.
     base = {"name": "A", "place": "P", "aadhaarNumber": "x", "dos": "d", "donts": "n"}
     for broken in ({**base, "dos": ""}, {**base, "donts": ""}, base):
         with pytest.raises(ValidationError):
@@ -360,10 +315,6 @@ def test_every_count_has_a_clause_and_a_definition():
                 assert item["of"] in data["counts"], item
                 assert (kind, item["of"]) in rc.COUNT_CLAUSES
 
-
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# The page cost
-# ──────────────────────────────────────────────────────────────────────────────────────────────
 
 
 class _Recorder:
@@ -422,10 +373,6 @@ def test_a_failing_count_read_drops_the_block_and_never_the_response():
     assert out == {"id": "t1"}
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# The copies
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-
 
 def test_every_committed_copy_is_the_shared_file():
     shared = _text(SHARED)
@@ -452,10 +399,6 @@ def test_the_sibling_portal_carries_the_same_rules():
         pytest.skip("no sibling checkout carrying the rules (CI has one repository)")
     assert _text(sibling / "shared" / "record-completeness.json") == _text(SHARED)
 
-
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# The routes, without a database: the parameter, the 422 and the rules endpoint
-# ──────────────────────────────────────────────────────────────────────────────────────────────
 
 _LIST_ROUTES = ("/api/artisans", "/api/products", "/api/tools", "/api/workshops", "/api/questionnaire/interviews")
 
@@ -517,10 +460,6 @@ def test_the_rules_endpoint_needs_a_sign_in():
     assert asyncio.run(run()).status_code == 401
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# Against Postgres
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-
 from conftest import needs_db  # noqa: E402
 
 LOCATION = {"latitude": 21.19, "longitude": 83.58, "state": "Odisha", "district": "Bargarh"}
@@ -564,7 +503,6 @@ def world():
 
             base = {"place": "Bagru", "createdById": owner.id}
             artisans = {
-                # The FR shape: everything but the craft start date.
                 "no_start": await db.artisan.create(data={
                     **base, "name": f"No Start {tag}", "dateOfBirth": "1970-01-01T00:00:00Z",
                     "craftId": craft.id, "dos": "d", "donts": "n", "locationId": location.id,
@@ -618,7 +556,6 @@ def world():
                     "endDate": "2026-01-03T00:00:00Z",
                 }),
             ]
-            # W1 links through the join tables, W2 through the columns: both are "artisans" and "crafts".
             await db.workshopartisan.create(data={"workshopId": workshops[1].id, "artisanId": artisans["blank"].id})
             await db.workshopcraft.create(data={"workshopId": workshops[1].id, "craftId": craft.id})
             await db.artisan.update(where={"id": artisans["no_start"].id}, data={"workshopId": workshops[2].id})
@@ -626,7 +563,6 @@ def world():
             await media("IMAGE", "workshopId", workshops[1].id)
             await media("IMAGE", "workshopId", workshops[2].id)
 
-            # sortOrder is unique: a run killed before its teardown leaves its section behind.
             top = await db.questionnairesection.find_first(order={"sortOrder": "desc"})
             section = await db.questionnairesection.create(
                 data={"code": f"RC_{tag}", "title": f"RC {tag}", "sortOrder": (top.sortOrder if top else 0) + 1}
@@ -706,8 +642,6 @@ def test_postgres_agrees_with_the_meter_for_every_mode(world, kind):
         got = {row["id"] for row in _list(world, kind, mode) if row["id"] in ours}
         want = {i for i, row in ours.items() if _expected(kind, mode, row["completeness"])}
         assert got == want, (kind, mode, got, want)
-    # Every kind is seeded with a row that lacks something. (Interview I0's place is a single space:
-    # the accepted whitespace edge, harmless here because I0 lacks its date and language too.)
     assert any(row["completeness"]["missing"] for row in ours.values()), kind
 
 
@@ -764,7 +698,6 @@ def test_post_and_patch_answer_with_the_block(world):
     )
     assert patched.status_code == 200, patched.text
     assert [m["key"] for m in patched.json()["completeness"]["missing"]] == ["photo"]
-    # Put it back for the other tests' sake.
     client.patch(
         f"/api/artisans/{world['artisans']['no_start']}",
         json={"craftStartDate": None},
@@ -782,8 +715,6 @@ def test_a_masked_viewer_sees_the_same_block_and_no_values(world):
 
 
 def test_a_browser_may_read_the_rules_etag():
-    """The web revalidates the rules with ``If-None-Match``; hidden from a cross-origin script, the
-    tag would be unreadable and every page load would download the table again."""
     from app.main import app as application
 
     cors = [entry for entry in application.user_middleware if entry.cls.__name__ == "CORSMiddleware"]

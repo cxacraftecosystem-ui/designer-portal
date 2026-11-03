@@ -1,31 +1,3 @@
-"""The coverage map: what has been documented where, keyed by LGD code, and where the gaps are.
-
-``GET /map/points`` answers "where did this record come from" with points. This module answers the
-question a ministry asks of the whole programme — which districts have held a workshop, which crafts
-have never been documented, how many artisans and records each district holds — with one row per
-administrative UNIT (an LGD district, or a state where a record names no district).
-
-HOW A ROW BECOMES A COUNT. One fold per bucket over rows that come out of the same ``where`` clauses
-the map and the search box use (``record_filters.build_record_wheres``), so the visibility rule stays
-in one place and this module never composes a raw ``where`` for a record table. Each row's place is
-resolved through ``services/lgd.resolve`` when the map is read; nothing is stored. The two
-designer-portal-only buckets — design workshops (``DesignWorkshop``, scoped by
-``ministry_dashboard.scope_clause``) and planned workshops (``AnnualPlanEntry``, scoped by
-``annual_plan.plan_scope``) — are folded the same way from their own state/district columns.
-
-WHAT IS NEVER ADDED TOGETHER. Planned and held workshops are separate counts. The Field Repository's
-figures (``peer``) are a separate row on each unit and are never summed into this portal's, because
-the same artisan can exist in both without a consented link.
-
-THE FOLDS ARE PURE FUNCTIONS over already-fetched rows (``fold_*``), so the counting rules are tested
-without a database; :func:`compute` does the reads and hands them over.
-
-Filters: craft codes (``Craft.craftCode``, or a craft NAME through the shared spelling table and this
-portal's ``CraftSpelling`` rows), scheme (``DesignWorkshop.workshopKind`` / ``AnnualPlanEntry.workshopKind``
-— field records carry no scheme and are not narrowed by it), and financial year (1 April to 31 March,
-India Standard Time).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -44,32 +16,23 @@ from app.services import cross_portal_codes, lgd
 from app.services.concurrency import gather_reads
 from app.services.record_filters import build_record_wheres, design_workshop_where
 
-#: Rows read per bucket. A larger corpus degrades into a flagged, truncated map, not a timeout.
 ROW_CAP = 20_000
-#: Markers returned. Beyond this the map flags ``markersTruncated``.
 MARKER_CAP = 500
-#: Seconds a computed answer is reused for the same caller scope and parameters.
 CACHE_SECONDS = 60
-#: Seconds a Field Repository answer is reused.
 PEER_CACHE_SECONDS = 300
-#: Record stubs per bucket page in the unit panel.
 PAGE_SIZE = 20
-#: Unmatched spellings an administrator sees inline on the map payload.
 UNMATCHED_SAMPLE = 20
 
 LEVEL_STATE = "STATE"
 LEVEL_DISTRICT = "DISTRICT"
 LEVELS = (LEVEL_STATE, LEVEL_DISTRICT)
 
-#: The field buckets, in the order the panel lists them. Same names as ``record_filters.RECORD_TYPES``.
 FIELD_BUCKETS = ("workshops", "artisans", "products", "tools", "media")
 DW_BUCKET = "designWorkshops"
 PLAN_BUCKET = "plannedWorkshops"
 ALL_BUCKETS = (DW_BUCKET, PLAN_BUCKET, *FIELD_BUCKETS)
-#: The Field Repository's buckets, aggregate counts only.
 PEER_BUCKETS = ("workshops", "artisans", "products", "tools", "media")
 
-#: Which model a raw spelling came from, for the unmatched report.
 MODEL_FOR_BUCKET = {
     DW_BUCKET: "DesignWorkshop",
     PLAN_BUCKET: "AnnualPlanEntry",
@@ -108,17 +71,8 @@ IST = timezone(timedelta(hours=5, minutes=30))
 UnitKey = tuple[int, int]
 
 
-# --------------------------------------------------------------------------------------------
-# Financial years
-# --------------------------------------------------------------------------------------------
-
 
 def fy_of(value: datetime | None) -> int | None:
-    """The financial year a moment falls in, by its START year: 2026 is FY 2026-27.
-
-    The year turns at 00:00 on 1 April in India Standard Time, whatever zone the value carries. A
-    naive value is read as UTC, which is how Prisma hands back a ``timestamp(3)`` column.
-    """
     if value is None:
         return None
     if value.tzinfo is None:
@@ -131,13 +85,8 @@ def fy_label(fy: int) -> str:
     return f"{fy}-{(fy + 1) % 100:02d}"
 
 
-# --------------------------------------------------------------------------------------------
-# Filters
-# --------------------------------------------------------------------------------------------
-
 
 def split_values(raw: Iterable[str] | None) -> list[str]:
-    """Repeated and comma-joined spellings of one parameter, trimmed and de-duplicated in order."""
     out: list[str] = []
     for value in raw or ():
         for chunk in str(value).split(","):
@@ -178,7 +127,6 @@ def parse_filters(
     state_lgd: int | None,
     peer: bool,
 ) -> Filters:
-    """Validate the query. Raises ``ValueError`` with a sentence for a value that cannot mean anything."""
     chosen = (level or LEVEL_DISTRICT).strip().upper()
     if chosen not in LEVELS:
         raise ValueError("level must be STATE or DISTRICT.")
@@ -204,14 +152,8 @@ def parse_filters(
     )
 
 
-# --------------------------------------------------------------------------------------------
-# Craft codes
-# --------------------------------------------------------------------------------------------
-
 
 def craft_code_lookup(admin_spellings: dict[str, str]) -> Callable[[str | None], str | None]:
-    """A craft NAME to its shared code: the shared file first, then this portal's admin spellings."""
-
     def lookup(name: str | None) -> str | None:
         code = cross_portal_codes.shared_craft_code(name)
         if code is not None:
@@ -225,10 +167,6 @@ def craft_code_lookup(admin_spellings: dict[str, str]) -> Callable[[str | None],
 def _cluster_key(name: str | None) -> str:
     return cross_portal_codes.normalise(name)
 
-
-# --------------------------------------------------------------------------------------------
-# The fold
-# --------------------------------------------------------------------------------------------
 
 
 @dataclass
@@ -251,25 +189,17 @@ class Fold:
     documented: set[str] = field(default_factory=set)
     years: set[int] = field(default_factory=set)
     markers: list[dict[str, Any]] = field(default_factory=list)
-    #: (model, rawState, rawDistrict) -> rows that could not be placed at district level.
     unmatched: Counter = field(default_factory=Counter)
-    #: Rows whose place was blank or prose nothing could resolve.
     unplaced: int = 0
-    #: bucket -> unit -> record stubs (names only), for the unit panel.
     stubs: dict[str, dict[UnitKey, list[dict[str, Any]]]] = field(default_factory=dict)
     truncated: bool = False
     peer_status: str = PEER_OFF
     peer_as_of: str | None = None
     peer_unknown_units: int = 0
     peer_list_version: int | None = None
-    #: THE MASTER CRAFT LIST (2026-10-20). A craft on the list is keyed by its slug; ``key_aliases``
-    #: maps that slug to the shared code (C26) it also answers to, so a filter or a peer naming the
-    #: code still finds it. ``active_crafts`` is the list the catalogue and the gap list read.
     key_aliases: dict[str, set[str]] = field(default_factory=dict)
     active_crafts: list[dict[str, Any]] = field(default_factory=list)
     craft_keys_by_id: dict[str, str | None] = field(default_factory=dict)
-
-    # ------------------------------------------------------------------ helpers
 
     def unit(self, key: UnitKey) -> Unit:
         found = self.units.get(key)
@@ -290,7 +220,6 @@ class Fold:
         return not self.filters.fys or fy in self.filters.fys
 
     def keys_of(self, code: str | None) -> set[str]:
-        """A craft key and every key it answers to (its shared code, for a craft on the master list)."""
         if not code:
             return set()
         return {code} | self.key_aliases.get(code, set())
@@ -311,7 +240,6 @@ class Fold:
     def place(
         self, model: str, raw_state: str | None, raw_district: str | None, rows: int, place: str | None = None
     ) -> lgd.Resolution:
-        """Resolve one raw place and record it in the unmatched report when it falls short."""
         resolution = lgd.resolve(raw_state, raw_district, self.aliases, place)
         state_text = (raw_state or "").strip()
         district_text = (raw_district or "").strip()
@@ -352,7 +280,6 @@ def _key(resolution: lgd.Resolution) -> UnitKey:
     return (int(resolution.state_lgd or 0), int(resolution.district_lgd or 0))
 
 
-#: The display column(s) of each field bucket, first non-blank wins (``map_points._title``'s table).
 FIELD_TITLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "artisans": ("name",),
     "workshops": ("title",),
@@ -361,8 +288,6 @@ FIELD_TITLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "media": ("originalFilename",),
 }
 
-#: Every column a field bucket's read asks for. A ``group_by`` over exactly these, so the database
-#: hands back nothing else: no Aadhaar, no Pehchan, no phone, no address line.
 FIELD_COLUMNS: dict[str, tuple[str, ...]] = {
     "artisans": ("id", "name", "locationId", "place", "craftId", "workshopId", "createdAt"),
     "workshops": ("id", "title", "locationId", "place", "date", "startDate", "createdAt"),
@@ -377,7 +302,6 @@ def _get(row: Any, name: str) -> Any:
 
 
 def as_datetime(value: Any) -> datetime | None:
-    """A ``group_by`` row hands timestamps back as ISO strings; a model row as datetimes."""
     if value is None or isinstance(value, datetime):
         return value
     try:
@@ -411,7 +335,6 @@ def fold_field_rows(
     craft_codes_by_id: dict[str, str | None],
     workshop_codes: dict[str, set[str]] | None = None,
 ) -> None:
-    """One field bucket, one row at a time: filters, place, count, stub, and a marker for a workshop."""
     model = MODEL_FOR_BUCKET[bucket]
     is_workshop = bucket == "workshops"
     for row in rows:
@@ -487,7 +410,6 @@ def _cluster(fold: Fold, unit: Unit, name: str | None) -> None:
 def fold_design_workshops(
     fold: Fold, rows: list[Any], craft_code: Callable[[str | None], str | None]
 ) -> None:
-    """``DesignWorkshop`` rows, already narrowed by the caller's scope."""
     for row in rows:
         when = getattr(row, "startDate", None) or getattr(row, "createdAt", None)
         fy = fy_of(when)
@@ -535,7 +457,6 @@ def fold_design_workshops(
 
 
 def _row_craft_key(fold: Fold, row: Any, craft_code: Callable[[str | None], str | None]) -> str | None:
-    """A workshop or plan row's craft: its master-list link first, else its typed name's shared code."""
     craft_id = getattr(row, "craftId", None)
     if craft_id and fold.craft_keys_by_id.get(craft_id):
         return fold.craft_keys_by_id[craft_id]
@@ -543,7 +464,6 @@ def _row_craft_key(fold: Fold, row: Any, craft_code: Callable[[str | None], str 
 
 
 def fold_plans(fold: Fold, rows: list[Any], craft_code: Callable[[str | None], str | None]) -> None:
-    """``AnnualPlanEntry`` rows that are not withdrawn. ``planYear`` IS the financial year."""
     for row in rows:
         fy = getattr(row, "planYear", None)
         if not fold.wants_year(fy):
@@ -584,11 +504,6 @@ def fold_plans(fold: Fold, rows: list[Any], craft_code: Callable[[str | None], s
 
 
 def fold_peer(fold: Fold, answer: dict[str, Any]) -> None:
-    """Merge the Field Repository's aggregate counts as a SEPARATE row on each unit.
-
-    A unit whose code this register does not know (the two portals on different register versions)
-    is dropped and counted in ``peer_unknown_units`` rather than guessed at.
-    """
     reg = lgd.register()
     fold.peer_as_of = answer.get("asOf")
     fold.peer_list_version = answer.get("listVersion")
@@ -621,13 +536,6 @@ def fold_peer(fold: Fold, answer: dict[str, Any]) -> None:
 
 
 def _peer_documented_codes(fold: Fold, answer: dict[str, Any]) -> list[Any]:
-    """The Field Repository's documented crafts that may count against THIS fold's gap list.
-
-    The peer cannot filter by scheme, so under a scheme filter none of its crafts count. A fold
-    limited to some states (a Regional Director, or a state picked in the filters) takes only those
-    states' codes from ``craftCodesByState``; a peer that does not send it contributes nothing
-    rather than its national list.
-    """
     if fold.filters.schemes:
         return []
     if fold.allowed_states is None and fold.filters.state_lgd is None:
@@ -647,7 +555,6 @@ def _peer_documented_codes(fold: Fold, answer: dict[str, Any]) -> list[Any]:
 
 
 def add_cluster_markers(fold: Fold) -> None:
-    """One CLUSTER marker per named cluster per district, at the district's representative point."""
     for key, unit in fold.units.items():
         position = fold.centroid_for(key)
         if position is None:
@@ -669,10 +576,6 @@ def add_cluster_markers(fold: Fold) -> None:
                 }
             )
 
-
-# --------------------------------------------------------------------------------------------
-# Building the answer
-# --------------------------------------------------------------------------------------------
 
 _COUNT_KEYS = (DW_BUCKET, PLAN_BUCKET, "workshops", "artisans", "crafts", "products", "tools", "media")
 
@@ -780,12 +683,6 @@ def build_gaps(fold: Fold) -> dict[str, Any]:
 
 
 def crafts_never_documented(fold: Fold) -> list[dict[str, str]]:
-    """The crafts of the list (narrowed by the craft filter) that no record in scope documents.
-
-    Against the ACTIVE master list (2026-10-20), keyed by slug; a craft also counts as documented
-    when its shared code is (a record, or the peer, that names only the code). Without the list,
-    a corpus read before it existed, the shared code catalogue as before.
-    """
     wanted = set(fold.filters.craft_codes)
     if fold.active_crafts:
         out = []
@@ -816,7 +713,6 @@ def unmatched_items(fold: Fold) -> list[dict[str, Any]]:
 
 
 def suggestion_for(raw_state: str | None, raw_district: str | None) -> dict[str, Any] | None:
-    """A suggestion only from ``canonical_state`` plus an EXACT district of another state. No fuzzing."""
     from app.services.address import DISTRICTS_BY_STATE, canonical_district
 
     state_code = lgd.state_lgd(raw_state)
@@ -875,14 +771,8 @@ def build_payload(fold: Fold, *, is_admin: bool, boundaries: dict[str, Any], cat
     }
 
 
-# --------------------------------------------------------------------------------------------
-# The in-process cache
-# --------------------------------------------------------------------------------------------
-
 
 class TtlCache:
-    """A small dictionary with an expiry per entry. Per process, which is the whole deployment."""
-
     def __init__(self, seconds: int, limit: int = 256) -> None:
         self.seconds = seconds
         self.limit = limit
@@ -917,24 +807,17 @@ PEER_CACHE = TtlCache(PEER_CACHE_SECONDS, limit=64)
 
 
 def clear_caches() -> None:
-    """Called after an alias is written or deleted, so the next read re-resolves every place."""
     FOLD_CACHE.clear()
     CORPUS_CACHE.clear()
 
-
-# --------------------------------------------------------------------------------------------
-# Reading the corpus
-# --------------------------------------------------------------------------------------------
 
 BOUNDARIES_DIR = Path(__file__).resolve().parents[1] / "data" / "boundaries"
 CENTROIDS_FILE = BOUNDARIES_DIR / "district-centroids.json"
 SHAPES_MANIFEST_FILE = BOUNDARIES_DIR / "shapes-manifest.json"
 DEPICTION = "Survey of India"
 
-#: Location rows read per ``IN`` list, so a full bucket never builds one enormous statement.
 _LOCATION_CHUNK = 5_000
 
-#: Rows read once per caller scope and reused by every filter for :data:`CACHE_SECONDS`.
 CORPUS_CACHE = TtlCache(CACHE_SECONDS, limit=64)
 
 _DELEGATES = {
@@ -948,7 +831,6 @@ _DELEGATES = {
 
 @lru_cache(maxsize=1)
 def centroids() -> dict[int, tuple[float, float]]:
-    """``district LGD -> (lon, lat)``, a point inside the district's own polygon."""
     try:
         raw = json.loads(CENTROIDS_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -972,7 +854,6 @@ def scheme_catalogue() -> list[dict[str, str]]:
 
 
 def catalogue_payload(fold: Fold | None = None) -> dict[str, Any]:
-    """The filter lists. Crafts are the ACTIVE master list as ``{code: slug, name}`` (2026-10-20)."""
     if fold is not None and fold.active_crafts:
         crafts = [{"code": c["code"], "name": c["name"]} for c in fold.active_crafts]
     else:
@@ -982,11 +863,8 @@ def catalogue_payload(fold: Fold | None = None) -> dict[str, Any]:
 
 @dataclass
 class Corpus:
-    """Every row one caller's map is folded from, before any coverage filter is applied."""
-
     field_rows: dict[str, list[Any]] = field(default_factory=dict)
     locations: dict[str, Any] = field(default_factory=dict)
-    #: craft id -> its coverage key: the slug of a craft on the master list, else its shared code.
     craft_codes_by_id: dict[str, str | None] = field(default_factory=dict)
     workshop_codes: dict[str, set[str]] = field(default_factory=dict)
     key_aliases: dict[str, set[str]] = field(default_factory=dict)
@@ -1023,11 +901,6 @@ async def _locations(client: Any, ids: set[str]) -> dict[str, Any]:
 
 
 async def _allowed_states(client: Any, user: Any, scoped_workshops: list[Any]) -> frozenset[int] | None:
-    """``None`` for the whole country; else the states this officer answers for.
-
-    A Regional Director's assigned states, plus the states of every workshop the officer was named
-    on (an Assistant Director has no state assignment, only workshops).
-    """
     from app.core.deps import role_value
     from app.services import ministry_dashboard
 
@@ -1055,7 +928,6 @@ def scope_key(user: Any) -> str:
 
 
 async def load_corpus(user: Any) -> Corpus:
-    """One wave of reads for the caller's scope; cached for :data:`CACHE_SECONDS`."""
     key = scope_key(user)
     cached = CORPUS_CACHE.get(key)
     if cached is not None:
@@ -1066,7 +938,6 @@ async def load_corpus(user: Any) -> Corpus:
 
 
 async def read_corpus(client: Any, user: Any) -> Corpus:
-    """The reads themselves. Every record ``where`` comes from ``build_record_wheres``."""
     from app.services import annual_plan, ministry_dashboard
 
     wheres = await build_record_wheres(user)
@@ -1122,7 +993,6 @@ async def read_corpus(client: Any, user: Any) -> Corpus:
 
 
 def craft_keys(corpus: Corpus, crafts: list[Any]) -> None:
-    """Fill the corpus's craft keys and the ACTIVE master list from the ``Craft`` rows."""
     active: list[dict[str, Any]] = []
     for craft in crafts:
         code = getattr(craft, "craftCode", None)
@@ -1138,7 +1008,6 @@ def craft_keys(corpus: Corpus, crafts: list[Any]) -> None:
 
 
 def fold_corpus(corpus: Corpus, filters: Filters) -> Fold:
-    """Every bucket folded under ``filters``. Pure over the corpus, so cheap to repeat per filter."""
     fold = Fold(
         filters=filters,
         allowed_states=corpus.allowed_states,
@@ -1152,7 +1021,6 @@ def fold_corpus(corpus: Corpus, filters: Filters) -> Fold:
     craft_code = craft_code_lookup(corpus.admin_spellings)
     fold_design_workshops(fold, corpus.design_workshops, craft_code)
     fold_plans(fold, corpus.plans, craft_code)
-    # Field records carry no scheme, so a scheme filter leaves them out rather than pretending.
     if not filters.schemes:
         for bucket in FIELD_BUCKETS:
             fold_field_rows(
@@ -1167,13 +1035,8 @@ def fold_corpus(corpus: Corpus, filters: Filters) -> Fold:
     return fold
 
 
-# --------------------------------------------------------------------------------------------
-# The Field Repository's counts
-# --------------------------------------------------------------------------------------------
-
 
 def coverage_peer_active(settings: Any) -> bool:
-    """The coverage feed needs its own flag, the shared token and the Field Repository's address."""
     from app.services import cross_portal
 
     if not getattr(settings, "cross_portal_coverage_enabled", False):
@@ -1186,7 +1049,6 @@ def coverage_peer_active(settings: Any) -> bool:
 async def fetch_peer(
     settings: Any, filters: Filters, requested_by: str | None
 ) -> tuple[str, dict[str, Any] | None]:
-    """``(status, answer)``. Any failure is ``UNAVAILABLE`` and the map draws this portal's data."""
     from app.services.cross_portal_client import PeerUnavailable, peer_call
 
     if not coverage_peer_active(settings):
@@ -1219,13 +1081,8 @@ async def fetch_peer(
     return PEER_OK, answer
 
 
-# --------------------------------------------------------------------------------------------
-# The three answers the routes return
-# --------------------------------------------------------------------------------------------
-
 
 async def coverage(user: Any, filters: Filters, *, settings: Any, is_admin: bool) -> dict[str, Any]:
-    """The whole ``GET /map/coverage`` body, cached per (scope, parameters)."""
     cache_key = (scope_key(user), filters.key(), is_admin)
     cached = FOLD_CACHE.get(cache_key)
     if cached is not None:
@@ -1245,7 +1102,6 @@ async def coverage(user: Any, filters: Filters, *, settings: Any, is_admin: bool
 
 
 def peer_href(settings: Any, filters: Filters, state_code: int, district_code: int) -> str | None:
-    """The same unit on the Field Repository's own coverage map, when the feed is on."""
     from urllib.parse import urlencode
 
     base = (getattr(settings, "field_repository_web_url", None) or "").strip().rstrip("/")
@@ -1276,7 +1132,6 @@ async def unit_records(
     cursor: str | None,
     settings: Any,
 ) -> dict[str, Any] | None:
-    """The records behind one unit, a page per bucket. ``None`` when the codes name no unit."""
     if lgd.state_name(state_code) is None:
         return None
     if district_code and lgd.district_state(district_code) != state_code:
@@ -1313,14 +1168,12 @@ async def unit_records(
 
 
 async def unmatched_report(user: Any) -> dict[str, Any]:
-    """Every raw spelling that could not be placed at district level, busiest first."""
     corpus = await load_corpus(user)
     fold = fold_corpus(corpus, Filters())
     items = unmatched_items(fold)
     for item in items:
         item["suggestion"] = suggestion_for(item["rawState"], item["rawDistrict"])
     reg = lgd.register()
-    # The codes the mapping form picks from, so the client needs no copy of the register.
     register_payload = {
         "states": [{"lgd": code, "name": name} for code, name in sorted(reg.state_name.items())],
         "districts": [

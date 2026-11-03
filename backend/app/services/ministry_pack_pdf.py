@@ -1,13 +1,3 @@
-"""THE MINISTRY PACK'S PDF: a one- or two-page summary beside the workbook.
-
-Title, period and scheme; a month-to-date banner when the month is not over; the headline figures;
-the top ten states; and the data-protection footer. It names nobody — the workbook carries designer
-names, this page carries counts. Fonts come from ``report_pdf.register_fonts`` so a state or scheme
-name in an Indian script draws instead of printing boxes.
-
-Synchronous (reportlab); the caller runs it in ``asyncio.to_thread``.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -29,7 +19,6 @@ TOP_STATES = 10
 
 
 def _font_for(fonts: Any, text: str, *, bold: bool = False) -> str:
-    """The face for a string: the first non-Latin script in it decides, else the Latin pair."""
     for ch in text:
         script = script_of(ch)
         if script != Script.LATIN:
@@ -46,9 +35,6 @@ def _ist_text(moment: Any) -> str:
 
 
 def build_pack_pdf(summary: dict[str, Any]) -> bytes:
-    """Render the summary. ``summary`` keys: ``periodLabel``, ``schemeLabel``, ``snapshotAt``,
-    ``monthToDate``, ``revision``, ``counts`` (``compute_counts``), ``byState`` (``by_state``),
-    ``cap``, ``planYearLabel``, ``planned``, ``promoted``."""
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
 
