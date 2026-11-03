@@ -7,6 +7,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.designprototype.workshop.data.DwAiVerbAllowancePreflight
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -169,9 +173,18 @@ internal fun DwRecordConsentLink(consent: DwTier3Consent) {
 internal fun dwVerbSurface(runs: Int = 0): DwAiVerbSurface {
     val context = LocalContext.current
     val published = DwDictationRun.publishedWorkshop()
+    val preflight by DwAiVerbAllowancePreflight.version.collectAsState()
+    LaunchedEffect(Unit) {
+        val repository = DwDictationRun.repository() ?: return@LaunchedEffect
+        val userId = runCatching { TokenStore(context).getUser()?.id }.getOrNull()
+        if (DwAiVerbAllowancePreflight.shouldAsk(userId, dwDictationIstDay())) {
+            repository.refreshAiVerbAllowance(context.applicationContext)
+            DwAiVerbAllowancePreflight.answered()
+        }
+    }
     // Keyed on the published pair AND on the run count, so a stage screen that publishes a different
     // workshop rebuilds this and a finished run re-reads the mirror it just wrote.
-    return remember(published.serverId, published.consent, runs) {
+    return remember(published.serverId, published.consent, runs, preflight) {
         val userId = runCatching { TokenStore(context).getUser()?.id }.getOrNull()
         val today = dwDictationIstDay()
         DwAiVerbSurface(

@@ -7,6 +7,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -1093,6 +1097,86 @@ object DwMarketAnalysis {
      * and the whole value of this analysis rests on a designer seeing "these figures come from one
      * respondent group" before they see the figures.
      */
+    fun fromPayload(json: JsonObject): DwMarketFindings = DwMarketFindings(
+        observations = json.int("observations"),
+        respondentPrices = distributionOf(json["respondentPrices"]),
+        competitorPrices = distributionOf(json["competitorPrices"]),
+        byCategory = (json["byCategory"] as? JsonObject).orEmpty()
+            .mapNotNull { (key, value) -> distributionOf(value)?.let { key to it } }.toMap(),
+        bands = json.objects("bands").map { band ->
+            DwBandVerdict(
+                category = band.text("category"),
+                declaredLow = band.number("declaredLow"),
+                declaredHigh = band.number("declaredHigh"),
+                evidence = distributionOf(band["evidence"]),
+                inside = band.int("inside"),
+                below = band.int("below"),
+                above = band.int("above"),
+                coverage = band.number("coverage") ?: 0.0,
+                verdict = band.text("verdict"),
+                message = band.text("message"),
+            )
+        },
+        competitors = json.objects("competitors").map { item ->
+            DwCompetitorPosition(
+                name = item.text("name"),
+                seller = item.text("seller"),
+                category = item.text("category"),
+                price = item.number("price") ?: 0.0,
+                percentile = item.number("percentile"),
+                versusMedian = item.number("versusMedian"),
+                note = item.text("note"),
+            )
+        },
+        swot = json.objects("swot").map { point ->
+            DwSwotSupport(
+                kind = point.text("kind"),
+                point = point.text("point"),
+                supportedBy = point.texts("supportedBy"),
+                overlap = point.int("overlap"),
+                hasOwnEvidence = (point["hasOwnEvidence"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            )
+        },
+        clusters = json.objects("clusters").map { cluster ->
+            DwTrendCluster(
+                members = cluster.texts("members"),
+                mentions = cluster.int("mentions"),
+                coOccurrences = cluster.int("coOccurrences"),
+            )
+        },
+        groupCounts = (json["groupCounts"] as? JsonObject).orEmpty()
+            .mapNotNull { (key, value) -> (value as? JsonPrimitive)?.intOrNull?.let { key to it } }.toMap(),
+        cautions = json.texts("cautions"),
+    )
+
+    private fun distributionOf(element: JsonElement?): DwDistribution? {
+        val obj = element as? JsonObject ?: return null
+        return DwDistribution(
+            count = obj.int("count"),
+            minimum = obj.number("minimum") ?: 0.0,
+            maximum = obj.number("maximum") ?: 0.0,
+            mean = obj.number("mean") ?: 0.0,
+            p25 = obj.number("p25") ?: 0.0,
+            median = obj.number("median") ?: 0.0,
+            p75 = obj.number("p75") ?: 0.0,
+            quantilesReported = (obj["quantilesReported"] as? JsonPrimitive)?.booleanOrNull ?: false,
+        )
+    }
+
+    private fun JsonObject.number(key: String): Double? = (this[key] as? JsonPrimitive)?.doubleOrNull
+
+    private fun JsonObject.int(key: String): Int =
+        (this[key] as? JsonPrimitive)?.let { it.intOrNull ?: it.doubleOrNull?.toInt() } ?: 0
+
+    private fun JsonObject.text(key: String): String =
+        (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull.orEmpty()
+
+    private fun JsonObject.texts(key: String): List<String> =
+        (this[key] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+
+    private fun JsonObject.objects(key: String): List<JsonObject> =
+        (this[key] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+
     fun payload(findings: DwMarketFindings): JsonObject = buildJsonObject {
         put("observations", findings.observations)
         put("cautions", buildJsonArray { findings.cautions.forEach { add(JsonPrimitive(it)) } })

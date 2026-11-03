@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
@@ -237,6 +238,7 @@ fun StageIndexScreen(
      */
     onOpenProvenance: () -> Unit,
     onError: (String) -> Unit,
+    onOpenAiLayers: (() -> Unit)? = null,
     /** Content admins, admin view or not: the index ends with the "Danger zone" card. */
     canDelete: Boolean = false,
     onDeleted: () -> Unit = {},
@@ -531,6 +533,15 @@ fun StageIndexScreen(
                     Icon(Icons.Filled.FindInPage, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Inspectors")
+                }
+            }
+            if (onServer) {
+                onOpenAiLayers?.let { openAiLayers ->
+                    OutlinedButton(onClick = openAiLayers) {
+                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(DW_AI_LAYERS_TITLE)
+                    }
                 }
             }
             if (mayReadWorkshopProvenance(viewer) && onServer) {
