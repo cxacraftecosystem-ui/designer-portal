@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * "Import artisans from a spreadsheet" on stage 3 (owner decision C11, 2026-10-17).
- *
- * The officers' import, opened to the workshop's own designers: download the pro-forma (already
- * naming this workshop), fill it in, upload it. Same delete-after-reading rule, same ledger, same
- * report — `ImportReport` is the officers' component, reused. Closed until asked for: most stage-3
- * visits are not imports. After an import the participant rows exist on the server, so the panel
- * offers a reload rather than pretending the form beside it already shows them.
- */
-
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, FileSpreadsheet } from "lucide-react";
 
@@ -44,7 +34,6 @@ export function RosterImportPanel({
   disabled,
   disabledReason
 }: {
-  /** The SERVER id. A workshop only this device holds has nothing to import into yet. */
   workshopId: string;
   disabled?: boolean;
   disabledReason?: string | null;
@@ -183,5 +172,4 @@ export function RosterImportPanel({
   );
 }
 
-/** The stage this panel sits on — stage 3, where the participant roster is built. */
 export const PARTICIPANTS_STAGE = "WORKSHOP_PLAN_PARTICIPANTS_OPENING";

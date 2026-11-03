@@ -16,13 +16,6 @@ import {
 } from "@/lib/completenessCore";
 import { focusKeyFromSearch } from "@/lib/forms";
 
-/**
- * The web half of record completeness (2026-10-18), against `shared/record-completeness.json` — the
- * table both portals carry byte for byte, which the server and the handset also run. The evaluator
- * and the sentence are held to the shared vectors and to the same edge cases the server's
- * `tests/test_record_completeness.py` pins; the focus helper is run in a real page.
- */
-
 const ROOT = join(__dirname, "..", "..");
 const read = (...parts: string[]) => readFileSync(join(ROOT, ...parts), "utf-8").split("\r\n").join("\n");
 
@@ -98,14 +91,11 @@ test("every record form carries the anchors its rules name", () => {
     "components/forms/ProductForm.tsx": ["artisan", "sellingPrice", "costOfMaking", "timeTaken", "dimensions", "marketDemand", "photo"],
     "components/forms/ToolForm.tsx": ["artisan", "localName", "material", "dimensions", "maker", "traditionType", "replacementCost", "photo"],
     "app/(protected)/workshops/page.tsx": ["startDate", "endDate", "artisans", "crafts", "photo"]
-    // The retired global interview form (UNIFY 4.4) had anchors here; a session's coverage grid is
-    // where an interview's gaps are shown now.
   };
   for (const [file, keys] of Object.entries(expected)) {
     const found = anchors(file);
     for (const key of keys) expect(found.has(key), `${file} lacks data-field "${key}"`).toBe(true);
   }
-  // And the list above is every rule key, so a rule added without an anchor fails here.
   const kindOf: Record<string, string> = {
     "components/forms/ArtisanForm.tsx": "artisan",
     "components/forms/ProductForm.tsx": "product",

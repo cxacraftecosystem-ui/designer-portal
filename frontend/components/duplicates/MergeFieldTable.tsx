@@ -6,10 +6,6 @@ import { resultingValue, type MergeChoice, type MergeField } from "@/lib/duplica
 
 const CHOICE_LABEL: Record<MergeChoice, string> = { A: "A", B: "B", BOTH: "Both" };
 
-/**
- * One row per field: the two records' values and a radio for the side the kept record takes. Locked
- * rows (Aadhaar, Pehchan) come from whichever record holds them and cannot be chosen.
- */
 export function MergeFieldTable({
   fields,
   picks,

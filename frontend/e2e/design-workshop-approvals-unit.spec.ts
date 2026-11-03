@@ -14,17 +14,6 @@ import {
 import { APPROVAL_AUTHORITY_REFUSAL, canAccessRoute, ROUTE_GUARDS, ROLES_BY_RANK } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
-/**
- * REPORTS TO APPROVE — the pure half of the Ministry Admin's decision panel.
- *
- * Which buttons a report offers is decided by its STATUS; whether each may be pressed, and the
- * sentence a refused one shows, by the SERVER (`mayDecide`, `decisionRefusal`, `refusals`). These
- * tests hold both halves: no button is live without the server's explicit yes, and no refused button
- * is drawn without a sentence saying why.
- *
- * PURE NODE — no browser, no server.
- */
-
 const user = (role: UserRole): User => ({ id: `u-${role}`, email: "a@b.c", name: role, role }) as User;
 
 function detail(overrides: Partial<DwApprovalDetail>): DwApprovalDetail {

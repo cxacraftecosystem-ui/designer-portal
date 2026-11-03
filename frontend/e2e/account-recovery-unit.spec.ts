@@ -10,21 +10,6 @@ import { provisionableRoles } from "@/lib/permissions";
 import { EXISTING_ACCOUNT_HEADER, existingAccountId, retryAfterWords } from "@/lib/signIn";
 import type { User } from "@/lib/types";
 
-/**
- * GETTING BACK IN — "Forgot your password?", "Sign out of every device", and an address let in with a
- * password from the access list.
- *
- *   1. the sign-in card links to a PUBLIC /forgot-password page, outside the protected tree;
- *   2. that page prints the server's one sentence verbatim and has no branch about the account;
- *   3. a 429 says when to try again, from `Retry-After`;
- *   4. "Sign out of every device" is offered on exactly the accounts a provisioner manages, confirmed
- *      first, and posts to the route the server publishes;
- *   5. the access list's add form asks how the person will sign in, and sends the password untrimmed.
- *
- * Source reads where the rule is a component — there is no React renderer in devDependencies.
- * ⚠ LINE-ENDING AGNOSTIC: `\s` and `[\s\S]` throughout.
- */
-
 const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
 
 const LOGIN = read("app", "login", "page.tsx");
@@ -36,7 +21,6 @@ const ACCESS_LIB = read("lib", "accessRoster.ts");
 
 test("the sign-in card links to a public forgot-password page", () => {
   expect(LOGIN).toMatch(/<Link href="\/forgot-password"[^>]*>\s*Forgot your password\?\s*<\/Link>/);
-  // Public: it lives outside app/(protected), like /set-password, so a locked-out reader reaches it.
   expect(() => read("app", "(protected)", "forgot-password", "page.tsx")).toThrow();
   expect(FORGOT.startsWith('"use client";')).toBe(true);
 });
@@ -44,12 +28,10 @@ test("the sign-in card links to a public forgot-password page", () => {
 test("the page prints the server's one answer and nothing about the account", () => {
   expect(SIGN_IN).toMatch(/"\/auth\/forgot-password",\s*\{ method: "POST", body: JSON\.stringify\(\{ email \}\) \},\s*\{ redirectOn401: false \}/);
   expect(FORGOT).toContain("setSent(answer?.message ||");
-  // No sentence that could tell a stranger whether an address has an account.
   expect(FORGOT).not.toMatch(/not found|no account|could not find|doesn't exist|does not exist/i);
   expect(FORGOT).toContain("Email me a link");
   expect(FORGOT).toContain("you will still need your authenticator app");
   expect(FORGOT).toContain("No email? Ask an administrator");
-  // FormData first, before any await.
   const submit = FORGOT.slice(FORGOT.indexOf("async function submit("));
   expect(submit.indexOf("new FormData(event.currentTarget)")).toBeLessThan(submit.indexOf("await requestForgotPasswordLink("));
 });
@@ -69,10 +51,8 @@ const target = (extra: Partial<User> = {}) =>
 test("sign out of every device is offered on a managed account, and only by a provisioner", () => {
   expect(rowOffers(viewer, target(), { provision: true, admin: true }).signOutEverywhere).toBe(true);
   expect(rowOffers(viewer, target(), { provision: false, admin: false }).signOutEverywhere).toBe(false);
-  // Never on the reader's own row, nor a peer's.
   expect(rowOffers(viewer, { ...viewer }, { provision: true, admin: true }).signOutEverywhere).toBe(false);
   expect(rowOffers(viewer, target({ role: "ADMIN" }), { provision: true, admin: true }).signOutEverywhere).toBe(false);
-  // The server's derived `hasPassword` decides the password-link offer where it is sent.
   expect(rowOffers(viewer, target({ hasPassword: true, passwordSetAt: null }), { provision: true, admin: true }).passwordLink).toBe(true);
   expect(rowOffers(viewer, target({ hasPassword: false, passwordSetAt: "2026-01-01" }), { provision: true, admin: true }).passwordLink).toBe(false);
 });
@@ -93,14 +73,9 @@ test("the access list asks how they will sign in, and sends a password untrimmed
   expect(ACCESS).toContain('const password = withPassword ? String(form.get("password") ?? "") : "";');
   expect(ACCESS).not.toMatch(/form\.get\("password"\)[^;\n]*\.trim\(\)/);
   expect(ACCESS).toContain("...(withPassword ? { password, mustChangePassword: mustChange } : {})");
-  // Only on the add form: a correction cannot create an account.
   expect(ACCESS).toContain("{editing ? null : <SignInMethodField />}");
   expect(ACCESS_LIB).toMatch(/password\?: string;\s*mustChangePassword\?: boolean;/);
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * "Add a person" — one step, three ways to sign in
- * ──────────────────────────────────────────────────────────────────────────── */
 
 const FORM = {
   name: "Asha",
@@ -121,14 +96,12 @@ test("the body carries only what each sign-in answer needs", () => {
     password: " typed ",
     mustChangePassword: true
   });
-  // GENERATE: no password and no flag — the server makes one and forces the change.
   expect(newAccountBody({ ...FORM, passwordMode: "GENERATE" }, { admin: false })).toEqual({
     name: "Asha",
     email: "asha@example.org",
     role: "RESEARCHER",
     passwordMode: "GENERATE"
   });
-  // NONE: no password; the link only when ticked.
   expect(newAccountBody({ ...FORM, passwordMode: "NONE" }, { admin: false })).toEqual({
     name: "Asha",
     email: "asha@example.org",
@@ -136,9 +109,7 @@ test("the body carries only what each sign-in answer needs", () => {
     passwordMode: "NONE"
   });
   expect(newAccountBody({ ...FORM, passwordMode: "NONE", sendPasswordLink: true }, { admin: false }).sendPasswordLink).toBe(true);
-  // A link is never asked for beside a password.
   expect("sendPasswordLink" in newAccountBody({ ...FORM, passwordMode: "SET", sendPasswordLink: true }, { admin: false })).toBe(false);
-  // Grants still ride only for an admin.
   expect(newAccountBody({ ...FORM, passwordMode: "GENERATE" }, { admin: true }).canManageQuestionnaire).toBe(true);
 });
 

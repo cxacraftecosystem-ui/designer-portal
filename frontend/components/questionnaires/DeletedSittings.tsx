@@ -8,18 +8,12 @@ import { readableError } from "@/components/review/reviewErrors";
 import { formatDateTime } from "@/lib/format";
 import { listDeletedEntries, restoreEntry, type QFormDeletedEntry } from "@/lib/questionnaireForms";
 
-/**
- * The sittings deleted from one questionnaire, each with Restore. Mounted by the questionnaire page
- * in admin view only; the server answers 403 to anyone but a content admin. Draws nothing until it
- * knows there is something deleted, so a form with no deleted sittings gains no empty section.
- */
 export function DeletedSittings({
   questionnaireId,
   refreshToken,
   onRestored
 }: {
   questionnaireId: string;
-  /** Bumped by the page after it deletes a sitting, so the new row appears here. */
   refreshToken: number;
   onRestored: () => void;
 }) {

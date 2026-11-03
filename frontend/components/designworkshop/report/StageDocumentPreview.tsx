@@ -1,47 +1,5 @@
 "use client";
 
-/**
- * The document, as it stands, beside the stage being filled in — LIVE, on real A4 pages.
- *
- * Asked for on 2026-08-25 (*"designers can see how the document will look as they enter or modify
- * information"*) and rebuilt on 2026-10-16 after the owner judged the first version unusable. What
- * that version did, measured on a seeded workshop before this change:
- *
- *   • it drew the blocks with NONE of the report's stylesheet — the `rp-*` rules live inside
- *     `ReportSheets`, which this panel did not mount — so tables had no rules or header fill, the
- *     cover and callouts were unstyled HTML, and every photograph was drawn at its natural size;
- *   • it followed the SAVES, not the keystrokes: nothing changed while a designer typed, and every
- *     save blanked the panel to a "Building…" line for the length of a whole server-side build
- *     before drawing the document again, scrolled back to its top;
- *   • it was a disclosure ABOVE the form, so the paragraph being typed and the preview of it were
- *     never on screen at the same time.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * STILL NOT A FIFTH RENDERER — AND NOW LIVE ANYWAY
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * The first version refused to build from the local draft because a browser-side builder would be a
- * fifth renderer nobody checks. That stopped being true on 2026-10-10: `lib/offlineReport` is a port
- * of the server's builder, held to the server's output block for block by
- * `offline-report-parity-unit.spec.ts`, and this panel already used it whenever it had no
- * connection. So the live document is built by THAT builder from the draft with this stage's unsaved
- * answers laid over it (`liveDocument.buildLiveDocument`), and the pages are drawn by the same
- * `ReportSheets` the report screen uses. Where the server's document is available, only this
- * stage's blocks are taken from the live build and spliced into it (`stageSlice.spliceStageBlocks`),
- * so every other page keeps the server's content and the page numbers stay the document's own.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * SMOOTH WHILE TYPING
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * A rebuild runs {@link LIVE_DEBOUNCE_MS} after the last keystroke, never on every one. Unchanged
- * blocks keep their identity across rebuilds (`stableBlocks`), so React re-renders only the block
- * that changed; `ReportSheets` measures the new document off screen and swaps it in only once its
- * pages are known, so nothing flickers; photographs are sized from their dimensions before a byte
- * arrives, so a picture loading never moves a break; and nothing ever replaces the pages with a
- * loading line once there are pages to show.
- */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 
@@ -81,16 +39,10 @@ import { isUnreachable } from "@/lib/failureTriage";
 import type { MediaFile } from "@/lib/types";
 
 export { sliceStageBlocks };
-// Re-exported from the light module the stage page now imports them from — see `StagePreviewLayout.tsx`.
 export { StagePreviewLayout, useStagePreviewOpen } from "@/components/designworkshop/report/StagePreviewLayout";
 
 const EMPTY_BLOCKS: PreviewBlock[] = [];
 
-/**
- * `next`, with the block objects that did not change since the last render kept — see
- * `stageSlice.stableBlocks`. Held in state, not a ref, so the render that shows a rebuild is the
- * render that records it.
- */
 export function useStableBlocks(next: PreviewBlock[]): PreviewBlock[] {
   const [held, setHeld] = useState(next);
   const stable = useMemo(() => stableBlocks(held, next), [held, next]);
@@ -98,21 +50,10 @@ export function useStableBlocks(next: PreviewBlock[]): PreviewBlock[] {
   return stable;
 }
 
-/**
- * How long after the last keystroke the document is rebuilt. Long enough that a word typed at speed
- * is one rebuild, short enough that the page answers before the designer's eyes reach it.
- */
 export const LIVE_DEBOUNCE_MS = 250;
 
-/**
- * The most one load of the preview may take — the draft, the registry, the kept sources and the
- * server's document — before the panel stops saying "Building the document…" and offers Try again.
- * None of those requests carries a timeout of its own, so a stalled connection used to leave the
- * panel building for ever. Android's `DW_LIVE_PREVIEW_TIMEOUT_MS`, to the ms.
- */
 export const PREVIEW_DEADLINE_MS = 20_000;
 
-/** Thrown by {@link withDeadline} when the work outlives its deadline. */
 export class PreviewDeadlineError extends Error {
   constructor() {
     super("The preview took too long to build.");
@@ -120,10 +61,6 @@ export class PreviewDeadlineError extends Error {
   }
 }
 
-/**
- * `work`, or a {@link PreviewDeadlineError} once `ms` have passed — whichever settles first. The work
- * is not cancelled: a late answer still lands through the caller's own generation check.
- */
 export function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new PreviewDeadlineError()), ms);
@@ -150,15 +87,9 @@ type Shown = {
   headerText: string;
   footerText: string;
   accent: string | null;
-  /** Whether what is on the paper includes the form's unsaved answers. */
   live: boolean;
 };
 
-/**
- * Dimensions for photographs the kept sources do not describe — attached since they were fetched.
- * Read from the picture itself, once per id, from the device for a `dwlocal:` photograph and from
- * the repository otherwise.
- */
 function useProbedImageRefs(ids: string[], known: Record<string, unknown> | undefined): Record<string, ImageRef> {
   const [refs, setRefs] = useState<Record<string, ImageRef>>({});
   const asked = useRef(new Set<string>());
@@ -191,7 +122,6 @@ function useProbedImageRefs(ids: string[], known: Record<string, unknown> | unde
           found[id] = { source: id, width_px: bitmap.width, height_px: bitmap.height, rotation_deg: 0, mime_type: mime };
           bitmap.close();
         } catch {
-          // Unreadable here: the builder leaves it out and the report's own warning names it.
         }
       }
       if (!cancelled && Object.keys(found).length) setRefs((current) => ({ ...current, ...found }));
@@ -199,27 +129,18 @@ function useProbedImageRefs(ids: string[], known: Record<string, unknown> | unde
     return () => {
       cancelled = true;
     };
-    // `key` is `ids` by value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, known]);
   return refs;
 }
 
 export function StageDocumentPreview({
-  /**
-   * The id the REPOSITORY knows this workshop by — never the route param. The caller resolves it
-   * with `reportServerId`; where it has none (`localOnly` true or null) nothing is asked of it.
-   */
   workshopId,
-  /** The route id, which `loadDraft` matches whichever id it is. */
   draftId,
   stageKey,
   stageTitle,
-  /** Bumped after every successful save: the server's document has changed. */
   refreshToken,
-  /** Does this workshop exist ONLY on this device? `null` while the caller cannot say. */
   localOnly,
-  /** What the form holds right now, unsaved. Absent, the preview follows the saves. */
   live,
   open,
   onOpenChange
@@ -236,7 +157,6 @@ export function StageDocumentPreview({
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const isOpen = open ?? ownOpen;
-  /** Mounted inside `StagePreviewLayout`'s pane — controlled, and open. */
   const pane = open !== undefined && isOpen;
   const setOpen = onOpenChange ?? setOwnOpen;
 
@@ -252,13 +172,6 @@ export function StageDocumentPreview({
   const generation = useRef(0);
   const drawn = useRef<number | null>(null);
 
-  /**
-   * The whole document at the last save — the server's where there is one, the device's otherwise —
-   * plus what the live build needs: the draft, the registry and the kept sources.
-   *
-   * THE PREVIOUS PAGES STAY UP WHILE THIS RUNS. A refresh used to blank the panel to a loading line
-   * for a whole server-side build; a designer who had just saved lost the page they were reading.
-   */
   const load = useCallback(
     async (token: number) => {
       const mine = generation.current + 1;
@@ -308,7 +221,6 @@ export function StageDocumentPreview({
             offline: error ? isUnreachable(error) : offline
           });
         } else {
-          // The device builds the whole document below, from the same draft; no base is needed.
           setBase(null);
           setBaseError(null);
         }
@@ -317,7 +229,6 @@ export function StageDocumentPreview({
       try {
         await withDeadline(run(), PREVIEW_DEADLINE_MS);
       } catch {
-        // Never a spinner without end: the pages already up stay up, and the panel offers Try again.
         if (generation.current === mine) {
           setBaseError({ message: "The preview couldn't be built.", offline: false });
         }
@@ -334,11 +245,6 @@ export function StageDocumentPreview({
     void load(refreshToken);
   }, [load, localOnly, isOpen, refreshToken]);
 
-  /*
-    THE DRAFT CAN ARRIVE AFTER THE PANEL OPENS. A stage opened for the first time on this device is
-    banked by the stage page a moment after it renders, so the read in `load` can find nothing; it is
-    asked again on the next edit rather than waiting for a save that may never come.
-  */
   useEffect(() => {
     if (!isOpen || draft || !draftId || localOnly === null) return;
     let cancelled = false;
@@ -362,10 +268,6 @@ export function StageDocumentPreview({
   );
   const probed = useProbedImageRefs(isOpen ? mediaIds : [], sources?.media);
 
-  /**
-   * THE LIVE BUILD, on a debounce. The draft is the workshop as this device holds it; the form's
-   * own values replace this stage in it; the builder is the one the parity spec holds to the server.
-   */
   useEffect(() => {
     if (!isOpen || !draft || !registry || !stageKey) return;
     const timer = window.setTimeout(() => {
@@ -385,19 +287,12 @@ export function StageDocumentPreview({
           live: Boolean(live)
         });
       } catch {
-        // A build that throws leaves the last good pages up; the server's document is still shown.
       }
     }, liveDoc ? LIVE_DEBOUNCE_MS : 0);
     return () => window.clearTimeout(timer);
-    // `liveDoc` decides only whether the FIRST build waits; it must not re-arm the timer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, draft, registry, stageKey, live, sources, probed]);
 
-  /**
-   * What is put on the paper: the server's document with this stage's live blocks spliced in, or
-   * the device's whole live document where there is no server copy (or the stage has no heading in
-   * the server's copy yet). Blocks that did not change keep their identity.
-   */
   const assembled: Shown | null = useMemo(() => {
     let next: Shown | null = null;
     if (base && liveDoc) {
@@ -427,13 +322,6 @@ export function StageDocumentPreview({
   const palette = useMemo(() => paletteFromAccent(shown?.accent ?? null), [shown?.accent]);
   const blockCount = range ? range[1] - range[0] : 0;
 
-  /*
-    BRING THE STAGE'S HEADING TO THE TOP OF THE PANE, ONCE per stage and per "show every page"
-    choice — never on a rebuild, so the paper does not move under a designer who is typing and
-    reading. Only the pane's OWN scroll is touched: `scrollIntoView` would also scroll the page and
-    drag the form out from under the caret (§10.1). Below `lg` the pane does not scroll by itself and
-    nothing happens.
-  */
   const sectionRef = useRef<HTMLElement | null>(null);
   const placedFor = useRef<string | null>(null);
   const placeKey = range ? `${stageKey}:${showAll ? "all" : "stage"}` : null;
@@ -445,12 +333,9 @@ export function StageDocumentPreview({
       const section = sectionRef.current;
       const target = section?.querySelector<HTMLElement>('[data-rp-focus="start"]');
       if (!section || !target) {
-        // The pages are drawn a frame or two after the document arrives, once measured.
         if (attempts++ < 60) frame = requestAnimationFrame(place);
         return;
       }
-      // The nearest box between the heading and the page that scrolls by itself: the paper's own
-      // scroller in the pane (`scrollPages`). Never the document.
       let pane: HTMLElement | null = target.parentElement;
       while (pane && !(pane.scrollHeight > pane.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(pane).overflowY))) {
         pane = pane.parentElement;
@@ -495,7 +380,6 @@ export function StageDocumentPreview({
                 </button>
               </div>
 
-              {/* One region, always mounted, so assistive technology hears the first build finish. */}
               <p role="status" aria-live="polite" className={shown ? "sr-only" : "mb-3 text-sm text-ink-700"}>
                 {shown ? "The document is ready below." : baseError ? "" : "Building the document…"}
               </p>
@@ -586,7 +470,6 @@ export function StageDocumentPreview({
   );
 }
 
-/** A stage as the draft holds it, in the shape the form holds it — for a preview with no live form. */
 function draftStageAsLive(draft: DwDraft, stageKey: string): LiveStage {
   const stage = draft.stages[stageKey];
   if (!stage) return { singleton: {}, collections: {} };

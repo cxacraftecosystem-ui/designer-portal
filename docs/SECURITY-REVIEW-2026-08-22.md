@@ -652,7 +652,7 @@ None)` and 404s. A batch cannot smuggle an unvalidated or non-existent assignee 
 `grep -rn "dangerouslySetInnerHTML|innerHTML|document.write|eval(|new Function"` over
 `frontend/components/{designworkshop,sketches,forms}/` returns one *prose mention* in
 `AiVerbReviewDialog.tsx` saying never to use it. The repository's only real sink is
-`app/layout.tsx:52`, a static boot constant, unchanged tonight.
+`app/layout.tsx:46`, a static boot constant, unchanged tonight.
 
 ---
 

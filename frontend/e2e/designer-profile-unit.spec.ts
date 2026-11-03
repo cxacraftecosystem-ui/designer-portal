@@ -1,29 +1,3 @@
-/**
- * THE FOUR RULES THE DESIGNER PROFILE GAINED ON 2026-08-27, PINNED WHERE THEY CAN BE CHECKED
- * WITHOUT A SERVER.
- *
- * The owner's report was that the page was "very poorly executed": a collapsed media column, a
- * lower-cased "cv", no mandatory fields, no dictation, and a "View Data" tile offered to designers.
- * Four of those five are RULES rather than pixels — which tiers see a tile, which boxes must be
- * answered, which email rule is authoritative, and how wide a grid item may span — and every one of
- * them is the kind that goes wrong silently in a later edit.
- *
- * ── WHY THIS IS A SOURCE-READING SPEC ───────────────────────────────────────────────────────────
- *
- * There is no React renderer in this repository's devDependencies — `discarded-work-unit.spec.ts`,
- * `web-surface-gaps-unit.spec.ts` and `dashboard-tile-parity-unit.spec.ts` all say so and all read
- * source for the same reason — so a form's JSX can only be exercised by somebody looking at a
- * screen. Reading the source is also the stronger check for three of these four: what must not
- * happen is somebody EDITING a `required`, a `col-span` or a `visible:` expression, and a string
- * assertion catches that where a behavioural test through one fixture account would not.
- *
- * `-unit` MEANS NO BROWSER AND NO API (`e2e/README.md`: `test:unit` is the CI gate and runs with the
- * stack down). That constraint decides the shape of the e-mail assertions in particular: the rule
- * this page enforces IS the platform's `type="email"`, so there is no pure function to call and the
- * honest thing to pin is that the client delegates — to the browser and to the server's `EmailStr` —
- * and has not grown a second opinion of its own.
- */
-
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -35,10 +9,6 @@ import {
   DESIGNER_PROFILE_REQUIRED_FIELDS,
   isDesignerProfileFieldRequired
 } from "@/components/designers/profileCopy";
-// The read boundary the profile's own view goes through. Imported and CALLED rather than checked by
-// reading source, because this is the one assertion in this file that is about behaviour: whether an
-// address written before 2026-08-30 comes back as itself is a question with a right answer, and the
-// wrong answer — a round trip through `fromPlainText` — is what the obvious one-liner would produce.
 import { plainFromStoredRichText } from "@/components/richtext/storedRichText";
 import { canSeeDataTile, routeGuardFor } from "@/lib/permissions";
 import type { DesignerProfileField } from "@/lib/designers";
@@ -56,7 +26,6 @@ const SCHEMA = join(REPO, "backend", "app", "schemas", "designers.py");
 const read = (relative: string) => readFileSync(join(FRONTEND, relative), "utf8").split("\r\n").join("\n");
 const readAbsolute = (path: string) => readFileSync(path, "utf8").split("\r\n").join("\n");
 
-/** The role is the whole fixture: every predicate here reads nothing else off the user. */
 const user = (role: UserRole): User => ({ id: "u1", email: "a@b.c", name: "A", role } as User);
 
 const ROLES: UserRole[] = [
@@ -73,14 +42,6 @@ const ROLES: UserRole[] = [
   "CROWDSOURCE_VOLUNTEER"
 ];
 
-/**
- * Strip comments from TypeScript source, leaving string contents alone.
- *
- * Every assertion below that looks for a phrase "in the file" must not be satisfiable by a SENTENCE
- * about it, and these files are heavily commented — this one names `col-span-4`, `toLowerCase` and
- * `setCustomValidity` in prose precisely because they are the mistakes being guarded against. The
- * quote handling is what makes the stripping safe: a `//` inside a URL in a string is not a comment.
- */
 function stripComments(source: string): string {
   let out = "";
   let i = 0;
@@ -127,42 +88,13 @@ const FORM_CODE = stripComments(read(FORM));
 const VIEW_CODE = stripComments(read(VIEW));
 const DASHBOARD_CODE = stripComments(read(DASHBOARD));
 
-test("the comment stripper really removed the prose these assertions would otherwise match", () => {
-  // Without this the whole file is vacuously green: `FORM_CODE` still holding its own comments would
-  // make "the source does not contain `col-span-4`" fail for an honest reason and, worse, would make
-  // "the source DOES contain X" pass off a sentence describing X.
-  expect(read(FORM)).toContain("md:col-span-4");
+test("the form is read whole, and no item in it spans four columns", () => {
   expect(FORM_CODE).not.toContain("md:col-span-4");
   expect(FORM_CODE.length).toBeGreaterThan(1000);
 });
 
-/* ────────────────────────────────────────────────────────────────────────────────────────────────
- * 1. The media column: a grid item may not span past the grid it is in
- * ──────────────────────────────────────────────────────────────────────────────────────────────── */
-
 test.describe("the photograph, signature and CV cards get the row they ask for", () => {
   test("no item spans more columns than its grid declares", () => {
-    /*
-      THE DEFECT, IN ONE ASSERTION.
-
-      The CV wrapper was `md:col-span-4` inside the group grid `grid gap-3 md:grid-cols-2`. CSS Grid
-      does NOT clamp an over-long span: auto-placement adds IMPLICIT columns to accommodate it, and
-      an implicit column is sized by `grid-auto-columns`, i.e. `auto`. So one class turned a
-      two-track grid into `minmax(0,1fr) minmax(0,1fr) auto auto`, the signature card was
-      auto-placed into the implicit pair instead of onto its own row, and the `fr` tracks — which
-      only ever receive the space LEFT OVER after intrinsic tracks are sized — shrank towards zero.
-      Measured in Chromium at 1280px against this markup: tracks `482px 482px 107px 107px`, a 976px
-      photograph card beside a 226px signature card; and at the point the `fr` pair reaches 0 the
-      item spanning it measures exactly one `gap-3` — 12px around 127px of content, which is what
-      was reported from the live page.
-
-      `min-w-0` DOES NOT FIX THIS and reaching for it is the trap the house rules set up: it stops an
-      item refusing to shrink below its content, and cannot stop a track from being created. The
-      wrappers carry it as an ordinary belt; the span is the cause.
-
-      The rule is asserted generically rather than as "the file does not say col-span-4", so it also
-      catches `md:col-span-3`, and catches the day somebody narrows the group grid to one column.
-    */
     const declared = FORM_CODE.match(/md:grid-cols-(\d+)/g) ?? [];
     expect(declared, "the group grid no longer declares its columns; this assertion is aimed at it").toContain(
       "md:grid-cols-2"
@@ -181,67 +113,32 @@ test.describe("the photograph, signature and CV cards get the row they ask for",
   });
 
   test("every media wrapper carries the belt as well as the fix", () => {
-    // Three wrappers, three `min-w-0`s, and they are not the fix — see above. They are here because a
-    // `MediaCaptureField` and a rendered PDF are wide content in a grid item, and `min-width: auto`
-    // is what would let one of them widen the column rather than scroll inside it.
-    //
-    // MATCHED BY WHAT THEY WRAP, NOT BY THE CLASS ALONE. `min-w-0 md:col-span-2` stopped being unique
-    // to these three on 2026-08-30: the experience pair and the location card each take the full row
-    // of the same two-column grid for their own reasons. A bare count of the class would have failed
-    // on a correct change and, worse, would have gone on passing if one of the media wrappers lost
-    // its `min-w-0` while an unrelated full-width block gained one. The assertion above still holds
-    // the rule that matters for every wrapper on the form, this one holds it for these three.
     const wrappers = FORM_CODE.match(/className="min-w-0 md:col-span-2">\s*<(?:MediaSlot|DocumentSlot)\b/g) ?? [];
     expect(wrappers.length, "the photograph, signature and CV wrappers").toBe(3);
   });
 
   test("the read-only view already spanned correctly and still does", () => {
-    // `DesignerProfileView` draws the same three fields on a `md:grid-cols-2` and has always used
-    // `md:col-span-2` for the wide ones. Pinned so a future edit cannot copy the broken shape back
-    // across from the editor, which is exactly how the two screens would come to disagree.
     for (const token of VIEW_CODE.match(/md:col-span-(\d+)/g) ?? []) {
       expect(Number(token.replace("md:col-span-", ""))).toBeLessThanOrEqual(2);
     }
   });
 });
 
-/* ────────────────────────────────────────────────────────────────────────────────────────────────
- * 2. "CV" is an acronym everywhere it is printed
- * ──────────────────────────────────────────────────────────────────────────────────────────────── */
-
 test.describe("the CV slot spells CV", () => {
   test("the label is the acronym and the upload card composes from it verbatim", () => {
     expect(DESIGNER_PROFILE_LABELS.cvMediaId).toBe("CV");
-    // `Attach ${label}` / `Replace ${label}` — NOT `${label.toLowerCase()}`, which rendered
-    // `<h3>Attach cv</h3>` on the one screen a designer types on while five other labels on the same
-    // page said "CV". `MediaSlot`'s twin still lower-cases and is right to: "photograph" and
-    // "signature" are ordinary nouns.
     expect(FORM_CODE).toContain("`Replace ${label}`");
     expect(FORM_CODE).toContain("`Attach ${label}`");
   });
 
   test("no sentence on this form lower-cases a phrase that contains a name", () => {
-    // The trouble sentence had the same defect one layer down: `The ${caption.toLowerCase()} did not
-    // upload` printed "the designer cv did not upload" for the CV column. `uploadOne` now takes the
-    // mid-sentence phrase as its own argument, because a `.toLowerCase()` cannot know which words
-    // are names.
     expect(FORM_CODE).not.toContain("caption.toLowerCase()");
     expect(FORM_CODE).toContain('"designer CV"');
   });
 });
 
-/* ────────────────────────────────────────────────────────────────────────────────────────────────
- * 3. The four mandatory boxes, and the e-mail rule
- * ──────────────────────────────────────────────────────────────────────────────────────────────── */
-
 test.describe("the mandatory fields", () => {
   test("the set is exactly the four the owner named", () => {
-    /*
-      WRITTEN OUT RATHER THAN DERIVED. Comparing `DESIGNER_PROFILE_REQUIRED_FIELDS` to itself would
-      be a tautology and a widening — a required `website`, say — would sail through. This literal is
-      the independent statement of the instruction: "Name, qualification, email, and phone number
-      should be mandatory fields as well."
-    */
     expect([...DESIGNER_PROFILE_REQUIRED_FIELDS]).toEqual(["displayName", "qualification", "phone", "email"]);
 
     const optional: DesignerProfileField[] = [
@@ -251,9 +148,6 @@ test.describe("the mandatory fields", () => {
       "department",
       "specialisation",
       "experienceYears",
-      // Added 2026-08-30 with the Years + Months pair (requirement 14). Optional for the same reason
-      // the years are: a designer whose months were never asked for must still be able to save their
-      // biography, and "not recorded" is a real answer that a required box would forbid.
       "experienceMonths",
       "biography",
       "website",
@@ -274,38 +168,12 @@ test.describe("the mandatory fields", () => {
           "empanelment number the designer has not been issued would stop them saving a biography"
       ).toBe(false);
     }
-    // 4 + 18 = the twenty-two writable columns, so the two lists together are the whole record and
-    // a new column cannot be added without a decision being made about it here.
     expect(DESIGNER_PROFILE_REQUIRED_FIELDS.length + optional.length).toBe(
       Object.keys(DESIGNER_PROFILE_LABELS).length
     );
   });
 
   test("each one is marked on the form AND enforced by the browser", () => {
-    /*
-      BOTH HALVES, because either alone is a lie. An asterisk with no `required` is a form that
-      promises a refusal it will not deliver; a `required` with no asterisk refuses a designer at
-      the submit button over a box that never said it was needed.
-
-      Both are driven off `isDesignerProfileFieldRequired(...)` rather than a literal `true`, so the
-      mark a reader sees and the rule the browser enforces cannot drift apart — that is what these
-      assertions are really pinning.
-
-      ── THIS TEST COUNTED THE READS AND HAD TO STOP, 2026-08-28 ────────────────────────────────
-
-      It asserted EXACTLY TWO reads per field, "once for the label's asterisk and once for the
-      control's own `required` attribute", and that was a true description of a form built from
-      `Field` + a bare input. The dictation sweep replaced the four prose boxes with
-      `DictatedTextInput`, which draws the label AND the input itself and therefore takes ONE
-      `required` and uses it for both (`richtext/DictatedTextInput.tsx` — `{required ? " *" : ""}`
-      beside `required={required}`). One read feeding both is STRICTLY BETTER at the thing this test
-      protects: with two there was something to drift.
-
-      So the assertion is now a FLOOR plus the structural check that makes the floor sufficient —
-      every field reads the predicate at least once, no field is marked with a literal, and the
-      shared control really does spend one `required` on both halves. Counting call sites was
-      measuring the shape of the form; this measures the property.
-    */
     for (const field of DESIGNER_PROFILE_REQUIRED_FIELDS) {
       const calls = FORM_CODE.split(`isDesignerProfileFieldRequired("${field}")`).length - 1;
       expect(
@@ -317,43 +185,18 @@ test.describe("the mandatory fields", () => {
         `${field} must not be marked required by a literal anywhere on this form`
       ).not.toContain(`name="${field}"\n          required={true}`);
     }
-    // The control that spends ONE `required` on both halves. Without this, a single read would be
-    // ambiguous — it could be the asterisk with no rule, or the rule with no asterisk.
-    //
-    // ── THE MARK IS A COMPONENT NOW, 2026-08-30, AND THE ASSERTION FOLLOWS IT ──────────────────
-    //
-    // This read `toContain('{required ? " *" : ""}')` — the literal that appeared verbatim at ten
-    // label sites across the client. The owner asked for the asterisk in red, and a red asterisk
-    // cannot be a bare text node inside a label, so the ten literals became `<RequiredMark when={…}
-    // />` (`components/ui/RequiredMark.tsx`). The PROPERTY under test has not moved an inch: one
-    // `required` still feeds both the mark and the browser's own rule, which is the only thing the
-    // two lines below have ever been about. What changed is the spelling of the mark.
     const dictatedInput = stripComments(read("components/richtext/DictatedTextInput.tsx"));
     expect(dictatedInput, "the asterisk").toContain("<RequiredMark when={required} />");
     expect(dictatedInput, "the browser's own rule").toContain("required={required}");
-    // AND THE MARK ITSELF IS RED, which is the half a source-text assertion is uniquely able to
-    // check here: nothing else in this suite renders the component, and a colour that silently
-    // reverted to plain ink would look exactly like a mark that was never asked to be red.
     const mark = stripComments(read("components/ui/RequiredMark.tsx"));
     expect(mark, "the required mark must be red").toContain("text-error-600");
     expect(mark, "and legible on the dark canvas, where error-600 falls under 4.5:1").toContain(
       "dark:text-red-400"
     );
-    // And the view marks them from the same function, so an admin reading a colleague's profile can
-    // see which blank is the one that will stop the next save.
     expect(VIEW_CODE).toContain("isDesignerProfileFieldRequired(field)");
   });
 
   test("the phone constraint is on the visible box, never on the zero-size mirror", () => {
-    /*
-      §12.2's rule is that a themed control's mirror must be `type="text"` and not `type="hidden"`,
-      because a hidden input is exempt from constraint validation. That says which element CAN carry
-      a constraint; it is not an instruction to put every constraint there. `PhoneField`'s mirror is
-      `absolute h-0 w-0 opacity-0` — measured in Chromium, `required` on it does block the submit and
-      does report "Please fill out this field", pointed at a box of zero size. The visible number
-      input is an ordinary `<input>` in the same form, so the identical rule refuses the submit AND
-      focuses the box that is empty.
-    */
     const phone = stripComments(read("components/forms/PhoneField.tsx"));
     const mirror = phone.slice(phone.indexOf("{mirror ? ("));
     expect(mirror, "the mirror branch was not found; this assertion is aimed at it").toContain("aria-hidden");
@@ -361,35 +204,18 @@ test.describe("the mandatory fields", () => {
       mirror,
       "`required` must not be moved onto the mirror — the refusal would point at a zero-size element"
     ).not.toContain("required");
-    // The mirror keeps `pattern`, which is a different question: the composed value's SHAPE, which
-    // cannot be asked of the digits box alone, and which can only fail once digits exist.
     expect(mirror).toContain("pattern=");
     expect(phone).toContain("required={required}");
-    // Default false, so the design-workshop stage forms — where completeness is judged by
-    // `stage_completeness` at report time and never by the browser — are untouched.
     expect(phone).toContain("required = false");
   });
 
   test("the client's e-mail rule IS the platform's, and there is no second one", () => {
-    /*
-      THE CLIENT AGREES WITH THE SERVER RATHER THAN INVENTING A RULE. The column is `EmailStr`, so a
-      malformed address 422s the whole twenty-one-field body. `type="email"` is the WHATWG rule: an
-      `@`-bearing address the server would accept is not refused here, and one with no `@` never
-      leaves the browser.
-
-      A hand-written regex would be a second opinion that can disagree with `EmailStr`, and the
-      direction it disagrees in — refusing an address the server would have stored — is the one a
-      designer cannot work around. So the assertion is an ABSENCE, and the absence is the rule.
-    */
     expect(FORM_CODE).toContain('name="email"');
     expect(FORM_CODE).toContain('type="email"');
 
     for (const file of [FORM, VIEW, COPY]) {
       const code = stripComments(read(file));
       expect(code, `${file} must not carry a second e-mail rule`).not.toMatch(/@[^"'`\s]*\\\.|\\S\+@|\[\^@\]/);
-      // §12.8: never `required` AND a custom validity message on one control — with both set, which
-      // sentence the browser shows is up to the browser, so the field reports the wrong fault some
-      // of the time. The box is required, so `required` is the attribute that stands.
       expect(code, `${file} must not set a custom validity beside a native required`).not.toContain(
         "setCustomValidity"
       );
@@ -397,17 +223,6 @@ test.describe("the mandatory fields", () => {
   });
 
   test("the server refuses the same four columns, in the same words", () => {
-    /*
-      A CLIENT-ONLY RULE IS A RULE THE API DOES NOT HAVE, and this API is written to by a handset as
-      well as a browser. `DesignerProfileUpdate` now carries field validators over exactly these four
-      columns — field validators, so pydantic runs them only for a key that was SUPPLIED and the
-      `exclude_unset` contract ("absent leaves the stored value alone") is untouched in both
-      directions.
-
-      THE LABELS ARE ASSERTED TOO, not just the column names. The refusal is read by a designer on a
-      screen and has to name the box they are looking at, which means the server holds a copy of four
-      strings this file owns — so the copy is diffed here rather than trusted.
-    */
     const schema = readAbsolute(SCHEMA);
     const table = schema.slice(schema.indexOf("REQUIRED_PROFILE_COLUMNS"), schema.indexOf("class DesignerRosterCreate"));
     for (const field of DESIGNER_PROFILE_REQUIRED_FIELDS) {
@@ -415,58 +230,20 @@ test.describe("the mandatory fields", () => {
         `"${field}": "${DESIGNER_PROFILE_LABELS[field]}"`
       );
     }
-    // The validator is bound to those four and no others — a fifth name here without one in
-    // `DESIGNER_PROFILE_REQUIRED_FIELDS` is a column the API refuses and no form marks.
     expect(schema).toContain('@field_validator("displayName", "qualification", "phone", "email")');
     expect((table.match(/^\s{4}"[A-Za-z]+": "/gm) ?? []).length).toBe(DESIGNER_PROFILE_REQUIRED_FIELDS.length);
-    // `email` is still the server's own `EmailStr` and this rule adds nothing to it — the `@` rule
-    // lives in exactly one place on each side of the wire.
     expect(schema).toContain("email: EmailStr | None = None");
   });
 });
 
-/* ────────────────────────────────────────────────────────────────────────────────────────────────
- * 4. Dictation
- * ──────────────────────────────────────────────────────────────────────────────────────────────── */
-
 test("the free-text boxes have the microphone the rest of the app has", () => {
-  /*
-    The reference is `/artisans/new`, which offers dictation through `OnDeviceDictationButton` —
-    on-device recognition, no `MediaRecorder`, no network, nothing to obtain consent for.
-
-    ── THIS TEST SAID "TWO BOXES, NOT TWENTY-THREE" AND THE OWNER OVERRULED IT, 2026-08-28 ───────
-
-    The old assertion pinned exactly two dictated fields, the biography and the address, on the
-    argument that "a form whose every row carries a button is a form where the button stops being
-    noticed". The instruction that replaced it is explicit: *"On My Designer Profile, add the
-    existing microphone/dictation functionality to all applicable fields … Exclude calendar fields
-    and any other special fields where dictation is not applicable. All remaining applicable fields
-    should provide the mic dictation button."*
-
-    So the count is no longer the property. **THE EXCLUSIONS ARE**, and they are what this test now
-    holds, because they are the half that can silently rot: the reasoning the old comment gave for
-    stopping at two is still exactly right about WHICH boxes must not have a microphone. A
-    recogniser writes "at" for `@`, spells digits out and punctuates a URL, so a mic under the
-    e-mail, phone, pincode or date boxes reliably produces a value the field then refuses.
-
-    The noise problem the old argument names has been answered rather than ignored: every control
-    passes `explainWhenUnavailable={false}` and the form carries `DictationUnavailableNotice` once,
-    so the grey paragraph appears a single time instead of once per row.
-  */
   expect(FORM_CODE).toContain("DictatedTextInput");
   expect(FORM_CODE).toContain("DictatedTextArea");
-  // The prose boxes the old test named are still dictated — this is a widening, never a move.
   expect(FORM_CODE).toContain('name="biography"');
   expect(FORM_CODE).toContain('name="addressLine"');
-  // ...and there are now MORE than the original two, which is the instruction being carried out.
   const dictated = FORM_CODE.match(/<DictatedField\b/g) ?? [];
   expect(dictated.length, "every applicable free-text box, not just the original two").toBeGreaterThan(2);
 
-  /*
-    THE EXCLUSION LIST, ASSERTED BY NAME. `DictatedField` and `DictatedTextArea` are the only two
-    controls on this form that carry a microphone, so "this field has no mic" is checkable as "this
-    field's `name=` does not appear inside one of them".
-  */
   const dictatedBlocks = [
     ...FORM_CODE.matchAll(/<DictatedField\b[\s\S]*?\/>/g),
     ...FORM_CODE.matchAll(/<DictatedTextArea\b[\s\S]*?\/>/g)
@@ -479,48 +256,20 @@ test("the free-text boxes have the microphone the rest of the app has", () => {
       `${excluded} must NOT carry a microphone — a recogniser cannot produce a value it will accept`
     ).not.toContain(`name="${excluded}"`);
   }
-  // Said once for the whole form rather than once per row — the answer to the noise half of the old
-  // argument, and the reason widening from two to "every applicable box" is not a regression.
   expect(FORM_CODE).toContain("DictationUnavailableNotice");
   expect(FORM_CODE).toContain("explainWhenUnavailable={false}");
 });
 
-/* ────────────────────────────────────────────────────────────────────────────────────────────────
- * 5. The View Data tile
- * ──────────────────────────────────────────────────────────────────────────────────────────────── */
-
-/**
- * WHO SEES THE TILE, WRITTEN OUT ROLE BY ROLE RATHER THAN DERIVED FROM THE PREDICATE.
- *
- * Deriving it would assert `canSeeDataTile` equal to itself and a widening would sail through.
- * DESIGNER and INSPECTOR are the rows that carry this table: both outrank RESEARCHER, both are
- * false, and every rank-threshold instinct gets them wrong — which is why the predicate is a floor
- * at PROFESSOR with RESEARCHER carved out beside it, rather than a bare threshold.
- *
- * THIS TABLE IS THE GUARD AND IT DOES NOT CARE HOW THE PREDICATE IS SPELLED. It was written when
- * the rule was a four-item array and it reads the same now the rule is a floor plus a carve-out,
- * which is the point: the OWNER's requirement is these eight answers, and any mechanism that
- * produces them is acceptable while any that does not is a bug, whatever it looks like.
- */
 const TILE_OFFERED: Record<UserRole, boolean> = {
   MASTER_ADMIN: true,
   ADMIN: true,
-  // TRUE, and derived rather than decided: `canSeeDataTile` is a PROFESSOR floor with one carve-out,
-  // written that way precisely so a new senior tier is picked up by construction. All three
-  // directorate tiers clear 40, and none of them is an admin.
   MINISTRY_ADMIN: true,
   REGIONAL_DIRECTOR: true,
   ASSISTANT_DIRECTOR: true,
   PROFESSOR: true,
   RESEARCHER: true,
-  // FALSE. The owner's instruction names four tiers and neither of these is among them: a designer
-  // and an inspector work on design workshops, and the dashboard was offering them a reading surface
-  // the "View Data" MENU ROW had already decided they were not the audience for.
   INSPECTOR: false,
   DESIGNER: false,
-  // FALSE, and stated rather than left to the rank comparison: both sit below RESEARCHER, and
-  // neither loses a way in — "Browse records" is an ungated menu row to the same /search the tile
-  // was sending them to.
   FIELD_CONTRIBUTOR: false,
   CROWDSOURCE_VOLUNTEER: false
 };
@@ -531,21 +280,11 @@ test.describe("the View Data tile", () => {
       ROLES.map((role) => ({ role, tile: TILE_OFFERED[role] }))
     );
 
-    // A signed-out reader is nobody's role. The dashboard is behind the shell, so this is belt —
-    // but a predicate that answered `true` for `null` would light every tile on a logged-out render.
     expect(canSeeDataTile(null)).toBe(false);
     expect(canSeeDataTile(undefined)).toBe(false);
   });
 
   test("a floor ALONE would get two tiers wrong, which is why the carve-out exists", () => {
-    /*
-      THE INDEPENDENT DEMONSTRATION, so "a floor alone cannot say this" is checked rather than
-      asserted. RESEARCHER-and-above is the tightest floor that admits all four named tiers, and it
-      also admits DESIGNER(35) and INSPECTOR(37), which sit INSIDE the range. That is precisely why
-      the predicate floors at PROFESSOR and names RESEARCHER separately instead of dropping the
-      floor to 30. Any future edit that "simplifies" it to `hasRank(user, "RESEARCHER")` turns this
-      red and names both tiers it would have let in.
-    */
     const wrongByAFloor = ROLES.filter(
       (role) =>
         !canSeeDataTile(user(role)) &&
@@ -581,80 +320,30 @@ test.describe("the View Data tile", () => {
     const tile = DASHBOARD_CODE.slice(open, end + 1);
 
     expect(tile, "the tile carries no `visible` predicate at all").toContain("visible: canSeeDataTile(user)");
-    // The DESTINATION still forks on the grant, and that is a different question from whether the
-    // tile is drawn: a reader without dataset access is sent to Browse records rather than at a
-    // padlock.
     expect(tile).toContain('canDownloadDataset(user) ? "/data" : "/search"');
     expect(tile).toContain('newLabel: "Open"');
-    // Default-ALLOW is why the assertion above is about presence and not only spelling: a tile whose
-    // `visible` key was deleted is shown to every signed-in account.
     expect(DASHBOARD_CODE).toContain(".filter((tile) => tile.visible !== false)");
   });
 
   test("nothing about this is a route guard", () => {
-    /*
-      SAID OUT LOUD, because the tempting next edit is to "finish the job" with a `ROUTE_GUARDS` row
-      and that would be a client-side rule the API does not have.
-
-      `/data` keeps its own guard on `canDownloadDataset` — Professor and above, or the explicit
-      per-user grant — so a designer holding that grant still opens it, and still sees the "View
-      Data" menu row, and simply gets no tile. `/search` stays unguarded because the endpoints behind
-      it take nothing but a signed-in user and scope their rows per viewer on the server.
-    */
     expect(routeGuardFor("/data")?.gate).toBe("require_dataset_downloader");
     expect(routeGuardFor("/search"), "/search must stay open — its endpoints are").toBeNull();
-    // And the tile predicate is nowhere in the guard table, in either direction.
     expect(stripComments(read("lib/permissions.ts"))).not.toContain("can: canSeeDataTile");
   });
 });
 
-/* ────────────────────────────────────────────────────────────────────────────────────────────────
- * 6. The address after it took rich text (2026-08-30)
- * ──────────────────────────────────────────────────────────────────────────────────────────────── */
-
-/**
- * THE ONE THING THIS CHANGE COULD BREAK FOR EVERY DESIGNER AT ONCE, PINNED FIRST.
- *
- * `DesignerProfile.addressLine` is now edited by `RichTextField`. The COLUMN did not change: it is
- * still `String?`, there is no migration, and `encodeStoredRichText`'s rule is that a document is
- * only ever stringified when it is not expressible as plain text — so an address nobody formatted is
- * stored as exactly the prose the `<input>` stored yesterday, and only a bolded word turns the value
- * into `{"blocks":[…]}`.
- *
- * That split hands every READER of the column two cases, and the failure mode of the second one is
- * this repository's favourite: not a crash, but the literal characters `{"blocks":[{"kind":…` shown
- * to a designer in the place their street should be. `DesignerProfileView` is the surface that would
- * have shown them — every other branch on it ends in `String(raw)` — and it is not a surface anybody
- * would think to re-check while editing a form.
- *
- * The first assertion is the compatibility one and it is the one that matters most, because a plain
- * address is the state of EVERY live row: nothing was migrated and nothing needed to be.
- */
 test.describe("the designer's address, once it can be formatted", () => {
   const FORMATTED =
     '{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road, "},{"text":"Bagru","marks":["BOLD"]}]}]}';
 
   test("an address written before this change renders exactly as it did", () => {
-    /*
-      IDENTITY, NOT A ROUND TRIP, and the difference is the whole reason `plainFromStoredRichText`
-      exists rather than a `toPlain(fromStored(raw))` at the call site. `fromStored` reads a string
-      through `fromPlainText`, which strips each line, drops blank ones and collapses runs — so the
-      obvious one-liner compiles, looks right, and silently reformats every address in the database
-      on its way to the screen. These assertions are what that composition would fail.
-    */
     expect(plainFromStoredRichText("12 Nagar Road, Bagru")).toBe("12 Nagar Road, Bagru");
-    // Whitespace and blank lines a designer typed are theirs, not ours to tidy.
     expect(plainFromStoredRichText("12 Nagar Road\n\n  Bagru 303007  ")).toBe(
       "12 Nagar Road\n\n  Bagru 303007  "
     );
-    // Devanagari, because an address is among the fields most likely to be typed in a local script
-    // and a mangled one is unreadable rather than merely wrong.
     expect(plainFromStoredRichText("१२ नगर रोड, बगरू")).toBe("१२ नगर रोड, बगरू");
-    // A blank column keeps this screen's own "Not filled in" wording rather than gaining a second.
     expect(plainFromStoredRichText(null)).toBe("");
     expect(plainFromStoredRichText(undefined)).toBe("");
-    // Prose that merely BEGINS with a brace is prose. `decodeStoredRichText` demands a `blocks`
-    // array precisely so a flat number is not reinterpreted as a document.
     expect(plainFromStoredRichText("{Flat 2} Nagar Road")).toBe("{Flat 2} Nagar Road");
   });
 
@@ -666,9 +355,6 @@ test.describe("the designer's address, once it can be formatted", () => {
       "the read-only profile is printing raw JSON — which reads to an admin as a designer who " +
         "pasted something strange into their address, not as a rendering bug"
     ).not.toContain("blocks");
-    // Two paragraphs flatten to two lines. The view prints them with `whitespace-pre-line`; the
-    // REPORT gets them folded to one line, and that fold is the server's — see
-    // `_SINGLE_LINE_PREFILL_COLUMNS` in `backend/app/services/designers.py`.
     const twoBlocks =
       '{"blocks":[{"kind":"PARAGRAPH","spans":[{"text":"12 Nagar Road"}]},' +
       '{"kind":"PARAGRAPH","spans":[{"text":"Bagru 303007"}]}]}';
@@ -676,21 +362,11 @@ test.describe("the designer's address, once it can be formatted", () => {
   });
 
   test("the editor and the read-only view both go through the rich-text boundary", () => {
-    /*
-      THE TWO SURFACES, ASSERTED BY READING SOURCE, because there is no React renderer here (see
-      this file's header) and because what must not happen is somebody EDITING one of these two
-      lines. They are a pair: the editor decodes on the way in, the view flattens on the way out,
-      and either one alone is a screen showing braces.
-    */
     expect(FORM_CODE).toContain("<RichTextField");
     expect(FORM_CODE, "the address is what became rich text — not the biography beside it").toMatch(
       /<RichTextField\s+name="addressLine"/
     );
-    // The old control must be GONE from this box, or the form would submit two values under one
-    // name and `FormData.get` would answer with whichever came first in document order.
     expect(FORM_CODE).not.toMatch(/<DictatedField\s+name="addressLine"/);
-    // `defaultValue` is the stored column, raw. `RichTextField` owns the decode; a call site that
-    // pre-flattened would hand the editor prose and lose the designer's marks on the first save.
     expect(FORM_CODE).toMatch(/<RichTextField[\s\S]*?defaultValue=\{profile\.addressLine \?\? ""\}/);
 
     expect(VIEW_CODE).toContain("plainFromStoredRichText");
@@ -702,17 +378,6 @@ test.describe("the designer's address, once it can be formatted", () => {
   });
 
   test("the ceiling the box prints is the ceiling the server applies", () => {
-    /*
-      TWO NUMBERS NOW EXIST AND ONLY ONE OF THEM IS A RULE. The wire body bounds the RAW string
-      generously so that a marked-up address is not refused for the size of its own JSON envelope,
-      and then measures the FLATTENED text against 300 — the same 300 `designerAddress` declares on
-      stage 3 and the same 300 Android's `ADDRESS_LINE_MAX` clamps to.
-
-      A box that printed the envelope would tell a designer they had 20 000 characters and then be
-      refused at 301 by a server they were never warned about; a box that clamped to the envelope
-      would be worse, because the refusal would arrive as a 422 on a twenty-two-key body and lose
-      every other answer on the screen. So this asserts the FORM still passes the words ceiling.
-    */
     expect(FORM_CODE).toMatch(/<RichTextField[\s\S]*?maxLength=\{MAX\.addressLine\}/);
     expect(FORM_CODE).toContain("addressLine: 300");
 
@@ -726,40 +391,16 @@ test.describe("the designer's address, once it can be formatted", () => {
   });
 
   test("both clients call the two address halves by the same two names", () => {
-    /*
-      §1.3 — Android owns the wording. It renamed `ProfileSection("Address")` to "Postal address" and
-      its box to "Address line" on 2026-08-30, saying why: "there are now two of them and an
-      unqualified heading over one of two is the reading a person gets wrong". The web said
-      "Address" for both the group heading AND the first box under it, so the page opened by saying
-      one word twice and then drew a second address card below it.
-    */
     expect(DESIGNER_PROFILE_LABELS.addressLine).toBe("Address line");
     expect(DESIGNER_PROFILE_GROUPS.find((group) => group.key === "address")?.title).toBe(
       "Postal address"
     );
-    // The heading and the box it sits over must not be the same string again — which is the defect
-    // this pair fixes, stated as the rule rather than as two spellings.
     expect(DESIGNER_PROFILE_GROUPS.find((group) => group.key === "address")?.title).not.toBe(
       DESIGNER_PROFILE_LABELS.addressLine
     );
   });
 
   test("the village box carries one label and not two", () => {
-    /*
-      THE OWNER'S OTHER REPORT ON THIS PAGE, AND IT WAS NEVER TWO COLUMNS. `LocationFields` wrapped
-      its village box in `<FieldBlock label="Village or place">` while `DictatedTextInput` draws its
-      OWN `<label className="field-label" htmlFor>` — which it does deliberately, because it contains
-      a button and a `<label>` around a button folds the button's name into the box's (§12.3). So the
-      words rendered twice, stacked, over one input, and a screen reader announced "Village or place,
-      Village or place, edit".
-
-      Asserted on the SHARED file rather than on the designer profile, because that is where the
-      defect was and because the same double label rendered on all seven surfaces that mount this
-      card. There is one `name="village"` and one column behind it; nothing was orphaned.
-    */
-    // STRIPPED, like every other source assertion in this file, and here it is load-bearing rather
-    // than tidy: the comment left at the deletion site quotes the wrapper it removed, so a raw read
-    // counts the label twice and this test would report the bug it just fixed.
     const location = stripComments(read("components/forms/LocationFields.tsx"));
     expect(location).toContain('label="Village or place"');
     expect(

@@ -36,29 +36,12 @@ import {
 } from "@/lib/workshopOptions";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * One workshop's roster: everybody with a row on it, at what level, in what state.
- *
- * Two things about the backend shape drive this table and are easy to get wrong:
- *
- * - the list is NOT "the assigned researchers". Every row on the workshop comes back — pending
- *   requests, denials and revocations included — and only `status === "GRANTED"` confers access.
- * - revoking does not delete. The row moves to REVOKED and stays, because a deleted row is
- *   indistinguishable from "never asked" and the history of who granted or withdrew access is the
- *   whole audit trail. A revoked person can be put straight back with Grant again.
- */
-
 type DirectoryUser = Pick<User, "id" | "name" | "email" | "role">;
 
 export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken: number; onChanged: () => void }) {
   const { toast } = useToast();
   const levels = useWorkshopAccessLevels();
 
-  /**
-   * `WorkshopListState`, not a bare array — see the fetch effect below for the failure this closes.
-   * `"loading"` is the correct first render: the effect below has not resolved yet, and the old bare
-   * `Workshop[]` state had no way to say that separately from "answered, and there are none".
-   */
   const [workshopList, setWorkshopList] = useState<WorkshopListState<Workshop>>({ kind: "loading" });
   const [workshopId, setWorkshopId] = useState("");
   const [roster, setRoster] = useState<WorkshopAccessRow[] | null>(null);
@@ -67,27 +50,11 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
 
-  // Plural, because granting access is almost never a one-person job: a workshop starts and six
-  // researchers need in at the same level on the same afternoon. One at a time meant six passes
-  // through the same three controls, and six chances to pick the wrong level on one of them.
   const [grantUserIds, setGrantUserIds] = useState<string[]>([]);
   const [grantLevel, setGrantLevel] = useState<WorkshopAccessLevel>(DEFAULT_ACCESS_LEVEL);
   const [grantNote, setGrantNote] = useState("");
 
   useEffect(() => {
-    /*
-      `WORKSHOP_OPTION_PAGE_SIZE` (`RENDER_CAP`), NOT THE ROUND NUMBER `100` THIS USED TO ASK FOR —
-      the live `Workshop` table has 196 rows, so a picker fetching 100 into a control that draws at
-      most `RENDER_CAP` (80) was already dropping the last third of a full page silently; asking for
-      exactly as many as the control can draw removes that gap instead of moving it.
-
-      AND THE FAILURE IS NO LONGER SWALLOWED. This used to be `.catch(() => setWorkshops([]))`, which
-      turned a failed `GET /workshops` into the same empty array a genuinely workshop-less deployment
-      produces — an admin opening this panel on a bad connection saw a picker with nothing in it and
-      no reason given, on a control whose entire job is finding a workshop to manage. `kind: "failed"`
-      lets `workshopEmptyLabel` below say what actually happened instead of asserting there is
-      nothing to grant access to.
-    */
     listResource<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE })
       .then((result) => {
         const sorted = sortWorkshopsByOccurrence(result.items);
@@ -118,30 +85,13 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
     void loadRoster();
   }, [loadRoster, refreshToken]);
 
-  /**
-   * WHICH LIST THIS IS, for `workshopEmptyLabel` below. `scoped: false` because this request carries
-   * no `accessibleOnly` — an admin managing rosters sees the whole `/workshops` table, so an empty
-   * answer here would genuinely mean "no workshops have been recorded", never "none are open to this
-   * account". `deviceLooksOffline` splits the failure sentence the same way `WorkshopSelect` does.
-   */
   const voice: WorkshopListVoice = { table: "field", scoped: false, online: !deviceLooksOffline() };
 
-  /**
-   * ROUTED THROUGH THE SHARED BUILDER rather than the hand-rolled `workshopLabel` + `.map()` this
-   * used to be, so this picker's rows match every other workshop picker in the app instead of adding
-   * yet another copy of the label logic `components/settings/workshopAccess.tsx` already carries one
-   * of. `group: true` because the request narrows by nothing at all — an ended workshop is a normal,
-   * still-manageable roster and needs its own heading same as everywhere else this table is offered.
-   * `offPage: "refuse"` because `workshopId` here is picker state with no persisted value behind it —
-   * there is nothing to recover a stored id FROM.
-   */
   const workshopOptionSet = useMemo(
     () => fieldWorkshopOptions(workshopList, { group: true, offPage: { mode: "refuse" } }),
     [workshopList]
   );
 
-  // Anybody already GRANTED belongs in the table, where their level is changed — offering them in the
-  // "add somebody" picker too would give two different controls for one piece of state.
   const grantableUsers = useMemo(() => {
     const granted = new Set((roster ?? []).filter((row) => row.status === "GRANTED").map((row) => row.userId));
     return directory
@@ -156,8 +106,6 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
     if (!grantUserIds.length || !workshopId) return;
     setBusy(`grant:${grantUserIds.join(",")}`);
     setError(null);
-    // One request per person (the endpoint takes one WorkshopAssignment), but settled together so
-    // one failure does not silently abandon the rest of the list. Whoever DID get in stays in.
     const results = await Promise.allSettled(
       grantUserIds.map((userId) =>
         apiFetch<WorkshopAccessRow>(`/workshops/${workshopId}/assignments`, {
@@ -185,11 +133,10 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
         .join(", ");
       setError(`Could not grant access to ${names}. Everyone else on the list is in.`);
     }
-    // Keep only the ones that failed selected, so a retry is one click and nobody is granted twice.
     setGrantUserIds(failed);
     if (!failed.length) setGrantNote("");
     setBusy(null);
-    onChanged(); // bumps the shared token; both panels re-read through their effects
+    onChanged();
   }
 
   async function changeLevel(row: WorkshopAccessRow, level: WorkshopAccessLevel) {
@@ -200,7 +147,7 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
         method: "PATCH",
         body: JSON.stringify({ accessLevel: level })
       });
-      onChanged(); // bumps the shared token; both panels re-read through their effects
+      onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to change that level");
     } finally {
@@ -219,7 +166,7 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
         tone: "info"
       });
       setConfirmRevoke(null);
-      onChanged(); // bumps the shared token; both panels re-read through their effects
+      onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to revoke that access");
     } finally {
@@ -227,15 +174,6 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
     }
   }
 
-  /**
-   * Turn a non-GRANTED row back on. The two cases are deliberately different calls:
-   *
-   * - PENDING is somebody's own request, so it is ANSWERED with PATCH — which records `decidedBy` but
-   *   leaves `assignedById` alone. Answering one request must not silently curate an open workshop
-   *   and 403 the team already working in it.
-   * - DENIED/REVOKED is reopened with POST, the act of an admin deliberately putting them back on the
-   *   roster; that one is supposed to mark the workshop as curated.
-   */
   async function restore(row: WorkshopAccessRow) {
     setBusy(row.id);
     setError(null);
@@ -256,7 +194,7 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
         description: `${personName(row.user)} can work in this workshop.`,
         tone: "success"
       });
-      onChanged(); // bumps the shared token; both panels re-read through their effects
+      onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to restore that access");
     } finally {
@@ -288,26 +226,14 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
             onChange={(next: string) => {
               setWorkshopId(next);
               setConfirmRevoke(null);
-              // A selection made against the previous workshop must not carry over: that roster is
-              // a different set of people, and half of them may already be granted here.
               setGrantUserIds([]);
             }}
             options={workshopOptionSet.options}
             placeholder={workshopList.kind === "loading" ? "Loading workshops…" : "Select or type to search"}
-            // The panel's own line when the list holds nothing — a failed read, or (since this
-            // request is unscoped) a repository that genuinely has none — never the bare "No
-            // options" `ComboBox` falls back to otherwise. See `workshopEmptyLabel`'s own header.
             emptyLabel={workshopEmptyLabel(workshopList, voice)}
             value={workshopId}
           />
         </Field>
-        {/*
-          WHAT THE LIST LEFT OUT. `searchable: false` in the sentence's own terms — `ComboBox`'s box
-          is always on, but it filters only the `WORKSHOP_OPTION_PAGE_SIZE` rows already fetched, not
-          the server, so it does not reach past the cut the way a `serverQuery` box would. See
-          `workshopCutSentence`'s header on why that argument is about REACH and not about whether a
-          box is on screen.
-        */}
         <CappedListNotice cuts={[workshopCutSentence(workshopOptionSet, { searchable: false })]} />
       </div>
 
@@ -359,14 +285,6 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
                   </td>
                   <td className="px-4 py-3">
                     <div className="w-40">
-                      {/* Changes the row in place — focus must stay on the control being adjusted.
-
-                          NO `searchable`, here or on the "Level" picker in the grant form below.
-                          `levels` is the access ladder the server declares — three rungs — and it is
-                          the same three on every row of the table. A filter box on each row of a
-                          roster is a control per row that nobody would type into, and this one is
-                          rendered once per person. The option-count rule leaves all of them plain,
-                          which is right. */}
                       <Dropdown
                         advanceOnSelect={false}
                         ariaLabel={`Access level for ${personName(row.user)}`}
@@ -442,12 +360,6 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
           <h3 className="font-display text-sm font-bold text-ink-900">Grant access to somebody new</h3>
           <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,1.2fr)]">
             <Field label="Person">
-              {/*
-                `searchable`: `grantableUsers` is an account list — records — and the whole task here
-                is finding one named colleague among them. Left to the option count this panel would
-                have a filter box on a deployment with twenty accounts and none on a cluster with
-                six, and a search box that comes and goes is worse than either.
-              */}
               <MultiSelectDropdown
                 onChange={setGrantUserIds}
                 options={grantableUsers}

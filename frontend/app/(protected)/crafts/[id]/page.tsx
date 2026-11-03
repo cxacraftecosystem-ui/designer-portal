@@ -11,7 +11,6 @@ import { craftFields, type RecordFieldRow } from "@/components/records/recordFie
 import { craftIndex, craftPath, useCraftCatalogue, type CraftCatalogue } from "@/lib/craftCatalogue";
 import type { Craft } from "@/lib/types";
 
-/** The master-list attributes (REQUIREMENTS_2026-10-20 §2.6): serial, path, GI, states. */
 function masterListFields(craft: Craft, catalogue: CraftCatalogue | null): RecordFieldRow[] {
   const listed = catalogue ? craftIndex(catalogue).byId.get(craft.id) : undefined;
   const path = listed && catalogue ? craftPath(craftIndex(catalogue), listed) : null;
@@ -27,10 +26,6 @@ function masterListFields(craft: Craft, catalogue: CraftCatalogue | null): Recor
   return rows.filter((row): row is [string, string] => Boolean(row[1])).map(([label, value]) => ({ label, value }));
 }
 
-/**
- * One craft, read-only. Update is drawn only for Professor and above (`require_craft_manager`) and
- * opens the inline form on /crafts with this craft loaded.
- */
 export default function CraftViewPage() {
   const { id } = useParams<{ id: string }>();
   const { catalogue } = useCraftCatalogue();

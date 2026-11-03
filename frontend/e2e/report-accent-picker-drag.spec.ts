@@ -2,27 +2,6 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { signIn } from "./support/session";
 
-/**
- * THE REPORT COLOUR PANEL: IT DRAGS, IT CONFIRMS, AND BACKING OUT OF IT STILL APPLIES.
- *
- * Three separate reports, one control. It used to be a native `<input type="color">`, which on a
- * laptop opens a second OS window over the very pages the choice is being made against and on a
- * tablet does whatever the platform feels like. It is now a saturation square and a hue strip
- * drawn in the page.
- *
- * The third test is the one that matters and the one most likely to be got backwards. A designer
- * drags a colour, then clicks back onto the document to look at it — and that click is a dismissal.
- * A picker that treated dismissal as "cancel" would throw the colour away at the exact moment the
- * designer believed they had chosen it, which is the reported failure. So Escape and a click
- * outside both run the SAME commit the confirm button runs, and the proof demanded here is the
- * strongest available one: the colour is still on the workshop after a full page reload, and the
- * server says so independently.
- *
- * Every assertion about "the colour" is made twice over — once against the stage-20 record through
- * the API, and once against the pixel the page is actually painting — because the previous defect
- * in this area ("custom colour not saving") looked correct on screen and had written nothing.
- */
-
 const EMAIL = process.env.E2E_EMAIL ?? "";
 const PASSWORD = process.env.E2E_PASSWORD ?? "";
 const API = process.env.E2E_API_URL ?? "http://localhost:8000";
@@ -35,7 +14,6 @@ async function apiToken(page: Page): Promise<string> {
   return (await res.json()).accessToken as string;
 }
 
-/** A workshop of this spec's own, because every test here WRITES the accent onto stage 20. */
 async function newWorkshop(page: Page, token: string): Promise<string> {
   const created = await page.request.post(`${API}/api/design-workshops`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -45,7 +23,6 @@ async function newWorkshop(page: Page, token: string): Promise<string> {
   return (await created.json()).id as string;
 }
 
-/** Stage 20's saved accent as a bare upper-case `RRGGBB`, or "" when nothing has been written. */
 async function storedAccent(page: Page, token: string, id: string): Promise<string> {
   const res = await page.request.get(`${API}/api/design-workshops/${id}/stages/REPORT_GENERATION`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -65,7 +42,6 @@ async function openReport(page: Page, id: string) {
 const trigger = (page: Page) => page.getByRole("button", { name: "Custom colour" });
 const panelOf = (page: Page) => page.getByRole("dialog", { name: "Custom report colour" });
 
-/** What the page is actually painting in the trigger's swatch, as the browser reports it. */
 function swatchColour(page: Page): Promise<string> {
   return trigger(page)
     .locator("span")
@@ -80,15 +56,6 @@ async function openPanel(page: Page): Promise<Locator> {
   return panel;
 }
 
-/**
- * Press inside `surface` at the first fraction and travel through the rest, reading the hex box
- * after every leg.
- *
- * The button stays DOWN for the whole journey and the reading is taken between moves: a picker that
- * only answered discrete clicks would return the same string at every sample but the last, which is
- * precisely the difference this spec exists to detect. Fractions outside 0..1 are deliberate — see
- * the capture assertion in the first test.
- */
 async function dragThrough(
   page: Page,
   surface: Locator,
@@ -105,7 +72,6 @@ async function dragThrough(
   const seen: string[] = [await readout.inputValue()];
   for (const point of points.slice(1)) {
     const [x, y] = at(point);
-    // Several intermediate moves per leg, so this is a travelling pointer and not a teleport.
     await page.mouse.move(x, y, { steps: 6 });
     seen.push(await readout.inputValue());
   }
@@ -124,7 +90,6 @@ test("the colour panel tracks a press-and-drag, on both surfaces and past its ow
   const square = panel.getByRole("slider", { name: "Colour saturation and brightness" });
   const hue = panel.getByRole("slider", { name: "Colour hue" });
 
-  // Five stops across the square, diagonally, in one unbroken press.
   const acrossSquare = await dragThrough(page, square, readout, [
     [0.1, 0.1],
     [0.3, 0.3],
@@ -138,7 +103,6 @@ test("the colour panel tracks a press-and-drag, on both surfaces and past its ow
     `the colour changed continuously along the drag rather than only on release — saw ${acrossSquare.join(", ")}`
   ).toBeGreaterThanOrEqual(4);
 
-  // The hue strip is a second, independent drag surface and has to track too.
   const acrossHue = await dragThrough(page, hue, readout, [
     [0.05, 0.5],
     [0.3, 0.5],
@@ -150,15 +114,6 @@ test("the colour panel tracks a press-and-drag, on both surfaces and past its ow
     `the hue strip changed continuously along the drag — saw ${acrossHue.join(", ")}`
   ).toBeGreaterThanOrEqual(4);
 
-  /*
-    POINTER CAPTURE, WHICH IS THE WHOLE REASON THIS IS NOT A MOUSEMOVE-ON-DOCUMENT CONTROL.
-
-    A drag that runs off the bottom of the square must keep tracking until the button comes up. The
-    last two stops here are BELOW the surface — a fifth and a whole box-height past its bottom edge
-    — so an implementation that only listened on the element itself would freeze at the edge. The
-    bottom row of a saturation/brightness square is black, so the clamped answer is knowable
-    without arithmetic.
-  */
   const offTheEdge = await dragThrough(page, square, readout, [
     [0.5, 0.5],
     [0.5, 1.2],
@@ -213,7 +168,6 @@ test("dismissing the panel without confirming still applies the colour, and it s
   const kept = page.getByText("Using the colour saved on stage 20 for this file.");
   await expect(kept, "nothing is saved on a fresh workshop yet").toBeHidden();
 
-  /* ── Escape, which is the keyboard's way of backing out ─────────────────────────────────── */
   let panel = await openPanel(page);
   let readout = panel.getByLabel("Colour hex code");
   await dragThrough(page, panel.getByRole("slider", { name: "Colour hue" }), readout, [
@@ -227,7 +181,6 @@ test("dismissing the panel without confirming still applies the colour, and it s
   const escaped = await readout.inputValue();
   expect(escaped).toMatch(/^[0-9A-F]{6}$/);
 
-  // No confirm. Just leave.
   await page.keyboard.press("Escape");
   await expect(panel).toBeHidden();
 
@@ -238,18 +191,15 @@ test("dismissing the panel without confirming still applies the colour, and it s
     })
     .toBe(escaped);
 
-  // And on screen: the page stops offering an override and says the colour is the workshop's.
   await expect(kept).toBeVisible({ timeout: 30_000 });
   const afterEscape = await swatchColour(page);
   expect(afterEscape, "the page is painting a different colour from the one it opened on").not.toBe(before);
 
-  /* ── The reload. This is the assertion the whole spec is for. ───────────────────────────── */
   await page.reload();
   await expect(page.getByRole("heading", { name: "Report colour" })).toBeVisible({ timeout: 60_000 });
   await expect(kept, "the dismissed colour is still the workshop's after a reload").toBeVisible({ timeout: 30_000 });
   expect(await swatchColour(page), "and the page reloads painting that same colour").toBe(afterEscape);
 
-  /* ── Clicking back onto the document is the other way out, and must behave identically ──── */
   panel = await openPanel(page);
   readout = panel.getByLabel("Colour hex code");
   await dragThrough(page, panel.getByRole("slider", { name: "Colour hue" }), readout, [
@@ -259,8 +209,6 @@ test("dismissing the panel without confirming still applies the colour, and it s
   const clickedAway = await readout.inputValue();
   expect(clickedAway).not.toBe(escaped);
 
-  // A click well clear of both the panel and the trigger — the gesture of going back to reading
-  // the pages, which is exactly when a designer would have lost their colour before.
   await page.mouse.click(5, 300);
   await expect(panel).toBeHidden();
 

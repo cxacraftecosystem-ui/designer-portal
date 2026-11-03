@@ -10,16 +10,6 @@ import {
   recoveryCodesFileText
 } from "../lib/twoFactor";
 
-/**
- * Two-step verification, the client's pure half.
- *
- * `codeKind` is the server's `two_factor.code_kind` and Android's `TwoFactorCode.kindOf` — the three
- * must agree character for character, because a recovery code typed by somebody who lost their phone
- * is the worst moment for one client to disagree. `CHALLENGE_ENDED_DETAIL` is matched EXACTLY by the
- * sign-in form, so it is read off the backend source rather than trusted. And the sign-in answer is a
- * union: `isTwoFactorChallenge` is what keeps a challenge from being stored as a session.
- */
-
 test("six digits is an authenticator code, eight letters and digits a recovery code", () => {
   expect(codeKind("123456")).toBe("totp");
   expect(codeKind(" 123 456 ")).toBe("totp");
@@ -49,7 +39,6 @@ test("the recovery-code download holds every code, one per line", () => {
 
 test("every sign-in path on /login handles the challenge", () => {
   const page = readFileSync(join(__dirname, "..", "app", "login", "page.tsx"), "utf8");
-  // The password, Google and Microsoft/Yahoo paths each branch on the answer before using it.
   expect(page.match(/isTwoFactorChallenge\(outcome\)/g)?.length).toBe(3);
   expect(page).toContain("<TwoStepChallengeForm");
 });

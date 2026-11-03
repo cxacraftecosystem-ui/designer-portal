@@ -17,15 +17,6 @@ import { mergedSurvivorId } from "@/lib/duplicates";
 import { canCreateRecords } from "@/lib/permissions";
 import type { Artisan } from "@/lib/types";
 
-/**
- * One artisan, read-only — what a click anywhere on an artisan's row opens. Update (in the header)
- * is the way to the form. See `components/records/RecordView.tsx`.
- *
- * THE THREE LAUNCH CARDS LIVE HERE NOW. They used to appear above the artisans table when a row was
- * selected, which made a row click mean "select" on this one list and "open" everywhere else. On the
- * record's own page they say the same thing without the special case: this artisan, and the three
- * entries a researcher usually makes next, each arriving with the artisan already filled in.
- */
 function entryHref(path: string, artisan: Artisan) {
   const params = new URLSearchParams({ artisanId: artisan.id, artisanName: artisan.name, place: artisan.place });
   if (artisan.craftId) params.set("craftId", artisan.craftId);
@@ -38,8 +29,6 @@ export default function ArtisanViewPage() {
   const { user } = useAuth();
   const router = useRouter();
   const creator = canCreateRecords(user);
-  // The shared questionnaire's record of this artisan (UNIFY B26): timeline, by question and CSV,
-  // across every session and researcher. The older answers panel stays until the switch is on.
   const v2 = Boolean(useQuestionnaireConfig()?.v2Enabled);
   return (
     <RecordViewPage<Artisan>
@@ -51,7 +40,6 @@ export default function ArtisanViewPage() {
       titleOf={(artisan) => artisan.name}
       collabType="artisan"
       onLoadError={(error) => {
-        // A merged record answers with where it went: go there.
         const survivor = mergedSurvivorId(error);
         if (!survivor) return false;
         router.replace(`/artisans/${encodeURIComponent(survivor)}?${MERGED_FROM_FLAG}=1`);
@@ -63,12 +51,9 @@ export default function ArtisanViewPage() {
           <MergedIntoToast name={artisan.name} />
           <PossibleDuplicateBanner artisanId={artisan.id} />
           <RecordFieldList rows={artisanFields(artisan)} />
-          {/* The printable QR card. Draws nothing while cards are off here. */}
           <ArtisanCardPanel artisanId={artisan.id} canReissue={creator} />
           <section className="grid gap-3 md:grid-cols-3" aria-label="Make an entry for this artisan">
             {[
-              // Opening a tool or product record is `require_record_creator`; an interview is open to
-              // every tier (answering one somebody else started is what the two lower tiers do).
               ...(creator
                 ? [
                     { href: entryHref("/tools/new", artisan), title: "Make a tool entry", body: "Document a tool used by this artisan.", icon: Hammer },
@@ -93,8 +78,6 @@ export default function ArtisanViewPage() {
               </Link>
             ))}
           </section>
-          {/* `readOnly`: preview, play and download only. `recordHold={null}` because nothing here
-              writes — the hold only ever gated the ✕ and the re-run this page does not draw. */}
           <ExistingMedia linkedRecordType="artisan" linkedRecordId={artisan.id} recordHold={null} title="Media" readOnly />
           {v2 ? (
             <section id="questionnaire" aria-label="Questionnaire" className="scroll-mt-24">

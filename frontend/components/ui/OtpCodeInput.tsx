@@ -1,31 +1,5 @@
 "use client";
 
-/**
- * `OtpCodeInput` — the ONE six-digit code entry in the app. Six separate boxes, digits only.
- *
- * Every surface that asks for a 6-digit code draws this and nothing else: the two-step verification
- * setup, the sign-in's second step, turning it off, making new recovery codes, setting a first password
- * on an account that has it on, and the Aadhaar OTP. Android's twin is `OtpCodeField`
- * (`ui/OtpCodeField.kt`), same rules, same words. A recovery code is NOT a six-digit code and never
- * goes in here — it has its own text box, reached by "Use a recovery code instead".
- *
- * THE RULES (owner's, 2026-10-17), each one here on purpose:
- *   · exactly six boxes; ASCII digits only — anything else is refused and the box does not change
- *     (`otpCode.typeInto`); `inputMode="numeric"`, `pattern="[0-9]*"` so phones open the number pad;
- *   · `autoComplete="one-time-code"` on the FIRST box, where a browser or an SMS autofill delivers all
- *     six at once — a string of six digits landing in any box fills them all, as does a paste;
- *   · typing advances, Backspace on an empty box steps back and empties that one, arrows move;
- *   · `onComplete` fires once, the moment the sixth digit lands — from the change handler, never from
- *     an effect, so a re-render cannot submit a code twice;
- *   · `error` paints every box red (the static signal) and `errorKey` — bump it on each refusal —
- *     shakes the row once; under EITHER reduced-motion switch (`useAppReducedMotion`) there is no
- *     shake and the red is the whole message;
- *   · each box is named "Digit n of 6"; the group carries the visible label.
- *   · Plus Jakarta Sans (`font-display`, the owner's pick for the code), tabular figures, large.
- *
- * Controlled: `value` is the digits typed so far (contiguous, at most six).
- */
-
 import { forwardRef, useEffect, useId, useImperativeHandle, useRef } from "react";
 
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
@@ -44,26 +18,19 @@ import {
 } from "@/components/ui/otpCode";
 
 export type OtpCodeInputHandle = {
-  /** Put the caret in the first empty box. */
   focus: () => void;
 };
 
 export type OtpCodeInputProps = {
   value: string;
   onChange: (code: string) => void;
-  /** Called with the six digits the moment the code is whole. */
   onComplete?: (code: string) => void;
-  /** The visible label above the boxes. */
   label: string;
-  /** A line under the boxes (hint or refusal). Linked to every box with aria-describedby. */
   hint?: string;
-  /** Paint the boxes as refused. */
   error?: boolean;
-  /** Bump on every refusal to shake the row again (ignored under reduced motion). */
   errorKey?: number;
   disabled?: boolean;
   autoFocus?: boolean;
-  /** For a `<form>` that reads FormData: a hidden input under this name carries the code. */
   name?: string;
   id?: string;
   className?: string;
@@ -98,13 +65,9 @@ export const OtpCodeInput = forwardRef<OtpCodeInputHandle, OtpCodeInputProps>(fu
 
   useEffect(() => {
     if (autoFocus) focusBox(0);
-    // Mount only: re-running on every render would steal the caret back to box one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The refusal shake. The Web Animations API rather than a framer transition because the row is a
-  // plain element whose transform nothing else owns; the reduced-motion answer is read through a ref
-  // so a preference settling after mount cannot replay the animation (field-repo-frontend §17).
   useEffect(() => {
     if (!errorKey) return;
     const shake = otpShake(reduceRef.current);
@@ -120,7 +83,6 @@ export const OtpCodeInput = forwardRef<OtpCodeInputHandle, OtpCodeInputProps>(fu
       onChange(next);
       if (isCompleteCode(next) && !isCompleteCode(code)) onComplete?.(next);
     }
-    // After React has drawn the new digits, so the selection lands on the right character.
     requestAnimationFrame(() => focusBox(focus));
   }
 
@@ -137,7 +99,6 @@ export const OtpCodeInput = forwardRef<OtpCodeInputHandle, OtpCodeInputProps>(fu
       event.preventDefault();
       focusBox(moveFocus(code, index, event.key));
     } else if (event.key.length === 1 && !/[0-9]/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      // A printable key that is not a digit: refused before it can reach the box.
       event.preventDefault();
     }
   }
@@ -176,7 +137,6 @@ export const OtpCodeInput = forwardRef<OtpCodeInputHandle, OtpCodeInputProps>(fu
               aria-invalid={error || undefined}
               aria-describedby={hint ? hintId : undefined}
               onFocus={(event) => {
-                // Never past the first empty box: the code has no holes.
                 const reachable = reachableBox(code, index);
                 if (reachable !== index) focusBox(reachable);
                 else event.currentTarget.select();
@@ -188,7 +148,6 @@ export const OtpCodeInput = forwardRef<OtpCodeInputHandle, OtpCodeInputProps>(fu
                 if (edit.accepted) commit(edit.value, edit.focus);
               }}
               onChange={(event) => {
-                // What the box now holds minus the digit it held: a typed key, or an autofill of six.
                 const raw = event.target.value;
                 const typed = digit && raw.startsWith(digit) && raw.length > 1 ? raw.slice(1) : raw;
                 const edit = typeInto(code, index, typed);

@@ -1,21 +1,5 @@
 "use client";
 
-/**
- * The three row actions on /users that need more than a yes or a no: setting a temporary password,
- * correcting a name or a sign-in address, and requiring a new password at next sign-in — which was a
- * plain confirm on the page until it had to offer a password link beside the decision (see
- * {@link RequirePasswordChangeDialog}).
- *
- * Both open over an account the reader PROVISIONS (`rowOffers` in ./accountAdmin decides that), and
- * both show the server's own sentence on a refusal — a 403, 409 or 422 here is a rule the server
- * holds that this screen could not see coming, and its wording is the remedy.
- *
- * `open` IS SEPARATE FROM `target` so the page can close a dialog and leave the account in place:
- * the exit animation then plays over the real content rather than an empty card — the same reason
- * `ConfirmProvider` keeps its options after it closes. Each form is keyed on the account, so a
- * dialog reopened for somebody else never starts with the previous person's text.
- */
-
 import { useId, useRef, useState } from "react";
 import { AlertTriangle, KeyRound, UserPen } from "lucide-react";
 
@@ -35,21 +19,13 @@ import { Toggle } from "@/components/ui/Toggle";
 
 import { hasPassword, passwordFrom, passwordHasEdgeSpace } from "./accountAdmin";
 
-/** The amber box both forms on this page use for "this choice has a cost". Literal on both sides. */
 export const CAUTION_CLASS =
   "rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800";
 
 const ERROR_CLASS =
   "rounded-md border border-error-600/30 bg-error-100 px-3 py-2 text-sm leading-6 text-error-600";
 
-/**
- * The sentence under "Require a new password …" — one wording for the create form and this dialog,
- * so the two places an account provisioner makes the same choice describe it the same way. `when`
- * is "first" on a new account and "next" on an existing one.
- */
 export function RequireChangeNote({ required, when }: { required: boolean; when: "first" | "next" }) {
-  // A live region that is always mounted: unticking the box is the moment the warning matters, and
-  // a region created together with its first sentence announces nothing.
   return (
     <div aria-live="polite">
       {required ? (
@@ -66,7 +42,6 @@ export function RequireChangeNote({ required, when }: { required: boolean; when:
   );
 }
 
-/** Shown while the typed password begins or ends with whitespace, which is kept exactly as typed. */
 export function EdgeSpaceNote() {
   return (
     <p className={CAUTION_CLASS}>
@@ -75,18 +50,6 @@ export function EdgeSpaceNote() {
   );
 }
 
-/**
- * SET A TEMPORARY PASSWORD FOR SOMEBODY ELSE.
- *
- * `alertdialog`, so a stray click on the backdrop cannot throw away a typed password, and amber,
- * because saving signs the person out everywhere — every session on the web and on the phone ends
- * at once (the server stamps `sessionsValidFrom`). The dialog says so before the button is pressed,
- * not after.
- *
- * The require-change box is ON by default and is sent in BOTH directions: the server's default for
- * a password set for somebody else is "must change", so an unticked box that sent nothing would
- * quietly be a ticked one.
- */
 export function TemporaryPasswordDialog({
   open,
   target,
@@ -107,11 +70,6 @@ export function TemporaryPasswordDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Everything this dialog holds about ONE account, cleared on every way out. The component stays
-   * mounted for the life of the page, so without this the next account would open with the last
-   * one's choices — the box unticked for somebody nobody decided to leave it unticked for.
-   */
   function reset() {
     setRevealed(false);
     setRequireChange(true);
@@ -127,7 +85,6 @@ export function TemporaryPasswordDialog({
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // Read before any await: React nulls `currentTarget` across one.
     const password = passwordFrom(new FormData(event.currentTarget));
     if (!open || !target || busy) return;
     setBusy(true);
@@ -157,8 +114,6 @@ export function TemporaryPasswordDialog({
       title="Set a temporary password"
       description={target ? `${target.name} · ${target.email}` : undefined}
       initialFocusRef={passwordRef}
-      // The submit button names its form with `form=` because the footer is drawn outside the panel
-      // body, and that is what lets the browser's own length checks run before anything is sent.
       footer={
         <>
           <button type="button" className="field-button-secondary" disabled={busy} onClick={close}>
@@ -199,8 +154,6 @@ export function TemporaryPasswordDialog({
                 required
                 minLength={MIN_PASSWORD_LENGTH}
                 maxLength={MAX_PASSWORD_LENGTH}
-                // `new-password`: this box holds somebody ELSE's password, and a browser that took it
-                // for a sign-in form would offer to fill in the administrator's own.
                 autoComplete="new-password"
                 autoCapitalize="none"
                 autoCorrect="off"
@@ -223,26 +176,6 @@ export function TemporaryPasswordDialog({
   );
 }
 
-/**
- * REQUIRE A NEW PASSWORD AT NEXT SIGN-IN, on an account that has one — its password is not touched.
- *
- * A dialog of its own rather than the page's plain confirm, for two things the person on the other
- * end will meet that nothing on this page shows the reader:
- *
- *  1. GOOGLE. The screen they are held at asks for their PRESENT password — change-password requires
- *     it, and the Google door has nothing to fill it with. Somebody who only ever signs in with Google
- *     may never have known the password this account carries (an account made with a temporary
- *     password and later entered through Google; since 2026-10-09 any password account may be), and
- *     every wrong guess is charged to the account's sign-in budget. Their way through is a password
- *     link, so the dialog offers one with the same decision — ticked already for an account the
- *     server still records as a Google sign-in, which is exactly that case.
- *  2. OLD PHONES. A handset on 0.0.15 or older words the same screen "An administrator set your
- *     password", which is false here: nobody set anything. The neutral wording ships with the next
- *     build; until then the reader is told what will be quoted back to them.
- *
- * `alertdialog` and amber like {@link TemporaryPasswordDialog}, because saving signs the person out
- * everywhere at once, and the dialog says so before the button is pressed.
- */
 export function RequirePasswordChangeDialog({
   open,
   target,
@@ -252,17 +185,14 @@ export function RequirePasswordChangeDialog({
   open: boolean;
   target: User | null;
   onClose: () => void;
-  /** `withLink`: the reader also asked for a password link, which the page issues and shows. */
   onSaved: (updated: User, withLink: boolean) => void;
 }) {
   const confirmRef = useRef<HTMLButtonElement | null>(null);
-  /** Null until the reader touches the box: until then it follows the account — see the header, 1. */
   const [withLinkChoice, setWithLinkChoice] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const withLink = withLinkChoice ?? target?.authProvider === "GOOGLE";
 
-  /** Everything this dialog holds about ONE account, cleared on every way out — as the dialog above. */
   function reset() {
     setWithLinkChoice(null);
     setError(null);
@@ -302,8 +232,6 @@ export function RequirePasswordChangeDialog({
       icon={<AlertTriangle className="h-4 w-4" aria-hidden />}
       title="Require a new password at next sign-in?"
       description={target ? `${target.name} · ${target.email}` : undefined}
-      // The decision the reader came to make, as the plain confirm this replaced had it: the amber tone
-      // already slows the hand, and Cancel sits one Tab away.
       initialFocusRef={confirmRef}
       footer={
         <>
@@ -343,13 +271,6 @@ export function RequirePasswordChangeDialog({
   );
 }
 
-/**
- * CORRECT A NAME OR A SIGN-IN ADDRESS.
- *
- * Only what changed is sent, so a corrected name never re-sends an address and trips a rule about
- * addresses. The address is compared without regard to case because the server stores it lower-cased:
- * re-typing it in capitals is not a change, and sending it would be a write that does nothing.
- */
 export function AccountDetailsDialog({
   open,
   target,

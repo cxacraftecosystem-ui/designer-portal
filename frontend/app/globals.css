@@ -1,44 +1,6 @@
-/*
- * TAILWIND CSS 4, CONFIGURED BY tailwind.config.ts (2026-10-09).
- *
- * `@config` loads the JavaScript config, where every token, ramp and comment already lives, through
- * Tailwind 4's compatibility layer, so not one design token moved in the upgrade. `source(none)` turns
- * off Tailwind 4's own scan of the whole project: the config's `content` (app/, components/, lib/)
- * stays the list of files whose class names are compiled, exactly as under Tailwind 3.
- *
- * ── TAILWIND 4 EMITS REAL CASCADE LAYERS, AND THIS FILE IS ARRANGED FOR THEM ─────────────────────
- *
- * Tailwind 3's `@layer` was build-time ordering: everything compiled to one flat stylesheet, and the
- * plain rules in this file came AFTER the utilities and competed with them by selector weight.
- * Tailwind 4 emits native `@layer theme, base, components, utilities`, and a rule outside every layer
- * beats every rule inside one, whatever its weight. Left un-layered, `button, input, select, textarea {
- * font: inherit }` would have overridden every `text-sm` and `font-medium` on every control, and the
- * focus ring's `border-radius: 6px` every `rounded-full`. So each plain rule now sits, where it always
- * stood, inside the layer that keeps the contest it had:
- *
- *   · `@layer base` for rules on bare elements and pseudo-elements, which every class beat in v3;
- *   · `@layer utilities` for rules that carry a class, an attribute or a pseudo-class, which competed
- *     with utilities by weight. They come after everything Tailwind generates, so weight decides
- *     again and a tie goes to this file — the arrangement the comments below were written for.
- *
- * Only the `:root` rules (the design tokens and the larger-text root size) and the one keyframe stay
- * outside every layer: nothing competes with them. The recipes stay in `@layer components` as plain CSS rather than becoming
- * `@utility` definitions, so every utility still beats every recipe, as it did.
- */
 @import "tailwindcss" source(none);
 @config "../tailwind.config.ts";
 
-/*
- * WHAT TAILWIND 4'S PREFLIGHT CHANGED, PUT BACK AT TAILWIND 3'S VALUES.
- *
- *   · The default border colour is `currentcolor` in v4; v3 drew gray-200, #e5e7eb. An element with
- *     `border` and no colour class would otherwise draw its line in its text colour.
- *   · Placeholder text is the text colour at half strength in v4; v3 drew gray-400, #9ca3af.
- *   · A <button> shows the arrow in v4; v3 showed the pointer, and every button here was written
- *     for that.
- *
- * Remove one only together with the explicit class every element relying on it would then need.
- */
 @layer base {
   *,
   ::after,
@@ -59,42 +21,27 @@
   }
 }
 
-/*
- * Semantic neutrals live here as bare "R G B" triplets so tailwind.config.ts can consume them as
- * `rgb(var(--token) / <alpha-value>)` and every opacity modifier keeps working. Flipping a theme is
- * therefore a matter of re-pointing these eleven-odd numbers — no page ever hardcodes a neutral.
- *
- * The purple and gold ramps stay literal in the Tailwind config: brand colour does not invert.
- */
 :root {
   color-scheme: light;
-  /* Page canvas, cards and the tinted panel ladder (surface-50 → 300 = legacy field-50 → 300). */
-  --bg-0: 247 246 251; /* #f7f6fb */
+  --bg-0: 247 246 251;
   --card: 255 255 255;
-  --surface-50: 250 249 253; /* #faf9fd */
-  --surface-100: 243 241 250; /* #f3f1fa */
-  --surface-200: 233 230 245; /* #e9e6f5 */
-  --surface-300: 220 215 238; /* #dcd7ee */
-  --line-200: 228 226 239; /* #e4e2ef */
-  /* Type ladder: headings → body → muted → placeholder. */
-  --ink-900: 30 27 46; /* #1e1b2e */
-  --ink-700: 58 54 81; /* #3a3651 */
-  --ink-500: 97 93 122; /* #615d7a */
-  --ink-300: 167 163 188; /* #a7a3bc */
-  /* Progress indicators (.progress-track / .progress-fill below; Android's FieldProgress.kt holds
-     the same values). The TRACK is purple-700 at 28% over the white card — 1.61:1 against it, so a
-     bar is visibly a bar and never the card's own white. The FILL is purple-700: 7.59:1 on the card
-     and 4.71:1 on the track. DONE is success-600: 5.02:1 / 3.11:1. */
-  --progress-track: 217 196 233; /* #d9c4e9 */
-  --progress-fill: 118 44 177; /* #762cb1, purple-700 */
-  --progress-done: 21 128 61; /* #15803d, success-600 */
-  /* Legacy aliases — derived, so they follow the triplets into whichever theme is active. */
+  --surface-50: 250 249 253;
+  --surface-100: 243 241 250;
+  --surface-200: 233 230 245;
+  --surface-300: 220 215 238;
+  --line-200: 228 226 239;
+  --ink-900: 30 27 46;
+  --ink-700: 58 54 81;
+  --ink-500: 97 93 122;
+  --ink-300: 167 163 188;
+  --progress-track: 217 196 233;
+  --progress-fill: 118 44 177;
+  --progress-done: 21 128 61;
   --background: rgb(var(--bg-0));
   --foreground: rgb(var(--ink-900));
   --purple-700: oklch(0.47 0.198 305);
   --purple-900: oklch(0.34 0.15 305);
   --purple-950: oklch(0.255 0.108 305);
-  /* Gradients — exactly two recipes (ChartMate DESIGN.md §2.5) + the gold headline span. */
   --grad-brand: linear-gradient(135deg, oklch(0.47 0.198 305) 0%, oklch(0.34 0.15 305) 100%);
   --grad-mesh:
     radial-gradient(40rem 40rem at 12% 18%, oklch(0.648 0.19 305 / 0.16), transparent 60%),
@@ -104,47 +51,33 @@
   --header-clearance: 5.5rem;
 }
 
-/*
- * Dark theme. The neutrals stay purple-tinted (never pure grey) so the brand cast survives the
- * inversion, and the ink ladder mirrors the light one: 900 = headings, 300 = placeholders.
- * `data-theme` is stamped onto <html> before first paint by the boot script in app/layout.tsx.
- */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg-0: 17 15 25; /* #110f19 */
-  --card: 26 23 37; /* #1a1725 */
-  --surface-50: 32 28 45; /* #201c2d */
-  --surface-100: 38 33 53; /* #262135 */
-  --surface-200: 46 40 64; /* #2e2840 */
-  --surface-300: 58 51 80; /* #3a3350 */
-  --line-200: 52 46 71; /* #342e47 */
-  --ink-900: 242 240 249; /* #f2f0f9 */
-  --ink-700: 208 203 223; /* #d0cbdf */
-  --ink-500: 158 152 178; /* #9e98b2 */
-  --ink-300: 110 104 132; /* #6e6884 */
-  /* Progress in dark: purple-700 is 2.32:1 on this card, so the fill moves up the ramp to
-     purple-400 (7.16:1 on the card, 4.05:1 on the track), and the track is purple-400 at 30% over
-     the card (1.77:1). Done is success-400: 10.10:1 / 5.70:1. */
-  --progress-track: 76 59 99; /* #4c3b63 */
-  --progress-fill: 192 144 245; /* #c090f5, purple-400 */
-  --progress-done: 74 222 128; /* #4ade80, success-400 */
-  /* The mesh backdrop needs more punch to read against a dark canvas. */
+  --bg-0: 17 15 25;
+  --card: 26 23 37;
+  --surface-50: 32 28 45;
+  --surface-100: 38 33 53;
+  --surface-200: 46 40 64;
+  --surface-300: 58 51 80;
+  --line-200: 52 46 71;
+  --ink-900: 242 240 249;
+  --ink-700: 208 203 223;
+  --ink-500: 158 152 178;
+  --ink-300: 110 104 132;
+  --progress-track: 76 59 99;
+  --progress-fill: 192 144 245;
+  --progress-done: 74 222 128;
   --grad-mesh:
     radial-gradient(40rem 40rem at 12% 18%, oklch(0.648 0.19 305 / 0.24), transparent 60%),
     radial-gradient(34rem 34rem at 88% 12%, rgba(245, 158, 11, 0.08), transparent 60%),
     radial-gradient(46rem 46rem at 70% 90%, oklch(0.56 0.205 305 / 0.2), transparent 65%);
 }
 
-/*
- * Accessibility: high contrast. Re-points the low-contrast end of each ladder (borders, muted and
- * placeholder text) rather than patching individual components — every page inherits it for free.
- * Declared after the dark block so the dark+contrast pairing wins on specificity.
- */
 :root[data-high-contrast="true"] {
   --line-200: 124 118 152;
   --surface-300: 124 118 152;
-  --ink-500: 58 54 81; /* muted text → body strength */
-  --ink-300: 97 93 122; /* placeholders → muted strength */
+  --ink-500: 58 54 81;
+  --ink-300: 97 93 122;
 }
 
 :root[data-theme="dark"][data-high-contrast="true"] {
@@ -155,12 +88,10 @@
   --ink-300: 176 170 196;
 }
 
-/* Accessibility: larger text. Everything is sized in rem, so scaling the root scales the UI. */
 :root[data-larger-text="true"] {
-  font-size: 112.5%; /* 16px → 18px */
+  font-size: 112.5%;
 }
 
-/* Bare elements: every class beats these, as in v3 (see the header). */
 @layer base {
   * {
     box-sizing: border-box;
@@ -188,9 +119,7 @@
   }
 }
 
-/* Weighed against the utilities, and winning a tie, as in v3 (see the header). */
 @layer utilities {
-  /* Visible keyboard focus for interactive elements (inputs keep their own focus ring). */
   a:focus-visible,
   button:focus-visible,
   [role="button"]:focus-visible,
@@ -201,7 +130,6 @@
     border-radius: 6px;
   }
 
-  /* High contrast also thickens the focus ring, since the outline is the only cue for keyboard users. */
   :root[data-high-contrast="true"] a:focus-visible,
   :root[data-high-contrast="true"] button:focus-visible,
   :root[data-high-contrast="true"] [role="button"]:focus-visible,
@@ -213,15 +141,7 @@
   }
 }
 
-/* Every element at once, and the scrollbar's pseudo-elements (see the header). */
 @layer base {
-  /* Respect users who prefer reduced motion.
-   *
-   * `transition-delay` has to be zeroed alongside the duration, and it was not. A zero-duration
-   * transition that still honours its delay is not "no motion" — it is a staggered pop. The printing
-   * bed cascades its impressions with a per-column `transition-delay`, so without this line a reduced-
-   * motion reader would watch a ~150ms ripple travel across the cloth. Any staggered effect anywhere
-   * in the app had the same hole; this closes it once for all of them. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -235,9 +155,6 @@
     }
   }
 
-  /* ...and users who asked for it in Settings. A separate rule (a media query cannot be OR-ed with a
-     selector) so the two sources union: the app-level toggle can only ever ADD reduction, and there
-     is deliberately no `="false"` rule that would undo the OS preference above. */
   :root[data-reduced-motion="true"] *,
   :root[data-reduced-motion="true"] *::before,
   :root[data-reduced-motion="true"] *::after {
@@ -249,7 +166,6 @@
     scroll-behavior: auto !important;
   }
 
-  /* Themed scrollbars — bg-0 track, line-200 thumb, purple on hover. */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -266,11 +182,9 @@
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background-color: oklch(0.828 0.1 305); /* purple-300 */
+    background-color: oklch(0.828 0.1 305);
   }
 
-  /* Firefox fallback only: guarded because setting scrollbar-color in Chromium would
-     disable the styled ::-webkit-scrollbar above. */
   @supports not selector(::-webkit-scrollbar) {
     * {
       scrollbar-width: thin;
@@ -279,26 +193,7 @@
   }
 }
 
-/* Weighed against the utilities, and winning a tie, as in v3 (see the header). */
 @layer utilities {
-  /*
-   * Background scroll lock, worn by <html> while any surface is covering the page.
-   *
-   * THREE SURFACES WEAR IT — the navigation sheet, every `FieldDialog`, and the rich-text editor's
-   * full-screen mode — and none of them writes it directly any more. `lib/scrollLock.ts` owns the
-   * class and refcounts it, because two of the three used to add and remove it themselves and the
-   * third locked `overflow` on <body> instead: a dialog mounted in the protected layout closing while
-   * the sheet or the editor was still open took the class off with it, and the page behind started
-   * panning again. The name still says "nav" because the sheet needed it first; it is not renamed
-   * because these rules, `nav-sheet-scroll.spec.ts` and the fixed chrome that re-pays the gutter all
-   * spell it out and a rename that missed one would be silent.
-   *
-   * It is the root element and not <body> because iOS Safari quietly ignores `overflow: hidden` on the
-   * body and keeps panning the page under the open surface — the exact complaint this answers. The
-   * gutter variable is measured and set in the instant before this class lands: freezing the document
-   * takes the scrollbar away with it, and without paying that width back as padding every centred
-   * thing on the page — an open dialog's own panel included — jumps sideways as it opens.
-   */
   html.nav-scroll-locked,
   html.nav-scroll-locked body {
     overflow: hidden;
@@ -309,7 +204,6 @@
     padding-right: var(--nav-scroll-gutter, 0px);
   }
 
-  /* Clean number inputs — no native spinner arrows; values change by typing. */
   input[type="number"]::-webkit-inner-spin-button,
   input[type="number"]::-webkit-outer-spin-button {
     -webkit-appearance: none;
@@ -321,23 +215,19 @@
     appearance: textfield;
   }
 
-  /* react-day-picker root — site tokens (per-part Tailwind classes live in ui/calendar.tsx). */
   .rdp-root {
-    --rdp-accent-color: oklch(0.47 0.198 305); /* purple-700 */
-    --rdp-accent-background-color: oklch(0.977 0.013 305); /* purple-50 */
+    --rdp-accent-color: oklch(0.47 0.198 305);
+    --rdp-accent-background-color: oklch(0.977 0.013 305);
     --rdp-today-color: oklch(0.47 0.198 305);
     --rdp-outside-opacity: 0.6;
     font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
     color: rgb(var(--ink-900));
   }
 
-  /* Keep the light hover wash off solid purple selected cells (endpoints / single pick). */
   .rdp-root td[data-selected]:not(.cal-middle) > button:hover {
     background-color: transparent;
   }
 
-  /* Inline audio player seek bar (components/ui/AudioPlayer). The played portion is painted
-     via the --audio-range-fill gradient set inline by the component. */
   .audio-range {
     -webkit-appearance: none;
     appearance: none;
@@ -386,15 +276,6 @@
 }
 
 @layer components {
-  /*
-   * PROGRESS INDICATORS — every bar in the app draws its track and its fill with these two, so the
-   * rule lives in one place (owner report 2026-10-17: the voice-note bar vanished into its white
-   * card; its track was line-200, 1.28:1, and in dark the purple-700 fill was 2.32:1).
-   * Track: a tinted token, never the card. Fill: >= 3:1 against both track and card, both themes.
-   * At least 4px tall, round ends. `data-tone="done"` on the fill is the finished/passing state.
-   * `components/ui/ProgressBar.tsx` renders the pair; `e2e/progress-indicator-unit.spec.ts` holds
-   * the numbers and refuses a hand-rolled `bg-line-200` / `bg-field-200` track.
-   */
   .progress-track {
     @apply h-1.5 w-full overflow-hidden rounded-full bg-progress-track;
     min-height: 4px;
@@ -448,15 +329,6 @@
     @apply text-[0.8125rem] font-semibold uppercase tracking-[0.14em] text-purple-700;
   }
 
-  /*
-   * The navigation sheet. On a phone the list runs well past the bottom of the screen, so the PANEL
-   * has to be the scroller: a bounded height, its own overflow, and `overscroll-behavior: contain`
-   * so that reaching the last item does not hand the gesture on to the page underneath.
-   *
-   * The height is measured in dvh, not vh: while the address bar is showing — which is precisely
-   * when a thumb is reaching for this menu — 100vh is the taller, wrong number and the closing
-   * items of the list sit below the fold with no way to reach them.
-   */
   .nav-sheet {
     --nav-sheet-top: 5rem;
     margin-top: var(--nav-sheet-top);
@@ -466,11 +338,9 @@
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
     padding: 1.5rem;
-    /* The home indicator sits over the foot of the sheet; the last item has to clear it. */
     padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
   }
 
-  /* A phone in landscape leaves barely 350px of height — give the list back the chrome it can spare. */
   @media (max-height: 560px) {
     .nav-sheet {
       --nav-sheet-top: 4.25rem;
@@ -479,16 +349,6 @@
     }
   }
 
-  /*
-   * Both of these are position:fixed, so their containing block is the viewport rather than <body>
-   * and the padding the lock puts on the body cannot reach them. They pay the vanished scrollbar
-   * back themselves, otherwise the island and the sheet drift right as the menu opens.
-   *
-   * The overlay's z-index is set in DynamicIslandNav, not here, but it belongs to the same story:
-   * it is `z-[90]` because `AppShell`'s <main> no longer carries a z-index, so a page's own fixed
-   * chrome — `UploadTray` at `z-40` — competes with this scrim in the root stacking context and
-   * would win the tie on tree order. A modal scrim has to out-rank in-page chrome.
-   */
   .nav-sheet-overlay {
     padding-right: var(--nav-scroll-gutter, 0px);
   }
@@ -500,49 +360,20 @@
     padding-right: calc(0.75rem + var(--nav-scroll-gutter, 0px));
   }
 
-  /*
-   * Below `lg` (64rem = 1024px, the one breakpoint that decides the navigation mode) the bottom
-   * island floats over the foot of every signed-in page. `--bottom-nav-h` is its height plus its
-   * offset, so the upload tray and the toasts sit above it. `BottomIslandNav` puts the class on
-   * <html> while it is mounted; at `lg` and up nothing reads a value and both sit at the bottom.
-   */
   @media (width < 64rem) {
     html.has-bottom-nav {
       --bottom-nav-h: calc(62px + 0.75rem + env(safe-area-inset-bottom, 0px));
     }
   }
 
-  /* Themed file-upload trigger (label/button wrapping a hidden <input type="file">). */
   .file-trigger {
     @apply inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-purple-300 bg-card px-4 py-2 text-sm font-medium text-purple-700 transition hover:border-purple-400 hover:bg-purple-50 dark:border-purple-400/50 dark:text-purple-300 dark:hover:bg-purple-950/40 pointer-coarse:min-h-11;
   }
 
-  /*
-   * AN IN-TEXT LINK. Purple is literal and does not invert, so a bare `text-purple-700` link measured
-   * 2.18–2.31:1 on the dark card (UX audit DW-04, 2026-10-16). This recipe carries the dark pair so
-   * the next link cannot be written without it.
-   */
   .field-link {
     @apply font-medium text-purple-700 underline-offset-2 hover:underline dark:text-purple-300;
   }
 
-  /*
-   * "THIS ROW, JUST NOW" — the answer to a selection made somewhere else on the page.
-   *
-   * Worn for ~1.4s by the row `components/hooks/useRevealRow` has just scrolled to, driven by a
-   * `data-flash="true"` attribute rather than a class so React can flip it without touching the
-   * className a dozen conditional styles are already composing.
-   *
-   * TWO SIGNALS, DELIBERATELY, and only one of them is motion. The ring is a plain static outline: it
-   * is what a reader sees who looked away during the pulse, and — this is the point — it is the ONLY
-   * half that survives `prefers-reduced-motion`, where the global rule further up this file collapses
-   * every animation to 0.01ms. A "which one" signal that exists only as movement is a signal those
-   * readers never receive.
-   *
-   * `outline` rather than `box-shadow` or a border: these rows already carry a conditional border for
-   * their selected state and a focus-visible ring of their own, and an outline stacks with both without
-   * changing the row's box or fighting the selected border for the same pixels.
-   */
   .fr-flash-row[data-flash="true"] {
     outline: 2px solid var(--purple-700);
     outline-offset: 2px;
@@ -550,9 +381,6 @@
   }
 }
 
-/* One pulse, not a loop. A repeating highlight reads as an error state and pulls the eye away from
-   whatever the reader chose to look at next. The purple is the product's single action colour, at the
-   low alpha that reads as a wash over a white or a purple-50 row rather than as a second fill. */
 @keyframes fr-row-flash {
   0% {
     background-color: oklch(0.47 0.198 305 / 0.22);
@@ -574,7 +402,6 @@
     background-image: var(--grad-mesh);
   }
 
-  /* Gold gradient text — hero headline spans and auth marketing copy ONLY. */
   .text-gold-gradient {
     background-image: var(--grad-gold);
     -webkit-background-clip: text;
@@ -582,16 +409,6 @@
     color: transparent;
   }
 
-  /*
-   * Frosted glass card on light mesh backdrops (auth).
-   *
-   * THE PREFIXED LINE GOES FIRST IN BOTH RECIPES, AND THE ORDER IS LOAD-BEARING (2026-10-09). The
-   * production build minifies this file with Lightning CSS, which keeps only the LAST of the pair
-   * when the prefixed declaration follows the standard one: with `-webkit-backdrop-filter` second,
-   * every build shipped `-webkit-backdrop-filter` alone, which Safari reads and Chromium ignores, so
-   * neither card was ever frosted in Chromium. With the standard line last, the build keeps both,
-   * prefixed first. The `-webkit-background-clip` pairs below are already in that order.
-   */
   .glass-card {
     background: rgba(255, 255, 255, 0.72);
     -webkit-backdrop-filter: blur(18px);
@@ -606,7 +423,6 @@
     border: 1px solid rgba(255, 255, 255, 0.14);
   }
 
-  /* Legacy utilities kept as no-surprise aliases. */
   .ambient-light {
     background-image: var(--grad-mesh);
   }
@@ -620,20 +436,7 @@
 }
 
 @layer utilities {
-  /* ────────────────────────────────────────────────────────────────────────────
-     The printing bed — components/hero/PrintingBed.tsx
-     India rendered as block-printed cloth: a field of buti impressions clipped to
-     the national outline, printing in as the section crosses the reading line.
-     ──────────────────────────────────────────────────────────────────────────── */
 
-  /* One impression. Its position and misregistration live in a `transform` ATTRIBUTE on the parent
-     <g> and never change; only opacity and the stamp-scale animate here, so a scroll frame touches
-     nothing but the compositor.
-
-     `transform-box: fill-box` is not optional. A CSS transform on an SVG element resolves its origin
-     against the nearest viewBox by default, so `scale()` on an impression sitting at (60, 90) would
-     fling it toward the corner instead of pressing it onto its own centre. Pinning the box to the
-     element makes the stamp mean the same thing in every engine. */
   .fr-buti {
     transform-box: fill-box;
     transform-origin: 50% 50%;
@@ -642,15 +445,10 @@
       transform 200ms ease-out;
   }
 
-  /* The site marks resolve once, at the end of the print — one fade, not ninety-seven. */
   .fr-mark {
     transition: opacity 420ms ease-out;
   }
 
-  /* Place names are sized in viewBox units, so their rendered size follows the map's width. Below
-     640px the map is narrow enough that this lands under 9px — decoration pretending to be a label —
-     so it is withheld rather than shrunk. Every name is in the <figcaption> at every width, and the
-     SVG is aria-hidden, so this hides nothing from anyone. */
   .fr-map-label {
     display: none;
     font-size: 2.7px;
@@ -664,252 +462,37 @@
   }
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   THE MINISTRY SURFACE — four screens that belong to the ministry, said in colour
-
-   AppShell stamps `data-surface="ministry"` on <main> for every route whose ROUTE_GUARDS row
-   carries `ministry: true` (/annual-plan, /officers, /officers/monitored, /sanction-orders), and a
-   component that lives OUTSIDE those routes opts in by putting the same attribute on its own root —
-   which is how the ministry desk card, drawn on /dashboard, is themed without editing this file.
-   Every rule below is written twice, as a descendant AND as a self-match, so an opting-in component
-   may carry the attribute on the very element the rule targets.
-
-   ── AT THE END OF THE FILE, INSIDE `@layer utilities`, DELIBERATELY ─────────────────────────────
-   What decides these rules is selector weight: `[data-surface="ministry"] .field-header-chip` is
-   (0,2,0), and both the recipe class on its own and any single utility are (0,1,0). Under Tailwind 3
-   that held for an un-layered block at the end of the file, because v3's layers were build-time
-   ORDERING and emitted no real `@layer`. Tailwind 4 emits real cascade layers, and an un-layered rule
-   beats every layered one whatever its weight, so since 2026-10-09 the rules below sit inside
-   `@layer utilities`, after everything Tailwind generates: weight decides again, a tie still goes to
-   this block, and every recipe in `@layer components` still loses to it.
-
-   ── THE ACTION CONTROLS ARE ORANGE HERE. OWNER RULING, 2026-09-20. ────────────────────────────
-   ⚠ WHAT THIS PARAGRAPH SAID UNTIL THAT DATE, KEPT VERBATIM BECAUSE THE REVERSAL IS A PRODUCT
-   DECISION AND NOT A CORRECTION — the same treatment `GuideTrackSwitch`'s header gives its own
-   overruled argument:
-
-     "── SURFACE ACCENT ONLY. NO ORANGE ON ANY ACTION CONTROL. ──
-      `.field-button`, `.field-button-secondary`, `.field-input`, `.file-trigger`, the global
-      `:focus-visible` outline, `--purple-700` and `shadow-cta` are ALL deliberately absent from
-      this block. Purple-700 remains the only action colour in the product, on a ministry page
-      exactly as on every other. The arithmetic is in tailwind.config.ts beside the ramp:
-      `ministry-700` #923e0d and `amber-800` #92400e are ΔE 0.004 apart — the same colour — and
-      amber is drawn on all four of these screens, so an orange button would sit beside an
-      indistinguishable 'Withdrawn' pill and, through `hover:shadow-cta`, throw a saturated PURPLE
-      glow while doing it."
-
-   The owner's instruction is that the ministry's own screens wear the ministry's own colour,
-   buttons included. That reverses the RULING. It does not reverse the two MEASUREMENTS the ruling
-   rested on, and both are answered here rather than waived:
-
-   · THE PURPLE GLOW IS REAL AND IS FIXED AT THE SOURCE. `hover:shadow-cta` is a Tailwind TOKEN, not
-     a custom property, so no selector in this block can re-point it. `theme.extend.boxShadow` now
-     carries `cta-ministry` at hue 45 — same geometry, the ramp's own gamut-clipped chroma, alpha
-     nudged 0.28 → 0.29 for equal perceived weight — and the rule below spends it. The arithmetic is
-     written out beside the token.
-
-   · THE ΔE 0.004 COLLISION WITH `amber-800` IS REAL AND IS ANSWERED BY ROLE, NOT BY HUE. What the
-     old paragraph measured is that ministry INK and amber INK are the same colour. The rules below
-     never put ministry ink beside an amber pill: the primary is a FILLED ground at `ministry-700`
-     carrying WHITE text, and an amber status pill is `bg-amber-100` carrying `amber-800` text — a
-     dark ground with light ink against a pale ground with dark ink. Those are different shapes
-     before they are different colours, and rule 5 of the frontend contract is satisfied twice over
-     because a status pill also carries a WORD. The one place the two inks WOULD have met is the
-     secondary button, which is why its text stays `ink-900` below and only its border and hover
-     wash take the ramp.
-
-   WHAT IS STILL ABSENT, AND IS NOT OVERRULED:
-
-   · THE GLOBAL `:focus-visible` OUTLINE STAYS PURPLE. It was not part of the instruction — buttons
-     were — and it is the one mark that is identical on every screen in the product. A reader who
-     tabs across a ministry page and then a designer's page should not have to learn that the focus
-     ring means the same thing in two colours; `MinistryDeskCard`'s own tile comment makes the same
-     call for the same reason. `--purple-700` is therefore still never re-pointed here, which also
-     protects `.audio-range:focus-visible` and `.fr-flash-row`'s "this row, just now" outline, both
-     of which read that property and are app-wide meanings rather than ministry ones.
-
-   · `--bg-0` AND `--card` ARE STILL NEVER RE-POINTED, and neither is the page canvas repainted by
-     any other route. `THEME_COLOR` in lib/preferences.ts drives <meta name="theme-color"> — the
-     mobile address bar — and `applyPreferences` rewrites it on a PREFERENCE change and never on a
-     navigation, so an orange canvas would leave the address bar lavender with no code path in the
-     product that could ever correct it. The "light accent" on a ministry page is `.section-band`
-     below, which is a BAND on a page and not the page.
-
-   ── WHAT THIS BLOCK MUST NEVER CONTAIN ────────────────────────────────────────────────────────
-   A bare descendant rule on a utility class — `[data-surface="ministry"] .text-purple-700 { … }`
-   or the same for `.bg-purple-50`. It looks like the tidy way to "finish the job" and it destroys
-   information: StatusBadge paints NEEDS_REVISION and IN_PROGRESS `border-purple-300 bg-purple-50
-   text-purple-700`, deliberately sharing one treatment because both mean somebody is expected to be
-   doing something, and the SAME workshop row is drawn on /design-workshops, on
-   /design-workshop-inspections and on /officers/monitored. Such a rule would make one workshop read
-   purple on a designer's screen and orange on an officer's. This block targets recipe classes only.
-
-   Nor may it re-point `--bg-0` or `--card`. `THEME_COLOR` in lib/preferences.ts drives
-   <meta name="theme-color"> — the mobile address bar — and `applyPreferences` rewrites it on a
-   PREFERENCE change and never on a navigation. An orange page canvas would leave the address bar
-   lavender with no code path in the product that could ever correct it.
-
-   ── THE LIMIT OF THE MECHANISM, RECORDED SO IT IS NOT FOUND IN REVIEW ─────────────────────────
-   Portalled surfaces escape it and stay purple ON PURPOSE. `FieldDialog`, `AnchoredPopover` /
-   `SearchableSelect` panels and `Toast` all `createPortal` to document.body, i.e. outside <main>, so
-   no scope on <main> can reach them. That is the right answer rather than a gap: a dialog, a
-   dropdown panel and a toast are APP chrome that happens to have been raised from a ministry page,
-   not ministry surfaces. The island nav's active pill is purple for the same reason — it is global
-   chrome shared with every route and is rendered before <main>, outside this scope.
-
-   The refusal panel is outside the scope too, by a different route: AppShell stamps the attribute
-   only when the page it guards is actually being served, because `RouteLocked` is shown to somebody
-   who is NOT a ministry account, and putting the ministry accent in front of exactly the person it
-   is not for is the opposite of what it is for.
-   ──────────────────────────────────────────────────────────────────────────── */
-
 @layer utilities {
-  /*
-   * The page header's icon chip — the one mark every ministry screen carries, because every one of
-   * them passes an `icon` to PageHeader. `bg-field-200 text-field-600` (surface-200 + purple-700)
-   * everywhere else; here it is the pale ministry ground with ministry ink on it, 6.11:1.
-   *
-   * THE `dark:` PAIR IS NOT OPTIONAL. This ramp is literal and does not invert, so `bg-ministry-100`
-   * is a near-white peach in BOTH themes — as a chip on a dark card it would paint a bright patch,
-   * and `text-ministry-700` on it is the SearchableSelect failure verbatim ("near-black on near-black
-   * once the bar was darkened"). The dark half is CarryContextBanner's own chip pair with the hue
-   * moved: `ministry-900/60` ground, `ministry-200` ink, 10.71:1.
-   */
   [data-surface="ministry"] .field-header-chip,
   .field-header-chip[data-surface="ministry"] {
     @apply bg-ministry-100 text-ministry-700 dark:bg-ministry-900/60 dark:text-ministry-200;
   }
 
-  /*
-   * THE MINISTRY SPINE WAS REMOVED ON 2026-09-17, and this note stands in its place so that the next
-   * reader does not reinstate it from the argument that used to be written here.
-   *
-   * It was `[data-surface="ministry"] .panel, .panel[data-surface="ministry"] { @apply border-l-2
-   * border-l-ministry-300 dark:border-l-ministry-700 }` — a 2px accent stroke down the left edge of
-   * EVERY panel on the surface, which is 22 of them across /annual-plan, /officers,
-   * /officers/monitored and /sanction-orders, plus the desk card that opts in on /dashboard. Removed
-   * at the product owner's direction: on a real screen it did not read as the quiet rule the old
-   * comment argued for, it read as an orange streak beside the search bar and down the ministry card.
-   *
-   * NOTHING IS LOST BY ITS ABSENCE, which is why it could go at all. The stroke was by its own
-   * account the SECOND channel, never the first: the surface still names itself in the header chip
-   * above, in every ministry page title and in "Your ministry desk". Rule 5 of the frontend contract
-   * — a signal carried only by colour is a signal some readers never get — was already satisfied
-   * without the stroke and is still satisfied now.
-   *
-   * The `ministry` ramp itself stays, and so do the two rules around this one. If a future ministry
-   * screen needs to announce itself harder, add a mark that carries WORDS. Not another stroke.
-   */
-
-  /*
-   * PROVISION, NOT REPAIR, and said out loud so the next reader does not go looking for the screen it
-   * fixes: `.eyebrow` has NO consumer on any ministry surface today (grep is the check —
-   * `grep -rn eyebrow "app/(protected)/annual-plan" "app/(protected)/officers"
-   * "app/(protected)/sanction-orders"` answers nothing). It is here because the whole point of scoping
-   * RECIPE classes rather than editing pages is that the next ministry screen is right without anybody
-   * being told, and an eyebrow is a purple-700 typographic accent — precisely the kind of mark that
-   * should follow the surface. The `dark:` pair is mandatory for the ramp's usual reason: 2.44:1 on a
-   * dark card without it, 10.06:1 with.
-   */
   [data-surface="ministry"] .eyebrow,
   .eyebrow[data-surface="ministry"] {
     @apply text-ministry-700 dark:text-ministry-300;
   }
 
-  /*
-   * THE PRIMARY ACTION ON A MINISTRY SCREEN. Owner ruling 2026-09-20 — see the block header for the
-   * argument this reverses and for the two measurements it does not.
-   *
-   * ⚠ EVERY STATE THE BASE RECIPE CARRIES IS RE-DECLARED, AND THAT IS NOT VERBOSITY. `.field-button`
-   * is `@apply … hover:bg-purple-800 hover:shadow-cta disabled:bg-line-200 disabled:text-ink-500
-   * disabled:shadow-none`, and `.field-button:hover` compiles to (0,2,0) — exactly the weight of
-   * `[data-surface="ministry"] .field-button`. This block is LAST in the file, so it wins the
-   * source-order tie on `background-color`. A rule that set only the resting ground would therefore
-   * paint the SAME orange on hover — no hover response at all — and, worse, the same orange when
-   * DISABLED, erasing the disabled affordance on every button on the surface. Both states are
-   * restated so the cascade cannot be relied on to do the wrong thing quietly.
-   *
-   * `shadow-cta-ministry` AND NOT `shadow-cta`: the base is a literal purple oklch at hue 305 and is a
-   * Tailwind token, so it cannot be scoped — the twin exists for exactly this line.
-   *
-   * NO `dark:` PAIR IS OWED HERE AND THE ABSENCE IS DELIBERATE. The ramp is literal and does not
-   * invert, and this rule fixes BOTH halves of its own contrast: white on `ministry-700` #923e0d
-   * measures 7.20:1 and is the same 7.20:1 in either theme, because neither the ground nor the ink is
-   * themed. That is the identical position `.field-button`'s own `bg-purple-700 text-white` is in.
-   * The `dark:`-pair obligation belongs to ministry INK on a themed ground and to a PALE ministry
-   * ground on a themed card — both of which DO invert underneath — and every such rule below carries
-   * one. `e2e/ministry-surface-unit.spec.ts` encodes that distinction rather than the blanket rule it
-   * used to.
-   */
   [data-surface="ministry"] .field-button,
   .field-button[data-surface="ministry"] {
     @apply bg-ministry-700 text-white hover:bg-ministry-800 hover:shadow-cta-ministry disabled:bg-line-200 disabled:text-ink-500 disabled:shadow-none;
   }
 
-  /*
-   * THE SECONDARY ACTION — border and hover wash only, and the TEXT DELIBERATELY STAYS `ink-900`.
-   *
-   * This is the one control where the ΔE 0.004 collision the old header measured would actually have
-   * bitten. A secondary button is a pale ground with dark ink, which is the same shape as an
-   * `amber-100` / `amber-800` status pill — and `ministry-700` ink and `amber-800` ink ARE the same
-   * colour. Two inches apart on /annual-plan and /sanction-orders, one of them a thing to press and
-   * the other a fact about a workshop, they would be indistinguishable. Leaving the label in the
-   * app's ordinary ink keeps the shapes different: a pill has no border and no hover.
-   *
-   * The `dark:` pair IS owed here, and for the usual reason: `bg-ministry-50` is a near-white peach in
-   * BOTH themes, so as a hover wash on a dark card it would flash a bright patch. The dark half is
-   * `CarryContextBanner`'s pair with the hue moved.
-   */
   [data-surface="ministry"] .field-button-secondary,
   .field-button-secondary[data-surface="ministry"] {
     @apply hover:border-ministry-300 hover:bg-ministry-50 dark:hover:bg-ministry-950/40;
   }
 
-  /*
-   * THE UPLOAD TRIGGER. The same treatment as the secondary button and for the same reasons — it is
-   * the dashed sibling of one, and on /annual-plan and /officers it is the control an officer reaches
-   * for most. `text-ministry-700` is ink on a themed `bg-card`, so its `dark:` pair is mandatory:
-   * 2.44:1 without it, 10.06:1 with.
-   */
   [data-surface="ministry"] .file-trigger,
   .file-trigger[data-surface="ministry"] {
     @apply border-ministry-300 text-ministry-700 hover:border-ministry-400 hover:bg-ministry-50 dark:text-ministry-300 dark:hover:bg-ministry-950/40;
   }
 
-  /*
-   * THE TEXT BOX'S FOCUS RING — the band around a field while it is being typed in.
-   *
-   * ⚠ THIS IS NOT THE GLOBAL `:focus-visible` OUTLINE AND THE TWO MUST NOT BE CONFLATED. That one is
-   * an `outline` drawn by `globals.css` on every anchor, button and tabbable element in the product,
-   * it reads `--purple-700`, and it stays purple — the header says why, and this block still re-points
-   * that property nowhere. What is repainted here is `.field-input`'s OWN `focus:ring-4
-   * focus:ring-purple-600/15` and its `focus:border-purple-600`, which are this recipe's decoration
-   * and nothing else's meaning. On a ministry screen the two now agree: the box the officer is typing
-   * in glows in the surface's colour, and the ring that says "the keyboard is here" is the same mark
-   * it is on every other screen in the app.
-   *
-   * `dark:` is owed on the border because `bg-card` inverts underneath it.
-   */
   [data-surface="ministry"] .field-input,
   .field-input[data-surface="ministry"] {
     @apply focus:border-ministry-600 focus:ring-ministry-600/15 dark:focus:border-ministry-400;
   }
 
-  /*
-   * THE LIGHT ACCENT THE PAGES CARRY — a BAND, and never the canvas.
-   *
-   * `.section-band` is `rounded-lg bg-surface-50`: the recipe every screen in this app uses for "a
-   * quiet block of related things inside a page". On a ministry surface it takes the palest rung of
-   * the ramp, which is the whole of what "the pages should have a light accent" can mean here without
-   * running into the two things the header says are NOT overruled — the page canvas and the mobile
-   * address bar.
-   *
-   * AND THIS IS WHY THE ACCENT ARRIVES ON SCREENS NOBODY EDITED. Scoping a RECIPE class rather than
-   * editing pages is the whole point of the mechanism: /annual-plan, /officers, /officers/monitored
-   * and /sanction-orders pick this up wherever they already use the band, and the next ministry screen
-   * is right without anybody being told. `bg-ministry-50` is a near-white peach in both themes, so the
-   * `dark:` pair is mandatory for the reason every pale rung's is.
-   */
   [data-surface="ministry"] .section-band,
   .section-band[data-surface="ministry"] {
     @apply bg-ministry-50 dark:bg-ministry-950/30;

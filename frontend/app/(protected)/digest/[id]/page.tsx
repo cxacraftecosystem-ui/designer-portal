@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * One Monday summary (`GET /notifications/digests/{id}`), for its owner only. A snapshot taken on
- * Monday at 08:00; every row opens the live queue it counted.
- */
-
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import { ArrowRight, CalendarClock } from "lucide-react";

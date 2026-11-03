@@ -20,7 +20,6 @@ import {
 } from "@/components/crafts/craftAdmin";
 import type { CraftCatalogue, CraftCatalogueCategory, CraftCatalogueSubCategory } from "@/lib/craftCatalogue";
 
-/** What the one dialog on this tab is doing. */
 type Edit =
   | { kind: "addCategory" }
   | { kind: "renameCategory"; category: CraftCatalogueCategory }
@@ -28,10 +27,6 @@ type Edit =
   | { kind: "renameSub"; sub: CraftCatalogueSubCategory }
   | { kind: "moveSub"; sub: CraftCatalogueSubCategory; categoryId: string };
 
-/**
- * Categories and their sub-categories (REQUIREMENTS_2026-10-20 §2.6): rename, move, delete, add,
- * and reorder by up and down buttons — no drag-only control. Content admins only; the page gates it.
- */
 export function CraftCategoriesTab({
   catalogue,
   canEdit,
@@ -39,9 +34,7 @@ export function CraftCategoriesTab({
   onChanged
 }: {
   catalogue: CraftCatalogue;
-  /** Content admins manage the taxonomy; everyone else reads it. */
   canEdit: boolean;
-  /** Delete is drawn in admin view only (§5). */
   canDelete: boolean;
   onChanged: () => void;
 }) {

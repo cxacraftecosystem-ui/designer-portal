@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * One district (or state) opened from the map or the table: its counts, and the records behind
- * them, each a link to the record. Names only — the route never sends identity numbers or addresses.
- *
- * The Field Repository's panel, with the designer portal's two extra buckets (design and planned
- * workshops) and the Field Repository's own figures on a separate line, never added to ours.
- */
-
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ExternalLink, X } from "lucide-react";

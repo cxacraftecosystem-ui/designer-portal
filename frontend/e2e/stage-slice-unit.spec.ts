@@ -6,16 +6,6 @@ import { expect, test } from "@playwright/test";
 import { sliceStageBlocks, spliceStageBlocks, stableBlocks, stageBlockRange } from "@/components/designworkshop/report/stageSlice";
 import { galleryColumns } from "@/components/designworkshop/report/previewModel";
 
-/**
- * THE LIVE PREVIEW'S PURE HALF, AGAINST THE SHARED VECTORS.
- *
- * `shared/report-parity/stage-slice-vectors.json` is read here and by the handset's
- * `DwStageSliceTest`, so the two clients locate a stage — and splice a live copy of it into the
- * saved document — the same way. Behaviour only: no source text of either module is asserted.
- *
- * PURE NODE. Run: `npx playwright test e2e/stage-slice-unit.spec.ts --reporter=line`
- */
-
 type Block = { type: string; level?: number; runs?: Array<{ text: string }> };
 
 const vectors = JSON.parse(

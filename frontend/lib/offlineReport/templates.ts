@@ -1,14 +1,3 @@
-/**
- * The six report templates and the stage-20 settings that shape them, ported from
- * `backend/app/services/report_templates.py` so the browser can build the same document offline.
- *
- * A TEMPLATE IS DATA, and this file is that data written down a second time. The template list the
- * report screen offers still comes from the server whenever there is a connection
- * (`GET /design-workshops/report-templates`); this copy is what a browser with none builds from, and
- * `offline-report-parity-unit.spec.ts` builds every template over the shared fixture and compares the
- * result with the server's, so a section added, moved or renamed there fails here.
- */
-
 import { DEFAULT_THEME, type ReportTheme } from "@/lib/offlineReport/model";
 
 export type Tier = "BASIC" | "STANDARD" | "ADVANCED";
@@ -320,7 +309,6 @@ export const TEMPLATES: readonly ReportTemplate[] = [
         includePhotos: false,
         heading: "Price list",
         pageBreakBefore: true,
-        // No cost breakdown in a document that goes to a buyer — see the server's note.
         includeFigures: false
       }),
       section({
@@ -339,12 +327,10 @@ export const TEMPLATES: readonly ReportTemplate[] = [
 
 export const TEMPLATE_IDS: readonly string[] = TEMPLATES.map((t) => t.id);
 
-/** `report_templates.template`: an unknown id falls back to the first template. */
 export function templateById(id: string): ReportTemplate {
   return TEMPLATES.find((t) => t.id === id) ?? TEMPLATES[0];
 }
 
-/** `design_workshops.resolve_template_id`: the request, then stage 20, then the header column. */
 export function resolveTemplateId(requested: unknown, settings: Record<string, unknown> | null, headerTemplateId: string): string {
   for (const candidate of [requested, (settings ?? {}).templateId]) {
     const token = candidate === null || candidate === undefined || candidate === "" ? "" : String(candidate).trim();
@@ -365,7 +351,6 @@ const TOGGLE_LABELS: Record<string, string> = {
   includeCompletenessAnnexure: "Include the completeness annexure"
 };
 
-/** `_asked`: null for a switch nobody set, else Python's truthiness of the answer. */
 export function asked(settings: Record<string, unknown> | null | undefined, key: string): boolean | null {
   if (!settings) return null;
   const raw = settings[key];
@@ -382,7 +367,6 @@ export function pyTruthy(value: unknown): boolean {
   return Boolean(value);
 }
 
-/** `report_templates.inert_section_toggles`. */
 export function inertSectionToggles(template_: ReportTemplate, settings: Record<string, unknown> | null): string[] {
   if (!settings || !Object.keys(settings).length) return [];
   const present = new Set(template_.sections.map((s) => s.special));
@@ -401,7 +385,6 @@ export function inertSectionToggles(template_: ReportTemplate, settings: Record<
 
 export type CustomSectionRef = { key: string; title: string; stageKey: string; sortOrder: number };
 
-/** `report_templates.apply_report_settings`. */
 export function applyReportSettings(
   template_: ReportTemplate,
   settings: Record<string, unknown> | null,

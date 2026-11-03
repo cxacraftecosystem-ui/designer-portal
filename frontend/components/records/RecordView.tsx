@@ -22,20 +22,6 @@ import { isCompletenessKind, type CompletenessBlock } from "@/lib/completenessCo
 import { canUpdateRecord, recordLoadFailure, recordUpdateHref, type ViewableRecord } from "@/lib/recordView";
 import type { MediaFile, RecordStatus } from "@/lib/types";
 
-/**
- * A record's READ-ONLY page — what a click anywhere on its row or card opens (owner ruling,
- * 2026-10-16). Every field is printed and none is a control; the one way to change the record is the
- * "Update" button in the header, drawn only for a reader the server would let save
- * (`canUpdateRecord`), which opens the record's existing edit form.
- *
- * ONE SHELL FOR EVERY KIND, so the seven pages cannot drift into seven layouts: the header (back
- * arrow, title, Update, Discuss), the loading and failure states, and a status chip. The body —
- * the field list, the media — is the page's own `children`, built from `recordFields.ts`.
- *
- * A failed load says which failure in words. A 404 here is the usual way a record reads as gone
- * (deleted, or not visible to this account), and "Not Found" — FastAPI's literal body — is not a
- * sentence a researcher can act on.
- */
 export function RecordViewPage<T extends { id: string; status?: RecordStatus | string | null }>({
   kind,
   id,
@@ -50,16 +36,12 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
 }: {
   kind: ViewableRecord;
   id: string;
-  /** The `GET` that returns this record in full, e.g. `/artisans/{id}`. */
   endpoint: string;
-  /** "artisan", "product record" — the word the failure and loading lines use. */
   noun: string;
   icon: ReactNode;
   description?: string;
   titleOf: (record: T) => string;
-  /** The comments-and-history record type, or omit where the kind has none. */
   collabType?: string;
-  /** Handle a failed load (true = handled, draw no error) — the artisan page follows a merge. */
   onLoadError?: (error: unknown) => boolean;
   children: (record: T) => ReactNode;
 }) {
@@ -67,7 +49,6 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
   const [record, setRecord] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [collabOpen, setCollabOpen] = useState(false);
-  // Through a ref, so a new callback each render does not refetch the record.
   const onLoadErrorRef = useRef(onLoadError);
   useEffect(() => {
     onLoadErrorRef.current = onLoadError;
@@ -91,8 +72,6 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
 
   const updateHref = recordUpdateHref(kind, id);
   const mayUpdate = Boolean(updateHref) && canUpdateRecord(user, kind);
-  // The server's block (2026-10-18), on the five kinds that have rules. Its pills open the edit form
-  // at the missing field for a reader who may update; for anyone else they are plain words.
   const completeness =
     record && isCompletenessKind(kind) ? ((record as { completeness?: CompletenessBlock | null }).completeness ?? null) : null;
 
@@ -142,11 +121,6 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
   );
 }
 
-/**
- * The record's fields as a label column and a value column. A `<dl>`, because that is what this is:
- * a list of terms and what they are, which a screen reader announces as pairs. `pre-line` keeps the
- * line breaks of a numbered Do's list or a long note; `wrap-break-word` keeps a bare URL inside it.
- */
 export function RecordFieldList({ title = "Details", rows }: { title?: string; rows: RecordFieldRow[] }) {
   return (
     <section className="panel overflow-hidden" aria-label={title}>
@@ -167,11 +141,6 @@ export function RecordFieldList({ title = "Details", rows }: { title?: string; r
   );
 }
 
-/**
- * Files already in hand on the record (a process's own clips, a step's captures) shown read-only:
- * preview, play, read the transcript, Download. The fetched equivalent for a record whose files are
- * listed by the media endpoint is `ExistingMedia readOnly`.
- */
 export function ReadOnlyMediaGallery({ title, items, empty }: { title: string; items: MediaFile[]; empty?: string }) {
   const [active, setActive] = useState<PreviewMedia | null>(null);
   if (items.length === 0) {

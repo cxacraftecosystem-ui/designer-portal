@@ -1,51 +1,5 @@
 "use client";
 
-/**
- * Report history, and a diff between two generated reports.
- *
- * WHY THIS SCREEN EXISTS. A report submitted to a ministry comes back for revision three or four
- * times. Every one of those files was already recorded — `DwReportExport` has carried the checksum,
- * the size, the page count, the template, the registry version and the timestamp of each, INCLUDING
- * the ones a phone produced with no network — and none of it was on screen anywhere. So a
- * reviewer's "did you update the cost sheet before you resubmitted?" had no answer: four files
- * existed, and nothing said what was different about them.
- *
- * A SIBLING OF THE REPORT PAGE, NOT PART OF IT. `../page.tsx` is about producing the NEXT file:
- * template, colour, transcripts, preview, download. This is about the files already produced. They
- * are read at different moments by people asking different questions, and merging them would bury
- * the record of four submissions under the controls for making a fifth.
- *
- * WHAT THE DIFF CAN AND CANNOT SAY IS THE SUBSTANCE OF THE FEATURE, and it is stated on screen
- * rather than left for a reader to infer. No snapshot of the stage data is kept at export time, so
- * `lib/reportDiff.ts` works from the only evidence there is — every stage row's createdAt /
- * updatedAt / deletedAt. That supports a genuinely strong claim in one direction ("no row of the
- * costing stage was written to between these two files, so both carry identical data — provably,
- * not probably") and refuses the other ("stage 15 was written to", and NOT which field, because
- * nothing stored can say). Read that file's header before changing anything here; the temptation
- * this screen has to resist is inventing a field-level diff, which would be a confident answer to
- * the exact question a ministry reviewer is asking.
- *
- * THE VERB IS "WRITTEN", NEVER "CHANGED", and that is not fussiness. A stage is saved whole:
- * `save_stage` updates every row the payload names without comparing it to what is stored, so
- * correcting one word stamps the entire stage. Only the negative direction — nothing was written —
- * supports the word "identical".
- *
- * COMPLETENESS IS SHOWN ONLY WHERE IT IS TRUE OF BOTH FILES. Today's percentage is today's. It is
- * printed against a past export only for stages proven untouched since that export — where today's
- * figure IS that file's figure — and withheld everywhere else. That is the same discipline
- * `market_analysis.py` follows when it declines to quantile four observations: a number that cannot
- * be supported is worse than a blank, because the number is what gets quoted.
- *
- * IT NEEDS A CONNECTION, and says so instead of failing at the click. The export table records
- * files made on other devices by other people, so unlike a stage form it cannot be served from this
- * browser's draft. What is offline-shaped about it is the COMPARING: the history arrives in one
- * request and every pair a designer flips between afterwards is computed here, with no further
- * round trip.
- *
- * NOTHING ON THIS SCREEN WRITES. There is no control that edits or removes an export row — the
- * checksum is what makes the record evidence, and evidence that can be tidied up is not evidence.
- */
-
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { FileClock, Smartphone, Server } from "lucide-react";
 
@@ -75,19 +29,11 @@ import {
 import { loadDraft } from "@/lib/designWorkshopStore";
 import { bytes, formatDateTime } from "@/lib/format";
 import { isUnreachable } from "@/lib/offline";
-// Same rule as the report page beside this, from the same module: the route param may be a local
-// draft id and `GET /report/history` only knows server ids.
 import { reportServerId } from "../reportTarget";
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Small presentational pieces
- * ──────────────────────────────────────────────────────────────────────────── */
 
 function Chip({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "warn" | "good" }) {
   const tones = {
     neutral: "bg-field-200 text-ink-900",
-    // Literal amber/success rungs: only 100 and 600/800 exist in this palette, and they do not
-    // invert. Inside a tinted chip that is the pair to use — never amber-50 or success-500.
     warn: "bg-amber-100 text-amber-800",
     good: "bg-success-100 text-success-600"
   } as const;
@@ -96,25 +42,11 @@ function Chip({ children, tone = "neutral" }: { children: React.ReactNode; tone?
   );
 }
 
-/**
- * The checksum, in full and selectable.
- *
- * SHOWN ENTIRE, not abbreviated to eight characters. It is the one field on this screen that
- * PROVES something — that the file in somebody's hand is this row and not the revision after it —
- * and a truncated hash cannot be compared against the output of `sha256sum` on a laptop in a
- * ministry office, which is the only way anybody ever checks one.
- */
 function Checksum({ value, onDevice }: { value: string | null; onDevice: boolean }) {
   if (!value) {
     return (
       <span className="text-xs text-ink-500">
         No checksum recorded.
-        {/* THE HANDSET DOES SEND ONE. `ReportScreen.kt` passes `checksumSha256` on every export it
-            records, so a phone-made row without a checksum was written by a build that predates
-            that — which is an old ROW, not a missing capability. The sentence has to say which,
-            because a designer who reads "the app cannot do this" stops expecting it to, and the
-            handset's own copy of this sentence (`DwReportHistoryScreen.kt`) already says the row is
-            old. Two clients describing one archive must not disagree about what the archive holds. */}
         {onDevice
           ? " Made by an older phone app."
           : ""}
@@ -128,10 +60,6 @@ function Checksum({ value, onDevice }: { value: string | null; onDevice: boolean
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The page
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export default function DesignWorkshopReportHistoryPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
 
@@ -140,31 +68,13 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
   const [templates, setTemplates] = useState<DwTemplate[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
-  /**
-   * True once the draft has been read and this workshop has no server record yet.
-   *
-   * There is nothing to be sorry about in this state: no file has been generated from a workshop the
-   * repository has never seen, because both writers are on the server. What there IS to avoid is the
-   * screen this page used to draw — a red "Record not found" produced by carrying the `dwlocal-…`
-   * route param into `GET /report/history`, which reads as the workshop itself having been lost.
-   */
   const [localOnly, setLocalOnly] = useState(false);
   const [leftId, setLeftId] = useState("");
   const [rightId, setRightId] = useState("");
 
   useEffect(() => {
-    // A one-shot mount effect, so a `cancelled` flag is the right race guard (a generation counter
-    // is for a list that refetches on filter changes; nothing here refetches).
     let cancelled = false;
     (async () => {
-      /*
-        THE SERVER'S ID FIRST, AND NOTHING IS ASKED OF THE SERVER WITHOUT ONE.
-
-        `loadDraft` matches either id, so this one read answers for both shapes of URL; a workshop
-        this browser has no draft for is an ordinary case (a colleague's, opened here for the first
-        time) and its route param is then already a server id. Only a `dwlocal-…` id with no
-        `remoteId` behind it has no server record at all, and that is the state below.
-      */
       const draft = await loadDraft(id);
       if (cancelled) return;
       const target = reportServerId(id, draft);
@@ -182,8 +92,6 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
         setHistory(loaded);
         setError(null);
 
-        // The newest two, oldest on the left — the comparison a designer opening this page is
-        // almost always making. With one export there is nothing to compare and the picker says so.
         const ordered = inGenerationOrder(loaded);
         if (ordered.length >= 2) {
           setLeftId(ordered[ordered.length - 2].id);
@@ -191,9 +99,6 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
         }
       } catch (err) {
         if (cancelled) return;
-        // `isUnreachable`, not `isTransient`: a repository that answered and then failed must not
-        // be reported as a missing connection, or the designer goes to look at their signal for a
-        // fault the server already named.
         if (isUnreachable(err)) setOffline(true);
         else setError(err instanceof Error ? err.message : "Unable to load the report history");
       }
@@ -204,18 +109,12 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
   }, [id]);
 
   useEffect(() => {
-    // The template NAMES, and nothing else. Fetched separately and allowed to fail on its own: a
-    // template list that will not load must not cost the designer the history, and the id is a
-    // legible fallback. It is not folded into the history payload for the same reason stage titles
-    // are not — every client already caches `/templates`, and a second copy of a name on this wire
-    // is a second thing to drift.
     let cancelled = false;
     (async () => {
       try {
         const loaded = await listReportTemplates();
         if (!cancelled) setTemplates(loaded);
       } catch {
-        /* The template id is printed instead — see `templateName`. */
       }
     })();
     return () => {
@@ -224,15 +123,6 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
   }, [id]);
 
   const ordered = useMemo(() => (history ? inGenerationOrder(history) : []), [history]);
-  /**
-   * Are the numbers on this screen the workshop's own, or this browser's positions inside a window
-   * the server may have cut?
-   *
-   * Read by every label that prints a generation number, so the caveat appears exactly when it is
-   * true and never when it is not. Announcing "of the 100 most recent" against a number the server
-   * computed would disclose a defect this payload no longer has, and a reader who believed it would
-   * stop trusting a number that is correct.
-   */
   const generationsAbsolute = useMemo(
     () => (history ? generationsAreAbsolute(history) : false),
     [history]
@@ -246,8 +136,6 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
   const stageTitle = useCallback(
     (stageKey: string) => {
       const stage = registry?.stages.find((s) => s.key === stageKey);
-      // The registry is the single declaration of what a stage is called, so an unknown key means
-      // this browser's registry is older than the row — say the raw key rather than invent a title.
       return stage ? `${stage.number}. ${stage.title}` : stageKey;
     },
     [registry]
@@ -268,9 +156,6 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
     [history, ordered]
   );
 
-  // Newest first, and numbered by `generationOf` rather than by a position in this array: the
-  // picker's "Generation 7" and the card's "Generation 7" are the same file being named twice, and
-  // one arithmetic has to produce both.
   const exportOptions = useMemo(
     () =>
       history
@@ -367,10 +252,6 @@ export default function DesignWorkshopReportHistoryPage({ params }: { params: Pr
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * One recorded export
- * ──────────────────────────────────────────────────────────────────────────── */
-
 function ExportCard({
   record,
   generation,
@@ -382,43 +263,15 @@ function ExportCard({
 }: {
   record: DwExportRecord;
   generation: number;
-  /**
-   * True when `generation` is the SERVER'S number — the file's place in the workshop's whole export
-   * record — rather than this browser's position inside the window it was sent.
-   *
-   * It decides whether the caveat below is printed at all. `_export_payload` counts the files
-   * nobody was sent as well as the ones they were, so where its number is present the hundred-file
-   * cap shortens the LISTING and does not touch the NUMBERING.
-   */
   generationIsAbsolute: boolean;
-  /**
-   * True when the server cut the window this row was listed in.
-   *
-   * `GET .../report/history` takes the NEWEST hundred and flags the overflow as `exportsTruncated`.
-   * Where the payload carries no `generation`, `inGenerationOrder` re-sorts THAT WINDOW oldest-first
-   * and the label is an index into it — so once the cap bites, "Generation 3" means "the third of
-   * the hundred listed", not the third file this workshop ever produced, off by exactly the number
-   * of files cut, which this page knows it does not know. Audit 2026-08-15 (LOW, frontend).
-   *
-   * The screen already discloses that files are missing, in two places. What it did not say is that
-   * the NUMBERS were relative to what is left, and a generation number is precisely the thing a
-   * designer quotes months later ("the cost sheet changed at generation 7") — a number that silently
-   * means something different from what it did last quarter is worse than no number. BOTH halves
-   * have to hold before that caveat is true, which is why it reads `!generationIsAbsolute && …`.
-   */
   windowTruncated: boolean;
   templateName: string;
   duplicates: number[];
-  /** Stages edited since this file was made — only computed for the newest, else null. */
   staleStages: number | null;
 }) {
   return (
     <article className="rounded-md border border-line-200 bg-surface-50 p-3.5">
       <div className="flex flex-wrap items-center gap-2">
-        {/* A generation number is a POSITION IN TIME, so a row that never recorded when it was
-            generated has none — and "Generation 0" would read as one. It is also the row no
-            comparison can include, which the wording says rather than leaving the reader to
-            discover it in the picker. */}
         <span className="font-medium text-ink-900">
           {generation > 0
             ? !generationIsAbsolute && windowTruncated
@@ -427,8 +280,6 @@ function ExportCard({
             : "Undated file — it cannot be compared"}
         </span>
         <Chip>{record.format}</Chip>
-        {/* Where the file came from is a fact about the archive, not trivia: a file a phone made
-            offline exists on exactly one device until somebody copies it off. */}
         <Chip tone={record.generatedOnDevice ? "warn" : "neutral"}>
           {record.generatedOnDevice ? (
             <span className="inline-flex items-center gap-1">
@@ -462,8 +313,6 @@ function ExportCard({
         </div>
         <div className="min-w-0">
           <dt className="field-label">Generated by</dt>
-          {/* Never substituted with the workshop's owner: `generatedBy` is SetNull, so a deleted
-              account means nobody is named rather than the wrong person being named. */}
           <dd className="truncate text-ink-700" title={record.generatedByName ?? undefined}>
             {record.generatedByName ?? "Account no longer exists"}
           </dd>
@@ -494,9 +343,6 @@ function ExportCard({
 
       {record.warnings ? (
         <details className="mt-2">
-          {/* The warnings never travel inside the document — an officer opening the .docx next month
-              must not find a note about what was missing on the day — so the record is the only
-              place they can still be read. */}
           <summary className="cursor-pointer text-xs font-medium text-ink-700">
             Warnings recorded when this file was made
           </summary>
@@ -506,10 +352,6 @@ function ExportCard({
     </article>
   );
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The comparison
- * ──────────────────────────────────────────────────────────────────────────── */
 
 function DiffPanel({
   history,
@@ -564,16 +406,6 @@ function DiffPanel({
       ) : (
         <>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {/* `advanceOnSelect={false}` on both: these filter the screen they sit on rather than
-                filling in a form field, and moving focus away from a control the designer is still
-                adjusting is wrong.
-
-                `searchable` on both because this list grows one row per export, forever: it is the
-                clearest case in the app of a list whose length is nobody's design decision. A
-                workshop that has generated seven files would have no filter box and the same
-                workshop next week would have one, and the thing a designer wants to do here — find
-                the file from the 14th among thirty stamped with dates and names — is exactly what
-                typing answers and scrolling does not. */}
             <FieldBlock label="Compare">
               <Dropdown
                 value={leftId}
@@ -602,17 +434,9 @@ function DiffPanel({
 
           {diff ? (
             <>
-              {/* "WRITTEN", NOT "CHANGED", and the distinction is the honest one rather than a
-                  fussy one: a stage is saved whole and every row in the payload is updated without
-                  being compared to what is stored, so one corrected word stamps the whole stage.
-                  The negative direction carries no such loophole, which is why it is the sentence
-                  allowed to say "identical". */}
               <p className="mt-4 text-sm leading-6 text-ink-700" data-testid="diff-summary">
                 <strong className="text-ink-900">
                   Generation {diff.earlierGeneration} → generation {diff.laterGeneration}
-                  {/* Same caveat as the card's, in the one other place these numbers are printed —
-                      see `ExportCard`'s `windowTruncated`. Two labels for one arithmetic must never
-                      disagree about how honest it is, so both read the same two facts. */}
                   {history.exportsTruncated && !generationsAreAbsolute(history)
                     ? " (of the 100 most recent)"
                     : ""}
@@ -628,11 +452,6 @@ function DiffPanel({
 
               <FileFacts diff={diff} templateName={templateName} />
 
-              {/* ASYMMETRIC ON PURPOSE, and the asymmetry is the honest part. `save_stage` stamps
-                  the workshop row on every stage save, so "written" cannot be told apart from an
-                  ordinary save and must not be reported as "the cover was edited" — that sentence
-                  would appear on almost every window and would be wrong on almost all of them.
-                  "Not written" is a genuine proof and is worth saying plainly. */}
               {diff.headerRowWritten === false ? (
                 <p className="mt-3 text-sm leading-6 text-ink-700" data-testid="header-verdict">
                   Cover details are unchanged.
@@ -698,14 +517,6 @@ function DiffPanel({
   );
 }
 
-/**
- * A completeness figure, printed ONLY where it is true of both files.
- *
- * Today's score is today's. It describes a past export only when nothing has been written to the stage
- * since that export was generated — and then it describes BOTH exports, exactly. Everywhere else it
- * is withheld rather than shown with a caveat, because a percentage next to a date is read as that
- * date's percentage no matter what the caveat says.
- */
 function StageCompleteness({
   stage,
   completeness
@@ -713,9 +524,6 @@ function StageCompleteness({
   stage: StageChange;
   completeness: DwReportHistory["completeness"];
 }) {
-  // Optional-chained deliberately: a server one deploy behind this client answers without
-  // `completeness` at all, and the honest result of that is a missing percentage, not a screen
-  // that throws on the whole history.
   const score = completeness?.[stage.stageKey];
   if (!score || !stage.currentReflectsBoth) return null;
   return (
@@ -725,7 +533,6 @@ function StageCompleteness({
   );
 }
 
-/** The facts that come from the export rows themselves rather than from the stage timestamps. */
 function FileFacts({ diff, templateName }: { diff: ReportDiff; templateName: (id: string) => string }) {
   const facts: React.ReactNode[] = [];
 
@@ -790,12 +597,6 @@ function FileFacts({ diff, templateName }: { diff: ReportDiff; templateName: (id
   );
 }
 
-/**
- * What this comparison cannot tell you.
- *
- * ON SCREEN AND NOT IN A COMMENT, because the reader of this panel is about to answer a ministry's
- * question from it. A limit nobody is told about is indistinguishable from a fact.
- */
 function Limits({ diff, history }: { diff: ReportDiff; history: DwReportHistory }) {
   return (
     <div className="mt-5 rounded-md bg-surface-50 p-3.5">
@@ -825,10 +626,6 @@ function Limits({ diff, history }: { diff: ReportDiff; history: DwReportHistory 
         ) : null}
         {history.exportsTruncated ? (
           <li>
-            {/* The numbers are the record's own once `_export_payload` sends them, so only the
-                LISTING is short. Saying the numbering is relative in that case would disclose a
-                defect this payload no longer has. `dwReportHistoryLimits` splits the same two
-                cases with the same two sentences. */}
             {generationsAreAbsolute(history)
               ? "Files older than the latest 100."
               : "Files older than the latest 100 (numbering counts only these)."}

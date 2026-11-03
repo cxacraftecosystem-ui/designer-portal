@@ -28,8 +28,6 @@ export default function EditProductPage() {
       {record ? (
         <div className="grid gap-6">
           <ProductForm initial={record} />
-          {/* The code for THIS product, drawn live. Stuck on the piece, it is what tells a later
-              photograph, measurement or market note which record it belongs to. */}
           <RecordCodeCard recordType="product" id={record.id} title={record.productName} />
           <FieldProvenance extraMetadata={record.extraMetadata} title="Product field contributions" />
         </div>

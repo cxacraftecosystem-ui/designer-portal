@@ -1,10 +1,3 @@
-/**
- * The Designer Repository's half of the top-bar scanner: the DPW decoders and the network calls that
- * `lib/scanDispatch.ts` (shared byte for byte with the Field Repository) is handed. Nothing here
- * decides an outcome or writes copy; it only answers the dispatcher's questions and runs the one
- * action the person pressed.
- */
-
 import { ApiError, apiFetch, buildQuery } from "@/lib/api";
 import { resolveArtisanCard } from "@/lib/artisanCardApi";
 import {
@@ -50,10 +43,6 @@ async function resolveCard(raw: string): Promise<CardAnswer> {
   }
 }
 
-/**
- * The title of a design workshop the reader cannot open yet, for "Ask to join {title}"
- * (`GET /design-workshop-access/preview`, owner decision D34). Null when the server does not name it.
- */
 async function scannedWorkshopTitle(code: string): Promise<string | null> {
   try {
     const answer = await apiFetch<{ title?: string }>(`/design-workshop-access/preview${buildQuery({ code })}`);
@@ -78,15 +67,12 @@ async function lookUpRecord(
   return { status: "found", label: answer.hit.label, detail: answer.hit.detail, href: answer.hit.href, external: answer.hit.external };
 }
 
-/** The live services for this portal. */
 export function scanServices(): ScanServices {
   return { portal: SCAN_PORTAL, codecs: SCAN_CODECS, resolveCard, lookUpRecord };
 }
 
-/** What pressing an outcome's button led to: a place to go, or a new outcome to show. */
 export type ScanFollowUp = { navigate: string; external?: boolean } | { outcome: ScanOutcome };
 
-/** Run the action the person pressed. Never throws: every failure is an outcome with a sentence. */
 export async function runScanAction(action: ScanAction): Promise<ScanFollowUp> {
   switch (action.type) {
     case "open":
@@ -122,7 +108,6 @@ export async function runScanAction(action: ScanAction): Promise<ScanFollowUp> {
       }
     }
     case "joinSession":
-      // A Field Repository session; the dispatcher refuses it here before an action exists.
       return { outcome: { kind: "REFUSED", title: SCAN_COPY.sessionElsewhere } };
   }
 }

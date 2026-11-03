@@ -8,7 +8,6 @@ import { RecordFieldList, RecordViewPage } from "@/components/records/RecordView
 import { productFields } from "@/components/records/recordFields";
 import type { ProductDocumentation } from "@/lib/types";
 
-/** One product record, read-only. Update (in the header) opens the form — see `RecordView.tsx`. */
 export default function ProductViewPage() {
   const { id } = useParams<{ id: string }>();
   return (

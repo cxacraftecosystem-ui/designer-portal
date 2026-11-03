@@ -1,34 +1,3 @@
-/**
- * The design-workshop API, typed — and the one place the field registry is cached.
- *
- * THE WHOLE POINT OF THIS FILE is that there is no per-stage form code anywhere in the web app.
- * `GET /api/design-workshops/schema` returns the registry that
- * `backend/app/services/stage_definitions.py` declares — 22 stages, 43 entities, 496 typed fields —
- * and every screen renders by walking `stage.entities -> entity.fields` and dispatching on
- * `field.type`. A field added to the registry appears on this client with no client change, which
- * is the only arrangement under which three surfaces (this form, the Android capture screens and
- * the report writer) can still agree about a field list two field seasons from now. Hand-writing
- * twenty-two forms would guarantee they drift, and the drift would be discovered as a blank cell in
- * a report already submitted to a ministry.
- *
- * Two shapes on this wire will trip a reader who assumes the rest of the repository's conventions:
- *
- * 1. **MONEY arrives as a JSON string, not a number.** `coerce_value` in `stage_schema.py` stores it
- *    as `f"{value:.2f}"` deliberately, so 1250.10 survives the JSON round trip instead of coming
- *    back as 1250.0999999999999 — the same reason Prisma hands every `Decimal` column over as a
- *    string. Every money-ish value is therefore typed `string | number | null`; read it with
- *    {@link readNumber} (which is `Number()` behind `Number.isFinite`) and seed an input with
- *    {@link inputValue} (which is `String()`). Typing one of these as `number` has emptied a
- *    dropdown twice in this repository, and the compiler cannot catch it because JSON is `any`.
- *
- * 2. **Report preview blocks are snake_case.** `_block_payload` in the route serialises the
- *    `ReportDocument` dataclasses with `dataclasses.asdict()` and does not rename anything, so the
- *    keys are `width_pct`, `info_rows`, `total_row`, `height_px` and so on — unlike every other
- *    endpoint in this API, which is camelCase because it is built from pydantic models. The types
- *    below spell them exactly as they arrive rather than "tidying" them, because a renamed key here
- *    would compile perfectly and render an empty block.
- */
-
 import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describeApiDetail } from "@/lib/api";
 import { prepareIdentityPhotograph } from "@/lib/identityCardImage";
 import { DW_PHOTO_RETENTION_DEFAULT, type DwPhotoRetention } from "@/lib/identityPhotoRetention";
@@ -39,27 +8,9 @@ import { isStoredRichTextEmpty, richSummary, type StoredRichDoc } from "@/lib/ri
 import type { PageResult } from "@/lib/types";
 import { exportFilename } from "@/lib/naming";
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The registry — mirrors app/services/stage_schema.py's `*_to_dict` serialisers.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Every capture type the registry can declare. The set is deliberately small — the backend's own
- * comment says a new one has to earn its place four times over (web form, Android Composable,
- * validator, report renderer) — so this union is expected to stay short, and `FieldInput` has a
- * branch for every member. A `switch` over it with no `default` is what makes the compiler point at
- * `FieldInput` the day a twenty-third type is added.
- */
 export type DwFieldType =
   | "TEXT"
   | "LONG_TEXT"
-  /**
-   * A structured document, never HTML — `backend/app/services/rich_text.py`, mirrored in the
-   * browser by `lib/richText.ts`. The stored value is `{"blocks":[…]}` and NOT a string, so every
-   * helper in this file that reads a value has a branch for it: {@link inputValue} returns "" (it
-   * has no single-line form), {@link isFilled} asks whether the document holds any TEXT, and
-   * {@link rowTitle} titles a row from its first line rather than from its JSON.
-   */
   | "RICH_TEXT"
   | "INT"
   | "DECIMAL"
@@ -82,63 +33,18 @@ export type DwFieldType =
   | "PHONE"
   | "EMAIL";
 
-/**
- * The prefix that marks a type token this build must NOT draw a working control for.
- *
- * WHY THE UNION IS NOT ENOUGH, AND WHY THIS LIVES HERE RATHER THAN IN `lib/customSections.ts`.
- * {@link DwFieldType} is closed and `FieldInput` switches over it with no `default`, which is what
- * makes the compiler point at that file the day a twenty-third registry type is added. But a
- * DESIGNER-DEFINED field's type is a string that arrived over the wire from a per-workshop
- * definition, and two of its cases cannot be served by the union at all:
- *
- *  - a token this build has never heard of, because the server moved on while this tab did not; and
- *  - a token this build knows PERFECTLY WELL and still must not draw — GEO, IMAGE, RICH_TEXT, REF.
- *    v1 admits none of them for a custom question, because five separate walkers translate a local
- *    media reference into a server id and every one of them enumerates the media fields OF THE ROW'S
- *    REGISTRY ENTITY, so a custom photograph syncs as a `dwlocal:` reference resolving to nothing:
- *    clean save, and the picture simply absent from the .docx.
- *
- * The second case is why "does `FieldInput` have a branch" is the wrong question and why a type
- * outside the twelve is re-tokenised through {@link unsupportedFieldType} before it ever reaches the
- * switch. The RAW TOKEN travels inside the new one so the read-only note can name it: a note that
- * will not say what the type was is a note a designer cannot report.
- *
- * It is declared beside the union rather than in the feature module because both halves of the
- * contract have to agree about one string — the writer of the token and the switch's `default:` arm
- * that reads it — and a prefix restated in two files is the shape of the wrong-key defect this
- * repository has already shipped twice.
- */
 export const UNSUPPORTED_FIELD_TYPE_PREFIX = "UNSUPPORTED:";
 
-/**
- * A type token that no `FieldInput` branch can match, carrying the real one for the note to print.
- *
- * Cast rather than widened, and the cast is the honest description of what is happening: this value
- * is deliberately NOT a member of the union, so that the exhaustive switch falls through to its
- * `default:` arm. Widening `DwFieldType` with `string` instead would silence the compiler at all 23
- * existing branches and lose the guarantee the closed union exists for.
- */
 export function unsupportedFieldType(raw: string): DwFieldType {
   return `${UNSUPPORTED_FIELD_TYPE_PREFIX}${raw}` as DwFieldType;
 }
 
-/** The type as it should be NAMED to a designer: the raw token, with any marker prefix stripped. */
 export function fieldTypeName(type: string): string {
   return type.startsWith(UNSUPPORTED_FIELD_TYPE_PREFIX)
     ? type.slice(UNSUPPORTED_FIELD_TYPE_PREFIX.length)
     : type;
 }
 
-/**
- * The three capture tiers from the source matrix.
- *
- * BASIC is the minimum a report needs and is the only tier a field may be `required` on — the
- * backend's `validate_registry` refuses the build otherwise, because a required STANDARD field
- * would make the completeness gate unsatisfiable in exactly the village without mains power that
- * the app was written for. ADVANCED is collapsed behind a disclosure here for the same reason: a
- * designer standing in a courtyard must be able to see the whole of what is actually required
- * without scrolling past forty optional boxes.
- */
 export type DwTier = "BASIC" | "STANDARD" | "ADVANCED";
 
 export type DwReportRole =
@@ -152,61 +58,14 @@ export type DwReportRole =
   | "BULLETS"
   | "HIDDEN";
 
-/**
- * The members of the server's `TextFormat` enum — see {@link DwField.format}.
- *
- * `PHONE_IN` and not `PHONE`: the rule is "+91 means exactly ten digits, any other dial code means
- * four to fourteen", which is a rule about India and is named for it, exactly as the enum registry
- * names `INDIAN_STATE`. A second country's rule is then a second member rather than a silent change
- * of meaning in this one.
- *
- * A WIDER TYPE THAN THE UNION IS DELIBERATE at the fetch boundary — the schema arrives as JSON, so
- * a server one release ahead can send a member this build has never heard of. That is not a type
- * error, it is a value the dispatch table has no entry for, and `fieldFormatError` answers it by
- * enforcing NOTHING rather than by guessing. See its note on why that is the safe direction.
- */
 export type DwTextFormat = "EMAIL" | "PHONE_IN" | "AADHAAR" | "PEHCHAN" | "PINCODE";
 
 export type DwCardinality = "SINGLETON" | "COLLECTION";
 
 export type DwEnumOption = { value: string; label: string };
 
-/**
- * THE CEILING A MULTI-VALUED FIELD IS ENFORCED AGAINST WHERE THE REGISTRY DECLARES NONE — 200.
- *
- * The server's own `DEFAULT_MAX_ITEMS` (`services/stage_schema.py`), copied here and into Android's
- * `DW_DEFAULT_MAX_ITEMS` because `field_to_dict` emits `maxItems` ONLY for a field that states one:
- * a client that reads the absence as no ceiling at all is doing the exact thing
- * docs/DESIGN_WORKSHOP.md:229-232 forbids in those words, and until 2026-08-26 both clients did it.
- *
- * WHAT THAT COSTS IS NOT ONE PHOTOGRAPH. `coerce_value` REFUSES an over-long array rather than
- * trimming it, and `save_stage` restores a refused key from the previous entry — so the designer who
- * attaches the 201st file does not lose the 201st file, they lose every file that gallery was about
- * to store, reported as one error against the field with all the uploading already done.
- *
- * IT IS ENFORCED AND NEVER PRINTED, and that split is the whole of the rule. The same paragraph
- * forbids printing a number the client did not read, because this figure is the server's to change
- * and a stated cap that is not the enforced cap is worse than no sentence at all. So the "up to N"
- * line under a gallery is drawn from {@link DwField.maxItems} alone, while the trim — and the
- * sentence naming the files it turned away, which still has to fire — run off this. A notice gated
- * on the declared cap while the trim ran off this one would turn a loud refusal into a silent drop,
- * which is the half of the rule that costs the designer.
- *
- * A COPY OF A NUMBER WITH NOTHING ASSERTING THE TWO AGREE, and that is survivable in exactly one
- * direction: `maxItems` is deliberately not part of `registry_version()`, so a client may be
- * enforcing a stale ceiling, and the server refuses what it will not hold either way. This only
- * stops a designer walking into that refusal.
- */
 export const DW_DEFAULT_MAX_ITEMS = 200;
 
-/**
- * One field descriptor.
- *
- * Everything after `required` is optional because `field_to_dict` emits only non-default keys — the
- * whole registry crosses the wire on every cold start and the empty strings are most of its bulk.
- * So `field.help` being undefined means "no help text", never "the server forgot"; nothing here may
- * treat an absent key as an error.
- */
 export type DwField = {
   key: string;
   label: string;
@@ -214,149 +73,29 @@ export type DwField = {
   tier: DwTier;
   required: boolean;
   help?: string;
-  /** Extra guidance behind the field's "i" disclosure — collapsed until asked for (DW-14). */
   details?: string;
   unit?: string;
-  /** Name of the shared list in the registry's `enums` map — present only for ENUM / MULTI_ENUM. */
   enum?: string;
-  /** The same list, inlined by the server so a form never has to join against `registry.enums`. */
   options?: DwEnumOption[];
-  /** For REF: "Artisan", "Craft", or another Dw entity's PascalCase model name. */
   refModel?: string;
-  /**
-   * For REF: how wide the picker's net is, as the SERVER declared it.
-   *
-   * Emitted for every ref field, defaulted rather than omitted (see `field_to_dict`), and sent
-   * straight back on `GET .../references` rather than being re-derived here. That round trip is the
-   * whole point: if the client supplied its own default, the two ends would each hold an opinion
-   * about how wide the artisan list should be, and the day they disagreed the picker would quietly
-   * widen — offering artisans from another cluster to a designer who believes they are looking at
-   * this one's roster, with nothing on screen saying so.
-   */
   refScope?: string;
-  /**
-   * For REF: the key of the field ON THE SAME RECORD whose value narrows this picker.
-   *
-   * This is the cascade. `existingProduct.productRef` carries `refFilterBy: "artisanRef"`, so the
-   * product dropdown on that row holds the products of the artisan chosen on that same row and
-   * nothing else. It is a sibling key, never a global one — two rows of the same collection are two
-   * different artisans and must offer two different product lists.
-   */
   refFilterBy?: string;
   maxLength?: number;
-  /**
-   * HOW MANY ENTRIES A MULTI-VALUED FIELD MAY HOLD — IMAGE_LIST, TAGS, MULTI_ENUM.
-   *
-   * Emitted by `field_to_dict` only when the registry declares one, so ABSENT MEANS "the server's
-   * own default" ({@link DW_DEFAULT_MAX_ITEMS}, 200) and NOT "unbounded". That distinction cuts the
-   * two ways a client can get this wrong, and it must obey both halves: the absence is ENFORCED as
-   * 200, because reading it as no ceiling at all is what walks a designer into a refusal; and the
-   * number is never PRINTED where it was not declared, because a cap drawn on screen has to be the
-   * cap that will be enforced and 200 is the server's business to change. Only two of the registry's
-   * 20 IMAGE_LIST fields declare one (the motif pair, 20 each) and no TAGS or MULTI_ENUM field
-   * does, so for almost every multi-valued box on screen the ceiling is felt and not stated.
-   *
-   * ── WHY IT HAS TO BE READ HERE AT ALL, WHICH IT WAS NOT UNTIL 2026-08-25 ──────────────────────
-   *
-   * `coerce_value` REFUSES an over-long array rather than trimming it — deliberately, because
-   * silently keeping the first N of a list the client believes it stored is the shape of failure
-   * that module refuses everywhere ("the designer is told 'Stage saved' and the photographs are
-   * gone"). But neither client read this key, so the refusal was the ONLY thing enforcing it: a
-   * designer could attach twenty-five photographs to a twenty-photograph gallery, watch every one
-   * of them upload, press Save, and be told the field was rejected — with the work already done and
-   * no way to know which five to drop except by counting.
-   *
-   * So the cap is now enforced BEFORE the picker — the declared one where a field states it, the
-   * server's default where it does not — and whatever the ceiling turned away is NAMED either way,
-   * which is rule 10 of the frontend contract (every cap, truncation or skipped row must say so on
-   * screen). Only the CEILING ITSELF is printed conditionally, for the reason above. Reading the key
-   * and stating nothing was the 2026-08-25 half of this; enforcing its absence was the 2026-08-26
-   * half. The server's refusal stays exactly as it was and is still the authority; this only stops a
-   * designer walking into it.
-   */
   maxItems?: number;
-  /**
-   * THE SERVER WILL KEEP ONLY THE MASK OF AN IDENTITY NUMBER HERE, WHATEVER THIS FORM POSTS.
-   *
-   * `coerce_value` replaces this field's value with `mask_aadhaar(...)` on every save — "XXXX XXXX
-   * 9012" — so a box that says nothing about it is a box that takes twelve digits, tells the
-   * designer they were kept, and comes back four. Declared on `participant.aadhaarNumber` and
-   * nothing else today: the owner decided on 2026-08-24 that both of an artisan's identity numbers
-   * cross into a design report masked to their last four digits, and this flag is what makes that
-   * true of the COLUMN rather than only of the value hydration wrote. The long form is above the
-   * field in the server's `services/stage_definitions.py`.
-   *
-   * READ, NOT INFERRED FROM THE KEY. `FieldInput` says it on the box (see the TEXT branch) and
-   * Android masks at the point of capture, both off this one flag, so a field that gains or loses
-   * it needs no client change — which is why it is also part of `registry_version()` and therefore
-   * invalidates cached drafts when it moves.
-   */
   storeMasked?: boolean;
-  /**
-   * THE SHAPE THIS FIELD'S TEXT HAS TO HAVE, AS THE SERVER DECLARED IT — read, never inferred.
-   *
-   * `coerce_value` enforces it in the scalar-text arm, between the `maxLength` check and the
-   * `storeMasked` mask, and REFUSES a value that does not match rather than storing it. So this is
-   * the only key on `DwField` that tells the browser, before a round trip, that a box will not
-   * accept what is being typed into it.
-   *
-   * ── WHY A DECLARATION AND NOT A CHECK IN `FieldInput` ──────────────────────────────────────────
-   *
-   * Because the box that needed the check is not the box the validators were attached to.
-   * `StageRecordEmbed` mounts the real `ArtisanForm` for a participant row, so every record-page
-   * validator is present and working two inches away — and `splitMirroredFields` ALSO draws a
-   * second, editable box for the same fact, which is the copy `report_builder` prints. Both boxes
-   * held one artisan's email address; only one of them was governed; the ministry got the other.
-   * A rule declared on the field reaches both boxes, this client, the handset, and every direct API
-   * caller, and — because `validate_entry` re-coerces every field on every save — it also starts
-   * refusing the malformed values already sitting in `DwStageEntry.data`. A client-side check
-   * cannot reach one stored byte.
-   *
-   * ── IT IS PART OF `registry_version()`, SO IT INVALIDATES CACHED DRAFTS ───────────────────────
-   *
-   * Same reason as `storeMasked` and `derivedKind`: a phone with no signal that does not know a
-   * field has GAINED a format goes on accepting values the server will now refuse, and the designer
-   * finds out a fortnight later when the sync lands. Behaviour goes into the version; labels do not.
-   *
-   * The values are the members of the server's `TextFormat` — "EMAIL", "PHONE_IN", "AADHAAR",
-   * "PEHCHAN", "PINCODE" — and the key is ABSENT when the field declares none (`field_to_dict`
-   * emits only non-default keys). An unrecognised value must not blank the box or block the save;
-   * see `fieldFormatError` in `components/designworkshop/stageFieldFormats.ts` for what a client one
-   * release behind does with a format it has never heard of, and why that direction is the safe one.
-   */
   format?: DwTextFormat;
   minValue?: number;
   maxValue?: number;
   reportRole?: DwReportRole;
-  /** How this field computes itself when left blank, and the field keys it computes from. */
-  /*
-    KEEP IN STEP WITH `derive_value` IN `stage_schema.py`. A kind the server declares and this union
-    omits is not a type error at the fetch boundary — JSON is `any` — it is a SILENTLY DEAD BRANCH:
-    `lib/derivedFields.ts` stops computing that kind, the field stays blank as the designer types,
-    and the value only appears after a save round trip. That is exactly what happened to `SUM`, which
-    the registry declares for `costSheet.totalCost`, so a cost sheet's total did not add itself up in
-    the browser while every other derived field did.
-  */
   derivedKind?: "DAYS_BETWEEN" | "PRODUCT" | "SUM";
   derivedFrom?: string[];
-  /** How a NEW row numbers this field: a prefix ("S" → "S-01") or "#" for 1, 2, 3. See `lib/autoNumber`. */
   autoNumber?: string;
-  /** Number within the rows sharing this sibling's value (iterations per prototype). */
   autoNumberWithin?: string;
-  /** A date a new row takes from the workshop's start date and this sibling's day number. */
   autoDateFromDay?: string;
-  /** A count the server stores on save, drawn read-only. See `lib/stageComputed`. */
   computedKind?: "ROSTER_COUNT" | "ROSTER_WOMEN" | "ATTENDANCE_DAYS" | "ROSTER_COMPLETED" | "SURVEY_RESPONSES";
-  /** Drawn by a dedicated control, never as a box. `ATTENDANCE`: stage 3's daily tick-list. */
   widget?: string;
-  /** One-tap carries from the chosen in-workshop record: `fill` copies into blanks, `hint` is shown only. */
   refSuggest?: { fill: Record<string, string>; hint: Record<string, string> };
   columnWidthPct?: number;
-  /**
-   * This field is the caption of that media field. It must be rendered directly underneath its
-   * target and NEVER as a separate input: a caption box floating three fields away from the photo
-   * it describes gets filled in about the wrong photo, and the report then prints the mismatch.
-   */
   captionFor?: string;
   deprecated?: boolean;
   replacedBy?: string;
@@ -369,7 +108,6 @@ export type DwEntity = {
   title: string;
   description: string;
   parent: string;
-  /** Which field titles a row in a collection list. May be "" — see {@link rowTitle}. */
   labelField: string;
   fields: DwField[];
 };
@@ -380,50 +118,22 @@ export type DwStage = {
   title: string;
   purpose: string;
   notes: string;
-  /** The source document's reviewer marked this stage as possibly droppable. Say so on screen. */
   optionalStage: boolean;
   entities: DwEntity[];
 };
 
 export type DwRegistry = {
-  /** A content digest of every key, type and tier. Insensitive to labels — see `registry_version`. */
   version: string;
   enums: Record<string, DwEnumOption[]>;
   stages: DwStage[];
 };
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Stored values
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type DwGeoValue = { lat: number; lon: number; accuracy?: number };
 
-/**
- * One stored answer.
- *
- * `string` covers TEXT through DATE/TIME **and MONEY** (see the file header). `number` covers INT,
- * DECIMAL and PERCENT. `string[]` covers MULTI_ENUM, TAGS and IMAGE_LIST. Media fields store a
- * media id, not a URL — `media_resolver` on the server looks the row up by id, and a client that
- * stored a presigned URL here would write a value that expires.
- */
 export type DwValue = string | number | boolean | string[] | DwGeoValue | StoredRichDoc | null;
 
 export type DwEntryData = Record<string, DwValue | undefined>;
 
-/**
- * A row of a COLLECTION entity as the server hands it back.
- *
- * The three underscore-prefixed keys are added by `_stages_payload` and are NOT registry fields:
- * `_entryId` is the row's database id, `_ordinal` is its position, and `_clientKey` is the
- * idempotency key that lets a re-sent create match an existing row instead of duplicating it.
- *
- * `_entryId` and `_ordinal` travel as their own fields on the save envelope and must be stripped
- * out of `data`; `_clientKey` must be LEFT IN, because `save_stage` reads it out of `data` itself
- * (`entry.data.get("_clientKey")`) and matches on `(entityKey, clientKey)`. Strip that one and a
- * retried save after a dropped connection creates a second copy of the row. {@link entryDataOf}
- * draws exactly that line; the server explicitly excludes every underscore key from `droppedKeys`,
- * so leaving it in costs nothing.
- */
 export type DwRow = DwEntryData & {
   _entryId?: string;
   _ordinal?: number;
@@ -438,38 +148,12 @@ export type DwStageCompleteness = {
   requiredFilled: number;
   optionalTotal: number;
   optionalFilled: number;
-  /**
-   * Progress across BASIC-tier fields only. A stage with no required fields at all reads 100, not
-   * 0 — dividing by zero to decide whether a designer may submit is how a stage becomes
-   * permanently unsubmittable. Do not "fix" a 100% on an empty stage 22.
-   */
   percent: number;
   isComplete: boolean;
   collectionCounts: Record<string, number>;
-  /** Labels of the unfilled required fields, de-duplicated, in declaration order. */
   missing: string[];
 };
 
-/**
- * Who last set one field of one stage entry, as the server records it.
- *
- * `source` is the whole point and has two values:
- *
- * - `"reference"` — the value was COPIED onto this row from a shared canonical record when the
- *   designer picked it. `by` is then THAT RECORD's author — a researcher who may never have opened
- *   this workshop — and `refModel`/`refId`/`refKey` name the row and column it came from. This is
- *   "the provenance stays with the original author", rendered.
- * - `"designer"` — somebody working on this workshop typed or changed it, and `by` is them.
- *
- * Widened to `string` rather than a union of those two on purpose: a server one release ahead may
- * name a third source, and narrowing it here would make a build error out of a payload the API is
- * entitled to send. Compare against the constants and fall through to a neutral rendering.
- *
- * `byName` is resolved on read, so a researcher who changes their display name is shown under their
- * current one. It is null when the account has since been deleted — the stamp keeps its `by` id,
- * because "attributed to somebody no longer on record" is more useful than dropping the attribution
- * altogether, and far more honest than printing a cuid.
- */
 export type DwFieldStamp = {
   by?: string | null;
   byName?: string | null;
@@ -478,19 +162,9 @@ export type DwFieldStamp = {
   refModel?: string | null;
   refId?: string | null;
   refKey?: string | null;
-  /** C9: set while `source === "copied"` — the earlier workshop this text was copied from. */
   copiedFrom?: { workshopId: string; title: string } | null;
 };
 
-/**
- * One stage's provenance, mirroring the three data buckets of `DwStageData`.
- *
- * `collections` is keyed by entity and then BY ENTRY ID, never by array position. The readers of
- * this data sort their rows differently — `_stages_payload` sorts by `_ordinal` after grouping, the
- * report builder sorts before, the handset sorts its own draft — so a positional array would be
- * misaligned on whichever of them disagreed, and the failure it produces is one participant's edits
- * shown against another participant's name in the table that proves who attended.
- */
 export type DwStageProvenance = {
   singleton?: Record<string, DwFieldStamp>;
   collections?: Record<string, Record<string, Record<string, DwFieldStamp>>>;
@@ -500,58 +174,11 @@ export type DwStageProvenance = {
 export type DwStageData = {
   singleton: DwEntryData;
   collections: Record<string, DwRow[]>;
-  /**
-   * The answers to this workshop's own designer-defined questions for this stage.
-   *
-   * A THIRD SIBLING KEY AND NOT A NESTED OBJECT INSIDE `singleton`, because that is what
-   * `_stages_payload` sends: the `_custom` row is a `DwStageEntry` of its own, one per (workshop,
-   * stage), and the route gives it its own key precisely so it does not fall to the collection arm
-   * and come back as `collections["_custom"]` with `_entryId` and `_ordinal` injected into it — a
-   * phantom repeating entity on every stage that has custom answers.
-   *
-   * Optional because eight of the twenty-two stages send no such row for most workshops, and because
-   * a server that predates the feature sends none at all. Absent means "no custom answers here",
-   * never "the server forgot".
-   */
   custom?: DwEntryData;
-  /**
-   * WHO LAST SET EACH FIELD of the three buckets above — `_stages_payload`'s fourth sibling key.
-   *
-   * A stage entry holds two kinds of value that are indistinguishable once stored: what a designer
-   * typed, and what the reference picker COPIED off a shared record. `hydrate_entries` copies 108
-   * field-pairs — an artisan's name, village, phone, do's and don'ts — the moment the artisan is
-   * chosen, so a participant row on screen mixes one researcher's fieldwork with two designers'
-   * corrections and says nothing about which is which. This is the answer.
-   *
-   * READ-ONLY ON THE CLIENT. The server recomputes the whole map on every save from the values
-   * themselves (`entry_provenance.merge_entry_provenance`) and ignores anything a client sends: a
-   * stamp a client can set is a stamp a client can forge, and this one names a researcher who is
-   * not in the room. Do not put it in a save body.
-   *
-   * A SIBLING KEY AND NEVER NESTED INSIDE THE DATA, for exactly the reason `custom` is one: a key
-   * inside `singleton` that the registry does not declare comes back in `droppedKeys` on every
-   * save — the one registry-drift signal this repository has.
-   *
-   * Optional, and an absent entry means "nobody recorded who set this", never "the server forgot".
-   * Rows written before the column existed are deliberately NOT backfilled; see
-   * `backend/app/services/entry_provenance.py` for why inventing an author would be worse.
-   */
   provenance?: DwStageProvenance;
   completeness?: DwStageCompleteness | null;
-  /**
-   * The digest of the custom definition the score beside it was computed under.
-   *
-   * CARRIED BESIDE THE SCORE, and the pairing is the point rather than a convenience — the route's
-   * own comment says so. A client holding an older definition, or none, would otherwise show the
-   * server's higher `requiredTotal` for a stage it has never touched and its own lower one for a
-   * stage it has, which is two arithmetics in one list with nothing on screen to say why.
-   */
   customSchemaVersion?: string;
 };
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The workshop header
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export type DwStatus =
   | "DRAFT"
@@ -563,51 +190,17 @@ export type DwStatus =
   | "APPROVED"
   | "ARCHIVED";
 
-/**
- * **THE TRANSITION GRAPH, MIRRORED FROM THE SERVER — and the server is the authority.**
- *
- * `backend/app/schemas/design_workshop_review_loop.py::LEGAL_TRANSITIONS` is the same table and
- * `update_design_workshop` enforces it; this copy exists so the record page can DERIVE its buttons
- * instead of listing them. A button offering a status the server refuses, and a status the server
- * allows with no button for it, are the two halves of the same bug, and a hand-written list of
- * controls produces one or the other within a release.
- *
- * **THE CONSUMER IS `actionsFor` IN `app/(protected)/design-workshops/[id]/page.tsx`, AND IT ONLY
- * BECAME ONE ON 2026-09-14.** For one day these three exports were dead: the record page's own
- * docstring said every button was checked against them while `actionsFor` was a hand-written switch,
- * so the sentence that made this table worth maintaining was the sentence that was false. If a
- * future change makes this the only reference to them again, that is not tidiness — it is the mirror
- * going back to being a promise, and the claim in that docstring has to come out in the same edit.
- *
- * Until 2026-09-13 there was nothing to mirror: any status could follow any other, and the
- * confirmation dialog on the record page said so out loud.
- */
 export const DW_LEGAL_TRANSITIONS: Record<DwStatus, DwStatus[]> = {
   DRAFT: ["IN_PROGRESS", "COMPLETE", "PRE_SUBMISSION", "ARCHIVED"],
   IN_PROGRESS: ["COMPLETE", "PRE_SUBMISSION", "ARCHIVED"],
   COMPLETE: ["IN_PROGRESS", "PRE_SUBMISSION", "ARCHIVED"],
   PRE_SUBMISSION: ["IN_PROGRESS", "NEEDS_REVISION", "APPROVED"],
   NEEDS_REVISION: ["IN_PROGRESS", "PRE_SUBMISSION"],
-  // NEEDS_REVISION here is the Ministry Admin RETURNING a report that was handed on to the office —
-  // a decision, so it is in DW_DECISION_EDGES below and never a button on the designer's card. The
-  // other three are the legacy rows' way back; a handed-on row may take none of them (see
-  // `dwPatchableFrom`'s `handedOn`).
   SUBMITTED: ["IN_PROGRESS", "PRE_SUBMISSION", "ARCHIVED", "NEEDS_REVISION"],
-  // Both of APPROVED's edges are decisions, so a header edit may make neither. That is why
-  // `noActionsReason` on the record page exists: an empty button row reads as a broken page.
   APPROVED: ["SUBMITTED", "NEEDS_REVISION"],
   ARCHIVED: ["IN_PROGRESS", "PRE_SUBMISSION"]
 };
 
-/**
- * The five edges a DECISION ROUTE owns, which `PATCH /design-workshops/{id}` answers 422 to.
- *
- * Sending a report back, approving it, withdrawing an approval, handing it on to the office and
- * returning a handed-on report each write an audit row in the same transaction as the status. A
- * status change with no audit entry is a decision that appears to have made itself, so none of these
- * is a button on the designer's card — not even a disabled one, which would be a control that cannot
- * ever work. The Ministry Admin takes the last four on Reports to approve.
- */
 export const DW_DECISION_EDGES: ReadonlyArray<readonly [DwStatus, DwStatus]> = [
   ["PRE_SUBMISSION", "NEEDS_REVISION"],
   ["PRE_SUBMISSION", "APPROVED"],
@@ -616,15 +209,6 @@ export const DW_DECISION_EDGES: ReadonlyArray<readonly [DwStatus, DwStatus]> = [
   ["SUBMITTED", "NEEDS_REVISION"]
 ];
 
-/**
- * The statuses a HEADER EDIT may set from here — the graph less the decision edges.
- *
- * `handedOn` IS THE ROW'S FACT AND NOT THE STATUS'S. A SUBMITTED row the Ministry Admin handed on to
- * the office (`handedOnAt` set) accepts no header edit at all — reopening it, handing it in again or
- * archiving it would take an approved report back into editing with no audit entry, the laundering
- * path the server refuses. A SUBMITTED row from before approvals existed (`handedOnAt` null) keeps
- * its way back. Optional so every existing caller reads the legacy answer unchanged.
- */
 export function dwPatchableFrom(status: string, options?: { handedOn?: boolean }): DwStatus[] {
   if (options?.handedOn && status === "SUBMITTED") return [];
   const from = DW_LEGAL_TRANSITIONS[status as DwStatus];
@@ -634,49 +218,27 @@ export function dwPatchableFrom(status: string, options?: { handedOn?: boolean }
   );
 }
 
-/**
- * The two sentences the server refuses every content write with while a report is signed off,
- * word for word — so the banner a screen draws before the press and the 403 that would answer it
- * say the same thing.
- */
 export const DW_FROZEN_APPROVED =
   "Approved and locked. To change it, ask the Ministry Admin to withdraw the approval.";
 export const DW_FROZEN_HANDED_ON =
   "Handed on to the office and locked. To change it, ask the Ministry Admin to return it.";
 
-/**
- * IS THIS REPORT SIGNED OFF, AND SO NO LONGER WRITABLE? APPROVED, or a SUBMITTED row that was handed
- * on (`handedOnAt` set). A legacy SUBMITTED row — handed in before approvals existed — is not.
- *
- * Takes the two facts rather than a summary so the offline draft header (which carries `status` and,
- * once a server read has reached it, `handedOnAt`) can ask it too. An unknown status is not frozen:
- * the server is the authority, and its 403 says so if this device is behind.
- */
 export function dwIsFrozen(row: { status?: string | null; handedOnAt?: string | null }): boolean {
   const status = String(row.status ?? "").trim().toUpperCase();
   return status === "APPROVED" || (status === "SUBMITTED" && Boolean(row.handedOnAt));
 }
 
-/** The sentence for a frozen report, or null when it is writable. See {@link dwIsFrozen}. */
 export function dwFrozenReason(row: { status?: string | null; handedOnAt?: string | null }): string | null {
   if (!dwIsFrozen(row)) return null;
   return String(row.status ?? "").trim().toUpperCase() === "APPROVED" ? DW_FROZEN_APPROVED : DW_FROZEN_HANDED_ON;
 }
 
-/**
- * The list row. Everything from `workshopCode` down is DENORMALISED from stage 1 by
- * `promoted_values()` and is never written by hand, so it is null until stage 1 has been saved —
- * a freshly created workshop legitimately shows a title and nothing else.
- */
 export type DwSummary = {
   id: string;
   title: string;
   templateId: string;
   status: DwStatus | string;
   workshopCode: string | null;
-  /** A `WORKSHOP_KIND` token, or null for a workshop opened before the column existed — which means
-   *  "not stated" and never a kind. Every reader must treat it that way; see the column's own note
-   *  in `schema.prisma`. */
   workshopKind: string | null;
   scheme: string | null;
   craftName: string | null;
@@ -691,83 +253,17 @@ export type DwSummary = {
   sponsor: string | null;
   notes: string | null;
   workshopId: string | null;
-  /**
-   * MAY THIS WORKSHOP'S MATERIAL BE SENT OUT TO A PROVIDER — the artisan's own answer, on record.
-   *
-   * ── IT HAS BEEN ON THE WIRE ALL ALONG AND THIS CLIENT DID NOT DECODE IT ────────────────────────
-   * `dictation_consent.consent_keys` is spread into `workshop_summary`, so these three arrive on the
-   * LIST and on the single read. The web carried none of them and had no screen that could record
-   * one, while Android has had both since the consent landed — so on the web every server dictation
-   * and every AI verb refused with a 409 whose next move is *"Open the workshop's own screen and
-   * record the artisan's answer to that question"*, and there was no such screen to open. A refusal
-   * that names a control which does not exist is worse than the capability being absent.
-   *
-   * ── THE THREE STATES ARE A STATE MACHINE AND NOT A BOOLEAN ─────────────────────────────────────
-   * `NOT_RECORDED` is what a workshop says before anybody has been asked. `REFUSED` is an answer
-   * somebody gave. Both close the gate and they are NOT the same sentence: one is answered by asking
-   * the artisan, and telling somebody to go and ask again when the answer is already on record is
-   * the sort of instruction that teaches a designer to stop reading these messages.
-   *
-   * Widened with `string` for the reason `DwStatus` is: it arrives through `_enum_str`, and a server
-   * one release ahead can legitimately send a value this build has never heard of. Never null —
-   * `consent_of` fails closed to `NOT_RECORDED`, so a client renders a state rather than inferring
-   * one from an absence.
-   */
   dictationConsent: "NOT_RECORDED" | "GRANTED" | "REFUSED" | string;
-  /** When the ARTISAN answered — the courtyard moment, which can precede the sync by a fortnight. */
   dictationConsentAt: string | null;
-  /** A user id and NOT a name; the LIST resolves no accounts. See {@link DwDetail.dictationConsentByName}. */
   dictationConsentById: string | null;
   createdById: string;
   createdAt: string | null;
   updatedAt: string | null;
   deletedAt: string | null;
-  /**
-   * THE PRE-SUBMISSION LOOP: THE CACHE OF THE LATEST DECISION, and the count of hand-ins.
-   *
-   * **OPTIONAL HERE AND REQUIRED ON `DwDetail`, AND THE ASYMMETRY IS A FACT ABOUT THIS TYPE RATHER
-   * THAN A HEDGE.** `workshop_summary` always sends all four, on the list row as well as the single
-   * read — so on anything that came off the wire they are always present, which is why `DwDetail`
-   * below re-declares them as required and why a screen reading a server payload can rely on them.
-   *
-   * But `DwSummary` is ALSO the shape two local constructions produce: `draftSummary` in
-   * `lib/designWorkshopStore.ts` and `draftHeader` on the record page both build one out of the
-   * IndexedDB draft, whose header record holds ten columns and has never held these. A required key
-   * here would therefore not mean "the server always sends it" — it would mean "the offline store
-   * must invent it", and the value it would have to invent is exactly the misleading one: a
-   * `submissionRound: 0` on a report that has been handed in three times, written by a device that
-   * simply does not know.
-   *
-   * SO THE RULE FOR A READER IS: absent means THIS VALUE CAME FROM THIS DEVICE'S DRAFT, not "never
-   * handed in". Anything that needs the answer reads it from the single-record payload, where it is
-   * required.
-   *
-   * `reviewNotes` IS A CACHE AND NOT THE RECORD. It is the LATEST sentence and it is CLEARED the
-   * moment the report is handed back in, so a "what was sent back" panel built from it shows one
-   * line during a review and nothing at all afterwards. The register is
-   * {@link DwDetail.inspectionFeedback}, which the two detail reads carry and the list deliberately
-   * does not.
-   *
-   * `reviewedById` IS AN ID AND NOT A NAME. The list resolves no accounts; the feedback rows carry
-   * `actorName`, which is where a screen gets a name from.
-   */
   reviewNotes?: string | null;
   reviewedById?: string | null;
   reviewedAt?: string | null;
-  /** How many times this report has been handed in. Zero means never — true of every workshop that
-   *  predates the column, and never sent by a client: the server counts it. */
   submissionRound?: number;
-  /**
-   * THE SIGN-OFF, AS IDS AND MOMENTS. The Ministry Admin's approval (`approvedById`, `approvedAt`, and
-   * the submission round it was given in) and its hand-on to the office (who, when, to which office,
-   * and which exported file it was). Names are never on a summary — the single reads resolve
-   * `approvedByName` and `handedOnByName` — for `reviewedById`'s reason above.
-   *
-   * OPTIONAL FOR THE REASON THE FOUR ABOVE ARE: a summary built from this device's draft does not carry
-   * them, and absent there means "this device does not know", never "not approved". `handedOnAt` set is
-   * also what tells a report handed on to the office from a SUBMITTED row written before approvals
-   * existed; see {@link dwIsFrozen}.
-   */
   approvedById?: string | null;
   approvedAt?: string | null;
   approvedRound?: number | null;
@@ -775,61 +271,19 @@ export type DwSummary = {
   handedOnAt?: string | null;
   handedOnTo?: string | null;
   handedOnExportId?: string | null;
-  /** When the report last entered Pre-submission — how long it has been waiting for a decision. */
   lastHandedInAt?: string | null;
-  /**
-   * WHO DELETED IT — **on the trash listing alone**, and optional for that reason rather than as a
-   * hedge against an older server.
-   *
-   * `workshop_summary` names neither of these: the pointer is null on every live workshop, so
-   * putting it on the dict every list and every single read goes through would add a key that means
-   * nothing anywhere except the one listing that can contain a deleted row — and resolving the NAME
-   * there would be an account lookup per row on the page every designer loads. The route adds both
-   * to the rows of `deletedOnly`/`includeDeleted` in one batched query. Absent everywhere else.
-   *
-   * A NAME CAN BE NULL WITH AN ID PRESENT, and it is not an error: the column is `onDelete: SetNull`
-   * against `User`, so a pointer outlives the account it named. Render it as "an account no longer
-   * on record" — never as the workshop's creator, who did not delete it. See `deletedByLabel`.
-   */
   deletedById?: string | null;
   deletedByName?: string | null;
 };
 
-/**
- * ONE CORRECTION SUGGESTION, as `feedback_payload` sends it — eleven keys, and they are the contract.
- *
- * The Kotlin mirror is `DwInspectionFeedbackDto`, and the server's own test asserts this exact key
- * set, so a field added on one side and not the others is caught there rather than by a screen that
- * renders nothing.
- *
- * `actorName` CAN BE NULL AND THAT IS A REAL STATE, not a loading one: the account relation is
- * Restrict so the officer cannot have been deleted, but a name column can be blank. Print "an
- * officer no longer named" — never the workshop's own designer, who did not write it.
- *
- * BOTH MOMENTS ARE CARRIED. `recordedAt` is what the DEVICE said and is null when the suggestion
- * was filed straight against the server; `createdAt` is when the server heard it.
- */
 export type DwInspectionFeedback = {
   id: string;
   designWorkshopId: string;
-  /** The submission cycle this suggestion was filed against. Copied at write time, never recomputed,
-   *  so "what was asked for in round 2" is still answerable after round 5. */
   round: number;
-  /** A `StageSpec.key`, or null for a suggestion about the report as a whole — which is the common
-   *  case and is a real answer rather than a missing one. */
   stageKey: string | null;
-  /** A `FieldSpec.key` inside that stage, or null. NOT validated by the server: an officer may name
-   *  a field a client one release ahead is showing. */
   fieldKey: string | null;
   note: string;
-  /** True for the one suggestion that moved the report to Needs revision. */
   sentBack: boolean;
-  /**
-   * True when the sentence is the Ministry Admin's rather than an inspecting officer's — a report sent
-   * back without being approved, an approval withdrawn, or a report returned after it was handed on.
-   * The twelfth key; optional so a server that predates it reads as an officer's row, which is what
-   * every row it can hold is.
-   */
   byApprovingAuthority?: boolean;
   actorId: string;
   actorName: string | null;
@@ -837,17 +291,8 @@ export type DwInspectionFeedback = {
   createdAt: string | null;
 };
 
-/** What one decision on a report was, as the server decodes it off the audit row. */
 export type DwDecisionKind = "APPROVED" | "APPROVAL_WITHDRAWN" | "RETURNED" | "SENT_BACK" | "HANDED_ON";
 
-/**
- * ONE DECISION ON THE REPORT — an inspector's send-back, or one of the Ministry Admin's: an approval,
- * a return without approving, a withdrawn approval, a hand-on to the office. Newest first on the wire.
- *
- * `kind` is widened with `string` for `DwStatus`'s reason: a server one release ahead may record a
- * verb this build has never heard of, and the screen must say "a decision" rather than drop the row.
- * `actorName` can be null for the reason `DwInspectionFeedback.actorName` can.
- */
 export type DwDecision = {
   id: string;
   kind: DwDecisionKind | string;
@@ -857,40 +302,16 @@ export type DwDecision = {
   at: string | null;
 };
 
-/**
- * The three keys BOTH detail reads add — the designer's and the inspector's.
- *
- * Spelled once and spread into both types, because the two screens render the same register and a
- * second declaration is how they come to disagree about whether a key exists.
- *
- * OPTIONAL, for `dictationConsentByName`'s stated reason: a server predating them reads as absent
- * rather than as a type error at a boundary the compiler cannot police. Absence must therefore be
- * treated as "no" and never as "unknown, assume yes" — see {@link dwMayRecordFeedback}.
- */
 export type DwInspectionFeedbackKeys = {
   inspectionFeedback?: DwInspectionFeedback[];
-  /** True when the register held more rows than the read carries. Say so; a long history must not
-   *  look like a short one. */
   inspectionFeedbackTruncated?: boolean;
-  /** May THIS account file a correction suggestion about this report? False on the designer's own
-   *  read, true on the inspector's. */
   mayRecordFeedback?: boolean;
 };
 
-/**
- * MAY THIS ACCOUNT FILE A SUGGESTION? **Absent means no.**
- *
- * The dangerous default is the other one: a screen that offered the box on a payload with no flag
- * would offer it to the designer being inspected, on a route that answers 404. This is the twin of
- * `inspectionIsReadOnly`, which fails closed for the same reason in the opposite direction, and the
- * two answer DIFFERENT questions — `readOnly` is about the workshop's CONTENT and must stay true on
- * an inspection even while the feedback box is offered.
- */
 export function dwMayRecordFeedback(detail: DwInspectionFeedbackKeys | null | undefined): boolean {
   return detail?.mayRecordFeedback === true;
 }
 
-/** The register newest-first, grouped by the submission cycle each suggestion was filed against. */
 export function dwFeedbackRounds(
   rows: DwInspectionFeedback[] | undefined | null
 ): Array<{ round: number; rows: DwInspectionFeedback[] }> {
@@ -907,56 +328,18 @@ export function dwFeedbackRounds(
 
 export type DwDetail = DwSummary &
   DwInspectionFeedbackKeys & {
-    /**
-     * THE FOUR THE SINGLE READ ALWAYS CARRIES, narrowed from optional to required.
-     *
-     * `DwSummary` leaves them optional because it is also the shape the offline draft store builds
-     * (see the note there). A `DwDetail` is only ever a payload this server answered with, and
-     * `workshop_summary` writes all four every time — so on this type they are facts, and a screen
-     * that reads `detail.submissionRound` is not reading a maybe.
-     */
     reviewNotes: string | null;
     reviewedById: string | null;
     reviewedAt: string | null;
     submissionRound: number;
-  /**
-   * Who recorded the current answer, resolved. **The single-record read only**, deliberately:
-   * `consent_keys` leaves it out of the list because serialising it there would be a name lookup per
-   * row in a paged endpoint, to print something the list does not show.
-   *
-   * Optional so that a server predating the key reads as absent rather than as a type error at a
-   * boundary the compiler cannot police; absent and null both mean "this screen cannot name them",
-   * which is what it must then say instead of guessing.
-   */
   dictationConsentByName?: string | null;
-  /**
-   * WHO SIGNED THE REPORT OFF, RESOLVED — the single read only, for `dictationConsentByName`'s reason.
-   * Null until somebody has, and null beside an id when the account has since gone; a screen then
-   * says "somebody no longer on record" and never guesses. `approvedByRole` is the approver's role
-   * token, for the report's approval line. Optional so an older server reads as absent.
-   */
   approvedByName?: string | null;
   approvedByRole?: string | null;
   handedOnByName?: string | null;
-  /** Every decision taken on this report, newest first. See {@link DwDecision}. */
   decisions?: DwDecision[];
   stages: Record<string, DwStageData>;
   completeness: Record<string, DwStageCompleteness>;
   schemaVersion: string;
-  /**
-   * The digest of THIS WORKSHOP'S designer-defined questions. A SECOND, SEPARATE STRING.
-   *
-   * **IT MUST NEVER BE FOLDED INTO `schemaVersion` OR INTO THE DRAFT'S `registryVersion`.** That
-   * string is a content digest of every key, type and tier of the 496-field registry, and
-   * `stageSpecFor` reads it as a KEY into the registry object store — so a composite value would miss
-   * every cached registry and every stage would render from "whatever this browser happens to hold"
-   * instead of from the field list it was captured with. It is also the reason the server keeps the
-   * two apart: a designer's custom field moving `registry_version()` would make every handset in the
-   * fleet treat its bundled 119 KB schema as stale the moment anyone anywhere added a question.
-   *
-   * Optional so a server that predates the feature reads as "" rather than as a type error at a
-   * boundary the compiler cannot police anyway.
-   */
   customSchemaVersion?: string;
 };
 
@@ -964,7 +347,6 @@ export type DwStagesPayload = {
   stages: Record<string, DwStageData>;
   completeness: Record<string, DwStageCompleteness>;
   schemaVersion: string;
-  /** See {@link DwDetail.customSchemaVersion} — a second string, never folded into the one above. */
   customSchemaVersion?: string;
 };
 
@@ -973,75 +355,8 @@ export type DwTemplate = { id: string; name: string; description: string };
 export type DwCreateBody = {
   title: string;
   templateId?: string;
-  /**
-   * One of the registry's `WORKSHOP_KIND` tokens.
-   *
-   * `null` AND `undefined` BOTH MEAN "not stated" and both are accepted, because the two callers
-   * genuinely hold different shapes: the create form sends `undefined` (it omits the key), while a
-   * workshop kept on the device sends its stored header straight through and that header holds
-   * `null` for a kind nobody picked. The server's body declares it `str | None`, so either is a
-   * legal wire value and neither needs a translation layer nobody would remember to keep.
-   *
-   * `""` IS NOT ACCEPTED AND MUST NOT BE SENT. A present value is validated against the six, so an
-   * empty string is a 422 on a question the admin deliberately left for stage 1 to ask.
-   */
   workshopKind?: string | null;
-  /**
-   * THE DESIGNER THIS WORKSHOP IS FOR — the one field here that changes what the finished report
-   * SAYS rather than what it is filed under.
-   *
-   * Their `DesignerProfile` is what `seed_designer_prefill` copies into stage 1 and stage 3, and the
-   * create route grants them a viewer row in the same call under the same eligibility rule the
-   * viewers screen applies. Omitting it is legal and leaves the pre-field behaviour exactly as it
-   * was — the CREATOR's profile is copied — which for an admin opening a workshop on somebody
-   * else's behalf is the wrong person's name on a ministry document. There is deliberately no
-   * fallback between the two; see `seed_designer_prefill` for the whole argument.
-   *
-   * **BLANK IS ABSENT, and the server says so explicitly**: the route reads
-   * `(payload.designerUserId or "").strip() or None`, so an empty picker means "nobody named" and
-   * not an account whose id is the empty string. Send `undefined` or omit it; either is fine.
-   *
-   * Optional on the wire, so a client that has not adopted it is not broken and an older server
-   * that has never heard of it is not either.
-   */
   designerUserId?: string | null;
-  /**
-   * EVERY DESIGNER THIS WORKSHOP IS FOR — the full set that is granted access, the lead included.
-   *
-   * ── WHY THERE ARE TWO KEYS AND NOT ONE ──────────────────────────────────────────────────────
-   *
-   * They answer two different questions and only one of them has a single answer. WHO MAY OPEN IT
-   * is several people: a real Design & Prototype Development Workshop is a fortnight of work by two
-   * designers alongside a master craftsperson, and every one of them has to read the same 22
-   * stages. WHOSE NAME IS ON IT is exactly one: `seed_designer_prefill` copies ONE
-   * `DesignerProfile` into stage 1 and stage 3 — one `designerName`, one `designerProfile`, one
-   * signature — and `report_meta` puts that name into the .docx's `dc:creator`, which is a
-   * single-author field the file format cannot express as a list.
-   *
-   * So `designerUserId` keeps its exact meaning (THE LEAD, whose profile is seeded and whose name
-   * the report cover carries) and this names the whole team. Co-designers get access and appear in
-   * "Designers on a workshop"; they do not appear on the cover. Making the stage-1 designer block
-   * repeatable is a registry change — it moves `registry_version()`, stales the schema asset
-   * bundled into every APK and moves every existing workshop's completeness — so it is a separate
-   * wave and the owner's call, not something to reach for by widening a column.
-   *
-   * ── THE GRANT SET, AND WHAT AN OMITTED FIELD MEANS ──────────────────────────────────────────
-   *
-   * The server grants the lead plus everybody named here, minus the creator — whose access is not
-   * this list's to give, because they hold the workshop by having made it. An ineligible id
-   * ANYWHERE in the list refuses the WHOLE create, naming every account it objected to, and writes
-   * no row: a partly applied access change is the worst of both, because it looks like it worked.
-   * So a caller must render that whole sentence rather than a generic "could not create".
-   *
-   * **BOTH FIELDS ARE OPTIONAL FOREVER.** On Android `saveOrQueue` will not queue a 4xx, so a body
-   * the server refuses LOSES the record — narrowing this shape later (making either required, or
-   * removing the singular one) would silently destroy an un-updated handset's fortnight. And the
-   * key must not go onto the wire uninvited either: `APIModel` is `extra="forbid"`, so an API that
-   * predates this field answers 422 `extra_forbidden` to a body that merely CARRIES it. This
-   * repository ships the browser bundle and the API separately, so that skew is a live state.
-   * {@link createDesignWorkshop} is the one place that decides which of the two keys are sent, and
-   * it sends this one only when there is genuinely more than one designer — see its note.
-   */
   designerUserIds?: string[] | null;
   craftName?: string | null;
   clusterName?: string | null;
@@ -1053,73 +368,12 @@ export type DwCreateBody = {
   notes?: string | null;
 };
 
-/**
- * `Omit<…, "designerUserId">` AND NOT A BARE `Partial<DwCreateBody>` — read this before "simplifying"
- * it back.
- *
- * PATCH is CLOSED to this field: `DesignWorkshopUpdate` has no such member and `APIModel` is
- * `extra="forbid"`, so a PATCH carrying `designerUserId` is refused whole with `extra_forbidden`.
- * The `Omit` is what makes that closure VISIBLE in the type, so the key cannot be added to the
- * header-edit body at `designWorkshopStore.ts`'s `whole` without the mismatch being obvious.
- *
- * IT IS DOCUMENTATION RATHER THAN ENFORCEMENT ON THE ONE CALL THAT MATTERS, and saying otherwise
- * would be worse than saying nothing. The sync's header arm hands `patchDesignWorkshop` an
- * `Object.fromEntries(...)`, whose type is an index signature — so the compiler would accept the key
- * on that path whether or not this `Omit` were here. What actually keeps it out is that `whole`
- * enumerates its ten keys by hand and `designerUserId` is deliberately not among them. (This
- * paragraph claimed the body was built by SPREADING a draft header, and that the compiler therefore
- * caught the mistake. Neither was true: nothing spreads a header into an update body.)
- *
- * Naming the designer is a CREATE-time act by construction: it decides whose profile gets copied
- * into stage 1 before stage 1 exists, and once the workshop is open the same outcome is reached by
- * editing stage 1 and by the viewers panel. So there is nothing for a PATCH to carry.
- */
 export type DwUpdateBody = Omit<Partial<DwCreateBody>, "designerUserId" | "designerUserIds"> & {
   status?: string;
 };
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The designers a workshop is opened for — the pure half
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * The most accounts one create may name.
- *
- * The server's own cap, which it imports from `MAX_DESIGN_WORKSHOP_VIEWERS` rather than choosing
- * separately, because the create and `PUT /design-workshops/{id}/viewers` write the SAME table: a
- * create that accepted a set the viewers screen would refuse is one list with two rules.
- */
 export const MAX_NAMED_DESIGNERS = 100;
 
-/**
- * WHO MAY OPEN THE WORKSHOP, AND WHOSE NAME IS ON IT — resolved from what the picker holds.
- *
- * ── WHY THIS IS A FUNCTION AND NOT A TERNARY IN THE FORM ────────────────────────────────────────
- *
- * There is no React renderer in this project's devDependencies, so a decision written inside JSX is
- * a decision no test can reach — the same split, and the same reason, as
- * `components/ui/selectFilter.ts` and `components/data/cappedList.ts`. This one decides whose name
- * lands on a ministry document, so it is exercised by `e2e/design-workshop-designer-team-unit.spec.ts`
- * rather than by somebody looking at a screen.
- *
- * ── THE TWO RULES, AND THE CASE THAT MAKES THEM DIFFERENT ───────────────────────────────────────
- *
- * 1. **With designers ticked, the lead must be one of them.** An admin who names a lead and then
- *    UNTICKS them has removed them; re-adding them because they are still held in `lead` would put
- *    a designer on a workshop after the admin took them off it, which is the one direction an
- *    access control must never drift. The first ticked is promoted instead.
- * 2. **With nothing ticked, a lead standing alone IS the team.** This is not a hypothetical: a
- *    draft written before this control was a multi-select carries a lead and an empty list, and
- *    reading rule 1 over it would drop the designer that draft was opened for.
- *
- * Blanks are absent, duplicates collapse, and the ticked order is otherwise preserved — it is the
- * order the admin built and the only order they can see.
- *
- * The lead is NEVER the account that pressed create. The server promotes the first named designer
- * when no lead is sent, precisely because the only other candidate is the admin, and an admin's own
- * name on a workshop opened on somebody else's behalf is the wrong-name-on-a-ministry-document
- * defect `designerUserId` exists to end.
- */
 export function namedDesignerTeam({ chosen, lead }: { chosen: readonly string[]; lead: string }): {
   lead: string;
   team: string[];
@@ -1138,28 +392,6 @@ export function namedDesignerTeam({ chosen, lead }: { chosen: readonly string[];
   return { lead: resolved, team: [resolved, ...ticked.filter((id) => id !== resolved)] };
 }
 
-/**
- * The two designer keys of a create body, or neither — the ONE place that decides what goes on the
- * wire.
- *
- * ── THE THREE ANSWERS, AND WHY THE MIDDLE ONE MATTERS MOST ──────────────────────────────────────
- *
- *   NOBODY NAMED  → neither key. "Not decided yet" is a real and common answer: a workshop is
- *                   opened in a room on day one and the admin may genuinely not know yet who will
- *                   run it. The server then behaves exactly as it did before either field existed,
- *                   and stage 1 carries whoever created it.
- *   ONE DESIGNER  → `designerUserId` ALONE, which is byte-for-byte the body this client has been
- *                   sending since the singular picker shipped. So the overwhelmingly common create
- *                   is unchanged on the wire, and an API deployed before `designerUserIds` existed
- *                   goes on answering it — rather than 422ing `extra_forbidden` at a key it has
- *                   never heard of and taking a whole offline workshop's fortnight down with it.
- *   SEVERAL       → both, lead first. Only here is the new key sent, and only here can that skew
- *                   bite; there is no way to name a second designer without asking a server that
- *                   understands the question.
- *
- * An empty array is never sent. `[]` reads on the wire as "I considered this and the answer is
- * none", which is a different sentence from silence and one the server would have to interpret.
- */
 export function designerCreateFields({ chosen, lead }: { chosen: readonly string[]; lead: string }): {
   designerUserId?: string;
   designerUserIds?: string[];
@@ -1172,120 +404,32 @@ export function designerCreateFields({ chosen, lead }: { chosen: readonly string
 
 export type DwSaveEntry = {
   entityKey: string;
-  /** Omit to create a row; send the row's `_entryId` to update it in place. */
   entryId?: string;
   ordinal?: number;
   data: DwEntryData;
-  /**
-   * "I am sending every key I HAVE, not every key there IS."
-   *
-   * Set only when this browser knows it has NOT read the server's copy of the row
-   * (`serverLoadedAt === null`). The server then keeps the keys that are absent from `data`
-   * instead of deleting them. Omitted — the default — the row's data is replaced wholesale,
-   * which is what a browser that HAS read the row must do, because for it an absent key is a
-   * real deletion.
-   */
   merge?: boolean;
 };
 
 export type DwSaveBody = {
   entries: DwSaveEntry[];
-  /**
-   * True replaces the named entities wholesale (the phone's whole-stage sync, so a row deleted on
-   * the device is deleted here). The web form sends FALSE: it edits one row at a time and must not
-   * delete rows another editor added between this page loading and Save being pressed.
-   */
   replaceCollections?: boolean;
-  /**
-   * Collections this client has emptied: "I now hold zero rows of this entity, delete what you
-   * still have."
-   *
-   * IT IS THE ONLY WAY DELETING THE LAST ROW OF A COLLECTION REACHES THE SERVER. The sweep is
-   * scoped to the entities the payload actually NAMED — deliberately, so a partial save can no
-   * longer wipe collections it never mentioned — and an emptied collection names itself nowhere:
-   * `entries` is built from `collections[key] ?? []`, so zero rows sends zero entries and the
-   * entity is invisible in the request. There is no per-row delete endpoint. Without this field
-   * the deletion is accepted, reported as saved, and silently never happens.
-   *
-   * Send `removedFrom`, which the draft store already tracks per entity. Naming an entity that
-   * still has rows in `entries` is harmless: those rows are in the payload and survive the sweep.
-   * Read by the server only when `replaceCollections` is true, and ignored for singletons.
-   */
   emptiedEntities?: string[];
-  /** True enforces the BASIC-tier required fields and 422s if any is missing. */
   submit?: boolean;
-  /**
-   * C9: singleton field key -> the designer's own earlier workshop the text was copied from. The
-   * server verifies it against the source; a copied field counts toward completeness once edited
-   * or kept. SENT ONLY WHEN NON-EMPTY, so a body without copies is the body every server accepts.
-   */
   copiedFrom?: Record<string, string>;
 };
 
 export type DwSaveResult = {
   stageKey: string;
-  /** How many rows were written — a COUNT, not the data. `created + updated`. */
   saved: number;
   created: number;
   updated: number;
   removed: number;
-  /**
-   * Per-field validation messages, keyed by `entityKey` for a SINGLETON and by
-   * `` `${entityKey}[${index}]` `` for a collection row — where `index` is that entry's position in
-   * the `entries` ARRAY THAT WAS SENT, not its ordinal within the entity and not its position in
-   * the collection. A caller must therefore keep the order it built its entries in and translate
-   * back, or every message after the first collection lands on the wrong row.
-   */
   errors: Record<string, Record<string, string>>;
-  /**
-   * How many ANSWERS the save refused, counted by the server so both surfaces show one number.
-   *
-   * `errors` is two levels deep and carries no total, so a client computing its own headline picks
-   * whichever reading its author saw first — and the two clients picked one each. The web counted
-   * SCOPES and Android counted FIELDS, so one stage entry with three bad fields was "1 answer" on a
-   * laptop and "3 answers" on the phone, off the same response body, both saying *answer*. Fields is
-   * the right reading: an answer is what a designer typed into one box, a row is not an answer, and
-   * the remedy the sentence gives them — open the stage and look at the marked boxes — is per-field.
-   *
-   * PREFER THIS OVER COUNTING `errors` LOCALLY. `countRefusedAnswers` in `designWorkshopStore` is
-   * kept only as the fallback for a server that predates this field, and it is NOT equivalent: for a
-   * scope whose value is a bare string it returns `Object.keys(str).length` — a CHARACTER COUNT —
-   * where the server returns 1. See `refused_answer_count` in `services/design_workshops.py`, whose
-   * non-mapping guard exists for exactly that reason.
-   *
-   * Optional because a client can be newer than the deployment it is talking to.
-   */
   refusedAnswers?: number;
-  /**
-   * Field keys this build sent that the server's registry does not know, as "entity.field".
-   *
-   * This is how a server notices a client is running a newer registry than it is, and it is the
-   * only signal that data a designer typed was not stored. It must be shown on screen — a silent
-   * drop is a form that accepts an answer and discards it.
-   */
   droppedKeys: string[];
-  /**
-   * Custom question keys this build sent that the workshop's DEFINITION does not carry.
-   *
-   * **ITS OWN FIELD, ITS OWN STATE AND ITS OWN SENTENCE — NEVER MERGED INTO `droppedKeys`.**
-   * `droppedKeys` is the only client/server registry-drift signal this repository has and both
-   * clients render it in those words: "this build is running ahead of the server's field list". A
-   * custom key the definition does not carry is a DIFFERENT fact with a different remedy — the
-   * definition was edited, not the app — and feeding it into that signal would fire the amber banner
-   * on every save of every workshop that has a custom section, training the people who read it to
-   * ignore the one message that matters.
-   *
-   * Optional: a server that predates the feature sends nothing, and reading that as an empty list is
-   * correct.
-   */
   droppedCustomKeys?: string[];
   completeness: DwStageCompleteness | null;
   schemaVersion: string;
-  /**
-   * The digest of the definition this save was VALIDATED AGAINST, so a client can tell its cached
-   * copy is stale without a second request. "" for a workshop that has no definition, which is a
-   * different fact from "I hold nothing" and is why the server does not omit it.
-   */
   customSchemaVersion?: string;
 };
 
@@ -1313,47 +457,20 @@ export type DwExportRecordBody = {
   warnings?: string | null;
 };
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Report preview blocks — snake_case, see the file header.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * One run of formatted text, as the preview endpoint serialises `report_model.Run`.
- *
- * **THE MARKS ARRIVE AS BOOLEANS, ALREADY RESOLVED.** `rich_text.to_preview_json` and the report
- * builder both hand the browser `bold` / `italic` / `underline` / `strike` rather than the `Mark`
- * enum members they came from, precisely so the browser never has to interpret the mark vocabulary
- * itself — that is the one place a fifth renderer would start to drift from the other four.
- *
- * `underline` and `strike` were added to `report_model.Run` for RICH_TEXT and are optional here for
- * one deployment cycle only: a server that predates that change sends neither key, and typing them
- * as required would make every run on an older deployment fail the type at runtime while compiling
- * perfectly. Read them with `?? false`, never assume they are present.
- *
- * There is deliberately no `code` field, and its absence is a real gap rather than an omission on
- * this side: `Run` has no monospace flag, so `_runs_for` in `rich_text.py` cannot carry the CODE
- * mark and neither this preview nor the .docx nor the PDF can show it. The words survive; the face
- * does not. Adding `code: bool` to `Run`, to `_runs_for`, to both writers and to the Kotlin pair is
- * what would close it — and the day it lands, this type and {@link DwRun}'s renderer gain one line.
- */
 export type DwRun = {
   text: string;
   bold: boolean;
   italic: boolean;
   underline?: boolean;
   strike?: boolean;
-  /** LATIN / DEVANAGARI / ODIA / … — the writers pick a font per run from this. */
   script: string;
-  /** "RRGGBB", no leading hash — both writers want it bare, so prefix it before using it in CSS. */
   color: string | null;
 };
 
 export type DwImageRef = {
-  /** A media id on the server (an absolute file path on the device). Fetch it via `GET /media/{id}`. */
   source: string;
   width_px: number;
   height_px: number;
-  /** The EXIF orientation already resolved to a quarter turn: 0 / 90 / 180 / 270. */
   rotation_deg: number;
   mime_type: string;
 };
@@ -1406,7 +523,6 @@ export type DwPreview = {
     pageSize: string;
   };
   blocks: DwBlock[];
-  /** Missing required fields, photos that could not be embedded. Render these; never hide them. */
   warnings: string[];
 };
 
@@ -1414,72 +530,16 @@ export type DwReportBody = {
   templateId?: string | null;
   formats: Array<"DOCX" | "PDF">;
   pageSize?: string | null;
-  /**
-   * The report's accent colour as `#RRGGBB`, for this one file — `ReportGenerateIn.themeAccent`.
-   *
-   * ONE COLOUR, NOT A PALETTE. The server derives the soft accent, the ink, the muted grey, the
-   * rules, the zebra fill and the table header's text from it, so a single value recolours the
-   * whole document coherently and no combination of independently-chosen colours exists to get
-   * wrong. `undefined` means "whatever stage 20 says", and a stage that says nothing leaves the
-   * template's own colour alone. A malformed value is ignored rather than rejected: a download a
-   * designer is waiting on must not fail over a colour string.
-   */
   themeAccent?: string | null;
   headerText?: string | null;
   footerText?: string | null;
   includePhotographs?: boolean | null;
-  /**
-   * Append an annexure carrying every transcript the workshop's recordings produced.
-   *
-   * THREE-VALUED ON PURPOSE, and the third value is the useful one. `undefined` means "whatever
-   * stage 20's `includeTranscripts` says", which is what `wants_transcripts` on the server reads
-   * when the request is silent; `true` or `false` overrides it FOR THIS FILE ONLY. That is what
-   * lets a designer produce a short copy to read out in a meeting and a full copy for the file
-   * from one set of saved settings, without editing those settings twice and without the second
-   * edit being the one they forget. Sending `false` where you meant "unspecified" would silently
-   * strip an annexure a designer had already asked for and saved.
-   */
   includeTranscripts?: boolean | null;
-  /**
-   * Append an annexure carrying every AI layer a person has ACCEPTED, each named as machine-assisted
-   * text and each carrying the tier, the model and the person who accepted it.
-   *
-   * TWO-VALUED, NOT THREE, AND THAT IS THE DIFFERENCE FROM `includeTranscripts` ABOVE. The tri-state
-   * exists there to protect a saved answer: a template that has always printed transcripts must go
-   * on printing them for a workshop saved before the toggle existed, so `undefined` has to mean
-   * "leave the saved setting alone". There is no such history here. No template declares the
-   * section, there is no stage-20 answer behind it, and `apply_report_settings` splices it in only
-   * on an explicit `true` — so absent and `false` are the same instruction and there is nothing for
-   * a third value to preserve.
-   *
-   * IT IS ALSO THE HONEST DEFAULT. An annexure of model prose is not something that should happen
-   * TO a report. Plan §3 rule 4 exists so a reader can tell a machine's words from an author's, and
-   * a section that appeared without being asked for would put that decision nowhere.
-   *
-   * NOTHING UNACCEPTED IS EVER PRINTED, whatever this says — acceptance is checked again at the
-   * point of rendering. A report asked for the annexure with nothing accepted comes back unchanged,
-   * with a warning beside the download saying why.
-   */
   includeAiLayers?: boolean;
   record?: boolean;
-  /** Rebuild even when an identical file is stored (the approver's door reuses one otherwise). */
   fresh?: boolean;
 };
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The transcript annexure
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * One recording and the state of its transcript, as `GET /design-workshops/{id}/transcripts`
- * serialises `report_annexures.TranscriptItem`.
- *
- * THE SAME VALUE OBJECT THE ANNEXURE IS BUILT FROM. The endpoint exists so the annexure can be
- * READ BEFORE IT IS COMMITTED TO: a transcript annexure is the one part of a report whose contents
- * nobody has read, it can double the document's length, and generating sixty pages to find out
- * what is in it is not a preview. Two shapes would drift, and the drift would show as this screen
- * listing a recording the report then omitted.
- */
 export type DwTranscriptItem = {
   mediaId: string;
   stageKey: string;
@@ -1488,7 +548,6 @@ export type DwTranscriptItem = {
   entityKey: string;
   fieldKey: string;
   fieldLabel: string;
-  /** The field's own label, falling back to the filename and then the media id. */
   label: string;
   filename: string;
   recordedAt: string;
@@ -1497,14 +556,8 @@ export type DwTranscriptItem = {
   speakerCount: number;
   wordCount: number;
   firstLine: string;
-  /** The media queue's transcription status — QUEUED, RUNNING, DONE, FAILED. */
   status: string;
   hasTranscript: boolean;
-  /**
-   * Whether the annexure would carry this one. A recording with no transcript yet is still LISTED
-   * — hiding it would mean a designer who made six recordings and sees four concludes two were
-   * lost, when in fact two are still in the queue.
-   */
   includedInReport: boolean;
 };
 
@@ -1512,7 +565,6 @@ export type DwTranscriptList = {
   items: DwTranscriptItem[];
   total: number;
   withTranscript: number;
-  /** Null when no recording carries a duration, never 0 — see the note on the endpoint. */
   totalDurationSeconds: number | null;
 };
 
@@ -1520,69 +572,9 @@ export function listDesignWorkshopTranscripts(id: string) {
   return apiFetch<DwTranscriptList>(`/design-workshops/${id}/transcripts`);
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The registry cache
- * ──────────────────────────────────────────────────────────────────────────── */
-
 let cachedRegistry: DwRegistry | null = null;
 let registryInFlight: Promise<DwRegistry> | null = null;
 
-/**
- * The field registry, fetched once per tab and thereafter served from memory, keyed by `version`.
- *
- * THE PAYLOAD IS LARGE — every stage, entity, field descriptor and enum option list the three
- * clients render their forms from, with help text and report roles — and it is a pure constant on
- * the server (`get_stage_schema` reads no database at all, and answers every caller and every role
- * with the same bytes). MEASURED 2026-08-28: **162,717 bytes of JSON, 25,112 gzipped**, from
- * `docs/SCALABILITY.md` §9.1's own reproduce command through `create_app()`; and **22 stages, 44
- * entities, 635 field descriptors**, counted off that same response as
- * `sum(len(e["fields"]) for s in d["stages"] for e in s["entities"])`.
- *
- * **READ EVERY ONE OF THOSE AS A DATED FLOOR AND NOT AS A CONSTANT.** This comment said "496 field
- * descriptors" until 2026-08-28 and was wrong by 139, because the registry gains fields and never
- * loses them. It does not drift annually either: the reproduce command run twice in one session on
- * 2026-08-28 returned 162,178 and then 162,717, with `backend/app/services/stage_definitions.py` and
- * `stage_schema.py` both carrying modification times inside that session — another workstream was
- * writing the registry while it was being measured. The only figure anything enforces is the
- * order-of-magnitude band in `backend/tests/test_schema_conditional_get.py::
- * test_the_measured_sizes_are_still_in_the_range_the_docs_claim`. Count from `registry_to_dict()`
- * before you quote a number, and date what you write. **12 OTHER FILES IN THIS CLIENT STILL REPEAT
- * "22 stages, 43 entities, 496 typed fields"** (COUNTED 2026-08-28:
- * `grep -rl '496[- ]field\|496 typed field\|~496' lib app components e2e` returns 13 including this
- * one), and two of those three numbers were already wrong on the day this was measured — only the
- * 22 still holds. They are named here rather than swept because several of those files belong to
- * other workstreams as this is written; the sweep is one grep and a re-count.
- *
- * Every screen in this feature needs it: the list page to name the stages, the stage index to count
- * them, every stage form to render itself, and the report preview to caption its warnings. Fetching
- * it per navigation would put that on the wire each time a designer moved between two stages, on
- * the metered rural connection this whole feature is written for.
- *
- * **TWO LAYERS, AND THEY ANSWER DIFFERENT QUESTIONS — DO NOT COLLAPSE THEM INTO ONE.** The module
- * cache below removes every fetch after the first WITHIN a tab, and does nothing whatever for the
- * first one: a cold tab, which is what a designer opens each morning, still paid the whole body.
- * `revalidateFromHttpCache` is the other half — it lets the browser store the response and
- * revalidate it with `If-None-Match` against the `ETag` `get_stage_schema` sends, so a cold start
- * that already holds the current registry costs a 664-byte 304 instead of ~25 KB (MEASURED
- * 2026-08-28, same command; §9.1 has the table). **This is the ONLY call in the client that opts
- * in**, and `lib/api.ts` sends `cache: "no-store"` on everything else deliberately — the argument
- * for both is on `ApiFetchOptions.revalidateFromHttpCache`.
- *
- * NOTHING BELOW CHANGES SHAPE BECAUSE OF IT. The browser revalidates and hands back an ordinary 200
- * carrying the body; `fetch` never surfaces a 304 to JavaScript, so the `.then` still parses a full
- * registry and the version comparison still decides identity exactly as it did. A 304 is
- * indistinguishable from a 200 here because the caller never sees one.
- *
- * `refresh` re-asks the server and, WHEN THE VERSION IS UNCHANGED, deliberately returns the
- * *previously cached object* rather than the newly parsed one. Identity matters: components hold
- * the registry in `useMemo`/`useEffect` dependency arrays, and handing back a structurally identical
- * but referentially new object would re-run every one of them and rebuild every form's field list
- * for no reason. A CHANGED version replaces the cache wholesale, which is the signal that a field
- * was added, removed or retyped and every derived list must be rebuilt.
- *
- * The in-flight promise is shared so that three components mounting in the same commit — which is
- * exactly what the stage page does — issue one request between them rather than three.
- */
 export async function fetchStageRegistry(options?: { refresh?: boolean }): Promise<DwRegistry> {
   if (!options?.refresh && cachedRegistry) return cachedRegistry;
   if (!options?.refresh && registryInFlight) return registryInFlight;
@@ -1594,9 +586,6 @@ export async function fetchStageRegistry(options?: { refresh?: boolean }): Promi
       return next;
     })
     .finally(() => {
-      // Cleared whether it resolved or threw. A rejected promise left parked here would serve the
-      // same failure to every later caller for the life of the tab, so a connection that came back
-      // would never be noticed and the forms would stay permanently blank.
       registryInFlight = null;
     });
 
@@ -1604,41 +593,10 @@ export async function fetchStageRegistry(options?: { refresh?: boolean }): Promi
   return request;
 }
 
-/** The cached registry without touching the network — null before the first successful fetch. */
 export function peekStageRegistry(): DwRegistry | null {
   return cachedRegistry;
 }
 
-/**
- * THE SIX WORKSHOP KINDS, WITH A COMPILED-IN FLOOR UNDER THE SERVED LIST.
- *
- * ── WHY THERE IS A FLOOR AT ALL ─────────────────────────────────────────────────────────────────
- *
- * "Type of workshop" is a stage-1 field the registry declares `required`, and `docs/archive/DROPDOWN_DESIGN.md`'s
- * rule R2 is that a field may only be mandatory where it is ANSWERABLE. A vocabulary this client
- * fetches is answerable only once it has fetched it — and `fetchStageRegistry`'s IndexedDB copy is
- * seeded by a page that has already been online, so a browser that has never reached this API has
- * nothing at all. That is the `empty-because-offline` state, and for a served ENUM it is avoidable:
- * §3.1 of that document names this exact shape — "a served vocabulary with a compiled-in floor" —
- * as the correct answer, and points at Android's `workshopLevelOptions` as the precedent. This is
- * the web's copy of that pattern.
- *
- * ── THE SERVED LIST ALWAYS WINS ─────────────────────────────────────────────────────────────────
- *
- * The floor is used ONLY when the registry has not arrived. It is not merged with the served list
- * and it is not consulted to fill gaps in it: a member the server has retired must disappear, and a
- * union would resurrect it. A build whose floor has gone stale therefore under-offers until the
- * registry lands, which is the safe direction — it can never offer a token the server would refuse.
- *
- * ── AND IT IS NOT A SECOND SOURCE OF TRUTH ──────────────────────────────────────────────────────
- *
- * `backend/app/services/stage_schema.ENUMS["WORKSHOP_KIND"]` is the one definition. This constant is
- * a cache of it for the first paint of a never-online browser, in the same sense `OFFLINE_STATES`
- * is for the state list — and unlike that one it cannot be derived from anything already in this
- * bundle, so it is written out. If the vocabulary changes, this changes with it; a drift costs a
- * never-online browser a missing option and costs nobody a wrong save, because the server validates
- * the token either way.
- */
 export const WORKSHOP_KIND_FLOOR: readonly DwEnumOption[] = [
   { value: "DESIGN_PROTOTYPE_DEVELOPMENT", label: "Design & Prototype Development" },
   { value: "SKILL_UPGRADATION", label: "Skill Upgradation" },
@@ -1648,14 +606,6 @@ export const WORKSHOP_KIND_FLOOR: readonly DwEnumOption[] = [
   { value: "OTHER", label: "Other" }
 ];
 
-/**
- * The workshop kinds to draw, and whether they came off the server.
- *
- * `served` is returned rather than inferred by the caller comparing lengths, because the two lists
- * can legitimately be the same length and mean different things — and the only honest sentence a
- * screen can print about a floor ("these are this app's built-in options; connect once to refresh
- * them") depends on knowing which it is holding.
- */
 export function workshopKindOptions(registry: DwRegistry | null): {
   options: readonly DwEnumOption[];
   served: boolean;
@@ -1665,29 +615,11 @@ export function workshopKindOptions(registry: DwRegistry | null): {
   return { options: WORKSHOP_KIND_FLOOR, served: false };
 }
 
-/**
- * Seed the in-memory cache from a registry that did NOT come off the wire — the copy
- * `lib/designWorkshopStore.ts` keeps in IndexedDB, served when a tab has been out of signal since it
- * opened.
- *
- * It returns whatever is now cached rather than what was passed in, and that is the point: if this
- * tab already holds a registry of the same version, the ALREADY-CACHED OBJECT is handed back. The
- * identity contract described above is what stops every `useMemo` and effect in the feature
- * rebuilding its field list, and an offline fallback that quietly broke it would rebuild every one
- * of the several hundred field descriptors on the machine least able to afford it (635 on
- * 2026-08-28; this said "496" and see the dated-floor note on `fetchStageRegistry` before you quote
- * a number). A different version replaces the cache,
- * because that genuinely is a different field list.
- */
 export function adoptStageRegistry(registry: DwRegistry): DwRegistry {
   if (cachedRegistry && cachedRegistry.version === registry.version) return cachedRegistry;
   cachedRegistry = registry;
   return registry;
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Endpoints
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export function listReportTemplates() {
   return apiFetch<DwTemplate[]>("/design-workshops/templates");
@@ -1698,36 +630,15 @@ export type DwListParams = {
   pageSize?: number;
   search?: string | null;
   statusFilter?: string | null;
-  /** One of the registry's `WORKSHOP_KIND` tokens. The server 422s anything else rather than
-   *  answering an empty list, so a stale bookmark says so instead of claiming no such workshop
-   *  exists — see the route's own note beside the filter. */
   workshopKind?: string | null;
   craftName?: string | null;
   state?: string | null;
-  /**
-   * Narrow an admin's view to their own workshops. A non-admin is scoped to their own by the server
-   * regardless, so sending `false` never widens anything — the parameter cannot be used to see
-   * someone else's fieldwork.
-   */
   mineOnly?: boolean;
-  /**
-   * Show deleted workshops alongside the live ones. **ADMIN ONLY — the server answers 403, it does
-   * not quietly drop the flag**, because a client that asked for the trash and got the live list
-   * back would draw an ordinary workshop under a "Deleted" heading with a Restore button beside it.
-   */
   includeDeleted?: boolean;
-  /**
-   * The trash: deleted workshops and nothing else, newest deleted first. Same 403, same reason.
-   *
-   * Wins over `includeDeleted` server-side when both are sent. Its rows carry `deletedById` and
-   * `deletedByName`; every other listing carries neither.
-   */
   deletedOnly?: boolean;
 };
 
 export function listDesignWorkshops(params: DwListParams) {
-  // `buildQuery` takes no booleans and drops "" exactly as it drops null, so each boolean is spelled
-  // out as the literal "true" and omitted entirely when it is off.
   return apiFetch<PageResult<DwSummary>>(
     `/design-workshops${buildQuery({
       page: params.page,
@@ -1744,21 +655,6 @@ export function listDesignWorkshops(params: DwListParams) {
   );
 }
 
-/**
- * `POST /design-workshops` — and the one request in this module that REWRITES what it was handed.
- *
- * The two designer keys are one answer occupying two wire slots, and a caller holding a picker's
- * state can easily produce a pair the server would misread: an empty array, a one-element array
- * that needs no new key at all, or a lead absent from the list. Both arms that create a workshop —
- * the form's own POST and the sync pass's, minutes or a fortnight later — come through here, so
- * normalising once is what keeps them sending the same body for the same choice. See
- * {@link designerCreateFields} for the three answers, and for why the single-designer one must stay
- * byte-identical to the body this client sent before the multi-select existed.
- *
- * `JSON.stringify` drops an `undefined` value, so a key `designerCreateFields` omits never reaches
- * the wire at all — which is the whole protection against an API that predates the field, since
- * `APIModel` is `extra="forbid"` and refuses a body that merely CARRIES an unknown key.
- */
 export function createDesignWorkshop(body: DwCreateBody) {
   const { designerUserId, designerUserIds, ...rest } = body;
   return apiFetch<DwSummary>("/design-workshops", {
@@ -1778,44 +674,18 @@ export function patchDesignWorkshop(id: string, body: DwUpdateBody) {
   return apiFetch<DwSummary>(`/design-workshops/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The inspector's two write doors
- *
- * THEY ARE DECLARED HERE, BESIDE THE TYPE THEY ANSWER WITH, and not in
- * `lib/designWorkshopInspections.ts` where the inspection READS live. The register is decoded by
- * BOTH screens — the officer's and the designer's — so its type belongs to the module that owns the
- * workshop wire shapes, and a call declared away from the type it returns is how a second, subtly
- * different shape comes to exist. (The reads stay where they are: this is an addition, not a move.)
- *
- * ONLINE-ONLY, LIKE THE STATUS PATCH AND FOR THE SAME REASON. The web outbox sends a fixed 10-key
- * header PATCH with no `status` in it; routing either of these through it would never send them and
- * would leave `headerDirtyAt` set, which makes the store refuse to refresh that workshop's header
- * for as long as it stands. Every caller must say so in its failure sentence.
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type DwFeedbackBody = {
   note: string;
-  /** A stage key the registry declares, or omitted for the report as a whole. */
   stageKey?: string | null;
   fieldKey?: string | null;
-  /** The device's own moment, ISO-8601. Omitted when filing straight against the server — a copy of
-   *  `createdAt` here would later read as "a device reported this", which would be false. */
   recordedAt?: string | null;
 };
 
-/** What both write doors answer with: the header, plus the register as it now stands. */
 export type DwFeedbackAnswer = DwSummary &
   DwInspectionFeedbackKeys & {
     readOnly?: boolean;
   };
 
-/**
- * File one correction suggestion. **The report's status does not move.**
- *
- * 201. Filing a suggestion and sending the report back are two acts with two buttons, because the
- * second one moves a status, writes an audit row and puts a fortnight of somebody's work back on
- * their desk.
- */
 export function recordInspectionFeedback(workshopId: string, body: DwFeedbackBody) {
   return apiFetch<DwFeedbackAnswer>(`/design-workshop-inspections/${workshopId}/feedback`, {
     method: "POST",
@@ -1823,12 +693,6 @@ export function recordInspectionFeedback(workshopId: string, body: DwFeedbackBod
   });
 }
 
-/**
- * Send the report back to its designers with mandatory comments (status becomes Needs revision).
- *
- * A blank note is refused by the server with the same sentence the six repository record types get:
- * a send-back with no sentence tells a designer only that a fortnight of work is wrong.
- */
 export function sendWorkshopBackForRevision(workshopId: string, body: DwFeedbackBody) {
   return apiFetch<DwFeedbackAnswer>(`/design-workshop-inspections/${workshopId}/send-back`, {
     method: "POST",
@@ -1836,29 +700,10 @@ export function sendWorkshopBackForRevision(workshopId: string, body: DwFeedback
   });
 }
 
-/**
- * Soft delete — the row and every stage entry stay, only `deletedAt` is set.
- *
- * Say so in the confirmation copy. Nothing else in this repository has a soft delete, so a reader
- * who has met the artisan/product/tool dialogs will assume this one is permanent and will hesitate
- * over a mis-tap that an admin can undo in one click.
- */
 export function deleteDesignWorkshop(id: string) {
   return apiFetch<void>(`/design-workshops/${id}`, { method: "DELETE" });
 }
 
-/**
- * Undo a soft delete. Admin only — the point of a safety net is that it is not per-user.
- *
- * **THE WAY TO A DELETED WORKSHOP IS `listDesignWorkshops({ deletedOnly: true })`,** and until that
- * parameter existed this function had no caller on any surface: nothing listed deleted rows, so the
- * only admin who could restore one was an admin who had written the id down before deleting it. The
- * caller is the trash card on `/admin`. If you are adding a second one, list the rows the same way
- * rather than asking somebody to paste an id.
- *
- * Idempotent on a live workshop — the server writes the two nulls it already holds and answers 200 —
- * so a double-clicked Restore is not an error to handle.
- */
 export function restoreDesignWorkshop(id: string) {
   return apiFetch<DwSummary>(`/design-workshops/${id}/restore`, { method: "POST" });
 }
@@ -1871,48 +716,14 @@ export function getDesignWorkshopStage(id: string, stageKey: string) {
   return apiFetch<DwStageData>(`/design-workshops/${id}/stages/${stageKey}`);
 }
 
-/**
- * Stage 9's computed findings, as the SERVER sees them.
- *
- * THE FALLBACK, NOT THE SOURCE. `lib/marketAnalysis.ts` is a port of the same pure arithmetic and
- * runs on the rows this browser already holds, which is the only way the analysis exists in the
- * village where the survey was taken. This endpoint answers the one case the port cannot: a device
- * that has never downloaded stage 8 and so has no rows to compute from. A panel that called it
- * first would be a panel that goes blank without a connection.
- */
 export function getDesignWorkshopMarketAnalysis(id: string) {
   return apiFetch<MarketFindingsPayload>(`/design-workshops/${id}/market-analysis`);
 }
 
-/**
- * Stage 17's cost-integrity findings, as the SERVER sees them.
- *
- * THE ENDPOINT'S FIRST CALLER ON ANY SURFACE. `GET /design-workshops/{id}/cost-integrity` has been
- * deployed since the service was written and its own docstring said so plainly — "**So no designer
- * sees a cost-integrity finding on any surface today**: this endpoint is the whole of the feature,
- * and nothing consumes it." The handset has since grown a local port and a card; the browser had
- * neither, so a self-contradicting cost sheet reached a ministry unchallenged from the one surface
- * a designer is most likely to be typing the sheet on.
- *
- * THE FALLBACK, NOT THE SOURCE, exactly as the market analysis beside it. `lib/costIntegrity.ts` is
- * a port of the same pure arithmetic and runs off the rows on the screen, which is the only way the
- * check exists in a courtyard. This answers the one case the port cannot: a device that has never
- * downloaded stage 17 and so has no rows to compute from.
- */
 export function dwCostIntegrity(id: string) {
   return apiFetch<CostFindingsPayload>(`/design-workshops/${id}/cost-integrity`);
 }
 
-/**
- * Save one whole stage in one write.
- *
- * `replaceCollections` defaults to FALSE here, which is the opposite of the API's own default. The
- * server's default (true) is right for the phone, which posts everything it holds for a stage after
- * two days offline and means "this is the complete truth for these entities". It is wrong for a web
- * form: this page edits one row at a time and holds only what it loaded, so replacing wholesale
- * would delete every row a second editor added in the meantime — silently, with no error and no way
- * to tell afterwards that it happened.
- */
 export function saveDesignWorkshopStage(id: string, stageKey: string, body: DwSaveBody) {
   return apiFetch<DwSaveResult>(`/design-workshops/${id}/stages/${stageKey}`, {
     method: "PUT",
@@ -1920,133 +731,32 @@ export function saveDesignWorkshopStage(id: string, stageKey: string, body: DwSa
   });
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Reference pickers — the endpoint that stops a designer retyping the database
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * One row a REF picker offers.
- *
- * `data` is the part that matters and the part a naive reader skips. It is the chosen record's
- * display fields — the artisan's name, village, gender, specialisation; the product's category,
- * material and price — and it is handed over WITH the option precisely so that choosing fills the
- * row in immediately rather than after a second round trip. See {@link hydrateFromReference}.
- */
 export type DwReferenceOption = {
   id: string;
   label: string;
   sublabel: string;
   data: Record<string, unknown>;
-  /**
-   * Has this row been ticked "Tentative"? — see {@link DwReferencePayload.tentativeFirst}.
-   *
-   * ONE BOOLEAN, AND POINTEDLY NOT A KEY IN `data`. `data` above is the hydration dictionary, and
-   * `sketch.supersedesSketch` is a `DwSketch` picker mounted on a `sketch` row, which declares
-   * `isTentative` itself — so an `isTentative` inside `data` would be a standing offer to tick the
-   * new sketch's box from the old one's. The server keeps it out for that reason
-   * (`_in_record_options`), and this key must not be folded back in for tidiness.
-   *
-   * ABSENT ON EVERY PICKER WHOSE MODEL DECLARES NO SUCH FLAG, and absent from any server that
-   * predates the feature. Read it as `option.tentative === true`; treat undefined as "not
-   * tentative", exactly as `isTentativeRow` treats a missing value.
-   */
   tentative?: boolean;
 };
 
-/**
- * A picker's whole answer, and every field on it is load-bearing on screen.
- *
- * `scopedToWorkshop` is FALSE when a WORKSHOP-scoped field fell back to the whole table — which the
- * server does deliberately, because a design workshop need not be linked to a Workshop record and a
- * permanently empty picker with no explanation is worse than a wide one. The form has to say which
- * of the two happened, or a designer reads "all documented artisans" as "the artisans at this
- * workshop" and picks somebody who was never in the room.
- *
- * `truncated` is the same obligation in the other direction: a list that quietly stops at the
- * server's limit is indistinguishable from a cluster with only fifty artisans.
- *
- * `outOfScope` is a different kind of statement from those two. Both of them describe the LIST —
- * how `options` was narrowed — and both are routinely true with a full list. `outOfScope` is the
- * only flag here that describes a row the field's own scope would NOT offer: a `recordId` lookup —
- * a scanned card — found the record with the workshop clause lifted, so it is real and readable and
- * this WORKSHOP-scoped field still excludes it. Five fields can produce it
- * (`traditionalProcess.processRef`, `processStep.processRef`, `existingProduct.artisanRef`,
- * `existingProduct.productRef`, `prototype.productRef`). Without it, scanning designer A's product
- * into designer B's stage returned an empty list — the same bytes as a code that names nothing —
- * and the two need opposite next actions from the person holding the card.
- *
- * THE ROW ITSELF IS NOT IN `options`, AND THAT IS THE SAFETY OF THE WHOLE FEATURE. It arrives as
- * `outOfScopeOption`, with `options` left EMPTY, because every picker in this tree renders
- * `payload.options` and nothing else. Putting it in the list would have made a cross-cluster record
- * look like an ordinary choice AND suppressed `StageReferenceField`'s "Nothing is documented under
- * this design workshop's linked workshop yet" line, which is gated on an empty `options`. So the
- * default for a client that has not been taught this key is silence plus the notice it already had.
- * Rendering `outOfScopeOption` is a deliberate act, and whatever renders it must SAY what it is —
- * the server did not widen the scope, and neither may the picker without telling the designer.
- */
 export type DwReferencePayload = {
   model: string;
   scope: string;
   scopedToWorkshop: boolean;
   filtered: boolean;
   truncated: boolean;
-  /** See the note above. Older servers omit it, so read it as `payload.outOfScope === true`. */
   outOfScope?: boolean;
-  /**
-   * The out-of-scope record, when there is one — see the note above. Absent, `null` or `undefined`
-   * on every other answer, including from an older server. Never rendered as part of `options`.
-   */
   outOfScopeOption?: DwReferenceOption | null;
-  /**
-   * The server ordered `options` tentative-first — the rows a designer ticked "Tentative", then the
-   * rest, each group in its own stage order.
-   *
-   * WHY THE SERVER AND NOT THIS FILE. `options` is one CAPPED page (`truncated` above), so sorting
-   * it here would sort the page and leave a tentative sketch stranded behind the cap — a
-   * client-side re-sort cannot recover a row the server already cut, which is the same defect as a
-   * client-side filter over a server-truncated list (§11.5). The partition therefore runs beside
-   * the truncation, in `_in_record_options`, and this flag is how the picker knows it may say so.
-   *
-   * FALSE OR ABSENT is the ordinary answer: every external model (Artisan, ProductDocumentation, …)
-   * and every in-record entity that declares no such field — `prototype`, `sketchReview` — plus any
-   * server that predates the feature. A picker must not claim an ordering on a false or missing
-   * flag; a claim about an order nobody applied is worse than no sentence at all.
-   */
   tentativeFirst?: boolean;
-  /**
-   * The registry's own word for the flag — "Tentative" — or `""` where there is none.
-   *
-   * READ, NEVER HARDCODED, for §16's reason and `sketchTentative.ts`'s: the label belongs to
-   * `stage_definitions.py`, four surfaces already draw it, and a word typed into a component is the
-   * copy that goes stale the day the registry is edited. It arrives on the payload rather than
-   * being looked up here because a picker holds the REF field's `refModel` and not the referenced
-   * entity's schema.
-   */
   tentativeLabel?: string;
   options: DwReferenceOption[];
 };
 
 export type DwReferenceQuery = {
   model: string;
-  /** The field's own `refScope`, sent back verbatim — see {@link DwField.refScope}. */
   scope?: string | null;
-  /** The value of the field named by `refFilterBy`, on THIS row. See {@link DwField.refFilterBy}. */
   filterBy?: string | null;
   search?: string | null;
-  /**
-   * One record's id — the by-id half of the picker, for a code that was SCANNED rather than typed.
-   *
-   * ADDITIVE, and it does not replace the other three: the server appends an `id` clause to the
-   * same query, so `scope`, `filterBy` and `search` all still apply. It is spelled as a query
-   * parameter rather than a `/references/{id}` route because the answer must carry the same
-   * `scopedToWorkshop` / `filtered` / `truncated` / `outOfScope` flags as the list it belongs to —
-   * a second endpoint would grow its own opinion of them.
-   *
-   * A lookup that resolves to nothing and a lookup for a record this account may not read are the
-   * SAME answer on purpose (`options: []`, `outOfScope: false`). Do not add a branch that tells
-   * them apart; `lib/workshopCodeLookup.ts` documents what confirming a record's existence from a
-   * printed code is worth to somebody holding a stack of cards.
-   */
   recordId?: string | null;
   limit?: number;
 };
@@ -2064,92 +774,7 @@ export function listStageReferences(workshopId: string, query: DwReferenceQuery)
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Reference hydration — the client half of a copy the server also makes
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * WHICH DISPLAY FIELDS A CHOSEN REFERENCE WRITES ONTO THE ROW, keyed by `"entityKey.refFieldKey"`
- * and mapping the reference payload's own `data` keys to the entity's field keys.
- *
- * THIS IS A DELIBERATE SECOND COPY OF `REFERENCE_HYDRATION` in
- * `backend/app/services/stage_schema.py` (it was declared beside `hydrate_entries` in
- * `design_workshops.py` until the registry needed to validate and publish it), and the asymmetry
- * between the two copies is the safety property, so it must not be "tidied" into a guess.
- *
- * IT IS ALSO NO LONGER THE ONLY WAY TO GET IT. The server publishes the mapping on each REF field
- * as `refHydration`, which is what the Android client reads; this table is kept only because it is
- * already correct and converting the web is a change with no defect behind it. Whichever way it is
- * read, the two must not disagree — `test_the_web_carries_the_same_hydration_table` in
- * `backend/tests/test_reference_registry.py` fails the build if they do.
- *
- * The server hydrates authoritatively inside `save_stage`, from the live record, every time. This
- * table exists only so the boxes fill in AT THE KEYBOARD — a designer who picks an artisan and then
- * watches nine empty fields stay empty until they press Save has been given a dropdown that looks
- * broken, and will start typing the name in beside it, which is the behaviour the whole feature
- * exists to end.
- *
- * WHY IT IS NOT DERIVED BY MATCHING KEY NAMES, which is the obvious simplification and is actively
- * dangerous. On `existingProduct` the reference's `data.name` is the ARTISAN's name for the artisan
- * ref and the PRODUCT's name for the product ref, and the entity has a `name` field of its own that
- * means the product. A name-matching hydration would therefore write the artisan's name into the
- * product's name box on a row nobody had finished, the server's only-fill-blanks rule would then
- * refuse to correct it, and a ministry report would print a participant's name in its product
- * table.
- *
- * WHAT A MISSING ENTRY COSTS, which is the reason this can be allowed to drift at all: nothing is
- * written here, so the designer retypes one field, and the server fills it at save regardless. An
- * entry that is WRONG costs a wrong value nobody can see is wrong. So this table fails closed — an
- * unknown `entityKey.fieldKey` hydrates nothing rather than guessing.
- */
-/*
-  THE SERVER'S `stage_schema.REFERENCE_HYDRATION`, COPIED BY HAND, AND EQUALITY IS ASSERTED.
-
-  `backend/tests/test_reference_registry.py::test_the_web_carries_the_same_hydration_table` parses
-  this literal and requires it to equal the server's table exactly — not to be a subset. Its docstring
-  names the defect that bought the rule: Android once hydrated by matching key NAMES while the server
-  MAPPED, the two disagreed permanently on the same pick (choosing the artisan on a stage 6 row wrote
-  her name into the PRODUCT column), and the only-fill-blanks rule then refused to correct it at save.
-
-  Android cannot drift any more — it reads the server's `refHydration` off the schema. **This file is
-  the one remaining hand-maintained copy, which makes it the one place the defect can come back.** A
-  MISSING entry here costs one retyped box that the server fills at save; a WRONG one writes a value
-  nobody can see is wrong. Hence equality.
-
-  WIDENED 2026-08-16 with the carry-fidelity work: 32 field-pairs became 107 across these eight
-  mappings, and `traditionalProcess.processRef` is new. 108 as of 2026-08-23, when
-  `participant.artisanRef` gained `craftStartDate` — the feeder the experience number is derived
-  from. **When the server table moves, this moves in
-  the same change** — the parity test failed exactly once during that work, for exactly this reason,
-  which is the test doing its job rather than an argument for deleting it.
-
-  (The three prose copies of that number said 81 until 2026-08-22, which was the count at some
-  earlier point in the same lane, and 107 for the day on which the 108th pair was added; the two
-  tables had already grown past each of those and equality is asserted, so nothing was broken by
-  either — but a stale number in a comment is what a reader trusts instead of counting, and this one
-  has now been stale twice. Measured with
-  `python -c "import app.services.stage_definitions; from app.services.stage_schema import
-  REFERENCE_HYDRATION; print(sum(len(m) for m in REFERENCE_HYDRATION.values()))"` → 122 across
-  ELEVEN mappings, of which `participant.artisanRef` is 26.)
-
-  109 pairs / 8 mappings on 2026-08-24 morning, when `participant.artisanRef` gained the masked
-  `aadhaarNumber`. 122 pairs / 11 mappings the same day, and the +13 is two separate changes:
-
-   * `artisanBaseline.interviewRef` is NEW and carries 11 — the questionnaire-interview citation on
-     stage 6's new artisan-baseline singleton. It is the sixth external reference model.
-   * `traditionalProcess.productRef` and `processStep.productRef` are NEW and carry 1 each — the
-     product that now NARROWS both stage-5 process pickers, and answers `documentedFor` FIRST. The
-     identical pair stays on both `processRef` mappings: it is a SECOND writer of that one box, not
-     a replaced one, and the server's table says why removing it would report the whole archive as
-     diverged. A duplicated pair is exactly the kind of thing a hand-copy "tidies" away.
-*/
 const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
-  // The craft record in full. Two of the five things the crafts page collects used to cross; the
-  // argument for refusing the other three, and why each was answered by giving the value its own box
-  // rather than by silence, is written above `REFERENCE_MODELS["Craft"].data` on the server.
-  // `craftDescription -> documentedCraftNotes` is the pair that differs by name on purpose: stage 4's
-  // `craftIntroduction` is the designer's own required narrative and must not receive a researcher's
-  // note from another survey.
   "workshopSetup.craftRef": {
     craftName: "craftName",
     craftLocalName: "craftLocalName",
@@ -2157,12 +782,7 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     craftPlace: "craftPlace",
     craftDescription: "documentedCraftNotes",
     craftDocumentedOn: "craftDocumentedOn",
-    // WHERE the craft was documented, beside WHEN. `craftRef` is ALL_SCOPE, so a linked craft may
-    // belong to another cluster's study — legitimate reuse, and only readable if it is printed.
     craftDocumentedAtWorkshop: "craftDocumentedAtWorkshop",
-    // How much footage the craft record carries. A sentence counting the files and never the ids:
-    // the gallery rule forbids seeding the designer's own photographs and a referenced record's
-    // files are entitlement-gated per file. `_media_note` on the server carries both reasons.
     craftMediaNote: "craftMediaNote",
     craftPhoto: "craftPhoto",
     craftPhotoCaption: "craftPhotoCaption"
@@ -2171,32 +791,12 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     name: "name",
     localName: "localName",
     specialisation: "specialisation",
-    // THE FEEDER AND THE FIGURE. `craftStartDate` is the date the artisan began practising and
-    // `experienceYears` is the whole years since it, derived in the server's Artisan data lambda
-    // (NOT by `lib/derivedFields`, which is the port of the registry's sibling-field derivations —
-    // this one reads a column on another model). Both cross, which is where this differs from
-    // `age`: the participant entity has no birthday box, so `dateOfBirth` reaches the report only
-    // as the derived number, while a derived experience whose basis is stated nowhere is worse than
-    // one that names it.
     craftStartDate: "craftStartDate",
     experienceYears: "experienceYears",
     gender: "gender",
     phone: "phone",
     village: "village",
     photo: "photo",
-    // The widening. `notes -> recordNotes` and `pehchanCardNumber -> artisanCardNo` are the two whose
-    // names differ on purpose: the workshop already owns a `notes` of its own, and the card box was
-    // called `artisanCardNo` long before anything filled it. Both numbers arrive MASKED — the
-    // server's data lambda applies `mask_identity_number` before either is ever on the wire.
-    //
-    // THIS COMMENT USED TO END "`aadhaarNumber` is refused outright rather than masked, so nothing
-    // here can widen that", and it is worth keeping the sentence visible rather than replacing it
-    // silently: the owner REVERSED that on 2026-08-24, and this table is one of the four places the
-    // reversal had to land. The reasoning for both halves — why it was refused, what the owner was
-    // shown, and what would reverse it again — is written out above `participant.aadhaarNumber` in
-    // the server's `stage_definitions.py`. Nothing on this side masks anything: this table only
-    // says which server key lands in which registry box, and the value is already masked when it
-    // arrives.
     email: "email",
     address: "address",
     notes: "recordNotes",
@@ -2204,19 +804,9 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     donts: "donts",
     pehchanCardAvailable: "pehchanCardAvailable",
     pehchanCardNumber: "artisanCardNo",
-    // Added 2026-08-24 with the reversal above. Source and target are the same word deliberately:
-    // the server's `records._IDENTITY_KEYS` recognises `aadhaarNumber` BY KEY NAME, so a stage
-    // entry that ever reached `public_encode` would be re-masked rather than passed through.
-    // `test_the_web_carries_the_same_hydration_table` asserts this table EQUALS the server's, so a
-    // pair missing here is a failing build and not a silent drift.
     aadhaarNumber: "aadhaarNumber",
     documentedOn: "documentedOn",
-    // THE OTHER HALF OF `documentedOn`'S OWN JOB. This is the one artisan picker declared ALL_SCOPE
-    // — a roster legitimately holds artisans documented at other workshops — so a printed roster
-    // could say WHEN a row was documented and never WHERE.
     documentedAtWorkshop: "documentedAtWorkshop",
-    // What the record has attached beyond the single photograph: audio introductions, video,
-    // documents. A sentence and never the ids — see `_media_note` on the server for both reasons.
     recordMediaNote: "recordMediaNote",
     age: "age",
     state: "state",
@@ -2232,9 +822,6 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     usedFor: "usedFor",
     cost: "cost",
     photo: "photo",
-    // `lengthCm`/`breadthCm`/`heightCm` are CONVERTED on the server (the source columns are inches,
-    // ×2.54); the five `*AsRecorded` fields are the ones whose source carries no unit at all, and
-    // they keep that honesty in their name rather than being silently declared centimetres.
     englishName: "englishName",
     yearsInUse: "yearsInUse",
     maker: "maker",
@@ -2246,52 +833,25 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     remarks: "remarks",
     lengthCm: "lengthCm",
     breadthCm: "breadthCm",
-    // The THIRD converted figure, 2026-08-27. `ToolDocumentation.heightInches` did not exist
-    // before that day, so this table stopped at two. `heightAsRecorded` below is a DIFFERENT
-    // column — the old unit-less `height` — which is why the tool carries two heights and the
-    // product carries one.
     heightCm: "heightCm",
     heightAsRecorded: "heightAsRecorded",
     widthAsRecorded: "widthAsRecorded",
     thicknessAsRecorded: "thicknessAsRecorded",
     weightAsRecorded: "weightAsRecorded",
     radiusAsRecorded: "radiusAsRecorded",
-    // Every artisan the tool is ASSIGNED to (the ToolArtisan many-to-many the tool page's
-    // ToolAssignmentSection populates), which the single denormalised `artisanName` cannot answer.
-    // The record's own STATED address, four boxes of its own beside the denormalised free-text
-    // `place`. Provenance coordinates never cross as an address.
     recordState: "recordState",
     recordDistrict: "recordDistrict",
     recordVillage: "recordVillage",
     recordPincode: "recordPincode",
-    // The SUBJECT pin — the half of invariant 4 the stated-address carry left behind. The device's
-    // own fix is not here and never will be: it is the desk the record was typed at.
     subjectLocation: "recordSubjectLocation",
-    // The ordered making sequence and everything else on file, as a sentence. Never the ids.
     recordMediaNote: "recordMediaNote",
-    // HOW THE RECORD'S MEASUREMENTS WERE TAKEN, in the record sheet's own words. A vision model
-    // estimates a dimension from a grid-sheet photograph and `merge_field_provenance` stamps
-    // `method: "VISION_MODEL"` on the record's inch column — but hydration copies only the NUMBER, so
-    // the workshop entry carried a machine's guess stamped with a named human's authorship. One
-    // sentence about the RECORD's columns rather than a label per box: hydration only fills blanks, so
-    // a per-box label would sit over a length the designer typed themselves and call it an estimate,
-    // which replaces one false claim with another.
     measurementMethodNote: "measurementMethodNote",
     usedByArtisans: "usedByArtisans",
     documentedOn: "documentedOn",
     photoCaption: "photoCaption"
   },
-  // `Process` holds notes and hangs off a product, so a step row carries what happens and which
-  // documented product's sequence it came from instead of a bare name. `steps` and
-  // `preProcessAvailable` are deliberately absent HERE and present on `traditionalProcess.processRef`
-  // below — a STEP is one line of a sequence and cannot carry the whole sequence into itself.
   "processStep.processRef": { name: "name", notes: "description", productName: "documentedFor" },
-  // New with the widening: the stage-5 singleton, which is where a whole documented process belongs.
-  // `steps` arrives as one ordered bulleted list built from all four `ProcessStep` columns — the
-  // source's own sub-steps, which reached nothing at all before.
   "traditionalProcess.processRef": {
-    // How much footage the process record carries, as a sentence. Not the media ids: the gallery
-    // rule forbids seeding the designer's own photographs and the record's files are gated per file.
     recordMediaNote: "recordMediaNote",
     name: "documentedProcessName",
     notes: "documentedProcessNotes",
@@ -2300,49 +860,6 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     preProcessAvailable: "preProcessAvailable",
     documentedOn: "documentedOn"
   },
-  // ── THE PRODUCT THAT NARROWS BOTH PROCESS PICKERS, AND ANSWERS `documentedFor` FIRST ──────────
-  // Both stage-5 process pickers are now narrowed by a `productRef` sibling (`ref_filter_by` names a
-  // field of the SAME entity, so the sibling is not optional), which means three representations of
-  // "which product this process belongs to" coexist: the canonical non-nullable `Process.productId`,
-  // the copied `documentedFor` name, and the designer's picked id.
-  //
-  // WHICH WRITER WINS DEPENDS ON THE SAVE, and this comment used to claim otherwise. Hydration walks
-  // fields in DECLARATION order and `productRef` is declared just before `processRef` in both
-  // entities, so the parent answers FIRST — and the child then finds a filled box and leaves it alone
-  // ONLY while the child's own ref is unchanged. A re-pointed ref clears and rewrites its own targets
-  // instead of only filling blanks (`hydrateFromReference`'s `replaced` branch here, and the server's
-  // matching pop), so on the cascade's ordinary path — product changed, process cleared and re-picked
-  // in one save — the CHILD writes `documentedFor` last. Both name the same product while the stored
-  // pair is consistent; on a stale pair the box prints the process's parent rather than the product
-  // the designer chose. The server's `REFERENCE_HYDRATION` carries the full rule and
-  // `backend/tests/test_reference_carry.py` pins all five cases.
-  //
-  // AND THERE IS A SIXTH STATE, WHICH IS THE ONE BETWEEN THE CASCADE'S TWO HALVES. Changing the
-  // product CLEARS the process (`StageReferenceField`'s filter effect), and one autosave is enough to
-  // store the row before it is re-picked. A blank ref used to hydrate nothing AND pop nothing, so the
-  // six boxes copied from the old process stood while `productRef` rewrote `documentedFor` — a row
-  // describing product A's process under product B's name, with no ref left to re-resolve it by and
-  // nothing able to flag it (`canonical_divergence` reads only fields carrying a `reference` stamp,
-  // and the surviving stamps still named process A and still re-resolved to exactly what was stored).
-  //
-  // `design_workshops._clear_cascade_orphans` closes it, ON THE SERVER AND ONLY THERE, which is a
-  // deliberate placement rather than a gap on this side. The pop needs `previous` beside the incoming
-  // row to tell "the parent was re-pointed" from "this build never sent the parent" — a distinction no
-  // client has, because `validate_entry` drops blank keys and the two are the same absence on the
-  // wire. So the browser's filter effect clears the ID and says so, the handset does the same
-  // (`dwCascadeClearsChild`), and one writer on the side holding the evidence settles the values for
-  // both. The consequence to know about: between the clear and the save the row shows a process's name
-  // with no process linked, which is what both clients' notices exist to explain — a designer who
-  // retypes those boxes instead has TYPED them, and a typed value is not one hydration may overwrite.
-  //
-  // BOTH WRITERS ARE KEPT DELIBERATELY. Dropping `productName` from the server's `Process` data
-  // lambda would make `canonical_divergence` answer `canonical: null` for every `documentedFor`
-  // stamped before today and report the whole archive as diverged. The server's
-  // `REFERENCE_HYDRATION` carries that argument in full.
-  //
-  // SOURCE KEY `name`, NOT `productName`: the product model's data lambda produces `name` for its
-  // own name — `productName` is the PROCESS model's key for its parent's name. The identical shape
-  // is at `prototype.productRef` below. Writing the wrong one here hydrates nothing, silently.
   "traditionalProcess.productRef": { name: "documentedFor" },
   "processStep.productRef": { name: "documentedFor" },
   "existingProduct.artisanRef": { name: "artisanName" },
@@ -2352,28 +869,14 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     material: "material",
     price: "price",
     use: "use",
-    // The record's own STATED address, four boxes of its own beside the denormalised free-text
-    // `place`. Provenance coordinates never cross as an address.
     recordState: "recordState",
     recordDistrict: "recordDistrict",
     recordVillage: "recordVillage",
     recordPincode: "recordPincode",
-    // The SUBJECT pin. The artisan mapping has carried its own since it was written; this side
-    // carried the four stated strings and not the one coordinate that is about the village rather
-    // than about the desk.
     subjectLocation: "recordSubjectLocation",
-    // An audio note explaining the piece, a video of it being finished — the record holds them and
-    // one IMAGE could not say so. A sentence; see `_media_note` on the server.
     recordMediaNote: "recordMediaNote",
-    // The product record's measurement methods, in the record sheet's own words — see the same
-    // pair on `tool.toolRef` above for why this is one sentence about the RECORD rather than a
-    // label per dimension box.
     measurementMethodNote: "measurementMethodNote",
     photo: "productPhotos",
-    // `lengthCm`/`widthCm`/`heightCm` are the inches columns converted ×2.54 on the server. The boxes
-    // print "cm", so a raw copy would have understated every measurement by a factor of 2.54 in a
-    // document a ministry receives. `recordType` carries the four `productType` tokens that
-    // `category` cannot express, rather than hydrating blank as it did for nearly every product.
     localName: "localName",
     recordType: "recordType",
     craftName: "craftName",
@@ -2392,21 +895,6 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     photoCaption: "productPhotosCaption"
   },
   "prototype.productRef": { name: "productName" },
-  // ── THE BASELINE CITATION ON STAGE 6'S NEW ARTISAN-BASELINE SINGLETON ─────────────────────────
-  // The GLOBAL artisan questionnaire's INTERVIEW — a sitting, not a form. There is exactly one global
-  // instrument (`QuestionnaireSection.code` is unique and its sortOrder is globally unique), so what a
-  // designer picks is the afternoon: a title, a date, a place, a language, a named set of artisans.
-  // Not the per-workshop custom `Questionnaire`, which is the designer's own method, is already
-  // attached through `designWorkshopId`, has no `workshopId` for the scope machinery to read, is
-  // private by design and carries no reviewer's verdict.
-  //
-  // COUNTS AND NEVER ANSWERS. `QuestionnaireResponse.answerText` and `.notes` do not cross in any
-  // form: a workshop's stage reads do not pass through the record path's redaction, the schema cannot
-  // say who in a group answered, the copy is permanent and one-way, and a question's WORDING is
-  // mutable ("How many looms?" answered "12", reworded to "How many weavers?"). The artisans' names
-  // and `artisanSetKey` are excluded with them — a sitting may cover artisans who are not on this
-  // workshop's roster. The server's `REFERENCE_MODELS["QuestionnaireInterview"]` carries the whole
-  // argument; this copy exists only so the boxes fill in at the keyboard.
   "artisanBaseline.interviewRef": {
     interviewTitle: "interviewTitle",
     interviewDate: "interviewDate",
@@ -2416,63 +904,13 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
     interviewSectionsCovered: "interviewSectionsCovered",
     interviewQuestionsAnswered: "interviewQuestionsAnswered",
     interviewLastAnsweredOn: "interviewLastAnsweredOn",
-    // A sentence counting the files and never the ids. On this model it is the only thing that can
-    // say the audio recording of the sitting exists: one IMAGE per record is all the picker resolves.
     interviewMediaNote: "interviewMediaNote",
     interviewDocumentedOn: "interviewDocumentedOn",
     interviewDocumentedAtWorkshop: "interviewDocumentedAtWorkshop"
   },
-  // ── THE INSTRUMENT, WHICH IS NOT THE SITTING ABOVE IT (2026-09-03) ────────────────────────────
-  //
-  // `surveyPlan.questionnaireRef` points at a `Questionnaire` — the FORM a designer uploaded, its
-  // sections and its questions — where `artisanBaseline.interviewRef` points at one SITTING taken on
-  // one. One key crosses, and the eleven refusals ledgered against the sitting apply here in their
-  // strongest form: the rows under this model are questions and respondents' answers, a hydrated
-  // value is a permanent printed copy, and the server's `REFERENCE_MODELS["Questionnaire"]` declares
-  // no `include` at all so none of them is ever loaded.
-  //
-  // The title is also what the report prints once the form is retired — `isActive: false` is that
-  // API's delete — which is the whole of why a linked record's text is copied beside its id.
   "surveyPlan.questionnaireRef": {
     name: "questionnaireName"
   },
-  // ── THE WORKSHOP'S OWN ROWS: THE INTERNAL CARRY, ADDED 2026-09-03 ──────────────────────────────
-  //
-  // Every mapping above copies from a record in ANOTHER TABLE — an artisan, a documented product —
-  // which the picker resolves through a Prisma delegate. These two copy from ANOTHER ROW OF THIS
-  // SAME WORKSHOP: a `DwStageEntry` the designer filled in at an earlier stage. Nothing about the
-  // RULES differs, which is why they live in this same table and are applied by the same
-  // `hydrateFromReference` — only the server's loading branches, against `dwstageentry` scoped to
-  // the workshop and respecting `deletedAt`.
-  //
-  // WHAT WAS HAPPENING WITHOUT THEM. A prototype is described once at stage 13 (materials, five
-  // dimensions, weight, making time, the process followed) and stage 16 asks a designer to
-  // catalogue the same physical piece again in boxes of the same names. `prototypeRef` stored the
-  // id and nothing else, so the designer retyped — and the prototypes table and the final-products
-  // table of one report then printed different materials and different dimensions for one object,
-  // with nothing in the document saying which had been measured.
-  //
-  // THE RULE IS NARROWER THAN THE EXTERNAL ONE and the server's `REFERENCE_HYDRATION` argues it in
-  // full: the two boxes must ask the SAME QUESTION about the SAME PHYSICAL SUBJECT. Thirteen other
-  // internal REF fields are deliberately left out — `prototype.sketchRef` (a drawing is not the
-  // object made from it), `sketch.supersedesSketch` (a successor exists BECAUSE something changed),
-  // `materialUsage.prototypeRef` (one material, and the source holds a list), `costSheet.productRef`
-  // (stage 17 exists to build a price from line items rather than inherit one), and the rest — each
-  // named with its reason in the server's table. This copy carries the mappings and not the
-  // refusals, as it always has; `test_the_web_carries_the_same_hydration_table` asserts EQUALITY of
-  // the mappings, so an entry added there and forgotten here is a failing build.
-  //
-  // TWO THINGS DO NOT CROSS AND ARE WORTH KNOWING WHILE READING THIS. The PHOTOGRAPHS do not:
-  // both rows are in one workshop, so a carry would be the SAME media ids under two headings and
-  // the report's image pass dedupes by media id. The COSTS do not: `prototype` holds `materialCost`
-  // and `labourCost` where `finalProduct` holds one `costPrice`, and a mapping is one key to one
-  // key and cannot sum two heads.
-  //
-  // `processSummary -> makingProcess` IS THE ONE PAIR THIS SURFACE SKIPS AT THE KEYBOARD, and that
-  // is correct rather than a gap: it is RICH_TEXT, `stringifyRefValue` accepts only the two JSON
-  // scalars a display box can hold, so the browser writes nothing and the server writes the
-  // normalised document at save. Skipping is the fail-closed direction — the alternative is
-  // `"[object Object]"` in a narrative box.
   "prototypeValidation.prototypeRef": {
     lengthCm: "finalLengthCm",
     widthCm: "finalWidthCm",
@@ -2491,94 +929,24 @@ const DW_REFERENCE_HYDRATION: Record<string, Record<string, string>> = {
   }
 };
 
-/** MULTI_ENUM, TAGS and IMAGE_LIST hold a list; everything else holds one value. */
 export function isMultiField(field: DwField): boolean {
   return field.type === "MULTI_ENUM" || field.type === "TAGS" || field.type === "IMAGE_LIST";
 }
 
-/**
- * The mapping one REF field hydrates through, or an empty object when it hydrates nothing.
- *
- * EXPORTED SO THAT NOBODY OUTSIDE THIS FILE HAS TO KNOW THE KEY SHAPE. The table is keyed by
- * `"entityKey.fieldKey"` because a field key is unique only within an entity, and a caller that
- * builds that string itself is a caller that can build it wrong — silently, because a miss is
- * indistinguishable from a field that legitimately hydrates nothing.
- *
- * Empty is the FAIL-CLOSED answer, exactly as it is on the server (`reference_hydration_for` in
- * `stage_schema.py` says so in the same words): a field with no entry writes nothing, the designer
- * types one box, and the server fills it at save regardless. A guessed entry costs a wrong value
- * nobody can see is wrong.
- */
 export function referenceHydrationFor(entity: DwEntity, refField: DwField): Record<string, string> {
   return DW_REFERENCE_HYDRATION[`${entity.key}.${refField.key}`] ?? {};
 }
 
-/**
- * Every `"entityKey.refFieldKey"` the table above hydrates, as a list.
- *
- * EXPORTED FOR ONE READER AND IT IS A TEST. `components/designworkshop/StageRecordEmbed.tsx` holds
- * an explicit, argued table of which mirror points get the embedded record page and which do not —
- * NO COUNT HERE ON PURPOSE, because the last one went stale the first time the pin ran and found two
- * refusals nobody had enumerated. That table is only worth having if a mapping added here cannot
- * quietly go unmentioned by it. The pin (`e2e/stage-record-embed-unit.spec.ts`) walks this list and
- * fails on any key the embed table neither ships nor refuses in writing, and names every refusal by
- * hand, so the real numbers are enforced there rather than repeated here.
- *
- * A LIST AND NOT THE TABLE ITSELF, on purpose: the mapping is read through
- * {@link referenceHydrationFor}, which exists so that nobody outside this file has to know the key
- * shape or can build one wrong. Handing out the whole record would put a second reader on the
- * literal and make the next widening two edits instead of one.
- */
 export function referenceHydrationPoints(): string[] {
   return Object.keys(DW_REFERENCE_HYDRATION);
 }
 
-/**
- * One value out of a reference payload, as the string a single-value box may hold — or null.
- *
- * THE TYPE GUARD IS THE POINT AND IT IS `hydrateFromReference`'s, restated: only the two JSON
- * scalars a display field can legitimately be are accepted. Anything else — an object the payload
- * grew later, a nested record — becomes null rather than being stringified, because
- * `"[object Object]"` in a participant table is a value that looks answered and is not.
- *
- * Null means BOTH "the record says nothing here" and "the record says something this box cannot
- * hold", and the two are deliberately one answer: in each case the honest state of the box is
- * unanswered, and the caller has nothing different to do about them.
- */
 export function stringifyRefValue(raw: unknown): string | null {
   if (typeof raw === "string") return raw.trim() ? raw : null;
   if (typeof raw === "number") return String(raw);
   return null;
 }
 
-/**
- * The patch a chosen reference makes to the rest of its row.
- *
- * The rules are `hydrate_entries`' rules, restated in TypeScript because they are the same rules and
- * getting them different would be worse than not having them here at all:
- *
- * - **Only blanks are filled**, including on a brand-new row. What is already in a box is what the
- *   designer typed or accepted in the room — a name the artisan prefers, a village the master record
- *   has wrong — and a picker that reverted every correction the moment it was used would be watched
- *   doing it, which is a worse failure than retyping.
- * - **Unless the row named a DIFFERENT record before**, in which case every mapped single-value
- *   field is CLEARED FIRST and then rewritten with whatever the new record has to say. Clearing is
- *   the half that was missing for a year — see the block comment below, which names the defect.
- *   Leaving the previous artisan's name beside the new artisan's id is the one outcome worse than
- *   either alternative: the report and the research data then name two different people for the
- *   same row and nothing says which was meant.
- * - **A list is only ever seeded, never replaced.** The documented product's photograph is a
- *   starting point; overwriting a gallery with it would destroy the only copy of the photographs the
- *   designer took at the workshop.
- *
- * The returned patch is applied with a spread (`{...row, ...patch}` — `patchRowMany` in
- * EntityForm.tsx, and the singleton grid), so a cleared key travels as an explicit `null` VALUE
- * rather than as an absent one. An absent key cannot delete anything through a spread; a `null`
- * blanks the box on screen, and on the wire `coerce_value` reads it as blank and `validate_entry`
- * drops it, so the stored row loses the key. That is the same thing the handset sends
- * (`hydrationPatch` emits `null` for what it is clearing) and the same end state the server reaches
- * with `item.data.pop(target_key)`.
- */
 export function hydrateFromReference(
   entity: DwEntity,
   refField: DwField,
@@ -2592,40 +960,6 @@ export function hydrateFromReference(
   const patch: Record<string, DwValue> = {};
 
   if (replaced) {
-    // THE PREVIOUS RECORD'S VALUES ARE CLEARED FIRST, BEFORE ANYTHING IS COPIED IN.
-    //
-    // The rewrite promised three lines above used to be applied field by field in the loop below,
-    // which SKIPS a source value that is blank — so it rewrote only the fields the NEW record
-    // happens to have filled in, and every field the new record leaves blank kept the OLD record's
-    // answer. Pick a fully documented artisan, notice the phone belongs to a different Sita Devi,
-    // re-point the row at a thinly documented one, and the row now reads as artisan B's name and
-    // craft beside artisan A's phone, village, gender and PHOTOGRAPH, with `artisanRef` naming B so
-    // nothing can ever re-resolve it. That participant table goes into a .docx sent to a ministry.
-    //
-    // THE SERVER-SIDE HALF OF THIS RULE IS NOT ENOUGH ON ITS OWN, and that is the whole reason
-    // these lines are here rather than only in `hydrate_entries`. The server pops the mapped
-    // targets only when `replaced` is true, and it computes `replaced` against the STORED row —
-    // `was = item.previous.get(spec.key)`. So it fires exactly ONCE. Save 1 sends
-    // `{artisanRef: B, phone: A's}`, the stored row still says A, the pop clears the phone. But the
-    // browser's draft was never touched, so it still holds A's phone; save 2 sends the same pair,
-    // the stored row NOW says B, `replaced` is false, the only-fill-blanks rule sees a filled value
-    // and leaves it alone — and A's phone is written straight back under B's id. Anything that
-    // triggers a second save of an unchanged draft does it: a retry after a dropped connection, an
-    // autosave, or the designer simply pressing Save again.
-    //
-    // Cleared to `null` rather than to `""`, and cleared here rather than by writing blanks in the
-    // loop, because "the new record has nothing to say about this field" and "the new record says
-    // it is empty" are the same thing on the wire: the reference payload carries `null` for a
-    // column nobody filled in, and the loop below refuses a blank source outright.
-    //
-    // THE MULTI ARM IS DELIBERATELY EXEMPT, matching the gallery rule below and on both other
-    // surfaces: a gallery is seeded when empty and never overwritten, because it holds the
-    // photographs the designer took at the workshop and there is no second copy of those anywhere.
-    //
-    // A DEPRECATED TARGET IS CLEARED TOO, even though the loop below refuses to WRITE to one.
-    // Refusing to put new data into a retired field is not a reason to keep a DIFFERENT PERSON's
-    // data there — the value still travels in `data` and still prints. The server's pop makes the
-    // same call for the same reason; if you narrow one of them, narrow both or they diverge.
     for (const targetKey of Object.values(mapping)) {
       const target = entity.fields.find((candidate) => candidate.key === targetKey);
       if (!target || isMultiField(target)) continue;
@@ -2640,100 +974,23 @@ export function hydrateFromReference(
     if (!target || target.deprecated) continue;
     const multi = isMultiField(target);
     if (isFilled(row[targetKey]) && (!replaced || multi)) continue;
-    /*
-     * A GEO TARGET IS THE ONE PLACE AN OBJECT IS THE CORRECT SHAPE, and it was being dropped.
-     *
-     * `_subject_point` carries the SUBJECT pin — the coordinate a researcher dropped on the place
-     * itself, which invariant 4 permits and the device's own fix never crosses — as `{lat, lon}`.
-     * It lands on `participant.subjectLocation`, `existingProduct.recordSubjectLocation` and
-     * `tool.recordSubjectLocation`, all declared GEO. The scalar guard below refused it as "an
-     * object the payload grew later", so `hydrate_entries` wrote the pin at SAVE and the browser
-     * showed an empty map card until the page was reloaded — and worse than cosmetic: a designer
-     * looking at that empty card drops their own pin (the card offers "use the place this stage was
-     * recorded", which is the DESK), the box is then filled, and only-fill-blanks means the
-     * village's own coordinate never arrives at all. The two surfaces have to agree here.
-     *
-     * `geoValue` is the guard, not a type test: it returns null unless both numbers are finite, so a
-     * half-written coordinate is still refused and nothing else object-shaped can get through.
-     */
     if (target.type === "GEO") {
       const point = geoValue(raw as DwValue);
       if (point) patch[targetKey] = point;
       continue;
     }
-    /*
-     * A LIST SOURCE FOR A LIST TARGET, which the two other surfaces have always accepted and this
-     * one dropped (2026-09-03).
-     *
-     * The scalar guard below reads "a list the payload grew later" as something to skip, and that
-     * was right while every reference payload was a record's COLUMNS: an external `data` value is a
-     * scalar, and a single photograph reaching a gallery is wrapped by the `multi` arm below. It
-     * stopped being right with the internal carry — `finalProduct.materials` is a TAGS box fed from
-     * `prototype.materials`, which is a TAGS box, so the value on the wire is genuinely an array.
-     *
-     * BOTH OTHER SURFACES ALREADY DO THIS AND THE DIVERGENCE WOULD HAVE BEEN INVISIBLE.
-     * `coerce_value`'s multi arm is `[str(v).strip() for v in raw if str(v).strip()]` and
-     * `DwValues.coerceHydrated` opens with `raw as? JsonArray ?: JsonArray(listOf(raw))`. So a
-     * designer picking the prototype on a handset would have watched Materials fill in and the same
-     * pick in a browser would have left it empty until the save came back — on a REQUIRED box, which
-     * is the one a designer answers by typing rather than waiting.
-     *
-     * SAME SHAPE AS THE SERVER'S: strings, stripped, blanks dropped, and an all-blank list treated
-     * as nothing to say rather than as an empty answer. Non-scalar ENTRIES are refused with the list
-     * they are in, matching `coerceHydrated`'s "the whole value is refused when any token is
-     * unknown" — half a materials list is a claim about what a piece is made of that nobody made.
-     *
-     * `pyStrip` AND NOT `trim()`, AT BOTH THE MAP AND THE EMPTINESS TEST (2026-09-03). The quote
-     * above is `str(v).strip()`, and `trim()` is not that set — it walks past U+0085 and U+001C to
-     * U+001F, which Python strips, and cuts U+FEFF, which Python does not. A tag pasted with a
-     * next-line on it would therefore have stayed a distinct tag in the browser and become the plain
-     * word on the server and the handset, which is a stage row disagreeing with itself across three
-     * surfaces about what a piece is made of. `lib/marketAnalysis.ts` exports the set for exactly
-     * this and instructs it in as many words: anything in the web client reaching for `trim()` on a
-     * value the Python `.strip()`s imports that rather than writing a third one.
-     */
     if (multi && Array.isArray(raw)) {
       if (raw.some((item) => typeof item !== "string" && typeof item !== "number")) continue;
       const items = raw.map((item) => pyStrip(String(item))).filter((item) => item !== "");
       if (items.length) patch[targetKey] = items;
       continue;
     }
-    // Only the two JSON scalars a display field can legitimately be. Anything else — a nested
-    // record, a list a single-value box could not hold anyway — is skipped rather than stringified:
-    // "[object Object]" in a participant table is a value that looks answered and is not.
     if (typeof raw !== "string" && typeof raw !== "number") continue;
     patch[targetKey] = multi ? [String(raw)] : raw;
   }
   return patch;
 }
 
-/**
- * What to print on a reference picker's trigger for a value chosen on an earlier visit.
- *
- * A REF stores an id and nothing else, so a stage re-opened next week has `"cm3k…"` in the field and
- * no name to show — and the options that would supply one are fifty rows deep behind a search nobody
- * has typed yet. Rendering the id is the artisan-dropdown bug this repository already shipped once:
- * it asks a designer to confirm "the right artisan" while showing them twenty-five random
- * characters.
- *
- * The name is already on the row, because hydration put it there. This reads it back out through the
- * SAME mapping, so the hint and the fill can never disagree about which box holds the name.
- *
- * ── THE PROBE LIST IS SOURCE KEYS, AND A MODEL WHOSE LABEL IS NOT CALLED `name` FALLS THROUGH ────
- *
- * `interviewTitle` was added on 2026-08-24 with the sixth reference model, and it is worth saying
- * why it had to be: a `QuestionnaireInterview`'s label is its TITLE — `REFERENCE_MODELS`'s own
- * `label` lambda reads `r.title` — so `artisanBaseline.interviewRef` carries no `name` key at all
- * and this function answered "". The picker's trigger would then have shown a designer the raw cuid
- * of the sitting they picked last week, which is the exact bug the paragraph above says this
- * function exists to end, reintroduced by a model whose label column is spelled differently.
- *
- * Kept as an explicit list rather than "the first entry of the mapping": dict order is not a
- * contract, and `existingProduct.productRef`'s first pair happens to be the product's name only by
- * accident of how it was typed. Kept as SOURCE keys rather than target keys for the reason the
- * paragraph above gives — on `existingProduct` the target `name` means the product and the target
- * `artisanName` means the person, and only the source side says which.
- */
 export function referenceDisplayHint(entity: DwEntity, refField: DwField, row: DwEntryData): string {
   const mapping = DW_REFERENCE_HYDRATION[`${entity.key}.${refField.key}`];
   if (!mapping) return "";
@@ -2746,26 +1003,6 @@ export function referenceDisplayHint(entity: DwEntity, refField: DwField, row: D
   return "";
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Two optional server capabilities — probed, never assumed
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Whether this server offers a route at all, cached per path for the life of the tab.
- *
- * A GET is used as the probe because the answer is in the STATUS and a GET has no body to be misread
- * as work: 404 means the deployment predates the feature, anything else means the route is there.
- * Both probed paths now declare a literal GET that answers 200 — `dictation_probe` and
- * `identity_ocr_probe` in `routes/design_workshops.py` — because the 405 a POST-only route gives a
- * GET, though read correctly here, is printed by every browser as a red console error on every page
- * that mounts the control. A server older than those GETs still answers 405 and is still "there".
- * A POST probe with an empty body would reach the handler on a server that has it, and "did nothing
- * harmful this time" is not a property worth relying on across a refactor of somebody else's route.
- *
- * A network failure is deliberately NOT cached as "absent". Out here the connection drops for a
- * minute at a time, and a control that disappeared for the rest of the session because of one bad
- * moment is indistinguishable from a feature that was never deployed.
- */
 const routeProbes = new Map<string, Promise<boolean>>();
 
 export function serverOffersRoute(path: string): Promise<boolean> {
@@ -2785,107 +1022,22 @@ export function serverOffersRoute(path: string): Promise<boolean> {
   return probe;
 }
 
-/**
- * The id-less dictation route. **Used only to ask whether this deployment offers dictation at all.**
- *
- * It is deliberately NOT where a clip is sent any more — see {@link dictateAudio}. It survives as the
- * probe target because `serverOffersRoute` asks a question about the DEPLOYMENT ("is there a
- * transcription service configured here at all") rather than about a workshop, and asking it against
- * a per-workshop URL would need a workshop id before the button has been drawn.
- */
 export const DW_DICTATE_PATH = "/design-workshops/dictate";
 
-/**
- * Where a clip is actually sent: the per-workshop route, **because it is the only one that can
- * enforce the artisan's consent.**
- *
- * `POST /design-workshops/dictate` takes no workshop id, so it can consult no workshop's
- * `dictationConsent` column — it hands the clip to the provider chain exactly as it did before the
- * consent feature existed. The gate lives on `POST /design-workshops/{id}/dictate`, and a gate the
- * clients do not post to gates nothing: the columns are written, the decision log is kept, and an
- * artisan's recorded voice still reaches ElevenLabs. That is this repository's recurring defect —
- * a feature complete everywhere except its call site — and it is why this constant exists.
- *
- * The body is unchanged: the same `file` and the same `languageHint`. Only the URL moved.
- */
 export function dwDictatePathFor(workshopId: string): string {
   return `/design-workshops/${encodeURIComponent(workshopId)}/dictate`;
 }
 export const DW_OCR_IDENTITY_PATH = "/design-workshops/ocr/identity";
 
-/**
- * How many server dictations this account has left today, and where the day ends.
- *
- * ── THE ROUTE EXISTED AND NOBODY CALLED IT ────────────────────────────────────────────────────
- * `GET /design-workshops/dictation-allowance` has been deployed all along and its docstring opens
- * "**THIS ROUTE IS WHY THE CAP IS NOT JUST A 429**": a client that can only learn the ceiling by
- * being refused has to spend a multi-megabyte upload to learn it, on a metered connection, and then
- * spend another one tomorrow. Both clients did exactly that — the browser handled the cap purely
- * reactively in `Dictation.tsx` and the handset only ever wrote its allowance store downstream of a
- * request that had already paid. So the pre-flight the route exists to provide never happened.
- *
- * ── THE FOUR KEYS ARE THE SERVER'S, NOT GUESSED ───────────────────────────────────────────────
- * They are exactly `dictation_cap.allowance_payload`, which is the same object the 200 on a
- * successful dictation and the 429 refusal both carry — so one shape describes the allowance
- * wherever a client meets it.
- *
- * `dictationsLimit` and `dictationsRemaining` are BOTH null when there is no cap, deliberately:
- * "0 remaining" and "no ceiling" must not look alike. `dictationDay` is the SERVER's India-time
- * date, and it is what makes a cached spend safe to hold — a cached count whose day no longer
- * matches is stale rather than authoritative, and must resolve to "not spent" so the client tries
- * once and learns the truth here rather than withholding a capability at the wrong midnight.
- */
 export type DwDictationAllowance = {
-  /** The daily ceiling, or null when this deployment sets none. */
   dictationsLimit: number | null;
   dictationsUsed: number;
-  /** What is left today, or null when uncapped. Never conflate a null with a zero. */
   dictationsRemaining: number | null;
-  /** The server's India-time date the count belongs to, e.g. "2026-08-19". */
   dictationDay: string;
 };
 
-/**
- * The request that is in the air right now, if one is, so that a screen full of microphones asks
- * this question ONCE between them.
- *
- * ── THE DEFECT THIS ENDS, WHICH A COMMENT ONCE CLAIMED WAS ALREADY CLOSED ─────────────────────
- * `Dictation.tsx` gates its pre-flight on `mode === "server"` and its comment read "NOT ON EVERY
- * MOUNT OF EVERY MICROPHONE". `mode` is PER-BUTTON state, resolved by each button's own effect, so
- * on a browser with no native recogniser — Firefox, which is the entire reason the server rung
- * exists — every button on the stage resolves to `server`. Stage 13 draws eleven microphones, so
- * eleven of these fired on mount: exactly the eleven round trips the comment said it avoided. The
- * gate saved the request only on Chrome, where the readout is not drawn anyway.
- *
- * The dedupe is here rather than in the component because the component cannot see its siblings.
- * `serverOffersRoute` above solves the identical problem the identical way, and the two probes are
- * issued from the same eleven effects.
- *
- * ── WHY THE ANSWER IS NOT KEPT AFTER IT ARRIVES ──────────────────────────────────────────────
- * Only the IN-FLIGHT promise is held; it is released once it settles. A retained answer would be
- * "asked once per session", which sounds stronger and is worse in two ways this application really
- * meets: a designer who spends four dictations on stage 13 and then opens stage 14 would be shown
- * the count from before those four, and a field laptop is SHARED — `AuthProvider.logout` clears the
- * token and deliberately nothing else, so a retained count would follow the previous designer's
- * account into the next one's session. Releasing it costs one request per stage the microphones are
- * drawn on, and never eleven.
- *
- * A second property falls out of it and is worth as much as the saved round trips: the eleven
- * readouts on one stage are the SAME answer, so they cannot disagree with each other about how many
- * dictations are left.
- */
 let dictationAllowanceInFlight: Promise<DwDictationAllowance | null> | null = null;
 
-/**
- * Ask, before spending an upload to find out.
- *
- * It NEVER throws: a caller drawing a microphone must not lose the microphone because a courtesy
- * request failed, and the reactive 429 handling that has always been there is still the authority
- * on a refusal. Null means "this deployment does not answer, or the network did not" — the two are
- * one answer here because the caller has nothing different to do about either.
- *
- * Concurrent callers share one request — see {@link dictationAllowanceInFlight}.
- */
 export function dwDictationAllowance(): Promise<DwDictationAllowance | null> {
   if (dictationAllowanceInFlight) return dictationAllowanceInFlight;
   const asking: Promise<DwDictationAllowance | null> = apiFetch<DwDictationAllowance>(
@@ -2893,98 +1045,33 @@ export function dwDictationAllowance(): Promise<DwDictationAllowance | null> {
   )
     .catch(() => null)
     .finally(() => {
-      // Identity-checked rather than blanked: a later call may already have replaced this one, and
-      // clearing that one instead would leave a promise nothing can ever release.
       if (dictationAllowanceInFlight === asking) dictationAllowanceInFlight = null;
     });
   dictationAllowanceInFlight = asking;
   return asking;
 }
 
-/**
- * Forget any answer in the air, so the next caller asks the server again.
- *
- * FOR TESTS, and named so rather than hidden behind a flag: the dedupe above is module state, and a
- * spec that could not clear it would be asserting on whatever the spec before it happened to leave
- * behind. Nothing in the app calls it — the promise releases itself the moment it settles, which is
- * the whole reason there is no stale answer for production code to have to clear.
- */
 export function forgetDictationAllowanceInFlight(): void {
   dictationAllowanceInFlight = null;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * May this workshop's material be sent out — the artisan's own answer
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * The two answers somebody can record, and there is deliberately no third.
- *
- * `NOT_RECORDED` IS NOT ONE OF THEM. `DictationConsentIn` refuses it by name — *"somebody
- * deliberately wrote down that nobody has been asked" is not a state anybody is in* — and the
- * service refuses it again behind the schema. Taking a consent back is recording REFUSED, which is a
- * decision with a next move and a row in the log; un-recording one would leave the gate unable to
- * tell a withdrawn consent from a workshop nobody has opened.
- */
 export type DwConsentDecision = "GRANTED" | "REFUSED";
 
-/** One recorded answer, exactly as `dictation_consent.decision_payload` serialises it. */
 export type DwConsentDecisionRecord = {
   id: string;
   designWorkshopId: string;
   decision: DwConsentDecision | string;
   note: string | null;
-  /** A user id, not a name. */
   actorId: string | null;
-  /** When the ARTISAN answered. Null when the answer was taken straight against the server. */
   recordedAt: string | null;
-  /** When the SERVER heard it. A fortnight of no signal makes the two differ by a fortnight. */
   createdAt: string | null;
 };
 
-/**
- * The answer's new state, and the whole history that produced it.
- *
- * **THE `workshop` HALF IS THE SUMMARY AND NOT THE DETAIL, AND THIS TYPE SAID `DwDetail`.**
- * `record_dictation_consent` builds its answer as `workshop_summary(updated)` and then sets
- * `dictationConsentByName` on it — the single-record read is where the actor's NAME is resolved,
- * because the paged list serialises `workshop_summary` per row and a name lookup there would be a
- * query per workshop to print something the list does not show. What it never adds is `stages`,
- * `completeness` or `schemaVersion`.
- *
- * So a caller reaching for `result.workshop.stages` got `undefined` with no compile error — which is
- * the `DwIdentityOcrResult` defect this file's own header is written against, in the opposite
- * direction: there a type declared five keys the endpoint never sent and a perfect read was reported
- * as unreadable; here it declared three, and the next caller would have decided a workshop had no
- * stages. Latent when written — the consent card discards the result and the sync push does
- * `.then(() => true)` — and latent is exactly when a wrong type is cheapest to correct.
- */
 export type DwConsentResult = {
   workshop: DwSummary & { dictationConsentByName?: string | null };
   decisions: DwConsentDecisionRecord[];
 };
 
-/**
- * Put the artisan's answer on record.
- *
- * **ITS OWN ROUTE AND NEVER `PATCH /{id}`**, which is the most important fact about this call.
- * `PATCH`'s writable set is a hand-written tuple copied in a loop that records neither the actor nor
- * the moment, and a value whose entire point is who set it and when cannot ride a generic field-copy
- * loop.
- *
- * `recordedAt` IS THE COURTYARD MOMENT AND IS WORTH SENDING. A consent recorded with no signal
- * reaches the server on the next sync, which on this fleet can be a fortnight later; the moment that
- * matters is when the artisan actually answered, and the server keeps `createdAt` separately for
- * when it heard. A time in the FUTURE is refused rather than corrected — a corrected stamp is a
- * fabricated fact about when somebody agreed — so a laptop whose clock is ahead gets a 422, which is
- * the honest outcome and is why the offline path records the answer on this device first.
- *
- * ⚠ RECORDING **REFUSED** ALSO STOPS WORK ALREADY IN THE QUEUE. `cancel_pending_transcriptions`
- * marks every QUEUED or PROCESSING transcription of this workshop's recordings as FAILED and writes
- * the refusal sentence into each clip's `transcriptError`. That is the difference between a consent
- * and a preference, and a surface should say it before the press rather than let a designer discover
- * that nine clips stopped.
- */
 export function recordDesignWorkshopDictationConsent(
   id: string,
   decision: DwConsentDecision,
@@ -2995,30 +1082,11 @@ export function recordDesignWorkshopDictationConsent(
     body: JSON.stringify({
       decision,
       note: (options.note ?? "").trim() || null,
-      // Omitted rather than sent as null when there is nothing to say: the field's own description
-      // is that omitting it means "record this against the server now", which is exactly right for
-      // an answer typed while online.
       ...(options.recordedAt ? { recordedAt: options.recordedAt } : {})
     })
   });
 }
 
-/**
- * What the current answer MEANS, in one sentence, for the workshop it is on.
- *
- * ONE FUNCTION FOR ALL THREE STATES, mirroring Android's `dwConsentStateSentence`, so that the two
- * clients cannot describe one state two ways. Each names the CONSEQUENCE and not merely the state:
- * "not recorded" on its own tells a designer nothing about why the microphone and the AI controls on
- * the stage they have just left behaved as they did.
- *
- * **THE WEB'S SENTENCES DIVERGE FROM ANDROID'S IN EXACTLY ONE PLACE AND IT IS A PLATFORM FACT, NOT A
- * PARAPHRASE.** The handset's copy goes on to explain that dictation still works because it falls
- * back to the phone's own speech recogniser, and warns that the recogniser is Google's over the
- * network. A browser has no such fallback worth naming — `OnDeviceDictationButton` is the Web Speech
- * API and is absent from Firefox, which is the entire reason the server rung exists — so repeating
- * Android's clause here would promise a capability this client cannot offer. What IS the same is the
- * fact that matters: what is on record, and what it stops.
- */
 export function dictationConsentSentence(consent: string | null | undefined): string {
   const token = (consent ?? "").trim().toUpperCase();
   if (token === "GRANTED") {
@@ -3031,114 +1099,33 @@ export function dictationConsentSentence(consent: string | null | undefined): st
       "Nothing is sent out. Dictation and AI tools are off."
     );
   }
-  // No answer on record is consent, assumed by default (owner decision, 19 Oct 2026).
   return (
     "On by default: material may be sent for transcription and AI tools until someone switches it off."
   );
 }
 
-/**
- * THE QUESTION ITSELF, in the words it has to be put to the artisan in.
- *
- * **COPIED FROM ANDROID'S `DW_CONSENT_QUESTION` AND NOT REWRITTEN**, because the person who ASKS is
- * whoever is holding the device: if the screen says only "allow cloud dictation" then what the
- * artisan is actually asked is whatever that designer improvises, no two artisans are asked the same
- * thing, and there is no way afterwards to know what any of them agreed to. So it is on screen in
- * full, above the buttons, and the buttons are worded as the ARTISAN'S answer rather than as a
- * setting the designer is choosing for them.
- *
- * Two words differ from the handset's string and both are platform facts rather than edits: "the
- * phone" is "this device", because this one runs on a laptop. Nothing else moves — in particular the
- * clause distinguishing a passage dictated into a field (not kept) from a recording attached to the
- * workshop (kept, because it is there to be listened to again) stays exactly as it is. That
- * distinction was added to Android after the screen was found claiming "the server keeps no copy of
- * the audio", which was true of `/dictate` and false of the interview recording sitting in the same
- * record — the one claim a consent screen cannot afford to get wrong.
- */
 export const DW_CONSENT_QUESTION =
   "On by default: recordings and dictation may be sent to an online transcription service. Dictated audio is " +
   "not kept — only the words. Attached recordings stay with the workshop. Tell the artisan, and switch this " +
   "off if they say no.";
 
-/** The switch's label, the same words as the artisan form's switch and the Android row's. */
 export const DW_CONSENT_SWITCH_LABEL = "Recordings may be transcribed";
 
-/** Android's `DW_CONSENT_ROW_TITLE`, so somebody told "it is on the workshop screen" can find it. */
 export const DW_CONSENT_ROW_TITLE = "Sending recordings out to be written down";
 
-/**
- * What `POST /design-workshops/dictate` actually returns — all NINE keys, and only those.
- *
- * THIS DECLARED A `language` KEY THE ROUTE HAS NEVER SENT. The echo is named `languageHint`, and the
- * type carried neither `status` nor `provider` at all. It is the same defect the REQUEST half of
- * `dictateAudio` below was just fixed for, on the same round trip, in the opposite direction — a
- * client and a server agreeing about a name neither of them checks. It cost nothing only because
- * nothing read the key; a caller that had tried would have found `undefined` and had no way to tell
- * that from "the server did not say".
- *
- * `status` is the one that earns its place: without it the caller cannot tell EMPTY from
- * RATE_LIMITED from FAILED, and those are three different next moves — see
- * {@link dictationAnswerSentence}.
- *
- * AND THE SAME DEFECT HAD A SECOND ROUND, WHICH IS WHY THE COUNT ABOVE MOVED FROM FIVE TO NINE.
- * The route spreads `dictation_cap.allowance_payload` into its 200 — `dictationsLimit`,
- * `dictationsUsed`, `dictationsRemaining`, `dictationDay` — and has done all along. This type named
- * none of them, so every browser client threw the server's own post-spend count away and could
- * learn the ceiling only by being refused, which is precisely what
- * {@link dwDictationAllowance}'s route exists to prevent. `language`/`languageHint` was a name the
- * two ends spelled differently; this was four names one end never wrote down at all.
- */
 export type DwDictationResult = {
-  /** COMPLETED | EMPTY | FAILED | RATE_LIMITED, as `ai.transcribe_audio_bytes` resolved the chain. */
   status?: string | null;
   text?: string | null;
-  /**
-   * The stored recording, when the transcript pipeline keeps dictations (contract
-   * `transcript-v1-api`: every recording is a MediaFile). Absent on a deployment that stores none.
-   */
   mediaId?: string | null;
-  /** Which provider in the chain answered. Diagnostic; never shown beside the words. */
   provider?: string | null;
-  /** The tag we sent, echoed. It steers nothing today — see the note in `dictateAudio`. */
   languageHint?: string | null;
   message?: string | null;
-  /**
-   * THE ALLOWANCE, ON THE SUCCESS PATH — the four keys of `dictation_cap.allowance_payload`, spread
-   * into this response by the route itself.
-   *
-   * They were on the wire all along and this type did not name them, so every client threw them
-   * away and could only learn the ceiling by being refused. Carrying them here is what lets the
-   * microphone's readout age by at most one dictation instead of by a whole session: the count is
-   * the server's, taken after the spend, and no extra round trip pays for it.
-   *
-   * Optional because a deployment that predates the cap sends none of them, and because the same
-   * type describes a response this build may meet from an older server. `dictationsRemaining` null
-   * means UNCAPPED and never "none left".
-   */
   dictationsLimit?: number | null;
   dictationsUsed?: number | null;
   dictationsRemaining?: number | null;
   dictationDay?: string | null;
 };
 
-/**
- * What to tell a designer when the round trip worked and produced no usable words.
- *
- * **THE PROVIDER CHAIN'S OWN MESSAGE MUST NOT BE PASSED THROUGH, and that is the whole point.** For
- * a throttled provider `ai.py` composes "Transcription rate-limited (HTTP 429); will retry
- * automatically." — true of the transcription QUEUE, where a clip is requeued behind a growing
- * cooldown without consuming an attempt, and FALSE HERE. This endpoint is synchronous and stores
- * nothing: nothing retries a dictation, ever. A designer who reads that promise waits for words that
- * are never coming, and the recording they made is already gone.
- *
- * The chain also folds a throttle into the error list and resolves to FAILED when another provider
- * hard-failed as well, so the retry phrase can arrive under a status that is NOT RATE_LIMITED. That
- * is why the phrase is matched as well as the status.
- *
- * Android has had this since its ladder was built (`dwDictationServerAnswerSentence` in
- * DwDictationLadder.kt); the browser did not, and printed `result.message` verbatim. Two surfaces,
- * one endpoint, one set of sentences.
- */
 export function dictationAnswerSentence(result: DwDictationResult): string {
   const status = (result.status ?? "").toUpperCase();
   const message = (result.message ?? "").trim();
@@ -3149,114 +1136,35 @@ export function dictationAnswerSentence(result: DwDictationResult): string {
   if (status === "FAILED") {
     return "Couldn't transcribe that. Try again, or type the answer.";
   }
-  // EMPTY, or a status this build has not heard of. The round trip worked and there were no words in
-  // it, so the next move is about the microphone and the room rather than about the connection.
   return "No words heard. Speak closer to the microphone, or type the answer.";
 }
 
-/**
- * Server-side dictation, for the browsers that have no `SpeechRecognition` of their own.
- *
- * Firefox ships none at all and Chromium's implementation streams the audio to Google, so a cluster
- * behind a proxy that blocks it has a microphone button that lights up and never returns a word.
- * Both cases end here. The recording is posted whole rather than streamed because the fallback's job
- * is to produce a transcript at all, not to produce one live — an interim readout that cannot exist
- * is better admitted than faked.
- */
 export function dictateAudio(
   blob: Blob,
   language: string,
-  /**
-   * The workshop whose consent governs this clip. **Required, and not optional.**
-   *
-   * Optional would have been the smaller diff and the wrong one: an omitted id would have to fall
-   * back to the id-less route, which enforces no consent — so every call site that forgot to pass it
-   * would silently send an artisan's voice to a third-party provider without the gate. Making it
-   * required moves that from a runtime possibility to a compile error.
-   */
   workshopId: string,
-  /**
-   * Extra consent subjects (H3, 21 Oct 2026): the interview a clip belongs to and the artisans it is
-   * about, so one interviewed artisan's refusal stops the send even when they are not on the workshop.
-   */
   extraFields: Record<string, string> = {}
 ): Promise<DwDictationResult> {
   const form = new FormData();
-  // The extension is carried in the part name because the server picks its decoder from the MIME
-  // type: Safari records `audio/mp4` and Chrome `audio/webm`, and a hardcoded ".webm" would lie
-  // about the bytes for every iPhone in the field.
   form.append("file", blob, `dictation.${blob.type.includes("mp4") ? "m4a" : "webm"}`);
-  // `languageHint`, NOT `language`. The route declares `languageHint: str | None = Form(default=None)`
-  // and reads nothing else, so this part spent its whole life being discarded on arrival and the
-  // endpoint echoed `"languageHint": null` back to a caller that had just told it the language.
-  //
-  // IT COST NOTHING YET, WHICH IS WHY IT SURVIVED. Nothing downstream reads the hint today —
-  // `transcribe_audio_bytes` is called with the bytes, the filename and the MIME type only, and
-  // Deepgram is deliberately called with `language=multi` because a workshop is code-switched
-  // mid-sentence. So the bug had no symptom: no wrong transcript, no error, just a field that was
-  // never there. That is exactly the shape of defect this repository keeps finding late — a client
-  // and a server agreeing about a name neither of them checks — and the day the chain is taught to
-  // use the hint, the browser would have been the one surface silently not sending it.
-  //
-  // Found from the Android side, where the same part had to be named for the first time.
   form.append("languageHint", language);
   for (const [key, value] of Object.entries(extraFields)) form.append(key, value);
-  // THE PER-WORKSHOP URL, because it is the only one that can enforce the artisan's consent. See
-  // `dwDictatePathFor`. This used to post to `DW_DICTATE_PATH`, which takes no workshop id and so
-  // consults no consent column — the gate was built, the columns were written, and the clip went to
-  // the provider anyway.
   return apiFetch<DwDictationResult>(dwDictatePathFor(workshopId), { method: "POST", body: form });
 }
 
-/** One number the server read off the card, after its own Verhoeff filtering. */
 export type DwIdentityCandidate = {
-  /** The digits themselves, unconfirmed. NEVER written to a field without a human saying so. */
   value?: string | null;
-  /** "AADHAAR" / "PEHCHAN" — shown so a misclassification is visible rather than silent. */
   kind?: string | null;
-  /** 0–0.95; the server clamps below 1.0 on purpose. Shown, because a designer confirming needs it. */
   confidence?: number | null;
-  /** AADHAAR only: "XXXX XXXX 9012", the only form a surface other than the confirm panel may print. */
   masked?: string | null;
 };
 
-/**
- * The wire shape of `POST /design-workshops/ocr/identity`.
- *
- * THESE FIELD NAMES ARE THE SERVER'S, CHECKED AGAINST IT RATHER THAN REMEMBERED. This type used to
- * declare `number`, `documentType`, `name`, `confidence` and `message` — none of which the endpoint
- * has ever sent. `IdentityOcrResult.payload()` returns the five keys below, so
- * `(result.number ?? "").replace(/\D/g, "")` in `IdentityCardReader` was always "", and a PERFECT
- * read was reported to the designer as "No number could be read from that photograph": the card
- * looked unreadable, while the reader was simply listening on the wrong keys. Android's
- * `DwIdentityOcrDto` had the identical bug against the identical payload; both are now pinned by a
- * test that starts from the server's own bytes.
- */
 export type DwIdentityOcrResult = {
   aadhaarCandidates?: DwIdentityCandidate[] | null;
   pehchanCandidates?: DwIdentityCandidate[] | null;
-  /**
-   * How many 12-digit runs the model produced that FAILED the checksum — a count, never the values,
-   * because a rejected candidate is still somebody's misread identity number. Worth showing: "3
-   * readings were rejected" means the card was found and misread (better light), while "nothing was
-   * read" means it was not found at all (fill the frame). Two different next actions.
-   */
   rejectedAadhaarCount?: number | null;
   provider?: string | null;
-  /**
-   * The server stating in the payload that this is a suggestion, not a commit. Absent is read as
-   * TRUE by every consumer here — an older deployment or a proxy that rewrote the body must never be
-   * read as permission to write an identity number without a person.
-   */
   requiresConfirmation?: boolean | null;
-  /**
-   * What the server did with the PICTURE, as opposed to what it read off it.
-   *
-   * `stored` is `false` on every reply this route has ever sent and is a literal on the server
-   * rather than a computed value, so a build that ever sees `true` is talking to a server that
-   * grew a storage path. Absent — an older deployment — is read as "unknown", never as `false`:
-   * see `photographWasStored`, which is where that distinction is enforced rather than remembered.
-   */
   photograph?: {
     stored?: boolean | null;
     retention?: string | null;
@@ -3264,35 +1172,10 @@ export type DwIdentityOcrResult = {
   } | null;
 };
 
-/**
- * Whether the server has told us, in this reply, that it did not keep the photograph.
- *
- * TRUE ONLY FOR AN EXPLICIT `stored: false`. A deployment older than the field sends no `photograph`
- * block at all, and the temptation is to treat that as "false" because it is what those servers in
- * fact do. That would be a screen telling a designer "your photograph was not kept" on the strength
- * of a key that was missing — which is a promise about regulated data made from an absence. Where
- * the server has not said, the panel says nothing rather than reassuring anybody.
- */
 export function photographWasNotStored(result: DwIdentityOcrResult): boolean {
   return result.photograph?.stored === false;
 }
 
-/**
- * Read an identity number off a photograph of a card. The caller must not auto-commit the answer.
- *
- * THE PHOTOGRAPH IS REDRAWN BEFORE IT LEAVES THE TAB — see `lib/identityCardImage.ts`. Every path
- * that sends a card to the server goes through this one function, so the scale-down and the loss of
- * the EXIF block (which on a field photograph holds the GPS fix, the device serial and the second
- * the card was photographed) happen once here rather than being remembered at two call sites. A
- * failure to re-encode returns the original file, so this can never be the reason a card "could not
- * be read".
- *
- * `retention` DECLARES what the caller intends to do with its own copy of the photograph. It is not
- * an instruction — this route has no storage path and the reply says `stored: false` regardless —
- * and it is sent so that the one request in which an unmasked identity document crosses the wire
- * carries the designer's answer to "are you keeping this". Omitted, the server reads DISCARD, which
- * is the safe half and the half every build shipped before this parameter existed gets.
- */
 export async function readIdentityCard(
   file: File,
   retention: DwPhotoRetention = DW_PHOTO_RETENTION_DEFAULT
@@ -3303,32 +1186,12 @@ export async function readIdentityCard(
   return apiFetch<DwIdentityOcrResult>(DW_OCR_IDENTITY_PATH, { method: "POST", body: form });
 }
 
-/** A candidate this client is willing to put in front of a designer. */
 export type DwIdentityChoice = { value: string; kind: "AADHAAR" | "PEHCHAN"; confidence: number | null };
 
-/**
- * Strip a Pehchan card number to the ONE spelling the server stores.
- *
- * Mirrors `normalize_pehchan`: everything that is not a letter or a digit goes, and the rest is
- * upper-cased. There is no checksum on a PM Vishwakarma artisan ID, so normalisation is the only
- * thing standing between one card and two differently-punctuated records of it.
- */
 export function normalizePehchan(value: string | null | undefined): string {
   return (value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }
 
-/**
- * The candidates worth offering for `kind`, best first, each re-checked in this client.
- *
- * Pure, exported and tested (`e2e/identity-ocr-unit.spec.ts`) because it is the whole filter between
- * a model's guess and a deduplication key. `isValidAadhaar` is passed in rather than imported so
- * this module stays free of React component imports; every caller hands it
- * `AadhaarField.aadhaarValidationError`, so there is exactly one checksum on this client.
- *
- * A candidate that fails is REFUSED, not warned about: the server has already applied the same
- * Verhoeff filter, so anything that fails here is a transport or shape problem rather than a card a
- * designer can do anything about.
- */
 export function identityChoices(
   result: DwIdentityOcrResult,
   kind: "AADHAAR" | "PEHCHAN" | "ANY",
@@ -3348,8 +1211,6 @@ export function identityChoices(
   if (kind === "PEHCHAN" || kind === "ANY") {
     for (const candidate of result.pehchanCandidates ?? []) {
       const cleaned = normalizePehchan(candidate?.value);
-      // The same 4–32 bound `pehchan_error` applies. Shorter is not a card number, longer is not one
-      // either, and both are the shape a model returns when it read a caption instead of a code.
       if (cleaned.length < 4 || cleaned.length > 32) continue;
       push({ value: cleaned, kind: "PEHCHAN", confidence: typeof candidate?.confidence === "number" ? candidate.confidence : null });
     }
@@ -3357,11 +1218,6 @@ export function identityChoices(
   return out;
 }
 
-/**
- * What a report is built from besides the stages — the records a REF names, the map's district
- * anchors, each photograph's size, and the questionnaire, transcript and AI-layer sources — for the
- * browser to keep and build the same report from with no connection. See `lib/offlineReport`.
- */
 export function fetchReportSources(id: string) {
   return apiFetch<import("@/lib/offlineReport/assemble").ReportSources>(`/design-workshops/${id}/report/sources`);
 }
@@ -3374,20 +1230,6 @@ export function listDesignWorkshopExports(id: string) {
   return apiFetch<DwExport[]>(`/design-workshops/${id}/exports`);
 }
 
-/**
- * The export history, plus the stage timestamps a diff between two of them is built from.
- *
- * A SUPERSET of {@link listDesignWorkshopExports} rather than a replacement for it, and the two
- * differences are the whole reason it exists: this one names WHO generated each file (the column
- * has always been populated and no endpoint returned it) and carries every stage row's
- * `createdAt` / `updatedAt` / `deletedAt` — INCLUDING deleted rows, which `GET /{id}` filters out
- * and which are exactly the change a diff must not miss.
- *
- * It answers with facts only; the comparison itself is `lib/reportDiff.ts`, which is pure so that
- * flipping between generation 1 and generation 4 costs no further request. Read that file's header
- * before showing anything derived from this payload — what a stored timestamp can and cannot prove
- * is the substance of the feature.
- */
 export function fetchDesignWorkshopReportHistory(id: string) {
   return apiFetch<DwReportHistory>(`/design-workshops/${id}/report-history`);
 }
@@ -3402,11 +1244,8 @@ export function recordDesignWorkshopExport(id: string, body: DwExportRecordBody)
 export type DwReportFile = {
   blob: Blob;
   fileName: string;
-  /** When an unchanged report was served from its stored file (approver's door): when it was made. */
   reusedFrom?: string | null;
-  /** The ledger row this file is, when the server said. */
   exportId?: string | null;
-  /** Split back out of the `x-report-warnings` header, which joins them with "; ". */
   warnings: string[];
   warningCount: number;
 };
@@ -3416,36 +1255,13 @@ const REPORT_FALLBACK_NAME: Record<string, string> = {
   PDF: exportFilename("Workshop", "Report", "pdf", { dated: false })
 };
 
-/**
- * Generate and return one report file's bytes.
- *
- * This is the one call in the feature that cannot go through `apiFetch`: that helper reads every
- * response as JSON or TEXT, and reading a .docx as text would hand back a mangled string cast to
- * the caller's type — a download that "succeeds" and produces a file Word refuses to open. So the
- * fetch is built by hand, with the same three obligations `apiFetch` discharges: refuse the request
- * when this build has no usable API address ({@link assertApiConfigured}), attach the bearer token,
- * and turn a failure body into the real sentence the server sent rather than "[object Object]".
- *
- * The warnings — a missing required field, a photo that could not be embedded — arrive in a HEADER
- * rather than in the file, because they describe the act of generating and not the document; an
- * officer opening the .docx next month must not find a note about what was missing on the day. That
- * makes surfacing them the CALLER'S JOB, and a caller that drops them ships a report with four
- * empty stages while telling the designer it worked.
- */
 export async function downloadDesignWorkshopReport(
   id: string,
   body: DwReportBody,
-  /**
-   * `"approvals"` asks the Ministry Admin's own report door, `POST /design-workshop-approvals/{id}/report`
-   * — the same file, the same headers, the same export ledger row — for a reader the designer's door
-   * does not admit. Everything else about the request and its failure is identical, which is why it
-   * is a parameter here rather than a second copy of this function.
-   */
   options?: { via?: "approvals" }
 ): Promise<DwReportFile> {
   assertApiConfigured();
 
-  // No Authorization header: the call is same-origin, so the session cookie goes with it.
   const headers = new Headers({ "Content-Type": "application/json" });
 
   const prefix = options?.via === "approvals" ? "design-workshop-approvals" : "design-workshops";
@@ -3461,9 +1277,6 @@ export async function downloadDesignWorkshopReport(
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
     const detail =
       typeof payload === "object" && payload && "detail" in payload ? (payload as { detail: unknown }).detail : undefined;
-    // `statusText` is empty over HTTP/2 — which every deployed request is — so it can never be the
-    // last resort on its own, or a body-less failure reaches the screen as a blank error box. The
-    // headers go along so a password-gate 401 is told apart from an expired sign-in, as in `fetchFile`.
     throw new ApiError(
       response.status,
       describeApiDetail(detail, response.statusText || "Something went wrong. Please try again."),
@@ -3486,57 +1299,10 @@ export async function downloadDesignWorkshopReport(
   };
 }
 
-/**
- * THE TWO DOWNLOAD HELPERS MOVED TO `lib/fileDownload.ts` AND ARE RE-EXPORTED HERE.
- *
- * ── WHY THEY MOVED ──────────────────────────────────────────────────────────────────────────────
- *
- * Four modules had each written their own bearer-fetch-for-a-binary around these two — this one,
- * `lib/questionnaireForms.ts`, `app/(protected)/annual-plan/annualPlan.ts`, `lib/sanctionOrders.ts`
- * and `app/(protected)/officers/oversight.ts` — and that last one carried the instruction in its own
- * ⚠: *"If you are the person consolidating them, export `fetchWorkbook` and delete this."* The
- * ministry dashboard's downloads would have been the fifth copy. `lib/fileDownload.ts` is now the
- * one implementation and carries the argument in full.
- *
- * ⚠ **AND `fileNameFromDisposition` WAS WRONG IN ALL FIVE COPIES.** Its single regex matched the
- * FIRST filename in the header, and RFC 6266 requires the ASCII `filename=` to be written BEFORE the
- * extended `filename*=UTF-8''…` — so the Devanagari and Odia names the server goes to some trouble to
- * emit (`data_browser._content_disposition`) never reached a single download. The replacement reads
- * the extended form first. See that file.
- *
- * ── WHY THE NAMES ARE STILL EXPORTED FROM HERE ──────────────────────────────────────────────────
- *
- * Fourteen call sites import `saveBlobToDisk` from `@/lib/designWorkshops`, and
- * `e2e/sketch-trace-panel.spec.ts` STUBS this module's export by name to capture what the trace panel
- * hands to the browser. A re-export keeps every one of those working and keeps the stub pointing at
- * the function the component actually calls, which a moved import would silently break — the panel
- * would download for real inside a test that believed it had intercepted it.
- */
 export { fileNameFromDisposition, saveBlobToDisk } from "@/lib/fileDownload";
 
-/*
-  AND IMPORTED SEPARATELY, BECAUSE `export … from` DOES NOT BIND THE NAME LOCALLY.
-  `downloadDesignWorkshopReport` above reads the header itself — it is a POST with a body, and it
-  also reads `x-report-warnings` and `x-report-warning-count` off the same response, so it is one of
-  the two downloads in this app that legitimately is NOT `fetchFile`. It still must not re-implement
-  the filename parse: the report's name is built by `_report_file_name`, which strips the nine
-  characters Windows forbids, and a report named after a craft is routinely saved onto a departmental
-  share where a name that fails to save is a report that was not delivered.
-*/
 import { fileNameFromDisposition } from "@/lib/fileDownload";
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Value helpers — the small functions every renderer in this feature shares.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * A stored value as a number, or null.
- *
- * `Number()` behind `Number.isFinite` is the house rule for MONEY and every Prisma `Decimal`: those
- * arrive as JSON STRINGS, `Number("")` is 0 (not NaN), and `Number(null)` is 0 as well — so a plain
- * `Number(value)` turns "no answer" into a real, printable zero. A cost sheet that says ₹0.00 where
- * nobody has answered yet is worse than a blank, because it will be believed.
- */
 export function readNumber(value: DwValue | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "boolean") return null;
@@ -3545,13 +1311,6 @@ export function readNumber(value: DwValue | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/**
- * A stored value as the string an `<input>`'s `value` wants.
- *
- * `String()` and not a number round trip, again for MONEY: `String(1250.10)` is "1250.1", and
- * re-seeding an input from the parsed number silently drops the trailing zero the server took care
- * to preserve. Anything list- or object-shaped returns "" because it has no single-line form.
- */
 export function inputValue(value: DwValue | undefined): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -3559,14 +1318,12 @@ export function inputValue(value: DwValue | undefined): string {
   return String(value);
 }
 
-/** A stored value as a list, whatever arrived. MULTI_ENUM / TAGS / IMAGE_LIST all live here. */
 export function listValue(value: DwValue | undefined): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   if (typeof value === "string" && value) return [value];
   return [];
 }
 
-/** The GEO shape, or null. Guarded because a half-written coordinate is worse than none. */
 export function geoValue(value: DwValue | undefined): DwGeoValue | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Partial<DwGeoValue>;
@@ -3578,32 +1335,17 @@ export function geoValue(value: DwValue | undefined): DwGeoValue | null {
   };
 }
 
-/**
- * Does this value count as answered?
- *
- * Character-for-character the server's `_is_filled`, and it has to stay that way: this is what the
- * form uses to decide whether to mark a required field, and `stage_completeness` is what decides
- * whether the stage may be submitted. Two different answers to "is this filled in" is a form that
- * says a stage is complete and a Save that refuses it.
- */
 export function isFilled(value: DwValue | undefined): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === "string") return value.trim().length > 0;
   if (Array.isArray(value)) return value.length > 0;
   if (typeof value === "object") {
-    // A RICH_TEXT document is judged on its TEXT, not on the presence of the JSON — the same
-    // special case `_is_filled` makes on the server, and it has to stay in step here. An editor
-    // that was focused and left alone still holds `{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}`,
-    // which has a key and is therefore "an object with keys": counting it as answered would put a
-    // required narrative field at 100% on a stage nobody has written a word into.
     if ("blocks" in value) return !isStoredRichTextEmpty(value);
     return Object.keys(value).length > 0;
   }
   return true;
 }
 
-/** The registry fields a form actually renders: deprecated ones are dead inputs, captions belong to their media field. */
-/** Widgets this client draws itself; a field declaring one is left out of the generic grid. */
 export const DW_KNOWN_WIDGETS: ReadonlySet<string> = new Set(["ATTENDANCE"]);
 
 export function formFields(entity: DwEntity): DwField[] {
@@ -3612,18 +1354,10 @@ export function formFields(entity: DwEntity): DwField[] {
   );
 }
 
-/** The caption field declared for `mediaKey`, if the entity has one. */
 export function captionFieldFor(entity: DwEntity, mediaKey: string): DwField | null {
   return entity.fields.find((field) => !field.deprecated && field.captionFor === mediaKey) ?? null;
 }
 
-/**
- * Split an entity's fields into the two groups the form draws.
- *
- * BASIC and STANDARD are shown together and in declaration order — the source document ordered them
- * the way a designer works through them, and re-sorting by tier would scatter a three-box question
- * across two sections. ADVANCED goes behind the disclosure.
- */
 export function splitByTier(fields: DwField[]): { primary: DwField[]; advanced: DwField[] } {
   return {
     primary: fields.filter((field) => field.tier !== "ADVANCED"),
@@ -3631,22 +1365,11 @@ export function splitByTier(fields: DwField[]): { primary: DwField[]; advanced: 
   };
 }
 
-/**
- * The title of one collection row.
- *
- * Falls back through the label field, then the first filled text-ish field, then the ordinal —
- * never to the row's id. A list of CUIDs is the same defect the artisan dropdowns shipped: it asks
- * a designer to pick "the right prototype" while showing them twenty-five random characters.
- */
 export function rowTitle(entity: DwEntity, row: DwRow, index: number): string {
   const labelled = entity.labelField ? inputValue(row[entity.labelField]) : "";
   if (labelled.trim()) return labelled.trim();
   for (const field of entity.fields) {
     if (field.deprecated) continue;
-    // A RICH_TEXT field has no single-line form, so `inputValue` returns "" for it and it would be
-    // skipped — leaving a row whose only prose is a narrative titled "Prototype 3". `richSummary`
-    // is the browser's copy of `rich_text.summary`, so the row reads the same here as it does in
-    // the server's own row labels.
     if (field.type === "RICH_TEXT") {
       const summary = richSummary(row[field.key], 80);
       if (summary) return summary;
@@ -3659,12 +1382,6 @@ export function rowTitle(entity: DwEntity, row: DwRow, index: number): string {
   return `${entity.title} ${index + 1}`;
 }
 
-/**
- * A row's registry data ready to send: `_entryId` and `_ordinal` removed, `_clientKey` KEPT.
- *
- * See {@link DwRow} for why the asymmetry is not an oversight — the server reads the client key out
- * of `data`, and dropping it turns a retry after a lost connection into a duplicated row.
- */
 export function entryDataOf(row: DwRow): DwEntryData {
   const out: DwEntryData = {};
   for (const [key, value] of Object.entries(row)) {
@@ -3674,60 +1391,37 @@ export function entryDataOf(row: DwRow): DwEntryData {
   return out;
 }
 
-/** A blank row for `entity`, seeded only with the client key that keeps a re-save idempotent. */
 export function blankRow(): DwRow {
   return { _clientKey: newClientKey() };
 }
 
-/**
- * A client-side idempotency key for a row that has no server id yet.
- *
- * `crypto.randomUUID` is not available on every browser this app has to run on (it needs a secure
- * context, and a field laptop reaching a LAN address over plain http is not one), so the fallback
- * is not academic — without it, adding a row would throw and the whole stage form would blank.
- */
 export function newClientKey(): string {
   const cryptoApi = typeof crypto !== "undefined" ? crypto : undefined;
   if (cryptoApi && typeof cryptoApi.randomUUID === "function") return cryptoApi.randomUUID();
   return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Every stage's completeness rolled into one figure, for the list row and the header. */
 export function overallPercent(completeness: Record<string, DwStageCompleteness> | undefined): number {
   const scores = Object.values(completeness ?? {});
   if (!scores.length) return 0;
   const required = scores.reduce((sum, score) => sum + score.requiredTotal, 0);
   const filled = scores.reduce((sum, score) => sum + score.requiredFilled, 0);
-  // Same rule as the server's `percent`: nothing required means nothing outstanding, not 0%.
   if (required === 0) return 100;
   return Math.round((100 * filled) / required);
 }
 
-/**
- * A workshop's headline progress, counted in stages. The one rule every screen that prints
- * "N of M stages complete" draws its bar and percentage from.
- *
- * `overallPercent` is required FIELDS filled, a different and equally true number. Printed beside
- * the stage count it read as a bug ("0% overall · 9 of 22 stages complete": nine stages with nothing
- * required are complete while 0 of the remaining fields are filled), so a screen that leads with the
- * stage count takes its percentage from here and nowhere else. Android's `dwStageProgress` is the twin.
- */
 export type StageProgress = {
   stagesComplete: number;
   stagesTotal: number;
-  /** `stagesComplete` over `stagesTotal`, rounded; 0 when there are no stages to count. */
   percent: number;
-  /** Required fields still empty across every stage — the same count the readiness checklist lists. */
   requiredLeft: number;
 };
 
-/** The headline percentage: stages complete over stages total, 0 when nothing is counted. */
 export function stageProgressPercent(stagesComplete: number, stagesTotal: number): number {
   if (stagesTotal <= 0) return 0;
   return Math.round((100 * Math.min(stagesComplete, stagesTotal)) / stagesTotal);
 }
 
-/** Roll per-stage scores into the headline. `stagesTotal` defaults to the number of scores. */
 export function stageProgress(
   scores: readonly Pick<DwStageCompleteness, "isComplete" | "missing">[],
   stagesTotal: number = scores.length
@@ -3741,16 +1435,10 @@ export function stageProgress(
   return { stagesComplete, stagesTotal, percent: stageProgressPercent(stagesComplete, stagesTotal), requiredLeft };
 }
 
-/** The plain text of a run sequence — for a heading's anchor text and an image's alt attribute. */
 export function runsText(runs: DwRun[] | undefined): string {
   return (runs ?? []).map((run) => run.text).join("");
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * C9 — start a stage from an earlier workshop
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** The stages a designer may start from an earlier workshop — `workshop_copy.COPYABLE_STAGES`. */
 export const DW_COPYABLE_STAGES: readonly string[] = [
   "INTRODUCTORY_ADMIN_DOCUMENTATION",
   "CLUSTER_CRAFT_BACKGROUND",
@@ -3758,7 +1446,6 @@ export const DW_COPYABLE_STAGES: readonly string[] = [
   "SURVEY_PLANNING"
 ];
 
-/** The provenance `source` of copied text the designer has not yet edited or kept. */
 export const DW_COPIED_SOURCE = "copied";
 
 export type DwCopySource = {
@@ -3767,17 +1454,13 @@ export type DwCopySource = {
   craftName: string | null;
   clusterName: string | null;
   date: string | null;
-  /** Only the copyable fields this source has filled — keyed by field key. */
   values: Record<string, DwValue>;
-  /** Present on a read-only reference block, never on the designer's own. */
   designerName?: string | null;
 };
 
 export type DwCopySources = {
   fields: { key: string; label: string; type: string }[];
-  /** The designer's own earlier text: copyable. */
   own: DwCopySource[];
-  /** Other designers' text from the same cluster or craft: READ ONLY, never copied into a box. */
   reference: DwCopySource[];
 };
 
@@ -3787,7 +1470,6 @@ export function fetchStageCopySources(id: string, stageKey: string) {
   );
 }
 
-/** "Keep as is": copied fields the designer has checked now count as their answer. */
 export function confirmCopiedFields(id: string, stageKey: string, fields: string[]) {
   return apiFetch<{ provenance: Record<string, DwFieldStamp>; confirmed: string[] }>(
     `/design-workshops/${encodeURIComponent(id)}/stages/${encodeURIComponent(stageKey)}/confirm-copied`,
@@ -3795,17 +1477,12 @@ export function confirmCopiedFields(id: string, stageKey: string, fields: string
   );
 }
 
-/** The singleton fields still marked copied-and-not-checked, from the server's provenance. */
 export function unconfirmedCopies(provenance: Record<string, DwFieldStamp> | null | undefined): string[] {
   return Object.entries(provenance ?? {})
     .filter(([, stamp]) => stamp?.source === DW_COPIED_SOURCE)
     .map(([key]) => key);
 }
 
-/**
- * C9: the boxes holding copied text that does not count yet — marked on this device and not yet
- * sent, or stamped `copied` by the server and not edited since the stage opened.
- */
 export function pendingCopyKeys(
   copiedFrom: Record<string, string>,
   stamps: Record<string, DwFieldStamp> | null | undefined,
@@ -3816,16 +1493,11 @@ export function pendingCopyKeys(
   return keys;
 }
 
-/** C9: the singleton as the completeness bar should score it — pending copies left out. */
 export function countedSingleton<T>(singleton: Record<string, T>, hidden: ReadonlySet<string>): Record<string, T> {
   if (!hidden.size) return singleton;
   return Object.fromEntries(Object.entries(singleton).filter(([key]) => !hidden.has(key)));
 }
 
-/**
- * C9 "Keep as is": a copy still marked only on this device just loses its mark; every other key is
- * confirmed on the server (where, once a push carrying it was accepted, its stamp now lives).
- */
 export function splitKeptCopies(
   keys: readonly string[],
   copiedFrom: Record<string, string>

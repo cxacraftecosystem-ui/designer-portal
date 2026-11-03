@@ -1,32 +1,5 @@
 "use client";
 
-/**
- * ONE WORKSHOP UNDER INSPECTION — every stage, read-only, with who wrote each field.
- *
- * ── WHAT AN INSPECTION IS FOR ───────────────────────────────────────────────────────────────────
- *
- * "Who wrote this field" is most of what an inspection is for, so every value carries the same
- * {@link FieldProvenance} line the designer's stage form draws. There is no stage form, no Save, no
- * delete and no report button here: the server refuses all of it. What an inspector writes is a
- * NOTE — filed, or sent back with the report — and, since 2026-10-17, a verdict.
- *
- * `readOnly` STAYS TRUE ON THIS PAYLOAD AND THE NOTES ARE GATED ON A SECOND KEY, `mayRecordFeedback`,
- * which fails CLOSED on its absence. Every link into the workshop tree is asked for through
- * {@link inspectionMayOpen}, which is false for a read: those pages 404 for an inspector.
- *
- * ── THE REVIEW LAYOUT (2026-10-17) ──────────────────────────────────────────────────────────────
- *
- * A fixed stage menu and decision bar (A18), a Flag on every field that drafts a note into a tray and
- * one "File 3 notes" / "Send back with 3 notes" (B2), each note marked "Edited since" or "Untouched"
- * (A19), "Checked, no corrections" for the round (C5), and "Changed since round N" (C13). The
- * single-note routes are unchanged — Android's queued notes replay through them.
- *
- * ── THE REGISTRY IS THE LIST OF STAGES, NOT THE PAYLOAD ─────────────────────────────────────────
- *
- * Iterating the registry rather than `Object.keys(detail.stages)` is what makes an untouched stage
- * appear at all — on an inspection, a stage with nothing in it is a finding.
- */
-
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { FileSearch, Loader2, Lock, MessageSquarePlus, Send, Undo2 } from "lucide-react";
@@ -81,10 +54,6 @@ import type { User } from "@/lib/types";
 
 type Detail = DwInspectionDetail & DwInspectionFeedbackKeys & DwReviewAidKeys;
 
-/**
- * The failures this page can suffer, told apart in words. The 404 is deliberately vague: the server
- * gives the same one for "not an inspector", "no such workshop", "deleted" and "not yours".
- */
 function describeFailure(error: unknown, user: User | null | undefined): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) return "No connection. Try again.";
   if (inspectionRefusalMeansNoPosts(error, user)) return "You aren't appointed to inspect any workshop.";
@@ -93,7 +62,6 @@ function describeFailure(error: unknown, user: User | null | undefined): string 
   return error.message || "This workshop couldn't be loaded.";
 }
 
-/** Why notes are closed, by the report's status — the server's refusal, said before the press. */
 function closedInspectionSentence(status: string, handedOnAt: string | null): string {
   if (status === "APPROVED") return "Approved — inspection is closed.";
   if (status === "SUBMITTED" && handedOnAt) return "Handed on to the office — inspection is closed.";
@@ -150,7 +118,6 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
         setRegistryError(null);
       })
       .catch(() => {
-        // A separate failure: the answers are in hand and the field list that names them is not.
         if (!cancelled) setRegistryError("Couldn't load the form. Try again.");
       });
     return () => {
@@ -158,7 +125,6 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
     };
   }, [allowed]);
 
-  // EVERY HOOK ABOVE THE REFUSAL BELOW — the refusal returns early.
   const stages: DwStage[] = useMemo(() => registry?.stages ?? [], [registry]);
   const overall = useMemo(() => overallPercent(detail?.completeness), [detail]);
   const active = useActiveStage(
@@ -201,7 +167,6 @@ export default function WorkshopUnderInspectionPage({ params }: { params: Promis
   const myNotesThisRound = notes.some((note) => note.actorId === user?.id && note.round === round);
   const activeStage = stages.find((stage) => stage.key === active) ?? null;
 
-  /** The server answers with the register as it now stands; it replaces ours, never appends. */
   function adopt(answer: DwNotesAnswer) {
     setDetail((held) => (held ? { ...held, ...answer } : held));
   }

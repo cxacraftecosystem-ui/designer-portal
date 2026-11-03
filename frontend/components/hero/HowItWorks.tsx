@@ -6,57 +6,6 @@ import { ClipboardCheck, FolderDown, Languages, Mic } from "lucide-react";
 
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 
-/**
- * ── STEP 1'S MICROPHONE: THE EXACT WORDING IS LOAD-BEARING ────────────────────────────────────
- *
- * "A microphone on every narrative box" is the walkthrough's own sentence
- * (`components/guide/steps.ts`, in its design-workshop-stages card — cited by content and not by
- * line, because that file is being extended in a neighbouring lane) and is reused here verbatim
- * rather than paraphrased, because
- * the obvious paraphrase — "a microphone on every box" — is FALSE on both clients and deliberately
- * so: dictation is absent from a name, a code and a number box, since a recogniser returns the
- * nearest dictionary word and a respondent's name is the string sittings are searched by.
- *
- * ⚠ "THE AUDIO NEVER BECOMES A FILE" IS TRUE OF ONE OF THE FOUR DICTATION PATHS IN THIS PRODUCT,
- * AND THE CLAUSE NAMES THAT ONE. `components/dictation/OnDeviceDictationButton.tsx` — what a
- * record form mounts in the BROWSER — is unambiguous in its own header: "no `MediaRecorder`, no
- * `fetch`, no `workshopId` and no code path that can produce a network request: the recording never
- * becomes a file and never leaves the handset", asserted by `e2e/record-form-dictation-unit.spec.ts`.
- * That is not a simplification of the others; it is why that control was allowed to exist, since an
- * artisan record has no workshop whose `dictationConsent` could govern the artisan's recorded voice.
- *
- * THE OTHER THREE CAN ALL UPLOAD. The web's design-workshop STAGE button
- * (`designworkshop/Dictation.tsx`) falls through to `POST /design-workshops/{id}/dictate` where the
- * browser has no recogniser. Android's is a four-rung ladder (`data/DwDictationLadder.kt`) whose
- * second rung is that same endpoint, with a daily server allowance behind it
- * (`DwDictationAllowance.kt`) — so on the handset "on the device" is the FIRST choice rather than
- * the only one. Saying "in the browser's record forms" is therefore the widest true form of this
- * sentence; "dictation never uploads anything" would be a promise three of the four paths do not
- * keep, printed on the page a visitor reads before they can check.
- *
- * ── STEP 2'S LANGUAGE: A RECORDED FACT, NOT AN INSTRUCTION TO THE TRANSCRIBER ─────────────────
- *
- * The two must not be run together. The transcription chain DETECTS the spoken language — Scribe
- * auto-detects and Deepgram runs `language=multi`, which is why the hero card refuses to print a
- * tidy "hi-IN → en" chip. The Language dropdown is a different thing entirely: what the SITTING is
- * recorded as having been conducted in. It closed a real hole — the web had a free text box against
- * Android's dropdown, so "Bangla", "Bengali" and "bengali" reached one column that `/data`, the
- * consolidated questionnaire and every export group by.
- *
- * ⚠ TWENTY-THREE PLUS "OTHER", NOT "TWENTY-FOUR LANGUAGES" — this sentence said the latter and the
- * list's own header refuses it in so many words: "'Other' is last because it is the escape hatch,
- * not a language." `INTERVIEW_LANGUAGES` has twenty-four ENTRIES; twenty-four LANGUAGES is a
- * different and false claim, and it is the sort a reader can check by opening the dropdown and
- * counting to twenty-three before they hit the escape hatch.
- *
- * ⚠ AND THEY ARE TWO LISTS, NOT ONE. This said "one list the phone and the browser both read",
- * which describes a shared module that does not exist: `lib/interviewLanguages.ts` and
- * `android/…/data/DwInterviewLanguages.kt#DW_INTERVIEW_LANGUAGES` are separate declarations held in
- * step by a re-check the TS file writes out for the next reader (`grep -n "languageOptions" …
- * MainActivity.kt`). The parity is real and worth claiming; the mechanism is not, and "one list"
- * is exactly the sentence that stops somebody grepping for the second copy before they edit the
- * first — which is how the two spellings this dropdown was built to end would come back.
- */
 const STEPS = [
   {
     icon: Mic,
@@ -84,42 +33,22 @@ const STEPS = [
   }
 ];
 
-/**
- * The four-step product walk — a vertical timeline that alternates sides on
- * large screens, each step scroll-revealed once as it enters the viewport.
- *
- * The spine is the same instrument as the walkthrough's (`components/guide/GuideJourney`): a static
- * track, a scroll-linked fill, and a node riding the head of the fill, all driven by one
- * `useScroll` value. It was a dead grey line here, which read as decoration next to a page that
- * animates everywhere else — and it left the four numbered bubbles looking uniformly "done" before
- * the reader had reached any of them. Sharing the mechanism means the landing page and the
- * walkthrough teach the same gesture: the line fills as you read, and the numbers light as it
- * arrives.
- */
 export default function HowItWorks() {
   const reduce = useHeroReducedMotion();
   const listRef = useRef<HTMLOListElement>(null);
   const spineRef = useRef<HTMLDivElement>(null);
   const bubbleRefs = useRef<Array<HTMLSpanElement | null>>([]);
 
-  // The offset stays constant: it is rendered into the server HTML, so making it depend on
-  // `reduce` would hydrate to different inline styles. Reduced motion zeroes the duration instead.
   const item: Variants = {
     hidden: { opacity: 0, y: 18 },
     show: { opacity: 1, y: 0, transition: { duration: reduce ? 0 : 0.5, ease: [0.16, 1, 0.3, 1] } }
   };
 
-  // Same reading line as the walkthrough — the fill completes while the last step is still on
-  // screen rather than after the reader has scrolled past it into the next section.
   const { scrollYProgress } = useScroll({ target: listRef, offset: ["start 65%", "end 65%"] });
   const smoothed = useSpring(scrollYProgress, { stiffness: 140, damping: 30, mass: 0.4 });
   const progress = reduce ? scrollYProgress : smoothed;
   const nodeTop = useTransform(progress, [0, 1], ["0%", "100%"]);
 
-  // Where each bubble sits as a fraction of the spine's own box, so "the fill has reached step 3"
-  // is a measurement rather than an assumption that four cards are the same height. They are not:
-  // the copy runs from two lines to four, and evenly-spaced thresholds would light a number while
-  // the line was still visibly short of it.
   const [marks, setMarks] = useState<number[]>([]);
   const [reachedIndex, setReachedIndex] = useState(-1);
 
@@ -138,9 +67,6 @@ export default function HowItWorks() {
       );
     }
     measure();
-    // Card heights change with the viewport (the copy rewraps, and the layout goes from a single
-    // column to two alternating ones at `lg`), so the marks are re-measured rather than cached from
-    // first paint.
     const observer = new ResizeObserver(measure);
     if (spineRef.current) observer.observe(spineRef.current);
     window.addEventListener("resize", measure);
@@ -150,8 +76,6 @@ export default function HowItWorks() {
     };
   }, []);
 
-  // Integer state, so this re-renders four times over the whole section rather than once per
-  // scroll frame; the fill and the node stay on the compositor via motion values.
   useMotionValueEvent(progress, "change", (latest) => {
     let next = -1;
     for (let i = 0; i < marks.length; i += 1) {
@@ -175,12 +99,6 @@ export default function HowItWorks() {
       </motion.div>
 
       <div className="relative mt-14">
-        {/* Timeline spine — left rail on phones, centred on large screens.
-            `-ml-0.5` puts the 4px track's centre on the bubbles' centre line: the bubbles sit at
-            `left-5` (and `lg:left-1/2`) pulled back by half their width, so the track has to give
-            back half of its own. Nothing in here is centred with `translate` — framer-motion writes
-            its own inline transform for `scaleY`, and an inline transform silently beats a Tailwind
-            translate class, which is exactly how a fill ends up a pixel off its track. */}
         <div
           ref={spineRef}
           aria-hidden
@@ -194,8 +112,6 @@ export default function HowItWorks() {
           {reduce ? null : (
             <motion.span
               style={{ top: nodeTop }}
-              // Centred on the 4px track by margins, not transforms: -3px = (4px − 10px) / 2
-              // horizontally, -5px = half the dot vertically.
               className="absolute -left-[3px] mt-[-5px] h-2.5 w-2.5 rounded-full bg-progress-fill ring-4 ring-purple-100 dark:ring-purple-950"
             />
           )}
@@ -214,9 +130,6 @@ export default function HowItWorks() {
                 variants={item}
                 className="relative pl-16 lg:grid lg:grid-cols-2 lg:pl-0"
               >
-                {/* A plain span, deliberately: giving this a motion transform would fight the
-                    `-translate-x-1/2` that holds it on the spine. Colour and shadow carry the state
-                    change instead, which needs no transform at all. */}
                 <span
                   ref={(el) => {
                     bubbleRefs.current[i] = el;

@@ -9,18 +9,6 @@ import { decisionActor, decisionLabel, type DwAiDecisionRecord } from "@/lib/aiL
 import { ROLES_BY_RANK, canAccessRoute, canManageAnnualPlan, canReadAnnualPlan } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
-/**
- * THREE SCREENS THAT USED TO NARRATE A MISSING FEATURE, AND NOW HAVE IT (F9, F10, F11).
- *
- * - AI layers: a layer's whole decision history and one layer's text are read on their own.
- * - Sanction register: a co-designer's first link is re-issued from their own button, and an import
- *   hands back the same first links the form does.
- * - Annual plan: a Regional Director opens the plan narrowed to the states assigned to them.
- *
- * The server's half of each is asserted in backend/tests; this file holds the web's predicates and
- * the copy that must no longer say the feature is missing.
- */
-
 const user = (role: UserRole): User => ({ id: `u-${role}`, email: "a@b.c", name: role, role }) as User;
 const read = (path: string) => readFileSync(join(__dirname, "..", path), "utf8");
 
@@ -75,7 +63,6 @@ test("the screens no longer say these features are missing", () => {
   expect(report).toContain("sign-in links issued");
 
   const register = read("app/(protected)/sanction-orders/page.tsx");
-  // The re-issue names its designer; since 2026-10-18 it also says how the link travels.
   expect(register).toContain("issueSanctionCredentialLink(order.id, designer.designerUserId, deliverBy)");
 });
 

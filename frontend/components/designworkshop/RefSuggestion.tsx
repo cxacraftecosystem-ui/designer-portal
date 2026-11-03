@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * "Use from the sketch" beside an in-workshop picker (owner, C10, 2026-10-17).
- *
- * The registry's `refSuggest` names what may cross: `fill` keys are copied into this row's BLANK
- * boxes on a tap; `hint` keys (the sketch's intended size) are only shown, because a drawing's
- * intention is not the object's measurement. The maker crosses by reference — the same roster row's
- * id. The chosen record is read from this device's draft first and the server second, so it works
- * offline for anything this browser holds.
- */
-
 import { useEffect, useState } from "react";
 
 import { ActionGroup } from "@/components/ui/ActionGroup";
@@ -31,7 +21,6 @@ async function readSource(workshopId: string, model: string, id: string): Promis
       }
     }
   } catch {
-    // Fall through to the server.
   }
   if (isLocalWorkshopId(workshopId)) return null;
   try {

@@ -1,14 +1,3 @@
-/**
- * THE INTERVIEW INSTRUMENT, KEPT FOR OFFLINE (H7, 21 Oct 2026).
- *
- * `/questionnaire` fetched `GET /questionnaire/sections` with no fallback and the service worker does
- * not cache API calls, so the interview form could not open without a connection — and the outbox,
- * which can bank a whole interview with its audio, could never be reached for one. The last copy this
- * account downloaded is kept here, the same way `questionnaireFormCache.ts` keeps a custom form:
- * stamped with its owner, never served to another account, and served only when nothing reached the
- * server (`isUnreachable`), never over a 403, a 404 or a 5xx.
- */
-
 import { apiFetch } from "@/lib/api";
 import { isUnreachable } from "@/lib/offline";
 import type { QuestionnaireSection } from "@/lib/types";
@@ -20,7 +9,6 @@ const STORE = "instrument";
 export const INSTRUMENT_CACHE_VERSION = 1;
 
 export type CachedInstrument = {
-  /** The owner's user id — the IDB keyPath, so each account has its own copy. */
   key: string;
   schemaVersion: number;
   fetchedAt: string;
@@ -34,7 +22,6 @@ export type InstrumentRead = {
   cachedAt: string | null;
 };
 
-/** May this stored copy be served to this viewer? Never to another account, never without one. */
 export function instrumentRecordIsReadable(
   record: CachedInstrument | null | undefined,
   viewerId: string | null
@@ -111,7 +98,6 @@ export async function getCachedInstrument(viewerId: string | null): Promise<Cach
   }
 }
 
-/** The instrument, live if the server can be reached and out of storage only when it cannot. */
 export async function loadInstrumentWithCache(viewerId: string | null): Promise<InstrumentRead> {
   try {
     const sections = await apiFetch<QuestionnaireSection[]>("/questionnaire/sections");

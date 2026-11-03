@@ -6,15 +6,6 @@ import { expect, test } from "@playwright/test";
 import { CONTENT_ADMIN_ROLES, ROLE_RANK, isAdmin, isContentAdmin, mayDeleteQuestionnaire } from "@/lib/permissions";
 import type { User, UserRole } from "@/lib/types";
 
-/**
- * The content admins (owner's ruling, 2026-10-20): ADMIN, MASTER_ADMIN and MINISTRY_ADMIN add, edit
- * and delete every content type; every other role adds and edits and never deletes. Delete controls
- * read `canDeleteRecords` — the content admins, WHETHER OR NOT admin view is on (owner, 2026-10-21) —
- * so a Ministry Admin with admin view off still sees every Delete, and nobody else ever does.
- *
- * Run: `npx playwright test e2e/content-admin-unit.spec.ts --reporter=line`
- */
-
 const ROOT = join(__dirname, "..");
 const read = (relative: string) => readFileSync(join(ROOT, relative), "utf8").split("\r\n").join("\n");
 
@@ -34,18 +25,14 @@ test("the content admins are exactly the three admin tiers, and isAdmin is not w
 });
 
 test("a questionnaire form is deleted by its author or a content admin, and nobody else (22 Oct 2026)", () => {
-  // The author: a designer deleting the form they made.
   expect(mayDeleteQuestionnaire({ ...user("DESIGNER"), id: "author" }, "author")).toBe(true);
-  // Every content admin, on somebody else's form.
   for (const role of CONTENT_ADMINS) expect(mayDeleteQuestionnaire(user(role), "author"), role).toBe(true);
-  // Every other role, a designer and a researcher included, on somebody else's form.
   for (const role of Object.keys(ROLE_RANK) as UserRole[]) {
     if (CONTENT_ADMINS.includes(role)) continue;
     expect(mayDeleteQuestionnaire(user(role), "author"), role).toBe(false);
   }
   expect(mayDeleteQuestionnaire(null, "author")).toBe(false);
   expect(mayDeleteQuestionnaire(user("DESIGNER"), null)).toBe(false);
-  // Sittings stay a content admin's: their Delete reads canDeleteRecords, not the author rule.
   const form = read("app/(protected)/questionnaires/[id]/page.tsx");
   expect(form).toContain("{mayDeleteSittings ? (\n                      <button");
 });
@@ -54,7 +41,6 @@ test("admin view, and with it every Delete, is offered to the content admins", (
   const provider = read("components/AdminViewProvider.tsx");
   expect(provider).toContain("const canAdmin = isContentAdmin(user);");
   expect(provider).toContain("available: canAdmin,");
-  // Delete is not admin view's: it is the content-admin set itself.
   expect(provider).toContain("canDeleteRecords: canAdmin,");
 });
 
@@ -90,7 +76,6 @@ test("an attached file's remove control is drawn for content admins, admin view 
 });
 
 test("a form's deletes are its author's or an admin's", () => {
-  // The global form, whose deletes were content-admin only, is retired on the web (UNIFY 4.4).
   const form = read("app/(protected)/questionnaires/[id]/page.tsx");
   expect(form).toContain("const mayDelete = mayEdit && mayDeleteQuestionnaire(user, form?.ownerId);");
   expect(form).toContain("const mayDeleteSittings = mayEdit && canDeleteRecords;");
@@ -105,7 +90,6 @@ test("a deleted sitting is restored by a content admin in admin view; a form by 
   expect(form).not.toContain("This cannot be undone.");
   expect(form).toContain("{mayDeleteSittings && adminMode ? (\n        <DeletedSittings");
   const list = read("app/(protected)/questionnaires/page.tsx");
-  // The library's Deleted tab opens it too, for anyone who may delete.
   expect(list).toContain('{tab === "deleted" || adminMode || !canDeleteRecords ? (\n        <DeletedQuestionnairesCard ownOnly={!canDeleteRecords}');
   const lib = read("lib/questionnaireForms.ts");
   expect(lib).toContain('deletedOnly: params.deletedOnly ? "true" : undefined');

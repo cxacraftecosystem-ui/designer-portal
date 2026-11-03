@@ -1,66 +1,5 @@
 "use client";
 
-/**
- * /admin/workshop-types — the list behind the "Type of workshop" dropdown on every record form.
- *
- * ── WHAT AN ADMINISTRATOR IS ACTUALLY EDITING HERE ───────────────────────────────────────────────
- *
- * Every record form (artisan, product, process, tool, craft, questionnaire) carries TWO workshop
- * controls and never three:
- *
- *     "Type of workshop"  → this list
- *     "Workshop"          → the workshops OF THAT TYPE, most recent first
- *
- * The rows on this screen are the members of the first dropdown, and each row's **Where a workshop
- * saves** column is the rule the second one follows. A type marked "Design & prototype workshop"
- * fills the workshop dropdown from the 22-stage `DesignWorkshop` table and saves the chosen workshop
- * to the record's `designWorkshopId`; every other type fills it from the ordinary `Workshop` table
- * and saves to `workshopId`. That is the whole of the routing rule, it lives on the type rather than
- * on the record, and it is why this screen exists at all.
- *
- * **THE TYPE IS NOT SAVED ON THE RECORD.** The workshop a researcher picks already knows its own
- * type, so storing the type beside it would be a second copy that can disagree with the first — and
- * nothing would ever read them together to notice. Said here as well as in `lib/workshopTypes.ts`
- * because an administrator reading this screen reasonably assumes they are editing a field on a
- * record, and they are not.
- *
- * ── TWO GATES SIT ABOVE THIS PAGE, AND NEITHER OF THEM LIVES HERE ────────────────────────────────
- *
- * `/admin/workshop-types` is nested under `/admin`, so `ROUTE_GUARDS`' `/admin` row (`isAdmin`,
- * mirroring `require_admin`) already refuses everyone below admin above this component, and
- * `ADMIN_CHROME_ROUTES`' `/admin` rule already makes the whole path admin chrome — an admin browsing
- * with admin view off gets `AppShell`'s "hidden while admin view is off" panel and this component
- * never mounts. That is the same arrangement `/admin/analytics`, `/admin/designers` and
- * `/admin/access` sit in, and NO new rule is needed for this one: those three carry their own
- * `ROUTE_GUARDS` rows only because their server gates are DIFFERENT predicates
- * (`require_designer_roster_manager`, `require_access_manager`) that could one day move away from
- * `require_admin` and silently disagree. This route's server gate IS `require_admin`, the identical
- * predicate the `/admin` row already mirrors, so a second row would be a second copy of one rule.
- *
- * The `permitted` check below is the third mirror of the same thing, and it is not redundant either:
- * a client-side route guard that only hides a link is not a guard, and this component must refuse on
- * its own the way every other admin surface does. The boundary is none of these three — it is
- * `Depends(require_admin)` on the write routes in `backend/app/api/routes/workshop_types.py`. A
- * designer who types this URL is refused by the server, not merely by a hidden button.
- *
- * ── THE TWO RULES THE SCREEN IS SHAPED AROUND ────────────────────────────────────────────────────
- *
- * **A KEY IS PERMANENT AND A LABEL IS NOT.** The key is a token written into
- * `DesignWorkshop.workshopKind`, into `AnnualPlanEntry.workshopKind`, into stage documents and into
- * every dataset export ever taken — none of which this screen can reach. So the key box is offered
- * ONCE, when a type is created, and the edit form does not carry it at all: the API refuses it (422)
- * and the form does not draw it. Editing a label is the common case, it is a single-column write,
- * and it is safe by construction rather than by care.
- *
- * **DELETING IS REFUSED WHEN ANYTHING IS FILED UNDER THE TYPE.** There is no foreign key onto the
- * type table, so Postgres cannot make that refusal for us; the server counts the workshops and
- * answers 409 with a finished sentence naming how many and telling the administrator to deactivate
- * instead. That sentence is rendered VERBATIM — it is the only thing on screen that says what to do
- * next, and replacing it with "Unable to delete" would leave somebody trying again tomorrow.
- * Deactivating is the remedy and it is one click away in the same row: the type leaves every
- * dropdown and every workshop already filed under it keeps its type and its label.
- */
-
 import { useCallback, useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, Lock, Tags } from "lucide-react";
 
@@ -86,16 +25,6 @@ import {
 } from "@/lib/workshopTypes";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * The two answers the "Where a workshop saves" control offers, as words rather than as a checkbox.
- *
- * A TICKBOX LABELLED "routesToDesignWorkshop" WOULD BE THE WRONG CONTROL, and not because the name
- * is technical. A tickbox has one visible state and one invisible one — unticked reads as "not
- * decided" — and the consequence of getting this wrong is that a researcher's record is attached to
- * the wrong table's workshop. Two named radio options make both answers legible, and both of them
- * say which TABLE and which COLUMN, because that is what an administrator will be asked about when
- * somebody's record turns up in the wrong place.
- */
 const ROUTING_CHOICES = [
   {
     value: false,
@@ -109,23 +38,6 @@ const ROUTING_CHOICES = [
   }
 ] as const;
 
-/**
- * What the create form and the edit form both hold. `key` is only ever SENT by the create form; the
- * edit form carries it to print and never posts it.
- *
- * CONTROLLED REACT STATE, AND THE NEIGHBOURING ADMIN SCREEN DOES THE OPPOSITE — worth naming,
- * because `/admin/designers` reads its form with `new FormData(event.currentTarget)` and every
- * RECORD form in this app is uncontrolled by rule (the unsaved-changes guard, the zero-size mirror
- * inputs and the Enter-walker all hang off that). None of those three exists here: there is no
- * leave guard on this screen, no themed dropdown to mirror, and four fields.
- *
- * What decides it is the two fields that are not text. "Where a workshop saves" is a radio pair and
- * "offer this type" is a checkbox, and BOTH have to be seeded from the row being edited — which
- * uncontrolled inputs can only do through `defaultChecked` plus a `key` remount, i.e. a second
- * mechanism that has to be remembered every time a field is added. Controlled state also removes
- * the `event.currentTarget` hazard outright: React nulls it across an await, which is the first
- * rule §12.1 states and the one this form now cannot break.
- */
 type Draft = {
   key: string;
   label: string;
@@ -140,32 +52,21 @@ export default function WorkshopTypesPage() {
   const permitted = isAdmin(user);
   const confirm = useConfirm();
 
-  /**
-   * `null` = still loading, `[]` = loaded and empty. Two different sentences on screen, and they are
-   * not interchangeable: "no workshop types" during a fetch would tell an administrator the seed had
-   * failed, on the one screen whose whole job is to show them the seed.
-   */
   const [types, setTypes] = useState<WorkshopTypeOption[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  /** The id being edited, or `"new"` while the create form is open, or null. */
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
 
   const load = useCallback(async () => {
     try {
-      // `includeInactive` — this is the screen that MANAGES the list, so it has to show the retired
-      // rows. Every picker asks without it, and gets only what it may offer.
       const rows = await listWorkshopTypes({ includeInactive: true });
       setTypes(sortWorkshopTypes(rows));
       setError(null);
     } catch (err) {
       setError(readableError(err, "Unable to load the workshop types"));
-      // The list is NOT emptied on a failed refresh: what is on screen is still the last thing the
-      // server said, and replacing it with "no types" would turn a network blip into a claim about
-      // the repository. Only the first load has nothing to keep.
       setTypes((current) => current ?? []);
     }
   }, []);
@@ -215,8 +116,6 @@ export default function WorkshopTypesPage() {
 
   const openEdit = (type: WorkshopTypeOption) => {
     setEditing(type.id);
-    // The key is carried into the draft so the edit form can PRINT it; it is never sent back. See
-    // the form below, which renders it as text rather than as a box.
     setDraft({
       key: type.key,
       label: type.label,
@@ -248,9 +147,6 @@ export default function WorkshopTypesPage() {
         });
         setNotice(`Added “${created.label}”.`);
       } else {
-        // NO `key` IN THIS BODY, EVER. The server would answer 422 (the field is not on the update
-        // schema and extras are forbidden), which is the guarantee; leaving it out here is what
-        // makes the guarantee invisible to the administrator, who only ever wanted to fix a label.
         const updated = await updateWorkshopType(editing, {
           label: draft.label.trim(),
           isActive: draft.isActive,
@@ -274,12 +170,7 @@ export default function WorkshopTypesPage() {
     setBusy(true);
     setError(null);
     setNotice(null);
-    // `moveIndex` rather than a hand-rolled splice: it is the same pure function the drag reorder and
-    // the arrow buttons on `CustomSectionsEditor` and `EntityForm` commit through, so "move up" means
-    // one thing in this repository rather than four.
     const next = moveIndex(rows, index, target);
-    // Painted before the request answers, and reverted by `load()` if the server refuses. The whole
-    // order is one request, so there is no half-applied state to reconcile.
     setTypes(next);
     try {
       const saved = await reorderWorkshopTypes(next.map((type) => type.id));
@@ -317,9 +208,6 @@ export default function WorkshopTypesPage() {
     const ok = await confirm({
       title: `Delete “${type.label}”?`,
       body: "It's removed from every dropdown.",
-      // The note is where the refusal is announced BEFORE it happens, so an administrator with
-      // twelve workshops under this type learns the rule from the dialog rather than from a red
-      // banner after pressing the red button.
       note: "Types in use can't be deleted — retire them instead.",
       confirmLabel: "Delete",
       tone: "danger"
@@ -333,8 +221,6 @@ export default function WorkshopTypesPage() {
       setNotice(`Deleted “${type.label}”.`);
       await load();
     } catch (err) {
-      // VERBATIM. The server's 409 is a finished sentence naming how many workshops are in the way
-      // and naming the remedy; a generic fallback here would throw away the only useful half of it.
       setError(readableError(err, "Unable to delete that workshop type"));
     } finally {
       setBusy(false);
@@ -389,9 +275,6 @@ export default function WorkshopTypesPage() {
                   onChange={(event) => setDraft((d) => ({ ...d, key: event.target.value.toUpperCase() }))}
                   maxLength={64}
                   required
-                  // Mirrors the server's `_KEY_PATTERN` exactly. The browser's own refusal arrives
-                  // before the request does, and `title` is what it prints — so the two refusals say
-                  // the same thing rather than one of them being a regular expression.
                   pattern="[A-Z][A-Z0-9_]*"
                   title="Capitals, digits and underscores, starting with a letter."
                   placeholder="DESIGN_PROTOTYPE_DEVELOPMENT"
@@ -529,11 +412,6 @@ export default function WorkshopTypesPage() {
                       <code className="rounded bg-surface-50 px-1.5 py-0.5 text-xs text-ink-700">{type.key}</code>
                     </td>
                     <td className="px-4 py-3 align-top text-ink-700">
-                      {/*
-                        The column prints the COLUMN NAME as well as the words, because when a record
-                        turns up attached to the wrong kind of workshop this is the cell somebody will
-                        be asked to read out.
-                      */}
                       {type.routesToDesignWorkshop ? (
                         <>
                           Design &amp; prototype workshop
@@ -545,10 +423,6 @@ export default function WorkshopTypesPage() {
                       )}
                     </td>
                     <td className="px-4 py-3 align-top">
-                      {/*
-                        A word and an icon, never a colour alone — the same rule every status tone in
-                        this app follows, so the judgement survives greyscale and colour-blindness.
-                      */}
                       {type.isActive ? (
                         <span className="inline-flex items-center gap-1 text-ink-700">Offered</span>
                       ) : (

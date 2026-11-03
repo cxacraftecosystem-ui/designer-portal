@@ -1,16 +1,5 @@
 "use client";
 
-/**
- * Read-only rendering of one SATISFACTION SURVEY row — used for "your saved feedback" and for the
- * master admin's list.
- *
- * Lifted out of `app/(protected)/feedback/page.tsx` unchanged when the grievance register landed
- * beside it: two callers already shared it there, a third now reads it from another file, and a
- * component copied into a second file is a component that drifts. Labels stay as they were — the
- * Android read-only view's shorter wording, so a summary reads as a table of aspects rather than as
- * a re-run of the interview.
- */
-
 import type { AppFeedback } from "@/lib/feedback";
 
 export function SavedFeedbackDetail({ feedback }: { feedback: AppFeedback }) {

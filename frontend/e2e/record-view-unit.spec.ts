@@ -18,26 +18,6 @@ import {
 } from "@/lib/recordView";
 import type { Artisan, ToolDocumentation, User, UserRole } from "@/lib/types";
 
-/**
- * A RECORD OPENS READ-ONLY FROM ANYWHERE ON ITS CARD; EDITING IS THE SEPARATE "UPDATE" — the owner's
- * ruling of 2026-10-16, on both clients.
- *
- * What this file holds the web to, in the order a reader meets it:
- *
- *   1. Where a record opens and where Update goes are two tables, both carrying the id
- *      (`lib/recordView.ts`). A bare list route in the Update table is the blank-CREATE-form bug
- *      §13.0 of the frontend contract records shipping in six places.
- *   2. Update is drawn only where the server's PATCH gate would let the save land, and never on a
- *      file, which has no form.
- *   3. A press on a row's own control (Update, Discuss, Delete, a preview tile) is that control's,
- *      not the row's; a drag that selected text, or a press that began outside the row, opens
- *      nothing; a middle or modified click asks for a new tab, as it does on the row's real link.
- *   4. The read-only page never prints an identity number — the list hides the digits, so the page
- *      a click on the list opens must too.
- *   5. Every list that draws records routes its rows through `OpenableRow`/`OpenableCard` to the
- *      read-only page, and no row action on those lists still says "Edit".
- */
-
 const ROOT = join(__dirname, "..");
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
 
@@ -64,7 +44,6 @@ test.describe("where a record opens, and where Update goes", () => {
       process: "app/(protected)/processes/[id]/page.tsx",
       craft: "app/(protected)/crafts/[id]/page.tsx",
       workshop: "app/(protected)/workshops/[id]/page.tsx",
-      // An interview is a session now: its read view is the shared questionnaire's (UNIFY 4.4).
       interview: "app/(protected)/questionnaire/sessions/[id]/view/page.tsx",
       media: "app/(protected)/media/[id]/page.tsx"
     };
@@ -84,13 +63,10 @@ test.describe("where a record opens, and where Update goes", () => {
     expect(RECORD_UPDATE_HREF.artisan("a1")).toBe("/artisans/a1/edit");
     expect(RECORD_UPDATE_HREF.product("p1")).toBe("/products/p1/edit");
     expect(RECORD_UPDATE_HREF.tool("t1")).toBe("/tools/t1/edit");
-    // The inline-form shape: the id travels as ?edit=, read by useEditDeepLink on the list page.
     expect(RECORD_UPDATE_HREF.process("x1")).toBe("/processes?edit=x1");
     expect(RECORD_UPDATE_HREF.craft("c1")).toBe("/crafts?edit=c1");
     expect(RECORD_UPDATE_HREF.workshop("w1")).toBe("/workshops?edit=w1");
-    // An interview is a questionnaire session (UNIFY 4.4): Update opens its workspace.
     expect(RECORD_UPDATE_HREF.interview("i1")).toBe("/questionnaire/sessions/i1");
-    // A stored file has no form, so it has no Update at all.
     expect(recordUpdateHref("media", "m1")).toBeNull();
   });
 
@@ -119,8 +95,6 @@ test.describe("Update is drawn only for a reader whose save would land", () => {
   });
 
   test("the field records and interviews keep their PATCH gate of a plain sign-in", () => {
-    // guard_record_edit decides field by field on the server; the button was always offered to
-    // every signed-in reader on these lists, and the ruling changes the label, not the gate.
     for (const kind of ["artisan", "product", "tool", "process", "interview"] as const) {
       expect(canUpdateRecord(account("CROWDSOURCE_VOLUNTEER"), kind), kind).toBe(true);
     }
@@ -130,7 +104,6 @@ test.describe("Update is drawn only for a reader whose save would land", () => {
     const shell = read("components/records/RecordView.tsx");
     expect(shell).toContain("const mayUpdate = Boolean(updateHref) && canUpdateRecord(user, kind);");
     expect(shell).toContain("{mayUpdate && updateHref ? (");
-    // The label is "Update", never "Edit".
     expect(shell).toMatch(/Update\s*<\/Link>/);
     expect(shell).not.toMatch(/>\s*Edit\s*</);
   });
@@ -230,10 +203,8 @@ test.describe("Back lands where the reader left the list", () => {
         })
       )
     ).toEqual({ query: "bagru", applied: "bagru", page: 4, scrollY: 820, funnel: { workshopId: "w1", craftId: "", artisanId: "" } });
-    // A page below 1, a fractional page, a negative scroll and a half-formed funnel are dropped.
     expect(parseListMemory(JSON.stringify({ page: 0, scrollY: -5, funnel: { workshopId: "w1" } }))).toEqual({});
     expect(parseListMemory(JSON.stringify({ page: 2.5 }))).toEqual({});
-    // A page's other filters come back as strings only.
     expect(parseListMemory(JSON.stringify({ filters: { status: "SUBMITTED", kind: 3, on: "1" } }))).toEqual({
       filters: { status: "SUBMITTED", on: "1" }
     });
@@ -267,7 +238,6 @@ test.describe("every record list opens its rows read-only", () => {
       expect(source).toContain(`<OpenableRow`);
       expect(source).toContain(`RECORD_VIEW_HREF.${kind}(`);
       expect(source, "the row's name must be the keyboard route — a real link").toContain("<OpenableRowLink");
-      // No row action on these lists still says "Edit".
       expect(source).not.toMatch(/className=\{rowAction\("edit"\)\}[^>]*>\s*Edit\s*</);
       expect(source).not.toMatch(/>\s*Edit\s*<\/(Link|button)>/);
     });
@@ -343,7 +313,6 @@ test.describe("every record list opens its rows read-only", () => {
 test("a record that did not open says gone or not yours, never the server's bare words", () => {
   expect(recordLoadFailure("artisan", 404, "Record not found")).toBe("This artisan could not be found. It may have been deleted.");
   expect(recordLoadFailure("artisan", 403, "Forbidden")).toBe("Your account can't open this artisan.");
-  // A 404 is about the record only: nothing in it suggests a permission the reader lacks.
   expect(recordLoadFailure("artisan", 404, null)).not.toMatch(/shared|access|permission/i);
   expect(recordLoadFailure("artisan", 500, "The server couldn't respond.")).toBe("The server couldn't respond.");
   expect(recordLoadFailure("artisan", null, "Record not found")).toBe("Unable to load this artisan.");

@@ -7,10 +7,6 @@ import type { ProcessRecord } from "@/components/forms/ProcessForm";
 import { ReadOnlyMediaGallery, RecordFieldList, RecordViewPage } from "@/components/records/RecordView";
 import { processFields } from "@/components/records/recordFields";
 
-/**
- * One documented process, read-only: its details, the pre-process clips, then every step in order
- * with that step's own captures. Update (in the header) opens the inline form on /processes.
- */
 export default function ProcessViewPage() {
   const { id } = useParams<{ id: string }>();
   return (

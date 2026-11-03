@@ -5,15 +5,6 @@ import { expect, test } from "@playwright/test";
 
 import { craftIndex, craftPath, groupCrafts, normaliseCatalogue, searchCraftCatalogue, type CraftCatalogue } from "@/lib/craftCatalogue";
 
-/*
-  THE STAGE-1 CRAFT PICKER IS THE CRAFT LIST'S OWN PICKER (owner, 2026-10-21).
-
-  `workshopSetup.craftRef` used to draw the generic reference dropdown, whose rows showed a craft's
-  name over its free-text category copy. It now draws `CraftSelect`, like every other craft field in
-  both portals and like the Field Repository's Android picker: grouped under "Category ›
-  Sub-category", and searched by category and sub-category names as well as the craft's own.
-*/
-
 const ROOT = join(__dirname, "..");
 const FIXTURE = join(__dirname, "fixtures", "craft-catalogue.json");
 const catalogue = normaliseCatalogue(JSON.parse(readFileSync(FIXTURE, "utf8"))) as CraftCatalogue;

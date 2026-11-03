@@ -1,34 +1,6 @@
-/**
- * The report document model, ported from `backend/app/services/report_model.py`, for the browser to
- * build a workshop's report with no connection.
- *
- * WHAT THIS IS. The server builds a report in two steps — workshop data and a template become a
- * `ReportDocument` of blocks, and the blocks become a .docx, a .pdf or the preview — and the web
- * preview has always drawn those blocks. When the device is offline there is no server to build
- * them, so `lib/offlineReport/builder.ts` builds the same blocks here, in the same shape the preview
- * endpoint serialises them in (`_block_payload`: the class name upper-cased as `type`, then the
- * dataclass fields in snake_case), and `ReportSheets` draws them exactly as it draws the server's.
- *
- * WHICH ONE IS AUTHORITATIVE is written down in `docs/DESIGN_WORKSHOP.md` ("Reports built in the
- * browser"): the server's file, whenever there is a connection. This copy exists so a designer with
- * no signal is never without their report, and `frontend/e2e/offline-report-parity-unit.spec.ts`
- * holds it to the server's output for a fixture workshop block for block.
- *
- * EVERY PYTHON IDIOM THAT CHANGES A CHARACTER IS PORTED, NOT APPROXIMATED. `round()` is half-even,
- * `f"{x:.2f}"` rounds the exact binary value half-even, `f"{x:g}"` drops trailing zeros and switches
- * to an exponent outside 1e-4..1e6, and `str()` of a bool is never the string the template prints.
- * Each has a helper below, and the parity spec is what proves the helpers right.
- */
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Text cleaning and scripts
- * ──────────────────────────────────────────────────────────────────────────── */
-
-// Built with the constructor so the `u` flag and property escapes do not depend on the compile target.
 const XML_ILLEGAL = new RegExp("[^\\u0009\\u000a\\u000d\\u0020-\\ud7ff\\ue000-\\ufffd\\u{10000}-\\u{10ffff}]", "gu");
 const LINE_ENDINGS = new RegExp("\r\n?|\u2028|\u2029", "g");
 
-/** `report_model.clean_text`: a string any document part can carry. */
 export function cleanText(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -61,7 +33,6 @@ const SCRIPT_RANGES: ReadonlyArray<[number, number, Script]> = [
   [0x0d00, 0x0d7f, "MALAYALAM"]
 ];
 
-// `_NEUTRAL_CATEGORIES`: marks, separators, controls, punctuation, symbols and stray digits.
 const NEUTRAL = new RegExp(
   "^[\\p{Mn}\\p{Mc}\\p{Me}\\p{Zs}\\p{Zl}\\p{Zp}\\p{Cc}\\p{Cf}\\p{Pd}\\p{Ps}\\p{Pe}\\p{Pi}\\p{Pf}\\p{Po}\\p{Pc}\\p{Sm}\\p{Sk}\\p{Sc}\\p{Nd}\\p{No}]$",
   "u"
@@ -75,7 +46,6 @@ function scriptOrNeutral(ch: string): Script | null {
   return "OTHER";
 }
 
-/** `report_model.split_by_script`: the longest same-script spans, neutrals joining the run before. */
 export function splitByScript(text: string): Array<[string, Script]> {
   if (!text) return [];
   const chars = Array.from(text);
@@ -101,10 +71,6 @@ export function splitByScript(text: string): Array<[string, Script]> {
   spans.push([chars.slice(start).join(""), resolved[resolved.length - 1] as Script]);
   return spans;
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Runs and blocks — the preview payload's shape, field for field
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export type Run = {
   text: string;
@@ -136,7 +102,6 @@ export function makeRun(text: string, style: RunStyle = {}, script: Script = "LA
   };
 }
 
-/** `report_model.runs_of`: cleaned, split at every script boundary. */
 export function runsOf(text: unknown, style: RunStyle = {}): Run[] {
   const cleaned = cleanText(text);
   if (!cleaned) return [];
@@ -263,10 +228,6 @@ export function chartTotal(block: ChartBlock): number {
   return block.series.reduce((sum, [, value]) => sum + value, 0);
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Meta, theme, and the builder
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type PageSize = "A4" | "LETTER";
 
 export function pageSizeMm(size: PageSize): [number, number] {
@@ -339,7 +300,6 @@ export function makeMeta(partial: Partial<ReportMeta> & { title: string }): Repo
 
 export type ReportDocument = { meta: ReportMeta; theme: ReportTheme; blocks: Block[]; images: ImageRef[] };
 
-/** `report_model._bookmark_id`. */
 export function bookmarkId(number: string, text: string, ordinal: number): string {
   const slug = `${number}_${text}`
     .replace(/[^A-Za-z0-9]+/g, "_")
@@ -348,7 +308,6 @@ export function bookmarkId(number: string, text: string, ordinal: number): strin
   return slug ? `_S${ordinal}_${slug}` : `_S${ordinal}`;
 }
 
-/** `report_model.DocumentBuilder`: heading numbers counted here and nowhere else. */
 export class DocumentBuilder {
   readonly blocks: Block[] = [];
   private counters = [0, 0, 0, 0];
@@ -418,21 +377,14 @@ export function collectImages(blocks: readonly Block[]): ImageRef[] {
   return [...seen.values()];
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Python's formatting, exactly
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** Python's `str.strip()` with no argument: Unicode whitespace from both ends. */
 export function pyStrip(text: string): string {
   return text.replace(/^\s+|\s+$/g, "");
 }
 
-/** `" ".join(text.split())`. */
 export function collapseSpace(text: string): string {
   return text.split(/\s+/).filter(Boolean).join(" ");
 }
 
-/** Python's `round()` to an integer: half to even. */
 export function pyRound(value: number): number {
   const floor = Math.floor(value);
   const diff = value - floor;
@@ -441,7 +393,6 @@ export function pyRound(value: number): number {
   return floor % 2 === 0 ? floor : floor + 1;
 }
 
-/** `f"{value:.{digits}f}"`: the exact binary value, rounded half to even. */
 export function pyFixed(value: number, digits: number): string {
   if (!Number.isFinite(value)) return String(value);
   const exact = Math.abs(value).toFixed(Math.min(100, digits + 40));
@@ -478,11 +429,9 @@ export function pyFixed(value: number, digits: number): string {
   }
   const intLen = digitsStr.length - digits;
   const body = digits ? `${digitsStr.slice(0, intLen)}.${digitsStr.slice(intLen)}` : digitsStr;
-  // Python keeps the sign of a value that rounds to zero: f"{-0.001:.2f}" is "-0.00".
   return value < 0 || Object.is(value, -0) ? `-${body}` : body;
 }
 
-/** `f"{value:g}"`: six significant digits, trailing zeros dropped, an exponent outside 1e-4..1e6. */
 export function pyG(value: number): string {
   if (value === 0) return Object.is(value, -0) ? "-0" : "0";
   if (!Number.isFinite(value)) return Number.isNaN(value) ? "nan" : value > 0 ? "inf" : "-inf";
@@ -497,7 +446,6 @@ export function pyG(value: number): string {
   return `${trimmed}e${sign}${String(Math.abs(exponent)).padStart(2, "0")}`;
 }
 
-/** Python's `str()` of a JSON value: an int prints bare, a float as its repr, a list as a list. */
 export function pyStr(value: unknown): string {
   if (value === null || value === undefined) return "None";
   if (typeof value === "boolean") return value ? "True" : "False";
@@ -527,11 +475,6 @@ function pyRepr(value: unknown): string {
   return pyStr(value);
 }
 
-/**
- * Python's `sum()` of floats, which since 3.12 is Neumaier's compensated sum and not a plain
- * left-to-right fold. Table widths are summed this way on the server, and a plain fold differs in
- * the last bit — enough for a width to print as 16.666666666666654 instead of 16.666666666666668.
- */
 export function pySum(values: readonly number[]): number {
   let total = 0;
   let compensation = 0;
@@ -544,7 +487,6 @@ export function pySum(values: readonly number[]): number {
   return total + compensation;
 }
 
-/** `_group_indian`: "1234567" -> "12,34,567". */
 export function groupIndian(digits: string): string {
   if (digits.length <= 3) return digits;
   let head = digits.slice(0, -3);
@@ -558,14 +500,12 @@ export function groupIndian(digits: string): string {
   return [...parts, tail].join(",");
 }
 
-/** `f"{n:,}"`: thousands grouped in threes, as Python groups them. */
 export function groupThousands(n: number): string {
   const text = String(Math.trunc(Math.abs(n)));
   const grouped = text.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return n < 0 ? `-${grouped}` : grouped;
 }
 
-/** `report_builder._as_number`: a finite float, or null for anything that is not one. */
 export function asNumber(value: unknown): number | null {
   if (value === null || value === undefined || typeof value === "boolean") return null;
   let number: number;

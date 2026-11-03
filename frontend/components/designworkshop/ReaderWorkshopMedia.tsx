@@ -1,18 +1,5 @@
 "use client";
 
-/**
- * A WORKSHOP'S FILES AND ITS OWN QUESTIONS, DRAWN READ-ONLY — for its inspectors and its monitors.
- *
- * Shared by `/design-workshop-inspections/[id]` and `/officers/monitored/[id]` (sweep item F5). The
- * pure halves — which file a field points at, how a file is drawn, which custom answer belongs to
- * which question — live in `lib/workshopReaderMedia.ts`; this file only draws them.
- *
- * NOTHING HERE WRITES. There is no upload, replace, caption, transcribe or delete control, by
- * construction: these components receive files and answers and render them. The links they draw are
- * short-lived signed links handed out by the reader's own surface, so a link copied out of the page
- * stops working within minutes; "Refresh files" asks for fresh ones.
- */
-
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { FileText, ImageOff, RefreshCw } from "lucide-react";
 
@@ -42,7 +29,6 @@ type ReaderMediaContextValue = {
 
 const ReaderMediaContext = createContext<ReaderMediaContextValue>({ byId: new Map(), state: "loading" });
 
-/** Load one workshop's files for a read-only surface. `enabled` false holds the request. */
 export function useReaderMedia(surface: ReaderSurface, workshopId: string, enabled: boolean) {
   const [list, setList] = useState<ReaderMediaList | null>(null);
   const [state, setState] = useState<ReaderMediaState>("loading");
@@ -78,7 +64,6 @@ export function useReaderMedia(surface: ReaderSurface, workshopId: string, enabl
   return { list, state, failure, retry };
 }
 
-/** Puts one workshop's files where every media field below can find them. */
 export function ReaderMediaProvider({
   list,
   state,
@@ -92,7 +77,6 @@ export function ReaderMediaProvider({
   return <ReaderMediaContext.Provider value={value}>{children}</ReaderMediaContext.Provider>;
 }
 
-/** One file, drawn the way its type is read: a picture, a player, or a link to open it. */
 export function ReaderMediaTile({ file }: { file: ReaderMediaFile }) {
   const kind = readerMediaKind(file);
   const name = file.originalFilename?.trim() || "Untitled file";
@@ -155,7 +139,6 @@ export function ReaderMediaTile({ file }: { file: ReaderMediaFile }) {
   );
 }
 
-/** A media field's files, read-only, in the order the designer filed them. */
 export function ReaderMediaValue({ value }: { value: DwValue | undefined }) {
   const { byId, state } = useContext(ReaderMediaContext);
   const { shown, elsewhere } = resolveFieldMedia(value, byId);
@@ -194,7 +177,6 @@ export function ReaderMediaValue({ value }: { value: DwValue | undefined }) {
   );
 }
 
-/** Every file of the workshop in one place, with a way to fetch fresh links. */
 export function ReaderFilesPanel({
   list,
   state,
@@ -240,7 +222,6 @@ export function ReaderFilesPanel({
   );
 }
 
-/** The answers to the workshop's own questions on one stage, with their wording and their authors. */
 export function ReaderCustomAnswers({
   definition,
   stageKey,

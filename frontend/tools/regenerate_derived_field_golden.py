@@ -1,41 +1,3 @@
-"""Regenerate `frontend/e2e/fixtures/derived-field-cases.json` from the BACKEND's own rule.
-
-WHY THIS FILE EXISTS. `lib/derivedFields.ts` is a port of `stage_schema.derive_value`, and its own
-header says so: "IT IS A PORT, NOT A SECOND OPINION... inventing one here would produce a figure the
-save then overwrote, which is worse than no figure at all because the designer has already read it."
-Nothing checked that. A golden written by reading the TypeScript would only assert that the port
-agrees with itself, which is exactly the laundering `android/tools/regenerate_dw_analysis_golden.py`
-warns about. So the expectations below are whatever PYTHON answers, and the spec recomputes each case
-in Node and diffs it. When the two disagree the Python is right and the port is broken — never
-"regenerate until it passes".
-
-WHAT IT DOES NOT DO IS RUN THE TYPESCRIPT. Two sides, two tools: this writes what the server says,
-`frontend/e2e/derived-fields-unit.spec.ts` runs the browser's copy in a bare Node process.
-
-Run it from the repository root, which is where `backend/` is importable from, with the backend venv:
-
-    backend/.venv/Scripts/python.exe frontend/tools/regenerate_derived_field_golden.py
-
-Add `--check` to compare without writing — what proves the committed golden is still what today's
-Python produces:
-
-    backend/.venv/Scripts/python.exe frontend/tools/regenerate_derived_field_golden.py --check
-
-WRITTEN WITH AN EXPLICIT UTF-8 ENCODING rather than printed, for the reason the Android generator
-gives: redirecting Python's stdout on Windows is cp1252 and dies on the first rupee sign.
-
-TWO CASES ARE DELIBERATELY ABSENT and are asserted by hand in the spec instead, each with its
-argument written where the assertion is:
-
-  * a factor of "Infinity" — `float()` takes it and the server returns `inf`, which JSON cannot
-    carry at all (`json.dump` would emit a bare `Infinity` that no parser is obliged to read). The
-    web answers null, deliberately: `asNumber` refuses non-finite values so that "₹inf" cannot reach
-    a cost sheet, and a blank box is the safer of the two wrong answers.
-  * the week and ordinal date spellings `date.fromisoformat` also accepts ("2026-W33-4",
-    "2026-227"). No date input on any of the three clients can produce one, so the port handles the
-    two spellings that are reachable and says so rather than growing an ISO-8601 parser.
-"""
-
 from __future__ import annotations
 
 import json
@@ -49,14 +11,7 @@ from app.services.stage_schema import FieldSpec, FieldType, derive_value  # noqa
 
 GOLDEN = REPO_ROOT / "frontend" / "e2e" / "fixtures" / "derived-field-cases.json"
 
-# (name, field type, derived kind, derived_from, row)
-#
-# The three kinds in the registry today are DAYS_BETWEEN on `workshopSetup.durationDays` (INT),
-# PRODUCT on `costMaterialLine.amount` / `costLabourLine.amount` / `prototypeCostLine.amount`
-# (MONEY), and SUM on `costSheet.totalCost` (MONEY). DECIMAL cases are carried anyway because both
-# implementations branch on "is it MONEY", and an unexercised branch is where a port rots.
 CASES: list[tuple[str, str, str, tuple[str, ...], dict]] = [
-    # ── DAYS_BETWEEN ────────────────────────────────────────────────────────────────────────
     ("d01-three-day-workshop", "INT", "DAYS_BETWEEN", ("startDate", "endDate"),
      {"startDate": "2026-08-12", "endDate": "2026-08-14"}),
     ("d02-single-day-is-one", "INT", "DAYS_BETWEEN", ("startDate", "endDate"),
@@ -84,7 +39,6 @@ CASES: list[tuple[str, str, str, tuple[str, ...], dict]] = [
     ("d13-a-boolean-is-not-a-date", "INT", "DAYS_BETWEEN", ("startDate", "endDate"),
      {"startDate": "2026-08-12", "endDate": True}),
 
-    # ── PRODUCT ─────────────────────────────────────────────────────────────────────────────
     ("p01-quantity-times-rate", "DECIMAL", "PRODUCT", ("quantity", "rate"),
      {"quantity": "4", "rate": "12.5"}),
     ("p02-money-half-paisa-up", "MONEY", "PRODUCT", ("quantity", "rate"),
@@ -120,7 +74,6 @@ CASES: list[tuple[str, str, str, tuple[str, ...], dict]] = [
     ("p17-a-stored-number-not-a-string", "MONEY", "PRODUCT", ("quantity", "rate"),
      {"quantity": 3, "rate": 12.5}),
 
-    # ── SUM ─────────────────────────────────────────────────────────────────────────────────
     ("s01-three-cost-heads", "MONEY", "SUM", ("material", "labour", "packaging"),
      {"material": "1200.50", "labour": "800.25", "packaging": "99.00"}),
     ("s02-optional-heads-blank", "MONEY", "SUM", ("material", "labour", "packaging"),
@@ -145,7 +98,6 @@ CASES: list[tuple[str, str, str, tuple[str, ...], dict]] = [
     ("s12-a-boolean-head", "MONEY", "SUM", ("material", "labour", "packaging"),
      {"material": "1200.50", "labour": False, "packaging": ""}),
 
-    # ── NOT DERIVED AT ALL ──────────────────────────────────────────────────────────────────
     ("n01-no-derived-kind", "MONEY", "", ("material",), {"material": "12"}),
     ("n02-kind-with-no-sources", "MONEY", "SUM", (), {"material": "12"}),
     ("n03-unknown-kind", "MONEY", "QUOTIENT", ("a", "b"), {"a": "12", "b": "4"}),

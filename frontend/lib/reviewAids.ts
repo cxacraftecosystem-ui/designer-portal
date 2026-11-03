@@ -1,20 +1,3 @@
-/**
- * The review aids, on the client (2026-10-17): what makes a handed-in report quicker to read and
- * answer for the inspectors, the directors and the approving authority.
- *
- * - **Field notes in one batch (B2).** A reader flags fields as they read; the drafts collect in a
- *   tray and go out together — "File 3 notes" or "Send back with 3 notes".
- * - **Freshness (A19).** Each note says whether the stage it names was edited after it was filed —
- *   the server compares the stage rows' own timestamps (`editedSince`).
- * - **"Checked, no corrections" (C5).** One verdict per inspector per round; shown to the approver,
- *   never required for approval.
- * - **"Changed since round N" (C13).** The stage data as handed in for each round is kept; this file
- *   compares two of them field by field.
- * - **Queue readiness (B4).** Completeness, this round's notes and inspectors cleared, per row.
- *
- * The pure half (diff, labels, tray) is held by `e2e/review-aids-unit.spec.ts`.
- */
-
 import { apiFetch } from "@/lib/api";
 import {
   formFields,
@@ -32,11 +15,6 @@ import {
 } from "@/lib/designWorkshops";
 import { plural } from "@/lib/sharingScope";
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Wire shapes
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** One inspector's "Checked, no corrections" on one round. */
 export type DwClearance = {
   inspectorId: string;
   inspectorName: string | null;
@@ -44,12 +22,10 @@ export type DwClearance = {
   clearedAt: string | null;
 };
 
-/** A round whose hand-in copy was kept. */
 export type DwRoundSnapshotRef = { round: number; takenAt: string | null };
 
 export type DwRoundSnapshot = DwRoundSnapshotRef & { stages: Record<string, DwStageData> };
 
-/** A queue row's readiness. `percent` null means the server did not score it. */
 export type DwReadiness = {
   percent: number | null;
   stagesComplete: number | null;
@@ -59,14 +35,12 @@ export type DwReadiness = {
   cleared: number;
 };
 
-/** The keys the review aids add to a detail read. All optional: older servers send none of them. */
 export type DwReviewAidKeys = {
   clearances?: DwClearance[];
   myClearedAt?: string | null;
   roundSnapshots?: DwRoundSnapshotRef[];
 };
 
-/** A note with the two keys added on 2026-10-17. */
 export type DwReviewNote = DwInspectionFeedback & {
   editedSince?: boolean | null;
   actorPost?: string | null;
@@ -75,7 +49,6 @@ export type DwReviewNote = DwInspectionFeedback & {
 export type DwQueueSort = "default" | "oldest" | "newest" | "complete";
 export type DwClearedFilter = "" | "all" | "some" | "none";
 
-/** Which read a call goes through. */
 export type DwReviewSurface = "inspection" | "approval" | "oversight";
 
 const BASE: Record<DwReviewSurface, string> = {
@@ -84,12 +57,7 @@ const BASE: Record<DwReviewSurface, string> = {
   oversight: "/design-workshop-oversight/assigned"
 };
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Calls
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type DwNoteDraft = {
-  /** Local id for the tray; never sent. */
   id: string;
   note: string;
   stageKey: string | null;
@@ -106,7 +74,6 @@ function items(drafts: DwNoteDraft[]): DwNoteItem[] {
 
 export type DwNotesAnswer = DwFeedbackAnswer & DwReviewAidKeys;
 
-/** File every drafted note at once. Moves nothing. Inspectors and directors. */
 export function fileNotes(surface: "inspection" | "oversight", workshopId: string, drafts: DwNoteDraft[]) {
   return apiFetch<DwNotesAnswer>(`${BASE[surface]}/${encodeURIComponent(workshopId)}/feedback/batch`, {
     method: "POST",
@@ -114,7 +81,6 @@ export function fileNotes(surface: "inspection" | "oversight", workshopId: strin
   });
 }
 
-/** An inspector sends the report back with every drafted note. */
 export function sendBackWithNotes(workshopId: string, drafts: DwNoteDraft[], cover?: string | null) {
   return apiFetch<DwNotesAnswer>(
     `${BASE.inspection}/${encodeURIComponent(workshopId)}/send-back/batch`,
@@ -122,7 +88,6 @@ export function sendBackWithNotes(workshopId: string, drafts: DwNoteDraft[], cov
   );
 }
 
-/** The approver's `/revise` body carrying the tray. */
 export function reviseBody(drafts: DwNoteDraft[], cover: string, stageKey: string | null) {
   const notes = items(drafts);
   return notes.length
@@ -130,19 +95,16 @@ export function reviseBody(drafts: DwNoteDraft[], cover: string, stageKey: strin
     : { note: cover.trim(), stageKey: stageKey || null };
 }
 
-/** "Checked, no corrections" on the current round, or take it back. */
 export function setRoundCleared(workshopId: string, cleared: boolean) {
   return apiFetch<DwNotesAnswer>(`${BASE.inspection}/${encodeURIComponent(workshopId)}/clearance`, {
     method: cleared ? "POST" : "DELETE"
   });
 }
 
-/** The stage data as handed in for one round. */
 export function getRoundSnapshot(surface: DwReviewSurface, workshopId: string, round: number) {
   return apiFetch<DwRoundSnapshot>(`${BASE[surface]}/${encodeURIComponent(workshopId)}/rounds/${round}`);
 }
 
-/** The approver's queue with the two new controls. */
 export function readinessQuery(params: { sort?: DwQueueSort; cleared?: DwClearedFilter }) {
   return {
     sort: params.sort && params.sort !== "default" ? params.sort : undefined,
@@ -151,23 +113,17 @@ export function readinessQuery(params: { sort?: DwQueueSort; cleared?: DwCleared
 }
 
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Labels
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export const POST_LABELS: Record<string, string> = {
   ASSISTANT_DIRECTOR: "Assistant Director",
   REGIONAL_DIRECTOR: "Regional Director"
 };
 
-/** "Edited since" / "Untouched" — or null when the server did not say. */
 export function freshnessLabel(note: Pick<DwReviewNote, "editedSince">): string | null {
   if (note.editedSince === true) return "Edited since";
   if (note.editedSince === false) return "Untouched";
   return null;
 }
 
-/** Who wrote a note, in the register's words. */
 export function noteAuthor(note: DwReviewNote): string {
   const name = note.actorName?.trim() || "An officer no longer named";
   if (note.byApprovingAuthority) return `${name} · approving authority`;
@@ -175,7 +131,6 @@ export function noteAuthor(note: DwReviewNote): string {
   return name;
 }
 
-/** What a note is about: "12. Costing · Unit cost", the whole report, or the stored key. */
 export function noteTarget(
   note: Pick<DwInspectionFeedback, "stageKey" | "fieldKey">,
   stages: DwStage[]
@@ -195,7 +150,6 @@ function fieldLabel(stage: DwStage, fieldKey: string): string | null {
   return null;
 }
 
-/** The tray's buttons: "File 3 notes", "Send back with 3 notes". */
 export function fileLabel(count: number): string {
   return count === 1 ? "File 1 note" : `File ${plural(count, "note")}`;
 }
@@ -204,7 +158,6 @@ export function sendBackLabel(count: number): string {
   return count === 0 ? "Send back" : `Send back with ${plural(count, "note")}`;
 }
 
-/** The chips a queue row carries, in reading order. Each is a word, never colour alone. */
 export function readinessChips(
   readiness: DwReadiness | null | undefined,
   row: Pick<DwSummary, "lastHandedInAt" | "status">,
@@ -230,7 +183,6 @@ export function readinessChips(
   return chips;
 }
 
-/** The progress line under a row's bar. */
 export function readinessSentence(readiness: DwReadiness | null | undefined): string {
   if (!readiness || readiness.percent === null) return "Not scored";
   const stagesLine =
@@ -240,7 +192,6 @@ export function readinessSentence(readiness: DwReadiness | null | undefined): st
   return `${readiness.percent}% of required fields${stagesLine}`;
 }
 
-/** Completeness dot for the stage menu. */
 export type StageDot = "complete" | "partial" | "empty";
 
 export function stageDot(score: { requiredFilled: number; requiredTotal: number; isComplete?: boolean } | undefined): StageDot {
@@ -255,16 +206,10 @@ export const STAGE_DOT_LABEL: Record<StageDot, string> = {
   empty: "Not started"
 };
 
-/* ────────────────────────────────────────────────────────────────────────────
- * "Changed since round N"
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type FieldChange = { before: DwValue | undefined; after: DwValue | undefined };
 
 export type EntityChanges = {
-  /** Field changes on a singleton, by field key. */
   fields: Record<string, FieldChange>;
-  /** Collection rows, by entry id: added rows, and changed fields of kept rows. */
   addedRows: string[];
   changedRows: Record<string, Record<string, FieldChange>>;
   removedRows: Array<{ title: string; row: DwRow }>;
@@ -299,7 +244,6 @@ function rowId(row: DwRow, index: number): string {
   return row._entryId ?? row._clientKey ?? `#${index}`;
 }
 
-/** What moved between a round's hand-in copy and the report as it is now, stage by stage. */
 export function roundChanges(
   stages: DwStage[],
   current: Record<string, DwStageData> | undefined,
@@ -354,7 +298,6 @@ export function roundChanges(
   return out;
 }
 
-/** "4 changes in 2 stages since round 1" — or that nothing moved. */
 export function changesSummary(changes: Record<string, StageChanges>, round: number): string {
   const moved = Object.values(changes).filter((stage) => stage.count > 0);
   if (!moved.length) return `Nothing changed since round ${round}.`;
@@ -362,7 +305,6 @@ export function changesSummary(changes: Record<string, StageChanges>, round: num
   return `${plural(total, "change")} in ${plural(moved.length, "stage")} since round ${round}.`;
 }
 
-/** The earlier rounds a reader can compare against: kept copies older than the current round. */
 export function comparableRounds(
   snapshots: DwRoundSnapshotRef[] | undefined,
   currentRound: number | null | undefined
@@ -374,23 +316,14 @@ export function comparableRounds(
     .sort((a, b) => b - a);
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The tray, kept per browser so a reload does not lose drafted notes
- * ──────────────────────────────────────────────────────────────────────────── */
-
 const TRAY_KEY = "dw_review_tray";
 
-/**
- * Which screen a tray belongs to. One account can inspect a workshop AND approve it (a master
- * admin), and a note drafted as an inspector must never leave in the approver's send-back.
- */
 export type DwTraySurface = "inspect" | "approve" | "supervise";
 
 export function trayKey(userId: string | undefined, workshopId: string, surface: DwTraySurface): string {
   return `${TRAY_KEY}:${surface}:${userId ?? "anon"}:${workshopId}`;
 }
 
-/** Forget every drafted tray in this browser — on sign-out, so a shared machine keeps none. */
 export function clearReviewTrays(): void {
   try {
     const storage = window.localStorage;
@@ -401,7 +334,6 @@ export function clearReviewTrays(): void {
     }
     keys.forEach((key) => storage.removeItem(key));
   } catch {
-    // Storage blocked: nothing was kept.
   }
 }
 
@@ -431,11 +363,9 @@ export function saveTray(
     if (drafts.length) window.localStorage.setItem(key, JSON.stringify(drafts));
     else window.localStorage.removeItem(key);
   } catch {
-    // Storage blocked: the tray still works for this visit.
   }
 }
 
-/** How many notes one batch may carry — the server's `MAX_BATCH_NOTES`, held equal by a spec. */
 export const MAX_TRAY_NOTES = 30;
 
 let draftSeq = 0;
@@ -445,16 +375,6 @@ export function newDraft(note: string, stageKey: string | null, fieldKey: string
   return { id: `d${Date.now().toString(36)}${draftSeq}`, note, stageKey, fieldKey };
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The ministry register: where a row opens (A17)
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * The read-only view of a register row that THIS reader may open: the approving authority's read for
- * a Ministry Admin or the master admin, the supervisor's read for an Assistant or Regional Director
- * (the register lists them only the workshops they are posted to), and the record page for any other
- * kind of workshop.
- */
 export function registerRowHref(
   kind: "design" | "other",
   id: string,

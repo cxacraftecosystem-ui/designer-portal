@@ -8,7 +8,6 @@ import { RecordFieldList, RecordViewPage } from "@/components/records/RecordView
 import { toolFields } from "@/components/records/recordFields";
 import type { ToolDocumentation } from "@/lib/types";
 
-/** One tool record, read-only. Update (in the header) opens the form — see `RecordView.tsx`. */
 export default function ToolViewPage() {
   const { id } = useParams<{ id: string }>();
   return (

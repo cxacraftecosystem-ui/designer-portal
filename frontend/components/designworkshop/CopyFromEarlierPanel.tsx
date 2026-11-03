@@ -1,20 +1,5 @@
 "use client";
 
-/**
- * "Start from an earlier workshop" on stages 2, 4, 5 and 7 (owner decision C9, 2026-10-17).
- *
- * Two blocks, never mixed:
- *
- * - **Your earlier workshops** — the designer's own text, copied into EMPTY boxes only and marked
- *   "Copied". Copied text does not count toward completeness until the designer edits it or presses
- *   "Keep as is".
- * - **Other designers, same cluster or craft** — read only. Their text is shown to read, never put in a box:
- *   the registry's rule is one author per box.
- *
- * The page owns the boxes; this panel only hands it values (`onCopy`) and asks the server to keep a
- * copy as the designer's own (`onConfirm`).
- */
-
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Copy } from "lucide-react";
 
@@ -27,7 +12,6 @@ import {
   type DwValue
 } from "@/lib/designWorkshops";
 
-/** A value as one readable line, for the preview. Rich text is flattened to its words. */
 export function previewOf(value: DwValue | undefined, limit = 220): string {
   let text = "";
   if (typeof value === "string") text = value;
@@ -86,13 +70,10 @@ export function CopyFromEarlierPanel({
   onConfirm,
   confirming
 }: {
-  /** The SERVER id of this workshop. */
   workshopId: string;
   stageKey: string;
   disabled?: boolean;
-  /** Fill the empty boxes; answers how many were filled. */
   onCopy: (sourceWorkshopId: string, values: Record<string, DwValue>) => number;
-  /** Boxes holding copied text not yet edited or kept, with their labels. */
   pendingKeys: { key: string; label: string }[];
   onConfirm: (keys: string[]) => void;
   confirming?: boolean;

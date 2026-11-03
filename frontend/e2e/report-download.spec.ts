@@ -2,25 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { signIn, sessionTokenOf } from "./support/session";
 
-/**
- * The report actually downloads.
- *
- * Written because it did not, and because of HOW it did not: `isTransient` in `lib/offline.ts`
- * returns `true` for anything that is not an `ApiError`, so ANY client-side exception thrown
- * anywhere inside the download handler — a TypeError, a bad property read, a failed blob save —
- * was reported to the designer as
- *
- *     "The DOCX is written by the server, so it cannot be generated without a connection."
- *
- * That message is confident, specific and, when the server is up and answering, completely wrong.
- * It sends the designer to look at their signal instead of at the actual fault, and there is
- * nothing on screen to contradict it.
- *
- * So this spec asserts on the DOWNLOAD, not on the absence of an error box: it requires the
- * browser to actually receive a file. It also captures page errors, because the failure mode
- * being defended against is precisely one that hides itself behind a friendly sentence.
- */
-
 const EMAIL = process.env.E2E_EMAIL ?? "";
 const PASSWORD = process.env.E2E_PASSWORD ?? "";
 const API = process.env.E2E_API_URL ?? "http://localhost:8000";
@@ -41,8 +22,6 @@ for (const format of ["DOCX", "PDF"] as const) {
     await signIn(page);
     await page.goto(`/design-workshops/${WORKSHOP}/report`);
 
-    // The API answers the same request happily — proven here so a failure below is unambiguously
-    // the client's, not the server's.
     const token = await sessionTokenOf(page);
     const direct = await page.request.post(`${API}/api/design-workshops/${WORKSHOP}/report`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -56,8 +35,6 @@ for (const format of ["DOCX", "PDF"] as const) {
     const downloadPromise = page.waitForEvent("download", { timeout: 90_000 });
     await button.click();
 
-    // If the handler threw, the friendly-but-wrong offline sentence appears. Surface the REAL
-    // cause in the failure message rather than the sentence, which is the whole point.
     const offline = page.getByText(/Connect to the internet to generate the/i);
     const outcome = await Promise.race([
       downloadPromise.then(() => "download" as const),

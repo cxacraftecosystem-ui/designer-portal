@@ -1,29 +1,5 @@
 "use client";
 
-/**
- * "FORGOT YOUR PASSWORD?" — ASK FOR A ONE-TIME SET-PASSWORD LINK BY E-MAIL.
- *
- * Ported in shape from cxa-cms (`app/studio/login/forgot/ForgotPasswordForm.tsx`): one e-mail box, one
- * button, one answer.
- *
- * ── PUBLIC, AND IN THE LOGIN CARD'S FRAME ─────────────────────────────────────────────────────
- *
- * Outside `app/(protected)/` for `/set-password`'s reason: the person asking cannot sign in. It draws
- * the same frosted card as `/set-password`, so the two screens a locked-out person walks through
- * look like the sign-in they came from.
- *
- * ── THE ANSWER IS PRINTED VERBATIM AND IS THE SAME FOR EVERY ADDRESS ──────────────────────────
- *
- * `POST /auth/forgot-password` answers one sentence whether or not an account exists, has a password,
- * or e-mail could be sent — the work happens after the answer has gone. So this screen has no branch
- * that could say "an address is unknown", and must never grow one. The only failures it
- * shows are about the REQUEST: a malformed address (422), too many requests from this connection
- * (429, with `Retry-After` in words), and an unreachable server.
- *
- * The link it leads to lands on `/set-password`, which never signs anybody in: the person then signs
- * in with the new password and, where two-step verification is on, their code — the footnote says so.
- */
-
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { ArrowLeft, Mail } from "lucide-react";
@@ -42,7 +18,6 @@ export default function ForgotPasswordPage() {
   const emailRef = useRef<HTMLInputElement | null>(null);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
-    // FIRST, before any await — React nulls `currentTarget` across one.
     const data = new FormData(event.currentTarget);
     event.preventDefault();
     if (pending) return;
@@ -91,7 +66,6 @@ export default function ForgotPasswordPage() {
         </div>
 
         <form onSubmit={submit} noValidate className="grid gap-3">
-          {/* Both regions mounted from first paint, so what lands in them is announced. */}
           <div
             role="alert"
             aria-live="assertive"

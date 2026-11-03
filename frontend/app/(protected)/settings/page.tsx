@@ -23,27 +23,6 @@ import { WorkshopAccessRequestPanel } from "@/components/settings/WorkshopAccess
 import { isAdmin, isMasterAdmin } from "@/lib/permissions";
 import type { User } from "@/lib/types";
 
-/**
- * /settings — this ACCOUNT's settings first, administration second.
- *
- * The page used to run two columns, with the master admin's global configuration filling the left
- * one and a locked "you may not do this" placeholder standing in its place for everyone else. That
- * told ordinary users about powers they will never have and squeezed the two settings they DO own
- * into a narrow rail. Now:
- *
- *  - Appearance and Accessibility sit side by side at full width for everybody (stacked on a phone);
- *  - "Change password" is there for every account that has a password of its own, and for no other;
- *  - the "Request workshop access" panel is open to everyone, because asking is not an admin act;
- *  - admin destinations are HIDDEN, not disabled, and only rendered for accounts the API would
- *    actually let through — a non-admin sees no trace that these pages exist.
- *
- * Gating uses `isAdmin` / `isMasterAdmin` from lib/permissions, the same predicates the backend
- * dependencies mirror (`require_admin` / `require_master_admin`), ANDed with `adminChromeVisible`
- * so the admin half also disappears while an admin browses with admin view off. The route itself
- * stays open to everyone: what is left — Appearance, Accessibility and Request workshop access —
- * belongs to the account rather than to the repository, and is exactly what an ordinary user sees.
- */
-
 type AdminLink = {
   label: string;
   description: string;
@@ -54,9 +33,6 @@ type AdminLink = {
 
 const ADMIN_LINKS: AdminLink[] = [
   {
-    // The board is admin-guarded and lives under /settings, but it was reachable ONLY from a button
-    // on /tasks — so an admin told "it is in settings" found no trace of it here. Same title and
-    // icon the page itself uses, so the card and its destination read as one thing.
     label: "Task assignment",
     description: "Assign and track documentation work.",
     href: "/settings/tasks",
@@ -67,17 +43,11 @@ const ADMIN_LINKS: AdminLink[] = [
     label: "Workshop access",
     description:
       "Requests, rosters and design workshop access.",
-    // Points at the console directly rather than at /settings/workshop-access, which is now only a
-    // redirect kept alive for bookmarks. A hub card that bounces through a redirect is a hub card
-    // that will one day bounce through a broken one.
     href: "/workshop-access/manage",
     icon: UsersRound,
     visible: isAdmin
   },
   {
-    // Admins go here for the transcription provider ranking; only the master admin sees the keys
-    // themselves once inside. Hiding the card from admins is what left the ranking unreachable for
-    // everyone who asked for it, so the card is admin-visible and its description is role-aware.
     label: "API keys",
     description: "Rank transcription providers and manage keys.",
     href: "/settings/api-keys",
@@ -85,11 +55,6 @@ const ADMIN_LINKS: AdminLink[] = [
     visible: isAdmin
   },
   {
-    // NOT "Analytics" — that name is already the cross-workshop content comparison at
-    // /admin/analytics, and this repo's backend goes out of its way to keep the two apart (see
-    // usage.py's module docstring). isAdmin here mirrors the same rank `require_usage_reader`
-    // enforces on the server (Admin and above), so this card and the 403 an under-ranked account
-    // would get from the API agree by construction rather than by two people remembering to.
     label: "Usage",
     description: "Screen usage, speed and errors.",
     href: "/settings/usage",
@@ -101,8 +66,6 @@ const ADMIN_LINKS: AdminLink[] = [
 export default function SettingsPage() {
   const { user, loading } = useAuth();
   const { adminMode } = useAdminView();
-  // Role first, toggle second — every `visible` predicate below is `isAdmin` or `isMasterAdmin`, so
-  // ANDing the toggle in can only ever remove a card, never add one for a user without the rights.
   const chrome = adminChromeVisible(user, adminMode);
   const admin = isAdmin(user) && chrome;
   const master = isMasterAdmin(user) && chrome;
@@ -133,83 +96,28 @@ export default function SettingsPage() {
     <>
       {header}
       <div className="grid gap-4">
-        {/* The two settings every account owns — a pair on anything wider than a phone. */}
         <div className="grid items-start gap-4 md:grid-cols-2">
           <AppearanceCard />
           <AccessibilityCard />
         </div>
 
-        {/* This account's e-mail opt-outs. Draws nothing on a deployment that sends no e-mail. */}
         <EmailNotificationsCard />
         <WeeklyDigestCard />
 
-        {/*
-          NO ROLE GATE, AND HIGH UP, WITH THE OTHER TWO THINGS THIS ACCOUNT OWNS.
-
-          `GET`/`POST /api/usage/consent` are `get_current_user` and nothing more — reading and
-          changing your own answer about your own data needs permission from nobody — so this belongs
-          exactly where Appearance and Accessibility are and not on `/settings/usage`, which is the
-          admin aggregate. Filing a person's own consent behind an admin page would mean asking an
-          administrator what you had agreed to.
-
-          It sits above the app download rather than at the bottom because it is the door out of a
-          turnstile: `/login` will not let anybody in without agreeing, and an agreement that is hard
-          to find your way back to is an agreement that cannot really be withdrawn.
-        */}
         <UsageConsentCard />
 
-        {/* This account's own Aadhaar verification. Draws nothing unless the server has switched an
-            Aadhaar method on; open to every account, since verifying yourself needs nobody's rank. */}
         <AadhaarVerifyPanel subject={{ kind: "self" }} />
 
-        {/*
-          NO ROLE GATE, AND DIRECTLY UNDER THE CONSENT CARD, FOR THE SAME REASON THAT ONE GIVES.
-
-          `POST /feedback/reports` is `get_current_user` and nothing more: raising a grievance,
-          suggesting a change or recommending something needs permission from nobody, so this sits
-          with Appearance, Accessibility and the recording consent — the things this ACCOUNT owns —
-          rather than behind the "Repository administration" links below.
-
-          THIS HUB AND NOT `/admin`, WHICH IS THE OTHER THING CALLED "SETTINGS" (§16: the dashboard's
-          Settings TILE opens the admin hub, the Settings nav ROW opens this page). `/admin` is
-          admin-gated end to end, so a grievance card there would be invisible to every account a
-          grievance mechanism exists for — and it would mean asking the administration for
-          permission to complain about it. That hub already carries a "User feedback" tile pointing
-          at the same destination; that one is the READER's door and this is the WRITER's, and both
-          leading to /feedback is correct because the page shows a person their own reports and an
-          administrator the queue.
-
-          Above `GetTheAppPanel` rather than below it because this is a door somebody opens when
-          something has gone wrong, and the app download is a door they open once.
-        */}
         <GrievanceRedressalCard />
 
-        {/*
-          NO ROLE GATE EITHER, AND IT DRAWS ITSELF ONLY FOR AN ACCOUNT WITH A PASSWORD OF ITS OWN.
-
-          `POST /auth/change-password` is the signed-in account acting on itself, so it belongs with
-          the other things this account owns. Until this card the only caller of that route was the
-          first-password gate, so a password could be rotated only by asking an administrator for a
-          link. A Google-only account gets nothing here, rather than a form the server would refuse.
-
-          Below the grievance card, which says it must sit DIRECTLY under the consent card, and above
-          the app download, which every account opens once.
-        */}
         <ChangePasswordCard />
 
-        {/* Every account, every role: a second sign-in step is the account's own choice, and an
-            account that signs in with Google is asked for the code too. Beside the password card
-            because both are about getting in. */}
         <TwoStepVerificationCard />
 
-        {/* Everyone sees this: the two apps are one product and each is better at half the job. */}
         <GetTheAppPanel />
 
         <WorkshopAccessRequestPanel />
 
-        {/* Personal, not deployment-wide: this is the caller's own provider key, billed to
-            them. It sits above the administration links for that reason — the panel that
-            manages the ORGANISATION's keys is behind the master-admin link below. */}
         <MyAiKeysPanel />
 
         {links.length ? (
@@ -234,11 +142,6 @@ export default function SettingsPage() {
           </section>
         ) : null}
 
-        {/* Transcription and the off-peak window stay here, where they have always been — now gated
-            rather than replaced by a lock panel for everyone below the master admin. The provider
-            RANKING is deliberately not here: it lives on the API keys page, next to the providers it
-            ranks, where admins can reach it too. */}
-        {/* Where "Approve and hand on" e-mails approved reports — `require_admin` on the server. */}
         {admin ? <ReportDeliverySettingsCard /> : null}
         {master ? <AppSettingsPanel /> : null}
         {master ? <PublishAppUpdatePanel /> : null}

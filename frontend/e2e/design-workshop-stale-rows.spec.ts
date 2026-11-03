@@ -2,29 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { API, CREDENTIALS_MISSING, apiToken, bearer, signInWithToken } from "./support/session";
 
-/**
- * A stage emptied on the server must not keep its rows in this browser's draft.
- *
- * THE DEFECT THIS PINS. `adoptServerDetail` folds the server's copy of a workshop into the local
- * draft stage by stage. When the server says NOTHING about a stage — which is how `_stages_payload`
- * reports a stage with no entries at all — the fold took the `!incoming` branch, whose comment reads
- * "this device has now seen it and holds the same emptiness". It did not. The branch spread
- * `...current` and changed only `serverLoadedAt`, so every row the local copy already held survived,
- * AND the stage was stamped with this store's word for "the server's copy has been read into this
- * stage". A row the ministry had deleted then read as downloaded and current on the handset that
- * mattered, and the next push could put it back.
- *
- * IT IS THE `dirtyAt` GUARD ABOVE THAT MAKES CLEARING SAFE, and it is why this spec sets up the way
- * it does: the row is written through the API and folded in by a plain page read, so the stage is
- * clean. Fieldwork this device has typed and not yet sent takes the earlier branch and is never
- * touched — a spec that dirtied the stage first would pass against the bug.
- *
- * WHY THE ASSERTION READS INDEXEDDB RATHER THAN THE SCREEN. The stale row's visible consequence is
- * a printed artisan card for somebody no longer on the roster, several screens away from the fold
- * that caused it. The draft is where the defect actually lives, and reading it keeps the failure
- * naming the store instead of a card component that is behaving correctly.
- */
-
 const STAGE = "TRADITIONAL_PROCESS_BASELINE";
 
 test.skip(Boolean(CREDENTIALS_MISSING), CREDENTIALS_MISSING);
@@ -65,8 +42,6 @@ test("a stage emptied on the server loses its rows in the local draft", async ({
   expect(created.ok(), `create: ${await created.text()}`).toBeTruthy();
   const id = (await created.json()).id as string;
 
-  // ONE collection row and NO singleton entry, so deleting the row leaves the stage with zero entry
-  // rows — which is the only shape that makes `_stages_payload` omit the stage entirely.
   const put1 = await request.put(`${API}/api/design-workshops/${id}/stages/${STAGE}`, {
     headers: auth,
     data: {
@@ -84,11 +59,9 @@ test("a stage emptied on the server loses its rows in the local draft", async ({
 
   const before = await readStage(page, id);
   expect(before.found, "the browser cached a draft for this workshop").toBeTruthy();
-  // The control. Without this the test would pass against a browser that never read the row at all.
   expect(before.toolRows ?? [], "control: the row was folded into the local draft").toHaveLength(1);
   expect(before.dirtyAt, "control: the stage is CLEAN, so the fold is not refused by `dirtyAt`").toBeNull();
 
-  // Delete the only row, server-side, exactly the way the app itself would.
   const put2 = await request.put(`${API}/api/design-workshops/${id}/stages/${STAGE}`, {
     headers: auth,
     data: { entries: [], replaceCollections: true, emptiedEntities: ["tool"], submit: false }
@@ -99,7 +72,6 @@ test("a stage emptied on the server loses its rows in the local draft", async ({
   const serverStages = (await serverNow.json()).stages;
   expect(serverStages[STAGE], "the server now reports nothing at all for this stage").toBeUndefined();
 
-  // A plain background read of the workshop — what happens every time the page opens.
   await page.goto("/design-workshops");
   await page.waitForTimeout(1000);
   await page.goto(`/design-workshops/${id}`);
@@ -108,7 +80,5 @@ test("a stage emptied on the server loses its rows in the local draft", async ({
 
   const after = await readStage(page, id);
   expect(after.toolRows ?? [], "the local draft holds no row the server has deleted").toHaveLength(0);
-  // The other half of the same claim: having adopted the emptiness, the stage may say it has read
-  // the server. Before the fix it said so while still holding the row, which is the worse failure.
   expect(after.serverLoadedAt, "the stage records that the server's copy was read").not.toBeNull();
 });

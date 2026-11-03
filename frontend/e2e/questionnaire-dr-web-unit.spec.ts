@@ -37,13 +37,6 @@ import {
 } from "@/lib/questionnaireAuthoringOutbox";
 import { ApiError } from "@/lib/api";
 
-/**
- * Designer-portal's shared questionnaire client, the pure rules (stream U1). No server and no
- * browser: the subject keys a guest needs, the lock, group answers, required questions, the coverage
- * marks (✎ typed, three overrides), the start sheet's guest and form order, the handoff bundle, the
- * SHA-256 every take is checked with, and where every retired global-form link lands now.
- */
-
 const vectors: [string, string][] = [
   ["", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"],
   ["abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"],

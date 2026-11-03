@@ -7,23 +7,6 @@ import { buildOfflineReport, type OfflineReportInput, type ReportCase } from "@/
 import type { Registry } from "@/lib/offlineReport/builder";
 import { pyFixed, pyG, pyRound, splitByScript } from "@/lib/offlineReport/model";
 
-/**
- * THE BROWSER'S REPORT IS THE SERVER'S REPORT, block for block, for a fixture workshop.
- *
- * `shared/report-parity/workshop.json` is one workshop rich enough to reach every branch the
- * builder has — a cover with more fields than its table holds, rich text with every mark, tables
- * and cards, iterations grouped under their prototypes, a REF to a deleted row, photographs over a
- * template's cap, attachments a file cannot carry, all seven figures, the map, Odia text, the
- * designer's own sections, questionnaire sittings, transcripts and machine-assisted text.
- * `backend/tools/report_offline_parity.py` built each case in it with the SERVER's code and wrote
- * `expected.json`; `backend/tests/test_report_offline_parity.py` fails if that file is stale. This
- * builds the same cases with `lib/offlineReport` and requires the same meta, theme, blocks and
- * warnings. A change to either builder that the other does not make fails one side or the other.
- *
- * The registry is the one the handset bundles (`design-workshop-schema.json`), which the backend's
- * own tests hold to `registry_to_dict()`.
- */
-
 const ROOT = join(__dirname, "..", "..");
 const fixture = JSON.parse(readFileSync(join(ROOT, "shared", "report-parity", "workshop.json"), "utf8")) as OfflineReportInput & {
   cases: Array<ReportCase & { name: string }>;
@@ -51,7 +34,6 @@ for (const kase of fixture.cases) {
     });
 
     test("every block matches, in order", () => {
-      // Compared one at a time so a failure names the first block that differs, not a 3,000-line diff.
       const got = JSON.parse(JSON.stringify(built.document.blocks)) as unknown[];
       for (let i = 0; i < Math.max(got.length, want.blocks.length); i += 1) {
         expect(got[i], `block ${i}`).toEqual(want.blocks[i]);

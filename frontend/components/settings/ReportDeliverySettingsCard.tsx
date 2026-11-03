@@ -11,7 +11,6 @@ import {
   type ReportDeliverySettings
 } from "@/lib/designWorkshopApprovals";
 
-/** Split typed text into addresses: commas, semicolons, spaces and new lines all separate. */
 export function splitAddresses(text: string): string[] {
   return text
     .split(/[\s,;]+/)
@@ -25,12 +24,6 @@ function problemOf(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-/**
- * WHERE "APPROVE AND HAND ON" E-MAILS THE APPROVED REPORT — an administrator's setting (2026-10-18,
- * owner decision C4). No address is written into the product: with none set, the approver hands the
- * report on by hand and is told to ask for these. Saved whole, so removing the last address turns
- * e-mailed delivery off.
- */
 export function ReportDeliverySettingsCard() {
   const [state, setState] = useState<ReportDeliverySettings | null>(null);
   const [addresses, setAddresses] = useState<string[]>([]);

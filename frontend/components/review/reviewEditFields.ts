@@ -1,57 +1,9 @@
-/**
- * The reviewer-editable surface per record type, and where to read a record's current values from.
- *
- * This is the web half of a contract the Android app already implements — MainActivity's
- * `reviewEditableFields` / `loadReviewRecordValues`. The two clients MUST offer the same fields, so
- * a reviewer sees the same record whichever one they picked up, and edits made on a phone in the
- * field are the same edits a professor can make from a laptop. Change one, change the other.
- *
- * Chosen for this list: the name-like columns and the prose a reviewer is qualified to fix ("a
- * misspelt village or a craft name in the wrong column").
- *
- * Deliberately NOT here:
- * - `status` — that moves through Approve / Reject / Send for revision (or this endpoint's own
- *   `approve` flag), never through a field edit;
- * - the workshop, location and linked-record lists — the API refuses all of them with a 422
- *   (`_NOT_REVIEW_EDITABLE` in backend/app/api/routes/review.py) because they are separate writes
- *   with their own assignment/window checks, not column updates;
- * - the measurement and price decimals, and the validated identity fields (Aadhaar, Pehchan, phone,
- *   email) — those belong on the record's own edit screen, where the formatting, duplicate and
- *   checksum rules are enforced by a purpose-built form rather than a bare text box.
- */
-
 export type ReviewField = {
-  /** The API column name. It travels verbatim in the `fields` map and is validated against the
-   *  record type's own PATCH schema, so a typo here is a 422 rather than a silent no-op. */
   key: string;
   label: string;
   multiline?: boolean;
-  /** Mirrors `min_length=1` on the record's update schema — the column cannot be blanked. */
   required?: boolean;
-  /**
-   * Draw this box as a CLOSED VOCABULARY rather than free text.
-   *
-   * ── WHY A MARKER AND NOT AN `options` ARRAY ────────────────────────────────────────────────────
-   *
-   * This module is a plain registry with no imports; handing it a list would make it the second
-   * place the interview languages are written down, and the whole point of `lib/interviewLanguages`
-   * is that the list exists once. The panel resolves the marker to the real options — and to the
-   * "preserve whatever is stored as the front row" rule, which a static array could not express: an
-   * interview saved before the vocabulary existed must not silently lose its language on the next
-   * save.
-   *
-   * ── WHY THIS FIELD NEEDED IT ───────────────────────────────────────────────────────────────────
-   *
-   * `/questionnaire`'s own Language box became a dropdown on 2026-08-28, matching the handset, which
-   * has had one for longer. THIS panel is the only other web surface where a saved interview's
-   * language can be changed, and it stayed a text box — so the one route that edits an APPROVED
-   * record still took free text and bypassed the vocabulary entirely.
-   */
   vocabulary?: "interviewLanguage";
-  /**
-   * Shown, never edited or sent. A product's or tool's craft name is derived from the craft picked
-   * from the list (REQUIREMENTS_2026-10-20 §2.4); the craft itself changes on the record's own form.
-   */
   readOnly?: boolean;
 };
 
@@ -110,7 +62,6 @@ const FIELDS: Record<string, ReviewField[]> = {
   ]
 };
 
-/** The record's own GET endpoint, so the editor opens on what is actually stored. */
 const ENDPOINTS: Record<string, (id: string) => string> = {
   artisan: (id) => `/artisans/${id}`,
   workshop: (id) => `/workshops/${id}`,
@@ -125,17 +76,11 @@ export function reviewEditableFields(recordType: string): ReviewField[] {
   return FIELDS[recordType.toLowerCase()] ?? [];
 }
 
-/** Null for a record type this build has no editor for, which is how the Edit action stays hidden. */
 export function reviewRecordEndpoint(recordType: string, id: string): string | null {
   const build = ENDPOINTS[recordType.toLowerCase()];
   return build ? build(id) : null;
 }
 
-/**
- * Flatten a fetched record into the editable string values. Anything absent or non-scalar reads as
- * "" so an untouched box and a null column are indistinguishable — which is right, because sending
- * "" for a nullable column is exactly how a reviewer clears it.
- */
 export function reviewValuesFrom(record: unknown, fields: ReviewField[]): Record<string, string> {
   const source = (record ?? {}) as Record<string, unknown>;
   const values: Record<string, string> = {};

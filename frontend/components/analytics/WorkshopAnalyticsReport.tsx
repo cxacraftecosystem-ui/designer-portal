@@ -1,14 +1,5 @@
 "use client";
 
-/**
- * The cross-workshop findings, drawn from `GET /api/analytics/design-workshops`.
- *
- * Extracted from `/admin/analytics` (2026-10-17) so the Ministry dashboard can show the same
- * read-only analytics to a Ministry Admin and a Regional Director (owner decision C14) without a
- * second renderer. Nothing here computes: every figure and sentence comes off the wire, the
- * cautions render above the figures, and a withheld rate stays an em dash.
- */
-
 import { CircleAlert, Info } from "lucide-react";
 
 import { ResizableTh } from "@/components/ResizableTh";
@@ -19,18 +10,8 @@ import {
   type WorkshopAnalytics
 } from "@/lib/workshopAnalytics";
 
-/** A rupee figure as an officer would read it. `Intl` so the grouping follows the Indian system. */
 const RUPEES = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
 
-/**
- * A rate, or the em dash that stands for "not stated" — and the two must not look alike.
- *
- * A withheld figure rendered in the same ink weight as a measured one is a dash a reader skims
- * past as a formatting quirk. Dropping it to muted ink says "there is nothing here" at a glance,
- * before the sentence underneath is read, which is the only place a reader will otherwise learn it.
- * `title` carries the reason to a pointer, so the distinction survives without the table cell
- * growing a paragraph.
- */
 function RateFigure({
   group,
   className
@@ -59,13 +40,6 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
-/**
- * One group's outcomes as an ordered proportion bar.
- *
- * A 2px card-coloured gap sits between segments so two adjacent fills never read as one, and a
- * segment is only drawn when it has something in it — a zero-width sliver with a border is a mark
- * that says "a little" when the answer is "none".
- */
 function OutcomeBar({ group }: { group: AdoptionGroup }) {
   const total = group.observations;
   if (!total) return <div className="h-2 w-full rounded-full bg-line-200" aria-hidden />;
@@ -110,7 +84,6 @@ function OutcomeLegend() {
   );
 }
 
-/** One of the three dimension tables. Empty is stated, never rendered as an empty table body. */
 function AdoptionTable({
   title,
   columnLabel,
@@ -196,12 +169,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
   return (
     <>
 
-      {/*
-        THE CAUTIONS, FIRST AND UNMISSABLE. Amber rather than the page's own neutrals because this
-        is advisory and must not read as an error — nothing has failed, the archive is simply
-        thinner than the figures below would otherwise imply. `amber-100`/`amber-800` are the two
-        brand rungs; the stock amber steps beside them do not pair.
-      */}
       {data.cautions.length > 0 ? (
         <section className="mb-5 rounded-md border border-line-200 bg-amber-100 p-4">
           <div className="flex items-start gap-2">
@@ -265,8 +232,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
         </section>
       ) : null}
 
-      {/* ---------------------------------------------------------------- Adoption */}
-
       <h2 className="mt-8 font-display text-xl font-bold text-ink-900">Adoption</h2>
       <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-500">
         Each workshop counts once, at its latest follow-up. Under trial counts as not adopted.
@@ -315,8 +280,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
         noun="state"
       />
 
-      {/* ---------------------------------------------------------- 3 / 6 / 12 months */}
-
       <h2 className="mt-8 font-display text-xl font-bold text-ink-900">
         At 3, 6 and 12 months
       </h2>
@@ -353,11 +316,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
               value={String(survival.unobservedAfter3)}
               hint="Not revisited."
             />
-            {/*
-              Shown even when it is zero. A tile that appears only when rows were excluded reads,
-              on the run where it is absent, as though nothing was excluded — which is true, but a
-              reader cannot tell that from a page that simply does not mention it.
-            */}
             <Stat
               label="No product reference"
               value={String(survival.rowsWithoutProduct)}
@@ -366,8 +324,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
           </div>
         ) : null}
       </section>
-
-      {/* --------------------------------------------------------------- Cost sheets */}
 
       <h2 className="mt-8 font-display text-xl font-bold text-ink-900">
         What products cost against what they fetch
@@ -380,9 +336,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
       </p>
 
       {costRatios.groups.length === 0 ? (
-        // Deliberately NOT `EmptyState`: it hardcodes an <h2>, and this section already has one
-        // above it — two level-2 headings for one section is a structure a screen reader reads as
-        // two sections.
         <section className="panel mt-4 p-4">
           <h3 className="font-display font-bold text-ink-900">No cluster has costed products yet</h3>
           <p className="mt-1 text-sm leading-6 text-ink-500">
@@ -415,7 +368,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
                     <td className="px-4 py-3 text-right tabular-nums text-ink-700">
                       {group.sheets}
                     </td>
-                    {/* An em dash, never a 0.00× — a withheld distribution is not a ratio of zero. */}
                     <td className="px-4 py-3 text-right tabular-nums text-ink-700">
                       {group.ratio ? `${group.ratio.minimum.toFixed(2)}×` : "—"}
                     </td>
@@ -439,8 +391,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
           </div>
         </section>
       )}
-
-      {/* ------------------------------------------------------- Design opportunities */}
 
       <h2 className="mt-8 font-display text-xl font-bold text-ink-900">
         Design opportunities that recur
@@ -479,10 +429,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
         <section className="panel overflow-hidden">
           <div className="border-b border-line-200 px-4 py-3">
             <h3 className="font-display font-bold text-ink-900">Words that recur</h3>
-            {/*
-              Said plainly, because the alternative is a reader treating a word count as a finding.
-              It is a place to look; the examples beside it are what a reader actually judges.
-            */}
             <p className="text-sm text-ink-500">
               Word counts from titles, not meanings.
             </p>
@@ -518,8 +464,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
         </section>
       </div>
 
-      {/* ------------------------------------------------------------------- Money */}
-
       <h2 className="mt-8 font-display text-xl font-bold text-ink-900">What came back</h2>
       <section className="panel mt-4 p-4">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
@@ -541,8 +485,6 @@ export function WorkshopAnalyticsReport({ data }: { data: WorkshopAnalytics }) {
         </div>
         <p className="mt-3 max-w-3xl text-sm leading-6 text-ink-700">{reach.message}</p>
       </section>
-
-      {/* ------------------------------------------------- What cannot be computed */}
 
       <h2 className="mt-8 font-display text-xl font-bold text-ink-900">
         Limits of this data

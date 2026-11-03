@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * /admin/duplicates — likely-duplicate artisans, the decisions on them, and the merges.
- *
- * Nested under /admin, so the `/admin` ROUTE_GUARDS row (`isAdmin`, mirroring `require_admin`, the
- * server's gate on every `/artisan-duplicates` and `/artisan-merges` route) already covers it. Web
- * only: Android has no admin screen for this.
- */
-
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CopyCheck } from "lucide-react";
@@ -140,7 +132,6 @@ export default function DuplicatesPage() {
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
 
       <div className="panel mb-4 grid gap-3 p-4">
-        {/* Tabs and filters: segmented choices, not an action row. */}
         <div className="flex flex-wrap gap-2" role="group" aria-label="Show">
           {TABS.map((t) => (
             <Pill key={t.key} active={tab === t.key} onClick={() => { setTab(t.key); setPage(1); }}>

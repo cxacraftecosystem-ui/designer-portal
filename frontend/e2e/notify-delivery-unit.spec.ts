@@ -17,12 +17,6 @@ import { HAND_IN_MODES, readNotificationPreferences } from "@/lib/notifications"
 import { linkEmailWords, reminderSentence } from "@/lib/sanctionOrders";
 import type { User, UserRole } from "@/lib/types";
 
-/*
- * The 2026-10-18 notices and delivery on the web: the inspection badge's row and sentence, the
- * e-mail choices read off an older server, the sanction register's e-mail words, "Approve and hand
- * on" offered only where the server allows the decision, and "Received" on the ministry register.
- */
-
 const user = (role: UserRole) => ({ id: `u-${role}`, role, name: role, email: `${role}@x.org` }) as unknown as User;
 
 function detail(over: Partial<DwApprovalDetail>): DwApprovalDetail {
@@ -72,12 +66,10 @@ test("'Approve and hand on' is offered only where the server allows the decision
   expect(deliveryOffer(detail({ delivery: configured }))).toEqual({ kind: "send", label: "Approve and hand on" });
   const noAddresses = { ...configured, configured: false, addressCount: 0, mailAvailable: true };
   expect(deliveryOffer(detail({ delivery: noAddresses })).kind).toBe("setup");
-  // Mail off for the whole deployment: no address prompt, whether or not addresses are set.
   expect(deliveryOffer(detail({ delivery: { ...noAddresses, mailAvailable: false } })).kind).toBe("none");
   expect(
     deliveryOffer(detail({ delivery: { ...configured, configured: false, mailAvailable: false } })).kind
   ).toBe("none");
-  // An older server that sends no mailAvailable: addresses set but not configured means mail is off.
   expect(deliveryOffer(detail({ delivery: { ...configured, configured: false } })).kind).toBe("none");
   expect(
     deliveryOffer(detail({ status: "APPROVED", mayDecide: { handOn: true }, delivery: configured }))

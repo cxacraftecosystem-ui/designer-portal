@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * A count the stage works out for itself, drawn where the typed box used to be (owner, C7/C8).
- *
- * Read-only: `useComputedCounts` on the stage page keeps the value equal to the rows, and the server
- * stores the same figure on save. A value with nothing to count it from was typed on an older
- * workshop, and is shown as it was.
- */
-
 import type { DwField, DwValue } from "@/lib/designWorkshops";
 
 const SOURCE: Record<string, string> = {

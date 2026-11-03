@@ -20,13 +20,6 @@ import { qs } from "@/lib/questionnaire/qs";
 import { setDefaultQuestionnaire } from "@/lib/questionnaireForms";
 import { listWorkshops, type PortalWorkshop } from "@/lib/questionnairePortal";
 
-/**
- * A form's admin settings (UNIFY A9, B31, B32, D2; owner amendment 2): the design workshops it is
- * bound to and where it is the PRIMARY form (one per workshop), the default form for a design
- * workshop kind, and the global default. Admin acts, web only on this portal (ministry/admin
- * authoring); the server refuses anyone else whatever this draws. Drawn only while the shared
- * questionnaire is on.
- */
 export function FormAdminPanel({ questionnaireId, isDefault }: { questionnaireId: string; isDefault?: boolean }) {
   const { user } = useAuth();
   const isAdmin = isAdminUser(user);
@@ -140,7 +133,6 @@ export function FormAdminPanel({ questionnaireId, isDefault }: { questionnaireId
           {qs("save")}
         </button>
       </div>
-      {/* B32: the global default — the form a session gets when its workshop has none bound. */}
       <Toggle
         label={qs("defaultFormToggle")}
         description={qs("defaultFormNote")}
@@ -156,7 +148,6 @@ export function FormAdminPanel({ questionnaireId, isDefault }: { questionnaireId
         }}
       />
 
-      {/* B29: the corpus of this form's approved answers and recordings, for an admin's dataset work. */}
       <h3 className="mt-2 text-sm font-semibold text-ink-900">{qs("corpusTitle")}</h3>
       <ButtonRow size="sm" align="start">
         <a className="field-button-secondary" href={corpusHref(questionnaireId, "answers")} download data-corpus="answers">
@@ -171,13 +162,11 @@ export function FormAdminPanel({ questionnaireId, isDefault }: { questionnaireId
   );
 }
 
-/** Sessions on this form (UNIFY 4.2): the live ones, and the deleted ones for content admins. */
 export function FormSessions({ questionnaireId }: { questionnaireId: string }) {
   const on = Boolean(useQuestionnaireConfig()?.v2Enabled);
   const { canDeleteRecords } = useAdminView();
   const [items, setItems] = useState<Session[] | null>(null);
   const [deleted, setDeleted] = useState<Session[] | null>(null);
-  // The shared filters on this form's sessions (owner, 31 Oct 2026), kept in the page's URL.
   const { filters, setFilters, ready } = useUrlFilters();
   useEffect(() => {
     if (!on || !ready) return;
@@ -248,7 +237,6 @@ export function FormSessions({ questionnaireId }: { questionnaireId: string }) {
   );
 }
 
-/** `GET /questionnaire/corpus.csv`: one file of answers or of recordings, approved by default. */
 export function corpusHref(questionnaireId: string, kind: "answers" | "recordings"): string {
   return `/api/questionnaire/corpus.csv?${new URLSearchParams({ questionnaireId, kind }).toString()}`;
 }

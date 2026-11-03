@@ -18,10 +18,6 @@ import {
   type AuthoringStep
 } from "@/lib/questionnaireAuthoringOutbox";
 
-/**
- * The authoring outbox as a screen sees it (UNIFY A15): the account's steps, sent whenever the
- * browser comes online or the screen opens. `owner` is the signed-in account.
- */
 export function useAuthoringOutbox(owner: string | null) {
   const state = useSyncExternalStore(
     subscribeAuthoring,
@@ -38,18 +34,12 @@ export function useAuthoringOutbox(owner: string | null) {
   return state;
 }
 
-/**
- * What waits to be sent for one form: sections and questions added offline, each with its state,
- * Send again (when refused) and Discard. A section added offline takes questions here too. When a
- * form's last step lands, `onLanded` runs so the page can read the form again.
- */
 export function PendingAuthoring({
   formId,
   sections,
   onLanded
 }: {
   formId: string;
-  /** The form's live sections, for naming a question added to one of them. */
   sections: { id: string; title: string }[];
   onLanded?: () => void;
 }) {
@@ -156,10 +146,6 @@ function AddQuestion({ owner, formId, sectionRef }: { owner: string | null; form
   );
 }
 
-/**
- * A form made offline, before its create has landed (`/questionnaires/tmp-…`): its title, its
- * sections and questions as queued, and Add section. Once the form lands the page moves to its real id.
- */
 export function OfflineFormDraft({ id }: { id: string }) {
   const { user } = useAuth();
   const owner = user?.id ?? null;

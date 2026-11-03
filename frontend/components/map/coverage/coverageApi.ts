@@ -1,8 +1,3 @@
-/**
- * The coverage routes, typed. Every call goes through `apiFetch`; nothing here reaches a map tile
- * server or any third party — the coverage view draws only bundled geometry.
- */
-
 import { apiFetch, buildQuery } from "@/lib/api";
 import { coverageParams } from "@/components/map/coverage/coverageMath";
 import type {
@@ -50,7 +45,6 @@ export function createAlias(body: {
   });
 }
 
-/** Designer portal only: the ministry entitlement that opens the Coverage view. */
 export async function coverageAllowed(): Promise<boolean> {
   try {
     const answer = await apiFetch<{ coverageMap?: boolean }>("/ministry-dashboard/entitlements", {}, {
@@ -62,7 +56,6 @@ export async function coverageAllowed(): Promise<boolean> {
   }
 }
 
-/** Designer portal only: whether the Field Repository's figures can be shown beside ours. */
 export async function peerCoverageEnabled(): Promise<boolean> {
   try {
     const answer = await apiFetch<{ coverageEnabled?: boolean }>("/cross-portal/status", {}, {

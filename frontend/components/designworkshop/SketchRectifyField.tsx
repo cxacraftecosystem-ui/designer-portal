@@ -1,43 +1,5 @@
 "use client";
 
-/**
- * "Straighten this sketch into a plate" — the surface over `lib/sketchRectify.ts`.
- *
- * WHAT THIS IS FOR. Stage 11's Advanced tier asks for perspective correction, background cleanup and
- * line-art extraction. What actually reaches the archive is a photograph of a sheet of paper lying on
- * a table, taken from wherever the designer was standing, under a tube light on one wall — and the
- * report prints exactly that: a skewed grey rectangle with a drawing somewhere inside it. Four
- * corners and a local threshold turn it into a plate. All of it is arithmetic on this device, which
- * is the only way it can happen in the village where the sketch was drawn.
- *
- * IT NEVER TOUCHES THE PHOTOGRAPH, AND THE FIELD IT IS RENDERED ON IS HOW THAT IS GUARANTEED.
- *
- * This panel is offered on `sketch.lineArtFile`, not on `sketch.image`, and that placement is the
- * safety property rather than a layout preference. A single IMAGE field REPLACES its value when a
- * file is attached to it, so a panel that produced a plate into `image` would detach the original
- * photograph from the record — precisely the outcome docs/MEDIA_PIPELINE.md §5 refuses ("the original
- * file *is* the artifact"). Rendered here, the plate is written where a plate belongs and `image` is
- * never written to at all. See `stageFieldRoles.offersSketchRectify`.
- *
- * The derived file also goes in through the ordinary door — `attach`, the same one a camera
- * photograph uses — so eager pre-upload, per-file retry and the offline draft store all already apply
- * to it. Nothing here uploads anything itself.
- *
- * "KEEP THE ORIGINAL ONLY" IS A REAL ANSWER AND IS ON SCREEN AS ONE.
- *
- * An over-processed sketch has lost something. A faint construction line, a smudged tone that showed
- * where a curve was being felt out, a pencil note in the margin — a threshold is a decision to
- * discard everything on one side of it, and the person who can tell whether that mattered is the
- * designer looking at both pictures with the actual sheet still in front of them. So the before and
- * the after are shown side by side, at the same size, and declining costs one press and no
- * explanation. There is also a middle answer — straighten it and keep the tones — because "the
- * geometry was wrong but the greys were the drawing" is a common and correct thing to think.
- *
- * NOTHING HERE BLOCKS ANYTHING. The panel writes only when a button is pressed, every refusal is a
- * sentence about what to do next, and a designer who ignores it entirely still has an ordinary file
- * picker underneath.
- */
-
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, Scan, SquareDashedBottom, Wand2, X } from "lucide-react";
 
@@ -60,44 +22,17 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { Toggle } from "@/components/ui/Toggle";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * A photograph this panel could make a plate from: a media id, or a `dwlocal:` reference to bytes
- * held on this device.
- */
 export type SketchSource = {
-  /** The media id or `dwlocal:` reference stored in the sibling image field. */
   ref: string;
-  /** The registry label of the field it came from, so a designer can tell two image fields apart. */
   fieldLabel: string;
 };
 
-/**
- * The long edge the LIVE preview is computed at.
- *
- * Deliberately far below {@link RECTIFY_MAX_EDGE_PX}. The preview is recomputed on every corner drag,
- * and the full-size plate is ~1.9M pixels through a bilinear resample and two integral-image passes —
- * about 100–180ms on a laptop and several times that on the handsets this app runs on, which as a
- * per-frame cost is a control that lurches. At 420px the same work is ~20x cheaper and the picture is
- * larger than the box it is drawn in, so nothing visible is lost. The plate that is actually ATTACHED
- * is always computed at full size, once, when the button is pressed.
- */
 const PREVIEW_EDGE_PX = 420;
 
-/** Corner handles start inset from the frame rather than on it, so all four are grabbable. */
 const SEED_INSET = 0.08;
 
 type Aspect = { key: string; label: string; value?: number };
 
-/**
- * The sheet proportions worth offering, and why a list rather than a free number.
- *
- * `rectifiedSize` explains that four image points of an unknown rectangle do not determine its true
- * proportions — that needs the camera's focal length, which these photographs do not carry. The
- * designer, however, very often knows: the sheet was A4, because that is what the workshop had. This
- * is the one place that knowledge can enter, and it is a short closed list because "the paper I drew
- * on" has about three answers and a free-text ratio would invite a typo that silently squashes a
- * plate.
- */
 const ASPECTS: Aspect[] = [
   { key: "auto", label: "As photographed" },
   { key: "a4p", label: "A4 portrait", value: 210 / 297 },
@@ -111,18 +46,6 @@ type LoadState =
   | { status: "ready"; plane: GreyPlane; url: string; name: string; decodeMs: number; sourceWidth: number; sourceHeight: number }
   | { status: "failed"; reason: string };
 
-/**
- * Get the bytes behind one stored reference.
- *
- * THE TWO CASES ARE NOT EQUALLY RELIABLE AND THE DIFFERENCE IS THE POINT. A `dwlocal:` reference is
- * bytes in this device's own draft store, so it is always readable — and that is the case that
- * matters, because a photograph taken minutes ago in a village with no connection IS a `dwlocal:`
- * reference. An uploaded media id means a cross-origin read of a presigned URL, which needs a bucket
- * CORS rule this application does not otherwise require (`IdentityCardReader` declines to attempt it
- * at all for exactly this reason). It is attempted here rather than refused up front, because where
- * the rule does exist the feature simply works on an older sketch — but a failure is reported as the
- * ordinary, expected thing it is, with the action that fixes it, and never as a broken feature.
- */
 async function loadSourceBlob(ref: string): Promise<{ blob: Blob; name: string } | { reason: string }> {
   if (isLocalMediaRef(ref)) {
     const media = await readLocalMedia(ref);
@@ -152,7 +75,6 @@ async function loadSourceBlob(ref: string): Promise<{ blob: Blob; name: string }
   }
 }
 
-/** Paint a grey plane into a canvas, sizing the canvas to it. */
 function paint(canvas: HTMLCanvasElement | null, plane: GreyPlane | null): void {
   if (!canvas) return;
   if (!plane) return;
@@ -170,10 +92,8 @@ export function SketchRectifyField({
   onAttach
 }: {
   sources: SketchSource[];
-  /** The registry label of the field the plate lands in, quoted on the button so it is unambiguous. */
   targetLabel: string;
   disabled?: boolean;
-  /** Hands the derived file to the capture card — the same door a camera photograph goes in by. */
   onAttach: (file: File) => void;
 }) {
   const panelId = useId();
@@ -196,10 +116,6 @@ export function SketchRectifyField({
 
   const aspect = ASPECTS.find((entry) => entry.key === aspectKey)?.value;
 
-  // Load the chosen photograph's bytes, decode to a bounded plane, and seed the corners. The object
-  // URL is created and revoked in this one effect, which is what keeps the pair together: revoked
-  // anywhere else it either leaks for the life of the tab or is released while the <img> is still
-  // reading it, and the second looks like a photograph that vanished.
   useEffect(() => {
     if (!open || !sourceRef) return;
     let cancelled = false;
@@ -233,10 +149,6 @@ export function SketchRectifyField({
         sourceHeight: decoded.sourceHeight
       });
 
-      // MANUAL IS THE DEFAULT, ALWAYS. The handles are seeded inset from the frame first, so there is
-      // a usable quadrilateral before any guess is attempted; a guess that succeeds MOVES them and
-      // says so, and a guess that declines leaves this standing with nothing on screen about it. See
-      // guessSheetCorners for why an uncertain guess is silent rather than hedged.
       const { width, height } = decoded.plane;
       const inset = orderCorners([
         { x: width * SEED_INSET, y: height * SEED_INSET },
@@ -252,9 +164,6 @@ export function SketchRectifyField({
     };
   }, [open, sourceRef]);
 
-  // The live preview. Recomputed off a short timer rather than on every pointer event: a drag fires
-  // pointermove far faster than a plate can be built, and without the gap the queue of stale
-  // recomputations is what makes a control feel heavy. PREVIEW_EDGE_PX is the other half of that.
   useEffect(() => {
     if (load.status !== "ready" || !corners) return;
     const plane = load.plane;
@@ -275,9 +184,6 @@ export function SketchRectifyField({
     if (load.status !== "ready") return;
     const guess = guessSheetCorners(load.plane);
     if (!guess) {
-      // Silent in the module, said out loud here — the designer pressed a button and is owed an
-      // answer, and "I could not tell" is an answer. What it must never do is move the handles to a
-      // quadrilateral it does not believe in.
       setGuessNote(
         "Couldn't find the sheet — place the corners yourself."
       );
@@ -289,7 +195,6 @@ export function SketchRectifyField({
     );
   }, [load]);
 
-  /** Plane pixels -> the box the photograph is drawn in, and back. Corners are stored in PLANE pixels. */
   const toDisplay = useCallback(
     (point: Point): { left: string; top: string } => {
       if (load.status !== "ready") return { left: "0%", top: "0%" };
@@ -307,18 +212,11 @@ export function SketchRectifyField({
       if (!box || load.status !== "ready") return;
       const rect = box.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1) return;
-      // Clamped to the photograph: a corner dragged outside it would sample OUTSIDE_VALUE for a whole
-      // margin of the plate, which is legal but is almost never what a hand slipping off the edge of
-      // a phone screen meant.
       const x = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1) * load.plane.width;
       const y = Math.min(Math.max((clientY - rect.top) / rect.height, 0), 1) * load.plane.height;
       setCorners((current) => {
         if (!current) return current;
         const next = current.map((corner, position) => (position === index ? { x, y } : corner)) as unknown as Point[];
-        // NOT re-ordered while dragging. orderCorners would relabel the handles the moment a drag
-        // carried one past a neighbour, so the handle would leap out from under the finger and the
-        // designer would be dragging a different corner than the one they grabbed. The ring is
-        // re-established once, on release.
         return next as unknown as Corners;
       });
     },
@@ -349,7 +247,6 @@ export function SketchRectifyField({
     setBusy(true);
     setProblem(null);
     try {
-      // Full size, once, on the button — never on a drag. See PREVIEW_EDGE_PX.
       const outcome = await rectifySketchFile(blobRef.current, load.name, corners, {
         aspect,
         lineArt,
@@ -455,9 +352,6 @@ export function SketchRectifyField({
 
       {load.status === "ready" && corners ? (
         <>
-          {/* BEFORE and AFTER, the same size, side by side from sm up. The whole judgement this panel
-              asks for — did the processing lose something that mattered — is a comparison, and a
-              comparison the designer has to make by remembering the other picture is not one. */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <span className="field-label">Drag the sheet&apos;s corners</span>
@@ -489,9 +383,6 @@ export function SketchRectifyField({
                         setDragging(index);
                       }}
                       onKeyDown={(event) => {
-                        // A keyboard route to every handle, because a corner that can only be placed
-                        // by dragging is a corner a keyboard user cannot place at all. One plane pixel
-                        // per press, ten with shift.
                         const step = event.shiftKey ? 10 : 1;
                         const delta: Record<string, [number, number]> = {
                           ArrowLeft: [-step, 0],
@@ -544,9 +435,6 @@ export function SketchRectifyField({
               Find the sheet
             </button>
             <Toggle checked={lineArt} onChange={setLineArt} label="Extract line art" className="gap-3" />
-            {/* The themed dropdown with no filter box (owner's rule, 2026-10-17: no plain <select> on
-                any surface). ASPECTS is four sheet ratios declared in this file and will not grow, so
-                `searchable={false}`; named by `ariaLabel`, because a <label> cannot name its button. */}
             <span aria-hidden className="text-xs text-ink-700">
               Sheet
             </span>
@@ -583,9 +471,6 @@ export function SketchRectifyField({
               <Wand2 className="h-4 w-4" aria-hidden />
               {busy ? "Making the plate…" : `Add this plate to “${targetLabel}”`}
             </button>
-            {/* A FIRST-CLASS OUTCOME, not a cancel. Same row, same size, no warning and no
-                confirmation: deciding the processing lost something is a correct decision, and it
-                should cost exactly one press. */}
             <button type="button" className="field-button-secondary" onClick={() => setOpen(false)} disabled={busy}>
               Keep the original only
             </button>

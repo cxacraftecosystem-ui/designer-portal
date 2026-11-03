@@ -1,24 +1,3 @@
-/**
- * REPORTS TO APPROVE — the Ministry Admin's sign-off on a design & prototype workshop's report, as
- * the web reads and writes it: the queue, one report read for a decision, the decisions themselves
- * (approve, send back or withdraw an approval, hand on to the office), and the report file.
- *
- * ── WHO DECIDES, AND WHO SAYS SO ────────────────────────────────────────────────────────────────
- *
- * The screen opens for {@link canApproveDesignWorkshops} (`lib/permissions.ts`), the mirror of the
- * server's `require_approving_authority`. Whether THIS account may decide on THIS report — nobody
- * signs off work they authored or inspected — turns on rows no client can see, so the server answers
- * it per report (`mayDecide`, `decisionRefusal`, `refusals`) and this module only DRAWS that answer.
- * {@link approvalActions} fails closed: a server that sent no `mayDecide` gets no live button.
- *
- * ── WHY A PURE HALF ─────────────────────────────────────────────────────────────────────────────
- *
- * There is no React renderer in devDependencies, so a judgement written inside JSX is only ever
- * exercised by somebody looking at a screen. Which buttons a report offers, what each is called and
- * which sentence a disabled one shows are decided here, where
- * `e2e/design-workshop-approvals-unit.spec.ts` can call them.
- */
-
 import { apiFetch, buildQuery } from "@/lib/api";
 import {
   downloadDesignWorkshopReport,
@@ -33,41 +12,28 @@ import { formatDate } from "@/lib/format";
 import type { DwClearedFilter, DwQueueSort, DwReadiness, DwReviewAidKeys } from "@/lib/reviewAids";
 import type { PageResult } from "@/lib/types";
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The wire
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** The four tabs of the queue, as the server's `state` parameter spells them. */
 export type DwApprovalQueueState = "awaiting" | "approved" | "handedOn" | "returned";
 
-/** What `/revise` would do from the report's present status. */
 export type DwReviseKind = "RETURN" | "WITHDRAW" | "RETURN_FROM_OFFICE";
 
-/** The three decisions, as `mayDecide` and `refusals` key them. */
 export type DwApprovalVerb = "approve" | "revise" | "handOn";
 
-/** One row of the queue: the summary, plus the two names the queue resolves in one batch. */
 export type DwApprovalRow = DwSummary & {
   approvedByName?: string | null;
   handedOnByName?: string | null;
-  /** B4: completeness, this round's notes and inspectors cleared. Absent from older servers. */
   readiness?: DwReadiness | null;
 };
 
-/** An account holding a post on the report — an inspector, or one of its two directors. */
 export type DwApprovalPerson = {
   userId: string;
   name: string;
   email?: string;
   role?: string;
   assignedAt?: string | null;
-  /** On an oversight row only: ASSISTANT_DIRECTOR or REGIONAL_DIRECTOR. */
   capacity?: string;
-  /** On an inspector row: their "Checked, no corrections" on the current round, or null (C5). */
   clearedAt?: string | null;
 };
 
-/** The newest exported file of the report — what a hand-on can name as the file the office received. */
 export type DwApprovalExport = {
   id: string;
   format: string;
@@ -77,13 +43,6 @@ export type DwApprovalExport = {
   generatedByName?: string | null;
 };
 
-/**
- * One report as the Ministry Admin reads it for a decision. The designer's read without the
- * recordings — and with what THIS reader may decide on it.
- *
- * `updatedAt` (a summary key) is the READ STAMP: an approval sends it back as `readAt`, and the
- * server refuses the approval if the report changed after it was opened.
- */
 export type DwApprovalDetail = DwSummary &
   DwInspectionFeedbackKeys &
   DwReviewAidKeys & {
@@ -99,22 +58,16 @@ export type DwApprovalDetail = DwSummary &
     oversight?: DwApprovalPerson[];
     readOnly?: boolean;
     mayDecide?: Partial<Record<DwApprovalVerb, boolean>>;
-    /** Why this account may not decide on this report at all (it authored or inspects it). */
     decisionRefusal?: string | null;
-    /** Why one decision is not available right now — the report's status, in a sentence. */
     refusals?: Partial<Record<DwApprovalVerb, string | null>>;
     reviseKind?: DwReviseKind | null;
     handOnDefaultTo?: string;
     latestExport?: DwApprovalExport | null;
-    /** True on the answer to an approve that found the report already approved: nothing was written. */
     alreadyApproved?: boolean;
-    /** "Approve and hand on" (2026-10-18): whether the office's addresses are set, and the newest e-mail. */
     delivery?: DwReportDelivery;
-    /** On the answer to "Approve and hand on": handed on, but the office's e-mail could not be written. */
     deliveryFailed?: boolean;
   };
 
-/** One e-mail of the report to the office, as the outbox reports it. */
 export type DwDeliveryEmail = {
   address: string;
   status: "QUEUED" | "SENT" | "FAILED";
@@ -123,10 +76,8 @@ export type DwDeliveryEmail = {
 };
 
 export type DwReportDelivery = {
-  /** True when an administrator set the office's addresses and this deployment sends e-mail. */
   configured: boolean;
   addressCount: number;
-  /** Whether this deployment sends e-mail at all. Absent from an older server: read as true. */
   mailAvailable?: boolean;
   officeName: string;
   linkDays: number;
@@ -144,12 +95,6 @@ export type DwReportDelivery = {
   } | null;
 };
 
-/**
- * WHAT THE DELIVERY ROW OFFERS. `send`: the one-step action, labelled for where the report stands —
- * "Approve and hand on" while it waits, "Hand on by e-mail" once approved. `setup`: the same moment
- * with no office addresses set, so the screen says where to set them and the ordinary hand-on stays.
- * `none`: nothing to offer. Gated on the server's own `mayDecide`, never on a guess.
- */
 export function deliveryOffer(
   detail: DwApprovalDetail | null | undefined
 ): { kind: "send" | "setup" | "none"; label: string } {
@@ -161,13 +106,11 @@ export function deliveryOffer(
   if (!label) return { kind: "none", label: "" };
   const delivery = detail.delivery;
   if (delivery?.configured) return { kind: "send", label };
-  // The address prompt only when addresses are what is missing; with mail off, nothing to offer.
   if (delivery?.mailAvailable === false) return { kind: "none", label: "" };
   if (delivery && delivery.addressCount > 0) return { kind: "none", label: "" };
   return { kind: "setup", label };
 }
 
-/** The few words for the newest delivery: when it went, how long the link lasts, whether it was opened. */
 export function deliveryLines(delivery: DwReportDelivery | null | undefined, format: (iso: string) => string): string[] {
   const latest = delivery?.latest;
   if (!latest) return [];
@@ -178,7 +121,6 @@ export function deliveryLines(delivery: DwReportDelivery | null | undefined, for
   return lines;
 }
 
-/** Approve (when waiting), make the report file, hand it on and e-mail the office a 7-day link. */
 export function approveAndHandOn(
   workshopId: string,
   body: { note?: string | null; round?: number; readAt?: string; format?: "PDF" | "DOCX" }
@@ -189,7 +131,6 @@ export function approveAndHandOn(
   });
 }
 
-/** A new link to the office; the old one stops working. */
 export function resendReportDelivery(workshopId: string) {
   return apiFetch<DwApprovalDetail>(`/design-workshop-approvals/${workshopId}/delivery/resend`, { method: "POST" });
 }
@@ -201,7 +142,6 @@ export type ReportDeliverySettings = {
   mailAvailable: boolean;
 };
 
-/** The office addresses "Approve and hand on" uses — an administrator's setting. */
 export function fetchReportDeliverySettings() {
   return apiFetch<ReportDeliverySettings>("/settings/report-delivery");
 }
@@ -210,7 +150,6 @@ export function saveReportDeliverySettings(body: { addresses: string[]; officeNa
   return apiFetch<ReportDeliverySettings>("/settings/report-delivery", { method: "PUT", body: JSON.stringify(body) });
 }
 
-/** What the office's download page reads. */
 export type ReportDownloadInfo = { workshopTitle: string | null; fileName: string; officeName: string; expiresAt: string };
 
 export function lookupReportDownload(token: string) {
@@ -238,7 +177,6 @@ export type DwApprovalQueueParams = {
   cleared?: DwClearedFilter;
 };
 
-/** How many reports wait for a decision, and how many approved ones wait to be handed on. */
 export function fetchAwaitingApprovalCount() {
   return apiFetch<{ awaiting: number; toHandOn: number }>("/design-workshop-approvals/awaiting-count");
 }
@@ -260,10 +198,6 @@ export function getReportForApproval(workshopId: string) {
   return apiFetch<DwApprovalDetail>(`/design-workshop-approvals/${workshopId}`);
 }
 
-/**
- * Approve the report as it was read. `round` and `readAt` are copied off the read the decision was
- * taken on — never typed — so an approval cannot land on a round or a version nobody opened.
- */
 export function approveReport(workshopId: string, body: { note?: string | null; round: number; readAt: string }) {
   return apiFetch<DwApprovalDetail>(`/design-workshop-approvals/${workshopId}/approve`, {
     method: "POST",
@@ -271,14 +205,12 @@ export function approveReport(workshopId: string, body: { note?: string | null; 
   });
 }
 
-/** Send the report back without approving it, withdraw its approval, or return it from the office. */
 export function reviseReport(
   workshopId: string,
   body: {
     note: string | null;
     stageKey?: string | null;
     fieldKey?: string | null;
-    /** The reader's tray of field notes (B2). With notes, `note` is an optional covering sentence. */
     notes?: Array<{ note: string; stageKey?: string | null; fieldKey?: string | null }>;
   }
 ) {
@@ -288,7 +220,6 @@ export function reviseReport(
   });
 }
 
-/** Hand the approved report on to the office. Records who, when, to which office and which file. */
 export function handOnReport(
   workshopId: string,
   body: { note?: string | null; handedOnTo?: string | null; exportId?: string | null }
@@ -299,19 +230,13 @@ export function handOnReport(
   });
 }
 
-/** The report file, generated through the Ministry Admin's own door. */
 export function downloadReportForApproval(workshopId: string, body: DwReportBody) {
   return downloadDesignWorkshopReport(workshopId, body, { via: "approvals" });
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The queue's tabs
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export const APPROVAL_QUEUE_TABS: ReadonlyArray<{
   value: DwApprovalQueueState;
   label: string;
-  /** What an empty tab says. A list that is empty must say which kind of empty it is. */
   empty: string;
 }> = [
   {
@@ -340,24 +265,12 @@ export function queueTab(value: string | null | undefined) {
   return APPROVAL_QUEUE_TABS.find((tab) => tab.value === value) ?? APPROVAL_QUEUE_TABS[0];
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The decisions a report offers, and the words for each
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** Where a report goes when nobody says otherwise. The DCH template is addressed to this office. */
 export const DEFAULT_HANDED_ON_TO = "Office of the Development Commissioner (Handicrafts)";
 
-/** The longest note or reason the server takes — `MAX_DECISION_NOTE_CHARS`. */
 export const MAX_DECISION_NOTE_CHARS = 4000;
 
-/** The longest office name a hand-on records. */
 export const MAX_HANDED_ON_TO_CHARS = 220;
 
-/**
- * The words for each of `/revise`'s three meanings. One verb on the server, three different acts to
- * the person pressing it: a report sent back before anybody approved it, an approval taken back, and
- * a report taken back from the office.
- */
 export const REVISE_COPY: Record<
   DwReviseKind,
   { button: string; title: string; confirm: string; body: string; placeholder: string; done: string }
@@ -388,7 +301,6 @@ export const REVISE_COPY: Record<
   }
 };
 
-/** What `/revise` would do from here, taking the server's word and deriving it only when absent. */
 export function reviseKindOf(detail: Pick<DwApprovalDetail, "status" | "handedOnAt" | "reviseKind">): DwReviseKind | null {
   if (detail.reviseKind !== undefined) return detail.reviseKind ?? null;
   const status = String(detail.status ?? "").toUpperCase();
@@ -401,28 +313,14 @@ export function reviseKindOf(detail: Pick<DwApprovalDetail, "status" | "handedOn
 export type DwApprovalAction = {
   verb: DwApprovalVerb;
   label: string;
-  /** The main act for this status draws as the primary button. */
   primary: boolean;
   allowed: boolean;
-  /** The server's sentence for why not; null when allowed. */
   reason: string | null;
 };
 
-/** When the server sent no sentence for a refused decision — said rather than left as a dead button. */
 export const NO_DECISION_REASON =
   "Couldn't check your permission. Reload the page.";
 
-/**
- * THE BUTTONS A REPORT OFFERS, IN ORDER, AND FOR EACH WHETHER IT MAY BE PRESSED AND WHY NOT.
- *
- * OFFERED BY STATUS: approve and send back from Pre-submission; hand on and withdraw once approved;
- * return from the office once handed on. A report anywhere else offers nothing, and the screen says
- * why in {@link noDecisionSentence}.
- *
- * ALLOWED BY THE SERVER ONLY. `mayDecide[verb] === true` — an absent key is a refusal, never a yes —
- * and the reason a refused button shows is the server's: the rule-7 sentence first (this account may
- * not decide on this report at all), then the decision's own.
- */
 export function approvalActions(detail: DwApprovalDetail | null | undefined): DwApprovalAction[] {
   if (!detail || detail.deletedAt) return [];
   const status = String(detail.status ?? "").toUpperCase();
@@ -446,7 +344,6 @@ export function approvalActions(detail: DwApprovalDetail | null | undefined): Dw
   });
 }
 
-/** Why a report offers no decision at all, by its status. Null while it offers one. */
 export function noDecisionSentence(detail: DwApprovalDetail | null | undefined): string | null {
   if (!detail) return null;
   if (approvalActions(detail).length > 0) return null;
@@ -467,10 +364,6 @@ export function noDecisionSentence(detail: DwApprovalDetail | null | undefined):
   }
 }
 
-/**
- * The exported file a hand-on can name: the newest export, and only when it was made after the
- * approval — a file from before the approval is not the approved report. Null otherwise.
- */
 export function pinnableExport(
   detail: Pick<DwApprovalDetail, "latestExport" | "approvedAt"> | null | undefined
 ): DwApprovalExport | null {
@@ -478,10 +371,6 @@ export function pinnableExport(
   if (!latest || !latest.generatedAt || !detail?.approvedAt) return null;
   return new Date(latest.generatedAt).getTime() >= new Date(detail.approvedAt).getTime() ? latest : null;
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The record, in words
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export const DECISION_KIND_LABELS: Record<string, string> = {
   APPROVED: "Approved",
@@ -491,19 +380,16 @@ export const DECISION_KIND_LABELS: Record<string, string> = {
   HANDED_ON: "Handed on to the office"
 };
 
-/** A decision's label; a verb this build has never heard of is still a decision, said so. */
 export function decisionKindLabel(kind: string | null | undefined): string {
   return (kind && DECISION_KIND_LABELS[kind]) || "A decision on this report";
 }
 
-/** A name, or what to say when the account behind an id has gone. Never a guess. */
 function nameOrGone(name: string | null | undefined, id: string | null | undefined): string | null {
   const clean = name?.trim();
   if (clean) return clean;
   return id ? "somebody no longer on record" : null;
 }
 
-/** Everything a screen needs to say who signed a report off — from a summary, a detail or a row. */
 export type DwSignOffFacts = {
   status?: string | null;
   approvedAt?: string | null;
@@ -515,12 +401,6 @@ export type DwSignOffFacts = {
   handedOnTo?: string | null;
 };
 
-/**
- * "Approved by A on 9 Oct 2026." and "Handed on to the Office of … by B on 10 Oct 2026." — the two
- * lines every reader of a signed-off report is shown. A name the read did not carry is left out
- * rather than guessed; an id with no name is "somebody no longer on record". Empty when the report
- * is not approved and was never handed on.
- */
 export function signOffLines(facts: DwSignOffFacts | null | undefined): string[] {
   if (!facts) return [];
   const lines: string[] = [];

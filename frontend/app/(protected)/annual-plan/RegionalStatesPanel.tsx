@@ -1,17 +1,5 @@
 "use client";
 
-/**
- * WHICH STATES EACH REGIONAL DIRECTOR ANSWERS FOR ON THE ANNUAL PLAN — the Ministry Admin's half of
- * the scope.
- *
- * A Regional Director opens this screen narrowed to the rows of the states assigned here, and may
- * correct the remarks on those rows and on no others; with nothing assigned they see an empty plan.
- * The server decides both (`annual_plan.plan_scope`), so this panel only writes the assignment and
- * shows it. Mounted for an annual-plan manager only; the routes behind it refuse anybody else.
- *
- * Collapsed by default: it is set once a year, and the directory is what the screen is for.
- */
-
 import { useCallback, useState } from "react";
 import { MapPinned } from "lucide-react";
 

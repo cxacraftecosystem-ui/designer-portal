@@ -5,7 +5,6 @@ import { useEffect } from "react";
 
 import { qs } from "@/lib/questionnaire/qs";
 
-/** The old consolidated index: each artisan's record is on their page now; the sessions list is here. */
 export default function ConsolidatedIndexRedirectPage() {
   const router = useRouter();
   useEffect(() => {

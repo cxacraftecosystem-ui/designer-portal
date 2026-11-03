@@ -16,18 +16,10 @@ import {
 } from "@/lib/media";
 import type { MediaFile } from "@/lib/types";
 
-/**
- * Page-scope upload state. Every media section on a page (the record form, the interview audio, the
- * per-question clips…) reports its own `BatchProgress` under a stable section id; the provider keeps
- * them keyed so a page-level dock can show one aggregate bar plus the per-section breakdown, and so
- * the media that finished uploading on this page can be listed in both places at once.
- */
-
 export type UploadSectionState = {
   id: string;
   label: string;
   progress: BatchProgress;
-  /** When this section last reported — used to name the file the page is currently pushing. */
   updatedAt: number;
 };
 
@@ -37,7 +29,6 @@ export type PageUploadAggregate = {
   totalBytes: number;
   fraction: number;
   etaSeconds: number | null;
-  /** Files finished across every active section, and how many there are in total. */
   fileIndex: number;
   fileCount: number;
   currentFileName: string;
@@ -51,7 +42,6 @@ export type CompletedUpload = {
 };
 
 type UploadsContextValue = {
-  /** False when a page has no <UploadsProvider>; consumers then degrade to section-only progress. */
   enabled: boolean;
   sections: UploadSectionState[];
   aggregate: PageUploadAggregate | null;
@@ -75,7 +65,6 @@ const UploadsContext = createContext<UploadsContextValue>(NOOP_CONTEXT);
 
 type ProviderState = {
   sections: Record<string, UploadSectionState>;
-  /** When the page went from idle to uploading — the clock the page-level ETA is measured against. */
   startedAt: number | null;
 };
 
@@ -85,17 +74,13 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<ProviderState>(EMPTY_STATE);
   const [completed, setCompleted] = useState<CompletedUpload[]>([]);
 
-  // Reclaim objects a previous visit pre-uploaded and never linked (tab closed mid-form, crash…).
   useEffect(() => {
     scheduleStagedObjectSweep();
   }, []);
 
   const reportSection = useCallback((id: string, label: string, progress: BatchProgress | null) => {
-    // `now` is read outside the updater so the updater stays pure (React may replay it).
     const now = Date.now();
     setState((current) => {
-      // Clearing a section that was never registered is a no-op — return the SAME state so an idle
-      // page (every questionnaire question mounts its own <UploadProgress>) never re-renders.
       if (!progress && !current.sections[id]) return current;
       const sections = { ...current.sections };
       if (progress) sections[id] = { id, label, progress, updatedAt: now };
@@ -129,9 +114,6 @@ export function UploadsProvider({ children }: { children: React.ReactNode }) {
         (sum, item) => sum + Math.min(item.progress.fileIndex, Math.max(0, item.progress.fileCount - 1)),
         0
       );
-      // Page-level ETA from the page-level rate, not a sum of per-section guesses. "Now" is the
-      // newest section report rather than Date.now(): reading the clock during render is impure,
-      // and progress ticks arrive continuously while a batch runs, so it tracks just as closely.
       const newest = sections.reduce((latest, item) => (item.updatedAt >= latest.updatedAt ? item : latest), sections[0]);
       const elapsed = state.startedAt ? (newest.updatedAt - state.startedAt) / 1000 : 0;
       const rate = elapsed > 0 ? uploadedBytes / elapsed : 0;
@@ -157,15 +139,12 @@ export function useUploads() {
 }
 
 export type EagerStagingSummary = {
-  /** One entry per file, in the caller's order; null while a file has not started staging. */
   entries: Array<StageEntry | null>;
   total: number;
   ready: number;
   failed: number;
   uploading: number;
-  /** 0..1 across every attached file, by bytes. */
   fraction: number;
-  /** True once every attached file is in object storage — "ready to save". */
   allReady: boolean;
   retry: (file: File) => void;
 };
@@ -181,36 +160,6 @@ const EMPTY_STAGING_SUMMARY: EagerStagingSummary = {
   retry: () => undefined
 };
 
-/**
- * Eager upload, as a hook. Every attached file starts streaming to object storage the moment it is
- * added — mirroring the Android capture screen — so the transfer overlaps the minutes spent filling
- * the form and saving only has to link the objects. Returns per-file transfer state for the capture
- * UI and publishes one aggregate row into the page-level <UploadTray>.
- *
- * Removal, failure, navigation and tab-close are all handled by the store in `lib/media`: discarding
- * a file aborts and deletes its object, an unmounted owner's unclaimed objects are deleted after a
- * short grace period, and anything that still slips through is reclaimed by the orphan sweep.
- *
- * ── `ownerKey`: WHEN THE SURFACE OUTLIVES THE COMPONENT ───────────────────────────────────────
- * The default owner is `useId()`, which is a PER-MOUNT string, and that is right whenever the
- * component's lifetime IS the surface's: the files were attached here, and when this goes away
- * nobody is holding them any more.
- *
- * It is wrong wherever the same surface is unmounted and remounted while the files it attached stay
- * alive somewhere above it. A design-workshop COLLECTION row does exactly that — the row's panel is
- * unmounted the moment the row is collapsed, and the 244-row flagship workshop is why it must be —
- * so a `useId()` owner made "collapse the row" indistinguishable from "the surface is gone": the
- * two-second grace period expired, the in-flight transfer was aborted and the object ALREADY IN S3
- * was deleted. Reopening the row said "Nothing attached yet". A caller that keeps its files above
- * the mount passes a key derived from WHERE the files live rather than from this instance, so a
- * remount inside the grace period cancels the release instead of racing it (`stageFiles` cancels a
- * pending release for the owner it is called with, which is the whole mechanism).
- *
- * IT IS NOT ENOUGH ON ITS OWN, and must not be shipped on its own: a stable owner keeps the OBJECT
- * alive across the remount, while the remounted component starts with an empty `files` array and so
- * has nothing to link it to. The caller has to hoist the file list as well. See the note on
- * `StagePendingMediaProvider` in `components/designworkshop/FieldInput.tsx` for the pairing.
- */
 export function useEagerStaging(
   files: File[],
   label = "Attach media",
@@ -227,11 +176,9 @@ export function useEagerStaging(
     const previous = trackedRef.current;
     trackedRef.current = files;
     stageFiles(files, ownerId);
-    // A file the user just removed: abort its transfer and delete whatever reached storage.
     previous.filter((file) => !files.includes(file)).forEach(discardStagedFile);
   }, [files, ownerId]);
 
-  // Unmount (or SPA navigation) releases this owner's claim; the store deletes anything orphaned.
   useEffect(() => {
     return () => releaseStagedOwner(ownerId);
   }, [ownerId]);
@@ -251,15 +198,11 @@ export function useEagerStaging(
       failed,
       uploading: known.length - ready - failed,
       fraction: Math.min(1, uploadedBytes / totalBytes),
-      // Zero-byte files are never staged, so "all ready" is measured against what CAN be staged.
       allReady: known.length > 0 && ready === known.length,
       retry: retryStagedFile
     };
   }, [files, snapshot]);
 
-  // Publish the eager transfer into the page dock, exactly like a save-time batch. A file claimed by
-  // a save drops out of the store, so the eager row clears at the moment the batch row appears —
-  // the two never double-count.
   useEffect(() => {
     if (!summary.uploading && !summary.failed) {
       startedAtRef.current = null;
@@ -284,7 +227,6 @@ export function useEagerStaging(
     });
   }, [files, label, ownerId, reportSection, summary]);
 
-  // Unmounting mid-transfer must not strand a ghost row in the tray.
   useEffect(() => {
     return () => reportSection(ownerId, label, null);
   }, [ownerId, label, reportSection]);

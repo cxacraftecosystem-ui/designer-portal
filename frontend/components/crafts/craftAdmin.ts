@@ -1,15 +1,8 @@
-/**
- * The craft list's write calls and the admin vocabulary (REQUIREMENTS_2026-10-20 §2.3, §2.6).
- *
- * Every write invalidates the cached catalogue, so the next picker that opens reads the new list.
- */
-
 import { apiFetch } from "@/lib/api";
 import { invalidateCraftCatalogue, type CraftCatalogueCategory, type GiStatus } from "@/lib/craftCatalogue";
 import { isAdmin } from "@/lib/permissions";
 import type { Craft, User } from "@/lib/types";
 
-/** The 28 states and 8 union territories, as the master list spells them, then "All India". */
 export const CRAFT_STATE_OPTIONS: readonly string[] = [
   "Andhra Pradesh",
   "Arunachal Pradesh",
@@ -52,10 +45,6 @@ export const CRAFT_STATE_OPTIONS: readonly string[] = [
 
 export const GI_LABEL: Record<GiStatus, string> = { GI: "GI", NON_GI: "Non GI" };
 
-/**
- * Who manages the categories, merges and adopts: the content admins (§5.1). The perms stream
- * publishes `isContentAdmin` in `lib/permissions`; until it lands this reads the same set.
- */
 export function canAdministerCraftList(user: User | null | undefined): boolean {
   return Boolean(user) && (isAdmin(user) || user?.role === "MINISTRY_ADMIN");
 }
@@ -96,7 +85,6 @@ export const updateCraftSubCategory = (id: string, body: { name?: string; catego
   write<unknown>(`/craft-sub-categories/${encodeURIComponent(id)}`, "PATCH", body);
 export const deleteCraftSubCategory = (id: string) => write<void>(`/craft-sub-categories/${encodeURIComponent(id)}`, "DELETE");
 
-/** The `sortOrder` that moves item `index` one place up (-1) or down (+1); null at either end. */
 export function swapSortOrder<T extends { id: string; sortOrder: number }>(
   items: readonly T[],
   index: number,
@@ -110,11 +98,6 @@ export function swapSortOrder<T extends { id: string; sortOrder: number }>(
   ];
 }
 
-/**
- * How many records name each ACTIVE craft — the `/crafts` table's Records column, for every reader.
- * `GET /crafts` adds `referenceCount` to every row of a list page; 500 a page (its ceiling) reads the
- * whole master list in one or two requests.
- */
 export async function loadCraftReferenceCounts(): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   for (let page = 1; page <= 20; page += 1) {

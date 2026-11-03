@@ -3,23 +3,6 @@ import { expect, test, type Page } from "@playwright/test";
 import { serveAddressReference, stateTheAddress } from "./fixtures/location";
 import { signIn } from "./support/session";
 
-/**
- * The artisan a researcher was last documenting must survive LEAVING the flow.
- *
- * `CarryForwardCards` has always carried the artisan into the next record through the query string,
- * which works for exactly one journey: click a card the instant the artisan saves. Nobody works
- * that way for long. They save the artisan, go back to the dashboard to check something, open the
- * product form ten minutes later — and every field is empty again. So the away-and-back path is the
- * only path worth asserting here; testing the click-through would prove nothing that already
- * worked.
- *
- * READ-ONLY, DELIBERATELY. The dev server this runs against points at the live production corpus,
- * so the spec never creates an artisan. It enters the flow at the URL `CarryForwardCards` builds
- * after a save — same params, same values, same code path into `lib/carryContext` — using a real
- * artisan read from the API. What is under test is what happens AFTER that: leaving, coming back,
- * and changing your mind.
- */
-
 const EMAIL = process.env.E2E_EMAIL ?? "";
 const PASSWORD = process.env.E2E_PASSWORD ?? "";
 
@@ -27,51 +10,22 @@ test.skip(!EMAIL || !PASSWORD, "Set E2E_EMAIL and E2E_PASSWORD to run the signed
 
 type ArtisanRow = { id: string; name: string; place: string; craftId?: string | null; craft?: { name?: string } | null };
 
-/**
- * `FormControls.Select` is not a native <select>: it renders the themed SearchableSelect trigger
- * plus a zero-size input that carries the value into FormData. So the value is read off that input
- * and the choice is made through the listbox, the way a researcher makes it.
- */
 async function chooseOption(page: Page, fieldName: string, optionLabel: string | RegExp) {
   await page.locator(`label:has(input[name="${fieldName}"]) button[data-searchable-select]`).click();
-  // The floating panel animates in and re-anchors on scroll, so Playwright's stability wait can
-  // outlast the test. Dispatching the click is enough: the handler is a plain onClick.
   await page.getByRole("option", { name: optionLabel }).first().dispatchEvent("click");
 }
 
-/**
- * THE TOOL FORM'S LINK PICKERS ARE MULTI-SELECTS — found by their GROUP, not by a hidden input.
- *
- * `ToolForm`'s "Linked crafts" and "Linked artisans" became `MultiSelectDropdown`s on 2026-09-15,
- * and a multi-select submits nothing through `FormData`: the ids are React state that the payload
- * reads directly. So there is no `input[name="craftId"]` to hang a selector off, and the wrapper is
- * `FieldBlock` (a `<div role="group">`) rather than `Field` (a `<label>`) — which is also why the
- * group has an accessible name to find it by.
- *
- * A tick applies IMMEDIATELY (`onChange` fires per toggle; Confirm only closes the panel), so this
- * leaves the panel open exactly as `chooseOption` does.
- */
 async function tickOption(page: Page, groupLabel: string, optionLabel: string) {
   await page.getByRole("group", { name: groupLabel }).locator("button[data-searchable-select]").click();
-  // `exact: false`, because an artisan row's accessible name is its LABEL PLUS ITS HINT — the name
-  // and then the place, which is what makes the picker searchable on a village. An exact match on
-  // the name alone would find nothing, and spelling the pair out here would pin a separator this
-  // spec has no business knowing about.
   await page.getByRole("option", { name: optionLabel, exact: false }).first().dispatchEvent("click");
-  // Close the panel before the next control is reached: the popover is portalled to <body> and the
-  // next trigger would otherwise be under it.
   await page.keyboard.press("Escape");
 }
 
-/** What the tool form's linked-artisan trigger reads back — "N selected" plus the names, sr-only. */
 function toolArtisanTrigger(page: Page) {
   return page.getByRole("group", { name: "Linked artisans (fills artisan + place)" }).locator("button[data-searchable-select]");
 }
 
-/** Two real artisans of the same craft: one to carry, one to switch to. */
 async function twoArtisans(page: Page): Promise<[ArtisanRow, ArtisanRow]> {
-  // Read through the app's own origin and session rather than a second config: whatever API the
-  // running server proxies to is the API whose artisans this spec should be using.
   const rows = await page.evaluate(async () => {
     const response = await fetch("/api/artisans?pageSize=100");
     return (await response.json()).items as ArtisanRow[];
@@ -86,7 +40,6 @@ async function twoArtisans(page: Page): Promise<[ArtisanRow, ArtisanRow]> {
   return [pair[0], pair[1]];
 }
 
-/** The href CarryForwardCards renders on the artisan save screen. */
 function handoffHref(path: string, artisan: ArtisanRow) {
   const params = new URLSearchParams({
     artisanId: artisan.id,
@@ -111,39 +64,30 @@ test.describe("Carry-forward artisan context", () => {
   test("survives a trip to the dashboard, and a change sticks", async ({ page }) => {
     const [first, second] = await twoArtisans(page);
 
-    // 1. Enter the flow exactly as the save screen would.
     await page.goto(handoffHref("/products/new", first));
     await expect(page.getByRole("status").filter({ hasText: "Continuing with" })).toContainText(first.name);
     await expect(page.locator('input[name="artisanName"]')).toHaveValue(first.name);
 
-    // 2. Leave. This is the step the query string cannot survive.
     await page.goto("/dashboard");
     await expect(page.getByRole("heading", { name: /what would you like to do/i })).toBeVisible();
 
-    // 3. Come back cold — no params on the URL at all.
     await page.goto("/tools/new");
     const banner = page.getByRole("status").filter({ hasText: "Continuing with" });
     await expect(banner).toContainText(first.name);
     await expect(banner).toContainText(/you documented/);
     await expect(page.locator('input[name="artisanName"]')).toHaveValue(first.name);
     await expect(page.locator('input[name="place"]')).toHaveValue(first.place);
-    // The carried artisan reaches the LINK PICKER too, and the picker is a multi-select now, so the
-    // assertion is what it reads back rather than a hidden input's value — see `tickOption`. One
-    // carried artisan is one tick: the carry bag is singular and stays so.
     await expect(toolArtisanTrigger(page)).toContainText("1 selected");
     await expect(toolArtisanTrigger(page)).toContainText(first.name);
 
-    // 4. One action clears it, and the fields go with the banner.
     await banner.getByRole("button", { name: "Change" }).click();
     await expect(banner).toHaveCount(0);
     await expect(page.locator('input[name="artisanName"]')).toHaveValue("");
     await expect(page.locator('input[name="place"]')).toHaveValue("");
 
-    // 5. Choose somebody else, and confirm THAT is what comes back next time.
     await tickOption(page, "Linked crafts (fills craft name)", second.craft?.name ?? "");
     await tickOption(page, "Linked artisans (fills artisan + place)", second.name);
     await expect(page.locator('input[name="artisanName"]')).toHaveValue(second.name);
-    // An explicit pick is the researcher's own choice, so nothing claims to have prefilled it.
     await expect(page.getByRole("status").filter({ hasText: "Continuing with" })).toHaveCount(0);
 
     await page.goto("/dashboard");
@@ -159,7 +103,6 @@ test.describe("Carry-forward artisan context", () => {
     await page.goto(handoffHref("/products/new", first));
     await expect(page.getByRole("status").filter({ hasText: "Continuing with" })).toBeVisible();
 
-    // Backdate the stored row past the twelve-hour window: a context from yesterday is not context.
     await page.evaluate(() => {
       const key = Object.keys(window.localStorage).find((k) => k.startsWith("field_repo_carry_context:"));
       if (!key) throw new Error("Nothing was stored — the carry context never reached localStorage.");
@@ -178,8 +121,6 @@ test.describe("Carry-forward artisan context", () => {
     await page.goto(handoffHref("/products/new", first));
     await expect(page.getByRole("status").filter({ hasText: "Continuing with" })).toBeVisible();
 
-    // Offline is the normal state in Bagru. Suppressing the prefill whenever the artisan list is
-    // unreachable would disable the feature in exactly the conditions it was written for.
     await page.route("**/api/artisans**", (route) => route.abort());
     await page.goto("/tools/new");
     const banner = page.getByRole("status").filter({ hasText: "Continuing with" });
@@ -198,15 +139,11 @@ test.describe("Carry-forward artisan context", () => {
       return { key, raw: key ? window.localStorage.getItem(key) : null };
     });
     expect(stored.raw).toBeTruthy();
-    // Aadhaar and Pehchan are regulated PII: they may not be copied between records, and they may
-    // not sit in local storage on a laptop three researchers share.
     expect(stored.raw?.toLowerCase()).not.toContain("aadhaar");
     expect(stored.raw?.toLowerCase()).not.toContain("pehchan");
     expect(JSON.parse(stored.raw as string).userId).toBeTruthy();
-    // Namespaced per account, so a colleague signing in on the same machine starts clean.
     expect(stored.key).toMatch(/^field_repo_carry_context:.+/);
 
-    // A row written under another account is ignored rather than shown.
     await page.evaluate((key) => {
       const row = JSON.parse(window.localStorage.getItem(key as string) as string);
       row.userId = "someone-else";
@@ -218,23 +155,8 @@ test.describe("Carry-forward artisan context", () => {
 });
 
 
-/**
- * The same journey, one record type further along.
- *
- * The context is no longer a pointer at an artisan: it is a bag that accumulates the craft, the
- * artisan, the workshop AND the records made under them. The claim these tests exist to prove is
- * the one that was actually asked for — record a product, wander off, open a PROCESS form, and find
- * the product already chosen — plus the rule that makes it safe, which is that a contradicting
- * artisan takes their products with them.
- *
- * NOTHING IS WRITTEN. The dev server points at the production corpus, so the product create is
- * answered locally — with a product that genuinely exists, because the process form has to find the
- * carried id in the artisan's real product list before it will let the prefill stand. Everything
- * between the Save click and that list is the app's own code.
- */
 type ProductRow = { id: string; productName: string; artisanId?: string | null; craftId?: string | null };
 
-/** A real product whose artisan is linked to a craft, so the create form can be filled by picking. */
 async function aLinkedProduct(page: Page): Promise<{ product: ProductRow; artisan: ArtisanRow; craftName: string }> {
   const { products, artisans } = await page.evaluate(async () => {
     const [productResponse, artisanResponse] = await Promise.all([
@@ -252,7 +174,6 @@ async function aLinkedProduct(page: Page): Promise<{ product: ProductRow; artisa
   throw new Error("Need a product linked to an artisan who is linked to a craft.");
 }
 
-/** The handoff URL a post-save screen builds, now that it carries the product too. */
 function productHandoff(product: ProductRow, artisan: ArtisanRow): string {
   const params = new URLSearchParams({
     artisanId: artisan.id,
@@ -267,8 +188,6 @@ function productHandoff(product: ProductRow, artisan: ArtisanRow): string {
 }
 
 test.describe("Carry-forward across record types", () => {
-  // The coordinate is mandatory and captures itself when the browser is allowed to answer, which is
-  // the only reason this spec can reach the Save button at all.
   test.use({ permissions: ["geolocation"], geolocation: { latitude: 26.8137, longitude: 75.545 } });
 
   test.beforeEach(async ({ page }) => {
@@ -284,8 +203,6 @@ test.describe("Carry-forward across record types", () => {
   test("a saved product is offered by the process form after a trip to the dashboard", async ({ page }) => {
     const { product, artisan, craftName } = await aLinkedProduct(page);
 
-    // Answer the create locally. The response is a real row, so the id the form banks is one the
-    // process form's product list will actually contain.
     await page.route("**/api/products", async (route) => {
       if (route.request().method() !== "POST") return route.fallback();
       await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(product) });
@@ -297,30 +214,22 @@ test.describe("Carry-forward across record types", () => {
     await expect(page.locator('input[name="artisanName"]')).toHaveValue(artisan.name);
     await page.locator('input[name="productName"]').fill(product.productName);
     await stateTheAddress(page);
-    // The card takes its own fix; the save is blocked until it has one.
     await expect(page.locator('input[name="latitude"]')).toHaveValue(/26\.81/, { timeout: 30_000 });
 
     await page.getByRole("button", { name: /^Save product$/ }).click();
-    // A workshop that has already ended asks before it saves, and this run is a late submission by
-    // construction, so the honest answer is yes.
     const lateSubmission = page.getByRole("button", { name: "Submit anyway" });
     if (await lateSubmission.isVisible().catch(() => false)) await lateSubmission.click();
     await page.waitForURL(/\/products$/, { timeout: 60_000 });
 
-    // Leave. This is the step the query string cannot survive.
     await page.goto("/dashboard");
     await expect(page.getByRole("heading", { name: /what would you like to do/i })).toBeVisible();
 
-    // Come back cold, into a different record type, with no params on the URL at all.
     await page.goto("/processes?new=1");
     const banner = page.getByRole("status").filter({ hasText: "Continuing with" });
     await expect(banner).toContainText(artisan.name);
-    // The implication is on screen rather than only in the fields: the product is named, and so is
-    // the fact that its artisan came along with it.
     await expect(banner).toContainText(product.productName);
     await expect(banner).toContainText(/came with it/);
 
-    // And it really is in the field, not just in the banner.
     await expect(processProductField(page)).toContainText(product.productName, { timeout: 30_000 });
   });
 
@@ -333,11 +242,7 @@ test.describe("Carry-forward across record types", () => {
     await page.goto(productHandoff(product, artisan));
     await expect(page.getByRole("status").filter({ hasText: "Continuing with" })).toContainText(product.productName);
 
-    // Choosing somebody else is a contradiction, not an addition: the product belonged to the
-    // artisan being replaced, so keeping it would file it under a person who never made it.
     await page.goto("/tools/new");
-    // The tool form's link pickers are multi-selects — see `tickOption`. A tick is still an explicit
-    // pick, which is what retires the banner and re-points the bag at the person chosen.
     await tickOption(page, "Linked crafts (fills craft name)", other.craft?.name ?? "");
     await tickOption(page, "Linked artisans (fills artisan + place)", other.name);
 
@@ -350,7 +255,6 @@ test.describe("Carry-forward across record types", () => {
   });
 });
 
-/** The process form's product dropdown, found by its label — the control carries no name. */
 function processProductField(page: Page) {
   return page
     .locator("label")

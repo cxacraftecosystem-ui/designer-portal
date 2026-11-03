@@ -1,18 +1,5 @@
 "use client";
 
-/**
- * THE REVIEW LAYOUT (A18): a fixed menu of stages with completeness dots beside the read, a fixed
- * decision bar at the foot of the window that knows which stage is in view, and the "Changed since
- * round N" control (C13). Shared by the inspection, approval and supervision screens.
- *
- * - The menu is a second pane from `lg` up (the §10.3 two-pane rule) and a "Jump to stage" picker
- *   below it — a phone has no room for two panes.
- * - The stage in view is the one crossing the middle tenth of the window (the walkthrough's band),
- *   so the bar's Note and Send back preselect what the reader is looking at.
- * - The bar is a bottom dock (z-40 on the ladder) from `sm` up, with a spacer so it never covers
- *   the last stage. On a phone the same actions sit in the page's own panels.
- */
-
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { GitCompare } from "lucide-react";
 
@@ -43,12 +30,10 @@ const DOT_CLASS: Record<StageDot, string> = {
   empty: "border border-ink-300 bg-transparent"
 };
 
-/** Which stage section is crossing the middle of the window. */
 export function useActiveStage(stageKeys: string[], ready: boolean): string | null {
   const [active, setActive] = useState<string | null>(null);
   const joined = stageKeys.join("|");
   useEffect(() => {
-    // `ready` is "the stage sections are on the page": observing before they render observes nothing.
     if (!ready || !joined || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -127,7 +112,6 @@ function StageNav({
   );
 }
 
-/** The two-pane review layout: stage menu, then the read. */
 export function ReviewLayout({
   stages,
   completeness,
@@ -178,7 +162,6 @@ export function ReviewLayout({
   );
 }
 
-/** The fixed decision bar. `children` are the buttons; they act on the stage named on the left. */
 export function ReviewDecisionBar({ stage, children }: { stage: DwStage | null; children: ReactNode }) {
   return (
     <>
@@ -205,7 +188,6 @@ export function ReviewDecisionBar({ stage, children }: { stage: DwStage | null; 
   );
 }
 
-/** The kept copy of one earlier round, and what moved since. */
 export function useRoundCompare(
   surface: DwReviewSurface,
   workshopId: string,
@@ -250,7 +232,6 @@ export function useRoundCompare(
   return { rounds, round, setRound, snapshot, changes, problem, onlyChanges, setOnlyChanges };
 }
 
-/** "Compare with round N" and "Only changes". Hidden when no earlier round was kept. */
 export function RoundCompareControls({ compare }: { compare: ReturnType<typeof useRoundCompare> }) {
   if (!compare.rounds.length) return null;
   return (

@@ -45,7 +45,7 @@ Decision 1.
 The web's dictation ladder (`frontend/components/designworkshop/Dictation.tsx`) is:
 
 1. `SpeechRecognition` / `webkitSpeechRecognition` if the browser has it;
-2. otherwise **`MediaRecorder` → `DW_DICTATE_PATH` → `ai.transcribe_audio_bytes`** (`Dictation.tsx:42,241`).
+2. otherwise **`MediaRecorder` → `DW_DICTATE_PATH` → `ai.transcribe_audio_bytes`** (`Dictation.tsx:33,169`).
 
 The server endpoint says why (`api/routes/design_workshops.py:254`): a dictated sentence and a
 transcribed interview "are produced by the same provider chain with the same craft vocabulary and

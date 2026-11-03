@@ -1,23 +1,5 @@
 "use client";
 
-/**
- * The designer's own questionnaires — the list, and the two doors into making one.
- *
- * "use client" is not a preference: there is NO server-side data fetching anywhere in this app (the
- * bearer token lives in `localStorage`, which a server component cannot read), so every page that
- * touches the API is a client component.
- *
- * PLURAL. `app/(protected)/questionnaire/` — singular — is the ONE global artisan questionnaire
- * every researcher answers, and it is a different feature with different tables. Nothing here
- * touches it.
- *
- * THE TWO PRIMARY ACTIONS ARE THE SPREADSHEET PAIR, in the order the loop runs: download the blank
- * pro-forma, type your questions into it, upload it back. "Start an empty one" is offered as well
- * but deliberately third and in the quieter treatment — a questionnaire built box-by-box in a
- * browser is the slower path, and putting it first would send designers down it by default when the
- * whole point of the feature is that they build the instrument in Excel.
- */
-
 import { Toggle } from "@/components/ui/Toggle";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -85,135 +67,41 @@ import {
 } from "@/lib/workshopOptions";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * "The read has not answered, or it failed", as ONE stable array.
- *
- * A fresh `[]` per render would give the two dialogs a new `workshops` prop identity on every
- * keystroke of the search box above the table, which re-runs their own option memos for an answer
- * that has not changed.
- */
 const NO_WORKSHOP_ROWS: readonly DwSummary[] = [];
 
 export default function QuestionnairesPage() {
   const router = useRouter();
   const { toast } = useToast();
-  // The trash and its Restore: a content admin sees every deleted form, in admin view (2026-10-20);
-  // anyone else sees the forms they authored, which they may restore (owner, 22 Oct 2026).
   const { adminMode, canDeleteRecords } = useAdminView();
   const { user: me } = useAuth();
   const v2 = Boolean(useQuestionnaireConfig()?.v2Enabled);
-  /**
-   * THE LIBRARY'S TABS (UNIFY 4.2): Mine (this account's own forms), Shared (published to everyone),
-   * Workshop (on a workshop this account works on, someone else's), and Deleted for content admins.
-   * One list from the server, which already scopes what this account may see; the tab narrows it.
-   */
   const [tab, setTab] = useState<"mine" | "shared" | "workshop" | "deleted">("mine");
   const [data, setData] = useState<PageResult<QFormSummary> | null>(null);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [error, setError] = useState<string | null>(null);
-  /**
-   * "It is on this device and not yet in the repository" — said after a create that was banked.
-   *
-   * ITS OWN STATE AND NOT `error`, because it is not one. A queued save succeeded; what differs is
-   * WHERE the questionnaire is, and rendering that in the red banner would tell a designer their
-   * work had failed when it had not. `OutboxBanner` in the protected layout names the entry itself;
-   * this says the one thing that banner cannot — what happens to THIS questionnaire next.
-   */
   const [notice, setNotice] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [report, setReport] = useState<QFormUploadReport | null>(null);
-  /**
-   * The questionnaire the report above is ABOUT, when that is not the one whose page this is — which
-   * on a LIST is every case where the sentence has a subject at all.
-   *
-   * A reuse report describes a row that is not on screen. Left unnamed, the panel's provenance line
-   * read "This questionnaire is a copy, and it carries no recorded answers" on a page showing twenty
-   * questionnaires, none of which is the copy. Null for the upload path, whose own heading claims no
-   * subject.
-   */
   const [reportSubject, setReportSubject] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  /*
-    THE TWO DICTATED BOXES ARE CONTROLLED, AND THAT IS `DictatedTextInput`'S CONTRACT, NOT A CHOICE.
-
-    Its header states it: it has one mode, because "a control that is sometimes controlled is a
-    control whose reset behaviour has to be re-derived at every call site". So the value lives here.
-    `submit` still reads `FormData` off the form element — the component renders a real `name` — so
-    `createEmpty` is untouched by this.
-
-    NOT CLEARED ANYWHERE, deliberately, because the form it belongs to never cleared itself either:
-    a successful create navigates to the new questionnaire and a QUEUED one stays put under a notice
-    saying it is banked. Clearing on the queued branch would be a behaviour change dressed as a
-    refactor.
-  */
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [creating, setCreating] = useState(false);
   const [newWorkshopId, setNewWorkshopId] = useState("");
-  /*
-    A WORKSHOP THE READER INSPECTS OR SUPERVISES TAKES NO NEW QUESTIONNAIRE FROM THEM (2026-10-09).
-    Attaching changes what the workshop's report says, and the create door asks the stage save's own
-    gate of it, so a post holder's create is refused with the 403 naming the post. Held on the
-    workshop CHOSEN — while its answer is out as well — and the picker stays live: another workshop,
-    or none, is the way forward. The upload and reuse dialogs hold their own choice the same way.
-  */
   const createWorkshopHold = useHeldPostRefusal(newWorkshopId || null);
   const createHold = attachHold(createWorkshopHold, "this questionnaire");
   const createHoldId = useId();
-  /** The kind on the create form. `""` is the blank row and means "not stated", which is allowed. */
   const [newKind, setNewKind] = useState("");
-  /**
-   * "Show deactivated" — WHETHER THE LIST ASKS FOR RETIRED FORMS AT ALL.
-   *
-   * ══ WHAT THIS FIXES ═══════════════════════════════════════════════════════════════════════
-   *
-   * `load` always called `listQuestionnaires({page, pageSize, search})`, and the server's
-   * `activeOnly` defaults to TRUE. So "Take out of use" — which this API has INSTEAD of a delete,
-   * precisely so nothing is ever lost — removed the form from the only list the web client can
-   * draw, permanently. "Bring back into use" sat on the detail page of a questionnaire the web had
-   * no route to any more: the designer would have had to keep the URL. A safety feature whose undo
-   * is unreachable is not a safety feature.
-   *
-   * Android has had both since it was written (`QuestionnaireListScreen.kt` — the switch at :338,
-   * the `activeOnly = !showDeactivated` at :158, the "Deactivated" chip at :459). The wording here
-   * is copied from it VERBATIM rather than re-written, because two clients describing one state in
-   * two ways is how a designer comes to believe they are two different states.
-   */
   const [showDeactivated, setShowDeactivated] = useState(false);
-  /**
-   * What the design-workshop read answered — three states, and `[]` was never one of them.
-   *
-   * It was `useState<DwSummary[]>([])` behind a `.catch(() => undefined)`, so a timeout and an
-   * account with no workshops produced the identical screen: an empty picker with nothing said, and
-   * a reuse dialog telling the designer "No design workshops are listed for this account here" on
-   * the strength of a request that never arrived. Those are four different facts with four different
-   * next moves and `lib/workshopOptions` owns the sentence for each.
-   */
   const [workshopList, setWorkshopList] = useState<WorkshopListState<DwSummary>>({ kind: "loading" });
-  /** Was the device reachable when that read FAILED? Captured in the catch — see
-   *  `components/forms/DesignWorkshopSelect.tsx` for why it is not read at render time. */
   const [workshopsOnline, setWorkshopsOnline] = useState(true);
-  /**
-   * The row "Reuse at another workshop" was pressed on, or null.
-   *
-   * ONE DIALOG FOR THE WHOLE TABLE, holding the row it points at, rather than one per row. Twenty
-   * mounted dialogs is twenty copies of the target list and twenty title look-ups waiting to fire;
-   * the dialog re-seeds itself on open (see its own effect) so swapping the row it points at is safe.
-   */
   const [reuseRow, setReuseRow] = useState<QFormSummary | null>(null);
   const skipFirstDebounce = useRef(true);
 
-  /**
-   * List pages count fetch generations rather than aborting: `listQuestionnaires` takes no signal,
-   * and what matters is IGNORING the late answer. Without this, a typed search whose first response
-   * arrives after the second overwrites the newer list with older rows, and the screen shows results
-   * for a query nobody can see any more.
-   */
   const generation = useRef(0);
-  // The shared filters (owner, 31 Oct 2026): forms with sessions of these artisans, workshops, dates …
   const { filters: sharedFilters, setFilters: setSharedFilters, ready: filtersReady } = useUrlFilters();
 
   const load = useCallback(async () => {
@@ -223,11 +111,6 @@ export default function QuestionnairesPage() {
         page,
         pageSize: 20,
         search: applied || undefined,
-        // `false` ASKS FOR EVERYTHING, active and deactivated alike — it is not "deactivated only".
-        // The server reads it that way (`if activeOnly: where["isActive"] = True`), so the switch
-        // WIDENS the list rather than swapping it, and the "Deactivated" badge on the row is what
-        // tells the two apart. A filter that swapped them would hide the designer's live forms the
-        // moment they went looking for an old one.
         activeOnly: showDeactivated ? false : undefined,
         filters: sharedFilters
       });
@@ -237,16 +120,9 @@ export default function QuestionnairesPage() {
     } catch (err) {
       if (mine !== generation.current) return;
       setError(err instanceof Error ? err.message : "Unable to load questionnaires");
-      // `data` is deliberately left alone on a failed refresh. Emptying it would replace a list the
-      // designer can still read with "no questionnaires yet", which is indistinguishable from having
-      // none — the most repeated bug class in this repository.
     }
   }, [page, applied, showDeactivated, sharedFilters]);
 
-  /**
-   * Search, page, the deactivated switch and scroll, so Back from a questionnaire lands on the same
-   * rows. Recalled once before the first fetch — `placeRestored` holds that fetch until it has been.
-   */
   const memory = useListMemory(
     "questionnaires",
     { query, applied, page, filters: { showDeactivated: showDeactivated ? "1" : "" } },
@@ -258,22 +134,12 @@ export default function QuestionnairesPage() {
     load();
   }, [load, placeRestored, filtersReady]);
 
-  // The design workshops a questionnaire can be attached to. Fetched once and shared by the create
-  // form and the upload dialog, so the two cannot offer different lists.
   useEffect(() => {
     let cancelled = false;
-    // NEVER 100 INTO A CONTROL THAT DRAWS 80. `SearchableSelect` renders at most `RENDER_CAP` rows,
-    // so a hundred-row page put twenty workshops into these pickers that they silently would not
-    // draw, with no sentence anywhere admitting it. One number governs the fetch and the render.
     listDesignWorkshops({ pageSize: WORKSHOP_OPTION_PAGE_SIZE })
       .then((result) => {
         if (!cancelled) setWorkshopList({ kind: "ok", rows: result.items ?? [], total: result.total });
       })
-      // STILL NO BANNER, and still for the reason it never had one: the picker is a convenience, a
-      // questionnaire attaches to a workshop just as well from the detail page, and an error banner
-      // for a shortcut that failed reads as the page itself being broken. What has changed is that
-      // the failure is no longer SILENT — it is recorded, and the sentence goes on the control it is
-      // about rather than nowhere at all.
       .catch(() => {
         if (cancelled) return;
         setWorkshopsOnline(!deviceLooksOffline());
@@ -284,36 +150,14 @@ export default function QuestionnairesPage() {
     };
   }, []);
 
-  /**
-   * The rows, and the one thing the page has to say about them.
-   *
-   * `offPage: "refuse"` on this control and not `"recover"`: this picker files a questionnaire that
-   * does not exist yet, so its value can only ever be one of the rows it drew and there is nothing
-   * off-page to recover. The detail page's picker, which points at a STORED workshop, passes
-   * `"recover"` — and that difference is exactly why the parameter is required and has no default.
-   *
-   * `group: true`: attaching a new questionnaire to a workshop that has already been submitted is
-   * allowed and is something the reader must be able to see they are doing.
-   */
   const workshopSet = useMemo(
     () => designWorkshopOptions(workshopList, { group: true, offPage: { mode: "refuse" } }),
     [workshopList]
   );
-  /** SCOPED — `list_design_workshops` narrows by `visible_to_clause`, so an empty answer is about
-   *  this account's grants and its next move is an administrator, not a new workshop. */
   const workshopVoice = useMemo<WorkshopListVoice>(
     () => ({ table: "design", scoped: true, online: workshopsOnline }),
     [workshopsOnline]
   );
-  /**
-   * ONE SLOT, TWO SENTENCES THAT CANNOT BOTH APPLY — and it is handed to the two dialogs as a
-   * string so that three controls fed by one read cannot describe it three ways.
-   *
-   * With no rows, `workshopListNotice` says WHICH of the four empty states this is. With rows and a
-   * cut, `cappedListNotice` says the arithmetic — its default arm, which is the honest one here,
-   * because these pickers filter the rows already fetched: "the other N are not on this list, and
-   * typing here searches only the M shown". Neither is ever true at the same time as the other.
-   */
   const workshopNotice =
     workshopListNotice(workshopList, workshopVoice) ||
     cappedListNotice(
@@ -321,11 +165,8 @@ export default function QuestionnairesPage() {
         ? cutOf(workshopList.rows.length, workshopList.total ?? 0, "design workshops")
         : null
     );
-  /** The rows themselves, for the two dialogs, which take an answer rather than a read. */
   const workshops = workshopList.kind === "ok" ? workshopList.rows : NO_WORKSHOP_ROWS;
 
-  // Live search: 350ms after typing stops, Enter applies immediately. Both go through the same state
-  // so the generation guard above stays the only race protection needed.
   useEffect(() => {
     if (skipFirstDebounce.current) {
       skipFirstDebounce.current = false;
@@ -338,9 +179,6 @@ export default function QuestionnairesPage() {
     return () => window.clearTimeout(timer);
   }, [query]);
 
-  // AFTER the debounce effect on purpose: effects run in declaration order, so the debounce's own
-  // first run has already spent `skipFirstDebounce`, and the flag raised here is the one that stops
-  // the restored query being debounced into a page-1 reset.
   useEffect(() => {
     const remembered = memory.recall();
     if (remembered) {
@@ -351,7 +189,6 @@ export default function QuestionnairesPage() {
       setShowDeactivated(remembered.filters?.showDeactivated === "1");
     }
     setPlaceRestored(true);
-    // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -370,17 +207,11 @@ export default function QuestionnairesPage() {
 
   async function createEmpty(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // React nulls `event.currentTarget` across an await, so the FormData must be built before any
-    // async work — after the first `await` it reads as null and every field comes back empty.
     const form = new FormData(event.currentTarget);
     const title = String(form.get("title") ?? "").trim();
-    // A held Create is disabled; this keeps the rule for Enter in the title box, and for a queued
-    // create, which would otherwise be banked on this device and refused on every replay.
     if (!title || writesHeld(createHold)) return;
     setCreating(true);
     setError(null);
-    // A15: with no connection the form is made on this device with a temporary id, and its sections
-    // and questions can be added straight away; the outbox sends all three, in order, once online.
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       const tempId = queueForm(me?.id ?? null, {
         title,
@@ -393,25 +224,6 @@ export default function QuestionnairesPage() {
       return;
     }
     try {
-      /*
-        SENT OR BANKED — `saveOrQueue`, not a bare `createQuestionnaire`, since 2026-08-28.
-
-        The owner asked that a designer building their own questionnaire have it *"work correctly
-        offline as well"*. This was a plain POST: pressed with no connection it threw, the banner
-        said "Unable to create the questionnaire", and the title the designer had typed was gone.
-
-        WHAT IS QUEUED IS THE ROW, NOT THE TREE, and that is a decision rather than a first
-        instalment. A section and a question are separate creates against
-        `/questionnaires/{id}/sections` and `.../questions`, and the id they need does not exist
-        until this row lands — the outbox replays entries independently and has no way to thread a
-        server-minted id from one into the next. So offline a designer gets the thing they actually
-        needed in the room: the form EXISTS, named, attached to its workshop, and on the server the
-        moment there is signal. The questions are written afterwards, and the notice says so.
-
-        `saveOrQueue` also gets the refusal split right for free: a 4xx is the server having
-        answered and is thrown, never banked, because replaying a rejection for ever while reporting
-        success is the failure its own header exists to prevent.
-      */
       const outcome = await saveOrQueue<QForm>({
         label: `Questionnaire · ${title}`,
         endpoint: "/questionnaires",
@@ -420,23 +232,15 @@ export default function QuestionnairesPage() {
           title,
           description: String(form.get("description") ?? "").trim() || undefined,
           designWorkshopId: newWorkshopId || undefined,
-          // `|| undefined` for the blank row, exactly as the workshop above: "" is not a kind, and
-          // the key is simply omitted rather than sent as null. The server reads an absent key and
-          // an explicit null identically on CREATE (both are "not stated"); they differ only on
-          // PATCH, where null means "clear what is there".
           kind: (newKind || undefined) as QFormKind | undefined
         }
       });
       if (outcome.queued) {
-        // NOT `router.push` — there is no id to open yet. The banner in the protected layout names
-        // the entry and where it lives; this says the one thing that banner cannot, which is what
-        // happens to this particular questionnaire next.
         setNotice(
           `“${title}” saved on this device. Add questions once it uploads.`
         );
         return;
       }
-      // A brand-new questionnaire has no sections at all, so the only useful next step is opening it.
       router.push(`/questionnaires/${outcome.saved.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create the questionnaire");
@@ -477,12 +281,6 @@ export default function QuestionnairesPage() {
       {error ? (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
       ) : null}
-      {/*
-        A QUEUED CREATE IS NOT AN ERROR AND MUST NOT WEAR THE RED BOX. `role="status"` rather than
-        `alert`: nothing went wrong, nothing was lost, and interrupting a screen reader for a save
-        that succeeded is the wrong trade. See the `notice` state for what it says that the outbox
-        banner cannot.
-      */}
       {notice ? (
         <div
           role="status"
@@ -492,52 +290,10 @@ export default function QuestionnairesPage() {
         </div>
       ) : null}
 
-      {/*
-        The change report from the upload that just happened, kept on screen until the next one.
-
-        NOT a toast. A toast is `aria-live="polite"`, never interrupts, and disappears on a timer —
-        which makes it the wrong home for a list of eleven rows that could not be read and the Excel
-        row numbers to find them at. This is the one thing on the page a designer may need to act on.
-      */}
       {report ? <UploadReport report={report} subject={reportSubject} className="mb-5" /> : null}
 
-      {/*
-        Drawn on the list rather than only on the detail page, because THIS is the screen with a
-        "Download .xlsx" button on every row. A designer sending a colleague their questions starts
-        here, and the difference between the two files — one of which carries every respondent they
-        have ever interviewed — has to be readable at the moment the row action is chosen, not one
-        navigation away.
-      */}
       <ArtefactNotice className="mb-5" />
 
-      {/*
-        ══ THE SEEDED DEFAULT QUESTIONNAIRE, POINTED AT FROM HERE (req 12) ═════════════════════
-        A designer asked to "use the default questionnaire" arrives on THIS page, because it is the
-        one called "questionnaires". The shared artisan instrument is not here and cannot be: the
-        two families are different TABLES, not two filters over one list. This page reads
-        `Questionnaire` rows — designer-authored forms, `GET /questionnaires` — while the seeded
-        default lives in `QuestionnaireSection` / `QuestionnaireQuestion`, upserted by
-        `backend/scripts/seed_questionnaire.py` from `app/data/questionnaire_questions.json` and
-        answered at `/questionnaire` (singular). Verified 2026-08-28:
-
-          grep -n "questionnairesection\|questionnairequestion" backend/scripts/seed_questionnaire.py
-          grep -n "db.questionnaire\b" backend/app/api/routes/questionnaire_forms.py
-
-        SO THERE IS NO CLIENT-SIDE FILTER HIDING IT AND NONE TO FIX. What was actually missing is
-        this line: the default was reachable but never OFFERED — a designer standing on an empty
-        "My questionnaires" had no route to the instrument the repository already ships, and the
-        two paths differ by one character in the URL and by one letter in the menu. Unifying the two
-        lists would be the wrong repair and is explicitly ruled out; a signpost is the right one.
-
-        A DESIGNER IS ENTITLED TO IT, WHICH IS WHY THIS IS AN UNCONDITIONAL LINK AND NOT A GATED
-        ONE. `/questionnaire` carries no `ROUTE_GUARDS` row, its nav entry is `can: everyone`
-        (`DynamicIslandNav.tsx`, "Take interview"), and on the server `GET /questionnaire/sections`,
-        `/questions` and `POST /questionnaire/interviews` all take `get_current_user` and nothing
-        more (`backend/app/api/routes/questionnaire.py`). Only EDITING the shared instrument is
-        gated — `require_questionnaire_manager`, PROFESSOR+ or the flag — and that is management,
-        not use. Drawing this behind a permission would be exactly the "hidden behind a permission
-        the API would in fact allow" failure this change was asked to remove.
-      */}
       {v2 ? (
         <p className="mb-5 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           Answer a form in a{" "}
@@ -581,46 +337,9 @@ export default function QuestionnairesPage() {
             setApplied(query);
             setPage(1);
           }}
-          // The placeholder names the columns; this names the corpus, which the page alone carries.
           ariaLabel="Search questionnaires"
           placeholder="Search by title or description"
         />
-        {/*
-          ══ A DESIGNER CAN REACH THIS, AND IT IS GATED BY NOTHING (req 11) ═══════════════════
-          Checked rather than assumed, because "the control is hidden behind a permission the API
-          would in fact allow" is the specific failure this was asked to rule out. All four rungs
-          agree that a DESIGNER (rank 35) may create a questionnaire, and none of them is stricter
-          than the endpoint. Verified 2026-08-28:
-
-            · The endpoint. `POST /questionnaires` runs `_require_designer(current_user)` — no rank
-              threshold and no ownership test — plus `_require_attachable_workshop` ONLY when the
-              body names a `designWorkshopId`:
-                grep -n "async def create_questionnaire" -A 12 backend/app/api/routes/questionnaire_forms.py
-              `_require_designer` is `can_run_design_workshops`, i.e. the SET {Designer, Admin,
-              Master Admin} — a set, not a floor, which is why a PROFESSOR (40) is outside it.
-              The attachment half needs no mirror in this form: the workshop dropdown below is fed
-              by `listDesignWorkshops`, whose server scope is `visible_to_clause` (creator OR
-              viewer-grant), and the attach check is `load_workshop_or_404(for_edit=True)` (creator
-              OR admin OR viewer-grant). For a designer those are the same set, so the picker cannot
-              offer a target the create call then refuses. Leaving the workshop unchosen — the
-              default — skips the check entirely.
-            · The route. `ROUTE_GUARDS` gates `/questionnaires` on `canRunDesignWorkshops`, the same
-              predicate, so the page opens for exactly the accounts the API serves:
-                grep -n "path: \"/questionnaires\"" -A 3 frontend/lib/permissions.ts
-            · The menu. `NAV_ITEMS` carries "My questionnaires" with the same `can`, so the
-              destination is offered rather than only typeable.
-            · This control. UNGATED ON PURPOSE — there is no `can…()` call on it and there must not
-              be. Every account that reaches this page has already passed the same predicate the
-              endpoint applies, so a second test here could only ever be stricter than the server
-              and would hide a door the API would open. `DESIGN_WORKSHOP_CREATOR_ROLES` is the
-              nearby trap: STARTING a design workshop is admin-only, and reusing that predicate here
-              — they read almost identically — would lock every designer out of building the
-              instrument for a workshop they are running.
-
-          It stays the QUIETER, third door, and that is a product decision rather than an oversight:
-          the spreadsheet pair above is the fast path and this page's own header comment says why.
-          Reachable and unhidden is the requirement; loudest is not.
-        */}
         <button type="button" className="field-button-secondary" onClick={() => setFormOpen((open) => !open)}>
           <Plus className="h-4 w-4" aria-hidden />
           {formOpen ? "Close" : "Start an empty one"}
@@ -636,9 +355,6 @@ export default function QuestionnairesPage() {
             </p>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            {/* Both boxes on this form are prose and both carry a microphone, matching the same
-                two boxes on `/questionnaires/[id]` and on Android's "New questionnaire" dialog. The
-                workshop dropdown beside it is a pick, not a phrase. */}
             <DictatedTextInput
               name="title"
               label="Title"
@@ -651,9 +367,6 @@ export default function QuestionnairesPage() {
             <FieldBlock
               label="Attach to a design workshop"
               hint={
-                /* WHICH OF THE FOUR EMPTY STATES, or the numbered cut — this picker had neither, at
-                   either level. `aria-live` because the trigger is not somewhere a reader can land
-                   while it is disabled. */
                 workshopNotice ? (
                   <p className="mt-1 text-xs leading-5 text-ink-500" aria-live="polite">
                     {workshopNotice}
@@ -665,39 +378,13 @@ export default function QuestionnairesPage() {
                 value={newWorkshopId}
                 onChange={setNewWorkshopId}
                 options={workshopSet.options}
-                /* THE UN-FILE ROW IS THE PRIMITIVE'S, and its label is the shared constant. The
-                   hand-built `{ value: "", label: "Not attached to a workshop" }` was one of nine
-                   strings this app had for four genuinely different meanings, and building it here
-                   as well as passing `noneLabel` would give two rows sharing the key "". */
                 noneLabel={NO_DESIGN_WORKSHOP}
                 emptyLabel={workshopEmptyLabel(workshopList, workshopVoice)}
                 ariaLabel="Attach to a design workshop"
                 searchable
-                /* R2: a picker with nothing in it must not be a thing standing between a designer and
-                   their questionnaire — and there is nothing here to open but the un-file row, which
-                   is already the value. Never while the read is still in flight: `workshopEmptyLabel`
-                   answers "Searching…" in the panel, and a disabled trigger cannot be opened to read
-                   it. */
                 disabled={workshopList.kind !== "loading" && workshopListStandsDown(workshopSet)}
               />
             </FieldBlock>
-            {/*
-              WHAT KIND OF QUESTIONNAIRE THIS IS — the owner's request of 2026-08-30, and the control
-              that makes it answerable: *"they also do market survey interviews, so create that
-              differentiation as well, so that we can map the questionnaires and the transcripts to
-              the correct stage in the report."*
-
-              `FieldBlock` and not `Field`, per the rule a dropdown is a `<button>` and a `<label>`
-              would forward a stray click into it and fold its value into the accessible name.
-
-              NOT `searchable`: two members of a constant vocabulary, which is the case
-              `SEARCH_THRESHOLD` answers correctly on its own. A filter box over two rows is a
-              control in front of a control.
-
-              THE BLANK ROW IS A REAL ANSWER and `noneLabel` says which — a designer who has not
-              decided must be able to leave it, and the server stores NULL for "not stated" rather
-              than refusing the create.
-            */}
             <FieldBlock
               label="Kind"
               hint={
@@ -726,10 +413,7 @@ export default function QuestionnairesPage() {
             maxLength={2000}
             explainWhenUnavailable={false}
           />
-          {/* Once for the form, because two microphones would otherwise print the same grey
-              paragraph twice where a browser has no recogniser. See the component. */}
           <DictationUnavailableNotice />
-          {/* Why Create is held, beside it — see `createHold`. */}
           <HeldPostNotice refusal={createHold} id={createHoldId} className="" sayPending />
           <ActionGroup>
             <button
@@ -746,27 +430,12 @@ export default function QuestionnairesPage() {
         </form>
       ) : null}
 
-      {/*
-        ══ SHOW DEACTIVATED ═══════════════════════════════════════════════════════════════════════
-
-        THE WORDING IS ANDROID'S, VERBATIM — the label and the sentence under it are copied character
-        for character from `QuestionnaireListScreen.kt:331-336`, per the house rule that Android owns
-        what a thing is CALLED. A designer moves between the two clients mid-workshop, and two
-        descriptions of one state is how they come to believe there are two states.
-
-        ABOVE THE TABLE AND ALWAYS VISIBLE, including while the list is empty. The empty state a
-        designer most needs this control for is the one they reach by deactivating their only
-        questionnaire — putting the switch inside the table would hide it exactly then.
-      */}
       <div className="mb-4 flex items-start justify-between gap-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2.5">
         <Toggle
           label="Show deactivated"
           checked={showDeactivated}
           onChange={(next) => {
             setShowDeactivated(next);
-            // BACK TO PAGE 1. The row count changes under the pager, so page 4 of the active-only
-            // list is very often past the end of the wider one — which renders as an empty table
-            // and reads as "there are none", the failure this whole control exists to end.
             setPage(1);
           }}
         />
@@ -777,8 +446,6 @@ export default function QuestionnairesPage() {
 
       <section className="panel overflow-hidden">
         {data === null ? (
-          // null is "still loading" and [] is "genuinely none" — a deliberate distinction. Saying
-          // "no questionnaires yet" during a fetch is both wrong and discouraging.
           <div className="p-4 text-sm text-ink-700">Loading…</div>
         ) : data.items.length === 0 ? (
           <div className="p-4">
@@ -801,14 +468,10 @@ export default function QuestionnairesPage() {
               </thead>
               <tbody className="divide-y divide-line-200">
                 {data.items.filter((row) => inTab(row, tab, me?.id ?? null)).map((row) => (
-                  // The whole row opens the questionnaire; every action button keeps its own click.
                   <OpenableRow key={row.id} href={`/questionnaires/${row.id}`}>
                     <td className="px-4 py-3">
                       <OpenableRowLink href={`/questionnaires/${row.id}`}>{row.title}</OpenableRowLink>
                       <div className="text-xs text-ink-500">
-                        {/* The source file name is null for a questionnaire built in the app, which
-                            is a fact worth showing rather than a blank: it tells a designer whether
-                            there is a spreadsheet somewhere that this came from. */}
                         {row.sourceFilename ? (
                           <span className="inline-flex items-center gap-1">
                             <FileSpreadsheet className="h-3 w-3" aria-hidden />
@@ -819,15 +482,6 @@ export default function QuestionnairesPage() {
                         )}
                         {row.version > 1 ? ` · version ${row.version}` : ""}
                       </div>
-                      {/*
-                        THE PUBLISHED DEFAULT, NAMED — added 2026-08-28 with the `isShared` column.
-
-                        A designer's list can now contain a form they did not upload, and a row that
-                        cannot say why reads as somebody else's work leaking in. The badge carries a
-                        WORD and not only a tint, per the rule that colour never carries meaning on
-                        its own, and it says what the row is FOR ("everyone can use it") rather than
-                        repeating the column's name at the reader.
-                      */}
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         {row.isShared ? (
                           <span className="inline-flex items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-1.5 py-0.5 text-[11px] font-medium text-purple-700">
@@ -835,26 +489,11 @@ export default function QuestionnairesPage() {
                             Standard form — everyone can use it
                           </span>
                         ) : null}
-                        {/*
-                          DEACTIVATED, IN A WORD — Android's chip wording, and the badge that makes
-                          "Show deactivated" above legible. The switch WIDENS the list rather than
-                          swapping it, so without this a retired form is indistinguishable from a
-                          live one in the same table. Amber-100/800 rather than a tint alone: colour
-                          never carries meaning on its own here, so the state survives greyscale, a
-                          colour-blind reader and a printed screenshot.
-                        */}
                         {!row.isActive ? (
                           <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
                             Deactivated
                           </span>
                         ) : null}
-                        {/*
-                          THE KIND, drawn only when one was stated. An unstated kind prints NOTHING
-                          here rather than "Kind not stated": on a list where most rows predate the
-                          column, a badge on every row would be twenty repetitions of an absence and
-                          would bury the two that carry a real answer. The detail page says it in
-                          full, where there is one row to say it about.
-                        */}
                         {row.kind ? (
                           <span className="inline-flex items-center gap-1 rounded-md border border-line-200 bg-surface-50 px-1.5 py-0.5 text-[11px] font-medium text-ink-700">
                             {row.kindLabel || questionnaireKindLabel(row.kind)}
@@ -873,28 +512,9 @@ export default function QuestionnairesPage() {
                         <Link className={rowAction("neutral")} href={`/questionnaires/${row.id}/answer`}>
                           Record answers
                         </Link>
-                        {/*
-                          UNGATED, exactly like "Download question set" below it and for the same
-                          reason: the server does NOT require ownership here, because the instrument
-                          already leaves this system for any designer through
-                          `/question-set.xlsx`. What the server does gate is the TARGET — the
-                          workshop the copy is attached to — and the dialog's dropdown is fed the
-                          page's own scoped workshop list, so the picker and the server agree about
-                          which workshops this account may write to.
-                        */}
                         <button type="button" className={rowAction("neutral")} onClick={() => setReuseRow(row)}>
                           Reuse at another workshop
                         </button>
-                        {/*
-                          THE SHARING DOWNLOAD COMES FIRST, and its label says what it is rather than
-                          what format it is. It is offered on EVERY row, including a colleague's
-                          questionnaire, because the server gates it exactly as it gates reading the
-                          form — any designer. "Download .xlsx" beside it is the lossless one, which
-                          answers 403 for anyone but the owner, a designer on its design workshop, or
-                          an admin; it is left in place for everyone rather than hidden, because this
-                          list does not know which of those the reader is and a refusal that names
-                          the question set is more use than a control that silently vanished.
-                        */}
                         <button
                           type="button"
                           className={rowAction("neutral")}
@@ -930,13 +550,6 @@ export default function QuestionnairesPage() {
         <DeletedQuestionnairesCard ownOnly={!canDeleteRecords} onRestored={() => void load()} />
       ) : null}
 
-      {/*
-        `key` on the questionnaire id, so the dialog is a FRESH component per row rather than the
-        same one re-pointed. Its state — the picked target, the typed title, the titles already at
-        that target — is seeded from the row it is about, and React keeps state across a prop change
-        on the same element. Without the key, opening it on a second row would show the first row's
-        default title in the box.
-      */}
       {reuseRow ? (
         <ReuseDialog
           key={reuseRow.id}
@@ -944,11 +557,6 @@ export default function QuestionnairesPage() {
           questionnaireId={reuseRow.id}
           sourceTitle={reuseRow.title}
           sourceWorkshopId={reuseRow.designWorkshopId}
-          /* NARROWED, NOT HANDED WHOLE: `ReuseTarget` is the nine fields the picker reads, so the
-             dialog stays clear of `DwSummary`'s thirty and of the API layer behind them. The nine
-             are what the shared builder needs to draw `title` with a `craft · cluster · date` hint,
-             which is what replaced the bare title that made two workshops in one craft draw as two
-             identical rows. */
           workshops={workshops.map((workshop) => ({
             id: workshop.id,
             title: workshop.title,
@@ -964,9 +572,6 @@ export default function QuestionnairesPage() {
           onClose={() => setReuseRow(null)}
           onReused={(result) => {
             setReuseRow(null);
-            // The same panel the upload path fills, with the same report shape — `provenance.action`
-            // is `"reused"` and its sentence is the one thing on this screen that states the copy
-            // carried no answers. A toast alone would say it and take it away again.
             setReport(result.report);
             setReportSubject(result.questionnaire.title);
             void load();
@@ -982,8 +587,6 @@ export default function QuestionnairesPage() {
       <UploadDialog
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
-        /* The same nine fields the reuse dialog gets, off the same one read, so the two dialogs and
-           the create form above cannot offer three differently-worded versions of one list. */
         workshops={workshops.map((workshop) => ({
           id: workshop.id,
           title: workshop.title,
@@ -999,11 +602,7 @@ export default function QuestionnairesPage() {
         onUploaded={(result) => {
           setUploadOpen(false);
           setReport(result.report);
-          // Cleared, not left standing: the panel below is now an UPLOAD report, and a stale subject
-          // would name the last copy made as the thing this upload happened to.
           setReportSubject(null);
-          // The list is refreshed rather than optimistically prepended: the upload may have been an
-          // edit of a row already on screen, and re-reading is the only way this page learns which.
           void load();
           toast({
             tone: "success",

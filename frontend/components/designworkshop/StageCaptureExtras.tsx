@@ -1,12 +1,5 @@
 "use client";
 
-/**
- * Everything the stage form gained on 2026-10-17 to cut retyping, in one place so the stage page
- * mounts it with one line: suggestions (`StageAssistPanel`), attendance (stage 3), "Log today"
- * (stage 13), the market-survey sittings (stage 8), one row per selected file (stages 8 and 11),
- * and the counts that replace typed boxes (`useComputedCounts`).
- */
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ClipboardList, ImagePlus } from "lucide-react";
 
@@ -31,13 +24,11 @@ export const SURVEY_STAGE = "MARKET_SURVEY_CAPTURE";
 export const CLOSING_STAGE = "INSPECTION_CLOSING";
 export const SETUP_STAGE = "WORKSHOP_SETUP";
 
-/** B11: the collections that take one row per selected photograph, and the box each file fills. */
 export const ROWS_FROM_FILES: Record<string, { entityKey: string; fieldKey: string; noun: string }> = {
   SKETCH_DEVELOPMENT: { entityKey: "sketch", fieldKey: "image", noun: "sketch" },
   MARKET_SURVEY_CAPTURE: { entityKey: "competitorProduct", fieldKey: "photo", noun: "product" }
 };
 
-/** The stage's assist payload, refetched whenever `token` moves (after each save). */
 export function useStageAssist(workshopId: string | null | undefined, stageKey: string, token: number): DwAssist | null {
   const [assist, setAssist] = useState<DwAssist | null>(null);
   useEffect(() => {
@@ -48,7 +39,6 @@ export function useStageAssist(workshopId: string | null | undefined, stageKey: 
         if (!cancelled) setAssist(payload);
       })
       .catch(() => {
-        // Offline or refused: the form works without suggestions, and says nothing about it.
       });
     return () => {
       cancelled = true;
@@ -59,16 +49,10 @@ export function useStageAssist(workshopId: string | null | undefined, stageKey: 
 
 const keysOf = (row: DwRow) => [row._entryId, row._clientKey].filter(Boolean).map(String);
 
-/** The workshop days attendance is taken on, from this stage's schedule or the server's answer. */
 export function attendanceDaysFor(collections: Record<string, DwRow[]>, assist: DwAssist | null): number[] {
   return workshopDays(collections.workshopScheduleDay ?? [], assist?.attendanceDays ?? []);
 }
 
-/**
- * C7/C8: keep each computed box equal to what the rows come to — the derived-field pattern, so the
- * draft, the live preview and the save all carry the same number. Nothing is written when nothing
- * can be counted, which leaves a value typed on an older workshop where it was.
- */
 export function useComputedCounts({
   stageKey,
   assist,
@@ -130,7 +114,6 @@ export function useComputedCounts({
       let dirty = false;
       const next = current.map((row) => {
         const value = compute(row);
-        // A counted participant carries its tick-list, so it is never read back as a typed one.
         const stamp = entityKey === "participant" && !Array.isArray(row.absentDays);
         if (value === null || (row[field] === value && !stamp)) return row;
         dirty = true;
@@ -141,7 +124,6 @@ export function useComputedCounts({
   }, [wanted, singleton, collections]);
 }
 
-/** Apply one suggestion to the form: a FILL into blank boxes, or ADD_ROWS appended. */
 export function applySuggestion(
   suggestion: DwAssistSuggestion,
   singleton: DwEntryData,
@@ -184,7 +166,6 @@ export function StageCaptureExtras({
   disabled: boolean;
 }) {
   const [applied, setApplied] = useState<ReadonlySet<string>>(() => new Set());
-  // A fresh answer from the server is the new truth about what is still worth offering.
   useEffect(() => setApplied(new Set()), [assist]);
   const suggestions = (assist?.suggestions ?? []).filter((s) => !(s.kind === "ADD_ROWS" && applied.has(s.id)));
   const fromFiles = ROWS_FROM_FILES[stage.key];
@@ -236,7 +217,6 @@ export function StageCaptureExtras({
   );
 }
 
-/** C8: the linked questionnaire sittings, counted and summarised — never copied in as rows. */
 function SurveySittingsCard({ assist }: { assist: DwAssist }) {
   const sittings = assist.sittings ?? [];
   const total = sittings.reduce((sum, s) => sum + (s.count || 0), 0);
@@ -262,10 +242,6 @@ function SurveySittingsCard({ assist }: { assist: DwAssist }) {
   );
 }
 
-/**
- * B11: one row per selected photograph. Each file is kept on this device and uploads with the rest
- * of the stage; the row is numbered (C6) and left unnamed, so it reads as incomplete until named.
- */
 function RowsFromFiles({
   workshopId,
   stageKey,

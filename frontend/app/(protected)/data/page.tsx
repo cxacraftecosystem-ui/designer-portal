@@ -68,10 +68,6 @@ import type {
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
-// ---------------------------------------------------------------------------
-// Local types for the /data browsing endpoints
-// ---------------------------------------------------------------------------
-
 type RecordType = "workshop" | "artisan" | "product" | "tool" | "process" | "interview" | "user" | "category";
 
 type TreeEntry = {
@@ -84,9 +80,7 @@ type TreeEntry = {
   url?: string | null;
   sizeBytes?: number | string | null;
   transcriptAvailable?: boolean;
-  /** 0.0.6: the recording's transcript files (md, docx, srt, vtt; with and without timestamps), when it has turns. */
   transcriptFiles?: { name: string; format: string; track: string; timestamps: boolean; url: string }[];
-  /** Inline body for generated text files (details.txt / answers.txt). */
   content?: string | null;
 };
 
@@ -96,7 +90,6 @@ type InfoField = { label: string; value: string };
 
 type FolderInfo = { title: string; fields: InfoField[] };
 
-/** One of the three ways the repository can be browsed (served with every tree level). */
 type Taxonomy = {
   id: string;
   name: string;
@@ -112,9 +105,7 @@ type TreeResponse = {
   info?: FolderInfo | null;
   truncated?: boolean;
   taxonomies?: Taxonomy[];
-  /** Which taxonomy the current path sits in; null at the root. */
   taxonomy?: string | null;
-  /** Served with every level; see `ReportResponse` for the split these two express. */
   designWorkshopsVisible?: boolean;
   designWorkshopsDownloadable?: boolean;
 };
@@ -147,11 +138,6 @@ const INCLUDE_OPTIONS = [
 
 type IncludeKey = (typeof INCLUDE_OPTIONS)[number]["key"];
 
-// ---------------------------------------------------------------------------
-// Small helpers
-// ---------------------------------------------------------------------------
-
-/** Folder icon per record type (skill: Android-parity records, purple visual language). */
 const RECORD_ICONS: Record<string, typeof Folder> = {
   workshop: UsersRound,
   craft: Brush,
@@ -162,10 +148,6 @@ const RECORD_ICONS: Record<string, typeof Folder> = {
   interview: ClipboardList,
   user: UserCircle,
   category: Folder,
-  // The two folder kinds the by-design-workshop taxonomy adds. `Layers` for the workshop because it
-  // is twenty-two stages stacked, `Brush` for a stage because that is the craft-work icon this app
-  // already uses — and NOT a second workshop icon, because `UsersRound` above is the LEGACY
-  // Workshop table and a reader has to be able to tell the two apart at a glance in one tree.
   designWorkshop: Layers,
   designWorkshopStage: Brush
 };
@@ -190,43 +172,11 @@ function fileIcon(entry: TreeEntry) {
   }
 }
 
-/** Swap a manifest path's extension for .mp4, keeping any directory part. */
 function mp4Path(path: string) {
   return `${path.replace(/\.[^./\\]+$/, "")}.mp4`;
 }
 
-/**
- * The whole-repository archive's filename — `design-workshop-dataset.zip`.
- *
- * ── IT WENT AWAY AND CAME BACK, AND BOTH MOVES WERE THE SAME RULE ────────────────────────────────
- * IT WAS A FILENAME THAT MISLED BY ITSELF. `GET /export/dataset` built the seven legacy repository
- * tables and their media and contained not one field of a design & prototype workshop —
- * `grep -c designWorkshop backend/app/api/routes/export.py` answered zero. A researcher archived a
- * file whose name promised the twenty-two-stage record, opened it a year later, found artisans and
- * products, and had no way to tell whether the workshops had been left out or had never been
- * recorded. That is worse than an omission: it is an artefact that asserts something false about a
- * corpus, in the one place nobody reads critically. So the name was retired to
- * `repository-dataset.zip` and this comment named the real fix — make the name TRUE — as belonging
- * in `export.py` rather than here.
- *
- * THAT FIX LANDED ON 2026-08-31 and the name is therefore back. The archive now carries a
- * `Design workshops/` section: one folder per workshop, its `details.txt`, one `.txt` per entity
- * that has rows under the stage that owns it, and the photographs those rows cite — the same shape
- * as the "By design workshop" folder in the tree below, so a researcher finds the workshop in the
- * archive where they found it on screen. See the block above `DESIGN_WORKSHOP_FOLDER` in
- * `backend/app/api/routes/export.py`.
- *
- * ── AND IT IS STILL NOT TRUE FOR EVERYONE, WHICH IS WHY THE NOTE BELOW SURVIVED ──────────────────
- * Reading design-workshop data and taking it out are different entitlements
- * (`canViewDesignWorkshopData` vs `canExportDesignWorkshopData` — a professor holds only the first),
- * so a professor's archive genuinely does not contain them. The filename cannot say that and does
- * not try; the sentence after the download does, and the archive itself carries a `NOT INCLUDED.txt`
- * saying how many workshops were withheld and where to read them. A name is not the place to encode
- * a permission — a note is.
- */
 function repositoryArchiveName(): string {
-  // NAMING 2.1: DesignWorkshop_Dataset_2026-10-18_All-Records_Export.zip — dated, so a second
-  // download never collides with the first.
   return exportFilename("Dataset", "Export", "zip", { subject: "All Records" });
 }
 
@@ -234,45 +184,10 @@ function zipFilename(folderName: string) {
   return exportFilename("Dataset", "Export", "zip", { subject: folderName });
 }
 
-/** Filename without its extension — used to pair a transcript with its media file. */
 function stem(name: string) {
   return name.replace(/\.[^.]+$/, "");
 }
 
-// ---------------------------------------------------------------------------
-// Transcripts, in the shared renderer
-// ---------------------------------------------------------------------------
-
-/**
- * A transcript, inside its own scroll box.
- *
- * ── THIS WAS A SECOND MARKDOWN RENDERER, AND IT IS NOT ONE ANY MORE — 2026-09-03 ────────────────
- *
- * The body of this function was a 25-entry `components` map handed to its own `<ReactMarkdown>`: a
- * parallel copy of `components/Markdown.tsx`, drifted. The two disagreed about the body colour
- * (ink-700 here, ink-900 there), about inline code (a purple chip here, a bordered surface-50 one
- * there), about blockquote rules (purple-300 against line-200) and about heading levels — this one
- * demoted `#` to an `<h3>`. And the corpus is IDENTICAL: `/media` renders the very same transcript
- * text through the shared component (`app/(protected)/media/page.tsx`), so one researcher reading a
- * transcript here and another reading it there saw two different documents and neither could tell
- * which was the house style. That is the duplication rule this repository applies to
- * `readableError` and `useDragReorder`: a second private implementation of a shared thing is a
- * divergence waiting for somebody to compare two screens.
- *
- * WHAT IS KEPT IS THE ONLY PART THAT WAS EVER LOCAL — the box. `max-h-80 overflow-y-auto` is this
- * screen's decision (a file tree row must not grow to the length of an interview) and belongs to
- * the caller, not to a renderer used in eight other places. The surface, border and padding go with
- * it for the same reason.
- *
- * THE ESCAPING PROPERTY SURVIVES, AND IT IS THE ONE THING NOT TO LOSE HERE. `Markdown.tsx` omits
- * `rehype-raw` deliberately, so raw HTML inside a transcript stays escaped text. A transcript is
- * machine-generated from somebody's recording and is not trusted markup; this screen renders it for
- * a professor with a dataset download beside it.
- *
- * The heading demotion is NOT reproduced, and that is a decision rather than an omission: it existed
- * only here, `/media` never had it, and the shared renderer's h1–h4 are what the rest of the
- * application shows for the same text. One appearance, chosen once.
- */
 function TranscriptMarkdown({ children }: { children: string }) {
   return (
     <div className="max-h-80 overflow-y-auto rounded-md border border-line-200 bg-surface-50 p-4">
@@ -281,64 +196,28 @@ function TranscriptMarkdown({ children }: { children: string }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Data tables accordion — lazy /data/report?format=json per folder, styled
-// sheets + a Bearer-authenticated .xlsx download of the same subtree.
-// ---------------------------------------------------------------------------
-
 type ReportSheet = {
   name: string;
   color?: string | null;
   columns: string[];
   rows: Array<Array<string | number | null>>;
-  /** The screen shows fewer rows than exist: the preview cut it, or the download's own cap did. */
   truncated?: boolean;
-  /** The preview cut this sheet (`PREVIEW_ROWS` on the server); the .xlsx has the rest. */
   preview?: boolean;
-  /** The .xlsx itself stops at the server's row cap. The last row is then a note, not data. */
   capped?: boolean;
-  /** Rows in the .xlsx, or null where the server did not count them. */
   totalRows?: number | null;
-  /**
-   * Why THIS sheet is truncated, when the reason is not the row cap.
-   *
-   * The banner below used to be the only sentence, and it says "This list hit the server row cap —
-   * browse a narrower folder to see the rest". That is right for a 5000-row clip and wrong for the
-   * design-workshop index page, which is 44 rows long and truncated because the TAB budget ran out —
-   * a different fact with a different next move, and a narrower folder does not recover a tab.
-   */
   truncatedNote?: string | null;
-  /**
-   * Which family a sheet belongs to. Only `"designWorkshop"` is set today, by
-   * `data_browser._dw_stamp`, and it is what tells this panel which tabs the reader may be looking
-   * at and not allowed to export — a question the colour cannot answer, because a palette edit must
-   * never be able to change who may download what.
-   */
   group?: string | null;
 };
 
-/**
- * The `group` the server stamps on every design-workshop sheet
- * (`data_browser.DW_SHEET_GROUP`). A key and not the tab colour, and the server's own note says why:
- * a palette edit must never be able to change which sheets a permission notice is about.
- */
 const DW_SHEET_GROUP = "designWorkshop";
 
 type ReportResponse = {
   sheets: ReportSheet[];
-  /** Rows per sheet in this preview. */
   previewRows?: number;
-  /** Whether this account may read design-workshop tables at all (Professor and above). */
   designWorkshopsVisible?: boolean;
-  /**
-   * Whether it may take them OUT (Admin and Master Admin). A professor is `true` above and `false`
-   * here, so this panel has to SAY the difference where the download button is — handing them a
-   * button that answers 403 would teach them the product is broken rather than that the rule exists.
-   */
   designWorkshopsDownloadable?: boolean;
 };
 
-/** The line over a sheet the screen does not show in full; null when it is whole. */
 function sheetCutNote(sheet: ReportSheet): string | null {
   const shown = sheet.rows.length - (sheet.capped ? 1 : 0);
   if (sheet.capped) {
@@ -350,13 +229,11 @@ function sheetCutNote(sheet: ReportSheet): string | null {
   return `Preview: first ${shown}${of} rows. The download has every row.`;
 }
 
-/** The count on a sheet's tab: every row when the server counted them. */
 function sheetCount(sheet: ReportSheet): string {
   if (typeof sheet.totalRows === "number") return sheet.totalRows.toLocaleString();
   return sheet.preview ? `${sheet.rows.length}+` : String(sheet.rows.length);
 }
 
-/** A refused report download's own sentence (the busy answer says when to try again). */
 async function reportRefusal(response: Response, fallback: string): Promise<string> {
   try {
     const body = (await response.json()) as { detail?: unknown };
@@ -366,7 +243,6 @@ async function reportRefusal(response: Response, fallback: string): Promise<stri
   }
 }
 
-/** Normalize a sheet color (accepts `RRGGBB`, `AARRGGBB`, or `#RRGGBB`) to a CSS color. */
 function sheetColor(raw?: string | null) {
   const fallback = "#58068c";
   if (!raw) return fallback;
@@ -377,7 +253,6 @@ function sheetColor(raw?: string | null) {
   return value;
 }
 
-/** White text on dark pills, ink on light ones. */
 function pillTextColor(cssHex: string) {
   const match = /^#([0-9A-Fa-f]{6})$/.exec(cssHex);
   if (!match) return "#ffffff";
@@ -387,7 +262,6 @@ function pillTextColor(cssHex: string) {
   return (r * 299 + g * 587 + b * 114) / 1000 > 160 ? "#1e1b2e" : "#ffffff";
 }
 
-/** The server names the workbook (NAMING 2.1); this is only the fallback when no header arrives. */
 function reportFilename(folderName: string, disposition: string | null) {
   return (
     fileNameFromDisposition(disposition) ??
@@ -395,17 +269,6 @@ function reportFilename(folderName: string, disposition: string | null) {
   );
 }
 
-/**
- * The tabular half of a folder.
- *
- * Every folder in the browser has a spreadsheet behind it — the records that live under
- * that path — and this panel is where it is read. It opens expanded, because the whole
- * point is that the tabular entry is visible alongside the media folders rather than
- * hidden behind a click.
- *
- * Sheets are switched with tabs rather than stacked: a whole-repository report is 14
- * sheets and stacking them all put up to 14 x 5000 rows in one DOM pass.
- */
 function DataTablesPanel({
   path,
   folderName,
@@ -423,12 +286,8 @@ function DataTablesPanel({
   const [activeSheet, setActiveSheet] = useState(0);
   const [filter, setFilter] = useState("");
 
-  // THE WHOLE REPOSITORY LOADS ON A CLICK (D39). The root and each taxonomy's top level are every
-  // record at once; opening the page used to build two of them together (the root, then the
-  // default taxonomy this page lands on a moment later), which ratcheted the API's memory.
   const wholeRepository = path.split("/").filter(Boolean).length <= 1;
   const [requested, setRequested] = useState(!wholeRepository);
-  // The one request in flight. A second load while it is out is dropped, never sent.
   const inFlight = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
@@ -447,7 +306,6 @@ function DataTablesPanel({
       setFilter("");
     } catch (err) {
       if (abort.signal.aborted) return;
-      // The server's own sentence, the busy answer included.
       setError(err instanceof Error ? err.message : "Couldn't load this folder");
     } finally {
       if (inFlight.current === abort) inFlight.current = null;
@@ -459,8 +317,6 @@ function DataTablesPanel({
     if (open && requested && !report) void load();
   }, [open, requested, report, load]);
 
-  // Leaving the folder cancels its request. Releasing the guard here is what lets StrictMode's
-  // setup, cleanup, setup send it again rather than deadlock on an aborted attempt.
   useEffect(
     () => () => {
       inFlight.current?.abort();
@@ -474,28 +330,17 @@ function DataTablesPanel({
     else setRequested(true);
   }
 
-  // Sheets that carry no rows are noise in the tab strip — a folder with only products
-  // should not offer eight empty tabs.
   const sheets = useMemo(
     () => (report?.sheets ?? []).filter((sheet) => sheet.rows.length > 0),
     [report]
   );
   const sheet = sheets[activeSheet];
 
-  /**
-   * True exactly when this reader is looking at design-workshop tables they may not export.
-   *
-   * BOTH HALVES, and neither alone. `designWorkshopsDownloadable === false` alone would print the
-   * notice on every folder in the repository, including the ones that hold no design workshop at
-   * all — a permission notice about data that is not on the screen reads as a fault. The sheet test
-   * is what ties it to what the reader can actually see.
-   */
   const exportBlocked = useMemo(
     () => report?.designWorkshopsDownloadable === false && sheets.some((entry) => entry.group === DW_SHEET_GROUP),
     [report, sheets]
   );
 
-  /** Case-insensitive match across every cell of a row. */
   const rows = useMemo(() => {
     if (!sheet) return [];
     const needle = filter.trim().toLowerCase();
@@ -513,7 +358,6 @@ function DataTablesPanel({
     setDownloading(true);
     setError(null);
     try {
-      // Same-origin: the session cookie goes with it, and this site adds the bearer token.
       const response = await fetch(`${API_BASE}/api/data/report${buildQuery({ path, format: "xlsx" })}`);
       if (!response.ok) throw new Error(await reportRefusal(response, "The report download didn't finish. Please try again."));
       const blob = await response.blob();
@@ -546,12 +390,6 @@ function DataTablesPanel({
           {downloading ? "Preparing report…" : "Download report (.xlsx)"}
         </button>
       </ActionGroup>
-      {/* SAID WHERE IT APPLIES — beside the button, not in a help page. This reader can see the
-          design-workshop tabs below and the workbook they download will not carry them, so the
-          sentence has to be where the decision to click is made. The FILE says it too — the server
-          replaces the dropped block with one sheet naming what was withheld — because a workbook
-          outlives this page; these are the two halves of one answer, not a duplicate. The button
-          stays enabled: the rest of the workbook is theirs and always has been. */}
       {exportBlocked ? (
         <p className="border-t border-line-200 bg-surface-50 px-4 py-2 text-xs text-ink-500">
           Design workshop tables are on screen only. The .xlsx carries the rest.
@@ -590,7 +428,6 @@ function DataTablesPanel({
                 <div className="p-4 text-sm text-ink-500">No tabular data under this folder.</div>
               ) : (
                 <>
-                  {/* Sheet tabs — the same tabs as the downloaded workbook, same colours. */}
                   <div
                     className="flex gap-1 overflow-x-auto border-b border-line-200 bg-surface-50 px-2 py-2"
                     role="tablist"
@@ -653,26 +490,12 @@ function DataTablesPanel({
                         </span>
                       </div>
 
-                      {/*
-                        THE DEFAULT NO LONGER OFFERS THE DOWNLOAD AS THE WAY TO SEE THE REST, because
-                        it is not one (2026-09-03). The .xlsx is built from the same capped read, so a
-                        reader told to download it got the identical first slice in a spreadsheet and
-                        no sign that anything was still missing — a truncation notice that sends the
-                        reader somewhere it is not fixed is worse than no notice, which is the whole
-                        of rule 10. Narrowing the folder is the one move that genuinely returns rows
-                        this list is not showing. Design-workshop sheets ship their own
-                        `truncatedNote` for the tab-budget case and are unaffected; this is the
-                        fallback the record and media sheets fall to.
-                      */}
                       {sheetCutNote(sheet) ? (
                         <p className="mx-4 mb-3 rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-800">
                           {sheetCutNote(sheet)}
                         </p>
                       ) : null}
 
-                      {/* The grid scrolls horizontally inside its own box so a 27-column
-                          tool sheet never makes the page itself scroll sideways. */}
-                      {/* Focusable so a keyboard can scroll it (UX audit DW-12). */}
                       <div
                         className="max-h-128 overflow-auto border-t border-line-200 focus-visible:outline-2 focus-visible:outline-purple-700"
                         tabIndex={0}
@@ -741,11 +564,6 @@ function DataTablesPanel({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Browse by type — jump straight to a record type's rows (most recent first),
-// optionally narrow to one record and see it with its linked media.
-// ---------------------------------------------------------------------------
-
 type BrowseRow = { id: string; name: string; creator: string; createdAt?: string };
 
 type WithCreator = { createdBy?: { name?: string | null } | null };
@@ -754,43 +572,16 @@ function sortRecent<T extends { createdAt?: string }>(items: T[]) {
   return [...items].sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 }
 
-/**
- * ONE PAGE of a record type, with the arithmetic that says it is one page.
- *
- * `load` used to be `() => Promise<BrowseRow[]>` — no page argument to give it, and `PageResult.total`
- * discarded in all eight implementations. The panel then drew those rows in a scroll box that simply
- * ended: no pager, no count, no notice. On this database that meant the first 100 of 2530 media
- * files and the first 100 of 749 artisans (counted 2026-08-15) on the screen whose entire purpose is
- * "browse everything we hold", with ~96% of the media table withheld and nothing saying so — and the
- * "Narrow to one record" ComboBox beside it filtering only those 100, so a researcher who typed a
- * filename they were holding in their hand was told there is no such record.
- *
- * The same file already surfaces truncation twice, in the tree panel ("This listing was truncated at
- * the server cap…") and in the dataset download; this panel knew the vocabulary and did not use it.
- */
 type BrowsePage = { rows: BrowseRow[]; page: number; pages: number; total: number };
 
 type BrowseTypeDef = {
   label: string;
-  /** linkedRecordType value used by /media for this record type. */
   linkedType: string;
   editHref: (id: string) => string;
-  /**
-   * The record's READ-ONLY page — where a click on its row goes (owner ruling, 2026-10-16). Null for
-   * a type with no such page yet, whose row then offers only Update.
-   */
   viewHref: ((id: string) => string) | null;
   load: (page: number) => Promise<BrowsePage>;
 };
 
-/**
- * Map one server page into browse rows, keeping the envelope.
- *
- * The recency sort is WITHIN THE PAGE, exactly as it always was — `/crafts` answers name-ascending
- * on purpose (see the ordering comment in `routes/crafts.py`) and this screen prefers newest-first,
- * so each page is re-ordered locally. It cannot and must not try to be a global sort: the rows past
- * the page boundary are not here, and pretending otherwise is the defect this whole change is about.
- */
 function browsePage<T>(result: PageResult<T>, map: (row: T) => BrowseRow): BrowsePage {
   return {
     rows: sortRecent(result.items.map(map)),
@@ -843,11 +634,6 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
   workshop: {
     label: "Workshops",
     linkedType: "workshop",
-    // Workshops, crafts and processes are edited INLINE on their list page rather than at a
-    // `/[id]/edit` route, so the id travels as `?edit=` — read by `useEditDeepLink` on each of those
-    // pages. Every one of these three used to discard the id this signature declares and return the
-    // bare list route, which rendered the CREATE form: "Edit record" on a record the researcher had
-    // already drilled into showed them an empty form, and filling it in made a second record.
     editHref: (id) => `/workshops?edit=${id}`,
     viewHref: RECORD_VIEW_HREF.workshop,
     load: async (page) =>
@@ -874,22 +660,6 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
   questionnaire: {
     label: "Questionnaire",
     linkedType: "questionnaire",
-    /*
-      THE LAST OF EIGHT ARMS STILL DISCARDING THE ID ITS OWN SIGNATURE DECLARES, fixed 2026-09-20.
-
-      `editHref` is typed `(id: string) => string` and every sibling spends it — `/crafts?edit=`,
-      `/workshops?edit=`, `/processes?edit=`, `/artisans/{id}/edit`. This one threw it away and
-      returned the bare route, so "Edit record" on an interview a researcher had just drilled into
-      opened the blank CREATE form: the same screen the Questionnaire tile opens, with the clicked
-      record nowhere on it. Filling it in filed a SECOND sitting, which under one-entry-per-artisan-
-      set either folded the answers into a shared entry nobody asked for or came back 409.
-
-      It could not be fixed before now because there was nothing on the receiving end. `/questionnaire`
-      gained its `useEditDeepLink` wiring in the same change as this line, and the two must stay
-      together: this href without that hook is a link that appears to work and goes nowhere, which is
-      worse than the bug it replaced.
-    */
-    // An interview is a session of the shared questionnaire (UNIFY 4.4): it is corrected in its workspace.
     editHref: (id) => `/questionnaire/sessions/${encodeURIComponent(id)}`,
     viewHref: RECORD_VIEW_HREF.interview,
     load: async (page) =>
@@ -953,40 +723,15 @@ function mediaTypeIcon(mediaType?: string | null) {
 }
 
 function BrowseByTypePanel() {
-  // WHETHER THIS READER HAS SOMEWHERE ELSE TO GO for the design-workshop half, which decides whether
-  // the note after a download names it. Mirrors `deps.can_view_design_workshop_data`; a reader who
-  // cannot open that folder must not be told to.
   const { user } = useAuth();
   const designWorkshopsVisible = canViewDesignWorkshopData(user);
   const [typeKey, setTypeKey] = useState("");
-  /**
-   * The page on screen, envelope and all. `null` means "loading", `[]` means "there really are
-   * none" — the distinction this repository keeps deliberately, so a fetch in flight never renders
-   * as an empty repository.
-   */
   const [browse, setBrowse] = useState<BrowsePage | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  /**
-   * THE OPEN RECORD, HELD — the row itself, not an id to be looked up in whatever page is loaded.
-   *
-   * This is the whole of the page-turn guarantee, and it is deliberately structural rather than a
-   * rule somebody has to remember. When the panel kept only `recordId` and recovered the row with
-   * `rows?.find((row) => row.id === recordId)`, every fact on screen about the open record — its
-   * name, its creator, its date, whether the card rendered at all — was a property of the page in
-   * `browse`. Load a different page and the card silently emptied: `recordId` was still set, so the
-   * table branch below (`typeKey && !recordId`) stayed hidden too, and the panel rendered NOTHING
-   * with a record still selected in the box above it. The reset effect below says a page turn must
-   * not close the open record; holding the row is what makes that true instead of aspirational.
-   *
-   * It also removes the second copy of the same state. `recordId` is derived from this, so the two
-   * cannot disagree, and a row can only be selected from rows that were on screen when it was
-   * picked — which is where it came from.
-   */
   const [selected, setSelected] = useState<BrowseRow | null>(null);
   const recordId = selected?.id ?? "";
   const [recordMedia, setRecordMedia] = useState<MediaFile[] | null>(null);
-  /** How much of this record's media the panel is holding — same ceiling, same rule. */
   const [recordMediaCut, setRecordMediaCut] = useState<ListCut | null>(null);
   const [mediaLoading, setMediaLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -996,15 +741,6 @@ function BrowseByTypePanel() {
 
   const def = typeKey ? BROWSE_TYPES[typeKey] : null;
 
-  // A record type is a different question, so it starts at page 1 and drops the open record — an
-  // artisan is not a row of the media table. Changing the PAGE must do neither: turning to page 2
-  // is the same question, further down.
-  //
-  // The deps list is only half of that promise, and it was the half that was kept. The other half is
-  // that nothing on the record's card may be re-derived from the page underneath it — see `selected`
-  // above, and note that the loader effect below no longer clears `recordMedia` either. Clearing it
-  // there emptied "Media linked to this record" on a page turn, which is the same closure the
-  // comment forbids, arriving by the other door.
   useEffect(() => {
     setPage(1);
     setSelected(null);
@@ -1065,12 +801,10 @@ function BrowseByTypePanel() {
     setDatasetNote(null);
     setError(null);
     try {
-      // Same zip pattern as sharing/page.tsx, but over the WHOLE repository (no ownerId).
       const manifest = await apiFetch<{
         files: Array<{ path: string; url?: string | null; content?: string | null }>;
         totalFiles: number;
         totalMedia: number;
-        /** The server hit a per-table row cap: this archive is a prefix of the data, not all of it. */
         truncated?: boolean;
       }>("/export/dataset");
       const { default: JSZip } = await import("jszip");
@@ -1109,24 +843,9 @@ function BrowseByTypePanel() {
       anchor.download = repositoryArchiveName();
       anchor.click();
       URL.revokeObjectURL(url);
-      // A capped export that presents itself as complete is the worst outcome here — the researcher
-      // archives it and never learns what is missing — so the server's flag is surfaced verbatim.
       const capNote = manifest.truncated
         ? " Incomplete — too large. Narrow it, or ask an admin for a full extract."
         : "";
-      // WHAT THIS ARCHIVE IS NOT, said once, to the readers for whom the absence is a question — and
-      // as of 2026-08-31 that is a much smaller group, because `GET /export/dataset` now builds the
-      // design-workshop half. Three states, not two:
-      //
-      //   * an ADMIN gets the workshops and is told so, because a researcher who has read this note
-      //     for weeks would otherwise have to open the zip to find out it had changed;
-      //   * a PROFESSOR may read those workshops and may not download them
-      //     (`canExportDesignWorkshopData` excludes them, deliberately: a screen is a reading, a file
-      //     is a copy that leaves the building), so the sentence ends in the place they CAN read them
-      //     rather than in a refusal;
-      //   * everybody else is told nothing at all, because they meet no design-workshop folder, sheet
-      //     or search bucket anywhere in this product and a note about data no screen offers them
-      //     would be this page inventing a disclosure.
       const dwNote = !designWorkshopsVisible
         ? ""
         : canExportDesignWorkshopData(user)
@@ -1148,25 +867,6 @@ function BrowseByTypePanel() {
 
   const rows = browse?.rows ?? null;
   const recordOptions = (rows ?? []).map((row) => ({ value: row.id, label: row.name }));
-  /*
-    NO `selectedRow` LOOKUP LIVES HERE ANY MORE. `const selectedRow = recordId ? rows?.find((row) =>
-    row.id === recordId) : undefined` is what stood on this line, and it is the coupling that let a
-    page turn close an open record: `rows` is one page of at most `LIST_PAGE_CEILING`, so a record
-    opened from page 1 is simply absent from page 2 and its card stopped rendering — while `recordId`
-    stayed set, which also kept the table hidden, so the panel showed nothing at all. The card below
-    reads `selected` directly. The option LIST is still page-scoped, honestly and by design (the
-    notice under the table says so); the record already OPEN is not a search result.
-  */
-  /**
-   * The cut, computed from the page on screen rather than from the request.
-   *
-   * `reach="pager"` is what makes the sentence honest HERE and only here: this is the one site in
-   * this pass that has a real second page, so it may say "use the pager to reach the rest" — and it
-   * must also say that the "Narrow to one record" box does NOT search them, because that ComboBox
-   * filters the array it was handed (`components/ui/SearchableSelect`) and nothing else. Typing a
-   * filename that lives on page 14 returns nothing, and without the sentence that reads as proof
-   * the file was never uploaded.
-   */
   const browseCut = browse ? cutOf(browse.rows.length, browse.total, def?.label.toLowerCase() ?? "records") : null;
 
   return (
@@ -1174,8 +874,6 @@ function BrowseByTypePanel() {
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-56 flex-1">
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-500">Record type</div>
-          {/* A taxonomy switcher, not a form field: it re-renders the browser below, so focus must
-              stay put rather than jumping to the "Narrow to one record" box beside it. */}
           <Dropdown
             value={typeKey}
             onChange={setTypeKey}
@@ -1191,9 +889,6 @@ function BrowseByTypePanel() {
             <ComboBox
               options={recordOptions}
               value={recordId}
-              // The ROW is what is kept, not the id: from here on the open record owes nothing to
-              // which page is loaded. An id the current page does not hold cannot arrive — these
-              // options ARE the current page — so the `?? null` branch is "cleared", not "lost".
               onChange={(id) => setSelected((rows ?? []).find((row) => row.id === id) ?? null)}
               placeholder={
                 loading
@@ -1248,7 +943,6 @@ function BrowseByTypePanel() {
                       <td className="px-4 py-2.5 text-ink-700">{row.creator}</td>
                       <td className="px-4 py-2.5 text-ink-700">{formatDateTime(row.createdAt)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        {/* Media has no form, so its row offers no Update — the row itself opens it. */}
                         {def && typeKey !== "media" ? (
                           <Link
                             href={def.editHref(row.id)}
@@ -1261,7 +955,6 @@ function BrowseByTypePanel() {
                       </td>
                     </>
                   );
-                  // The whole row opens the record read-only where it has such a page.
                   return viewHref ? (
                     <OpenableRow key={row.id} href={viewHref}>
                       {cells}
@@ -1273,20 +966,12 @@ function BrowseByTypePanel() {
               </tbody>
             </table>
             </div>
-            {/* The pager and the sentence are one answer in two parts: `Pagination` prints "Page 3 of
-                26 · 2530 records" (its own wording, unchanged across every list screen in the app),
-                and the notice says what the filter box above can and cannot see. Neither is
-                sufficient alone — the pager was missing entirely and the box silently searched a
-                hundred rows of two and a half thousand. */}
             <CappedListNotice cuts={[browseCut]} reach="pager" className="px-4 pt-3" />
             <Pagination page={browse?.page ?? 1} pages={browse?.pages ?? 0} total={browse?.total ?? 0} onPage={setPage} />
           </div>
         )
       ) : null}
 
-      {/* One condition, on the held row. It used to be `recordId && selectedRow`, whose two halves
-          could disagree — an id with no matching row on the loaded page rendered neither this card
-          nor the table above, i.e. an empty panel with a record still named in the box. */}
       {selected ? (
         <div className="mt-4 grid gap-3">
           <div className="flex flex-wrap items-center gap-3 rounded-md border border-line-200 bg-surface-50 px-4 py-3">
@@ -1356,10 +1041,6 @@ function BrowseByTypePanel() {
               ))}
             </ul>
           )}
-          {/* A record's media list is capped at the same 100. Multi-file upload against one linked
-              record is a first-class path here, so "100 files" can be the request's page size rather
-              than the record's truth — and the older half of a bulk import would otherwise be
-              invisible on a panel that presents itself as the record's complete media. */}
           <CappedListNotice cuts={[recordMediaCut]} />
         </div>
       ) : null}
@@ -1367,17 +1048,6 @@ function BrowseByTypePanel() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Record info card — surfaces the current folder's fields (artisan bio etc.)
-// ---------------------------------------------------------------------------
-
-/**
- * The taxonomy switcher — the same repository, re-rooted three ways.
- *
- * Before this existed the three taxonomies were just three folders sitting at the root,
- * indistinguishable from any other folder, so nobody knew they were alternative views of
- * the same data rather than three different data sets.
- */
 function TaxonomySwitcher({
   taxonomies,
   active,
@@ -1416,8 +1086,6 @@ function TaxonomySwitcher({
           );
         })}
       </div>
-      {/* The descriptions are the only place the folder shapes are spelled out, so keep
-          the active one visible rather than hiding it in a tooltip. */}
       <p className="mt-3 text-xs leading-5 text-ink-500">
         {current?.description ?? "Pick how the records should be grouped."}
       </p>
@@ -1425,17 +1093,6 @@ function TaxonomySwitcher({
   );
 }
 
-/**
- * The open folder's record, as a two-column table.
- *
- * A researcher opening an artisan's folder is almost always checking ONE value — the pincode, the
- * phone number, what the artisan said not to do — and a label column they can run their eye down
- * answers that far faster than the same fields reflowed as a paragraph of prose.
- *
- * Only fields the record actually carries become rows. The registry behind `info` already drops
- * empty values, and padding the table back out with "Notes —" would say nothing except that the
- * table is padded.
- */
 function RecordInfoCard({ info }: { info: FolderInfo }) {
   const fields = (info.fields ?? []).filter((field) => field.value != null && String(field.value).trim() !== "");
   if (fields.length === 0) return null;
@@ -1447,13 +1104,8 @@ function RecordInfoCard({ info }: { info: FolderInfo }) {
           {fields.length} recorded field{fields.length === 1 ? "" : "s"}
         </span>
       </div>
-      {/* Two columns of wrapping text can never be wider than their container, so this table gets
-          no horizontal scroller — the page stays put and the values wrap in place. */}
       <table className="w-full table-fixed border-collapse border-t border-line-200 text-left text-sm">
         <colgroup>
-          {/* A share of the width on a phone and a fixed column from `sm` up: a fixed label column
-              on a narrow screen leaves the value one word per line, and a proportional one on a
-              wide screen wastes half the card on the word "Phone". */}
           <col className="w-[38%] sm:w-56" />
           <col />
         </colgroup>
@@ -1477,9 +1129,6 @@ function RecordInfoCard({ info }: { info: FolderInfo }) {
                 {field.label}
               </th>
               <td className="px-5 py-2.5 text-ink-700">
-                {/* `pre-line` keeps the paragraph breaks in a 7,000-character interview note instead
-                    of running it into one line; `wrap-break-word` keeps a bare URL inside the column.
-                    The cap only bites on values that long — everything shorter shows in full. */}
                 <div className="max-h-72 overflow-y-auto whitespace-pre-line wrap-break-word leading-6">{field.value}</div>
               </td>
             </tr>
@@ -1489,10 +1138,6 @@ function RecordInfoCard({ info }: { info: FolderInfo }) {
     </section>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Lazy-loading directory tree (custom recursive tree, Tailwind + framer-motion)
-// ---------------------------------------------------------------------------
 
 type TreeState = {
   treeByPath: Record<string, TreeResponse>;
@@ -1566,10 +1211,6 @@ function TreeBranch({ parentPath, depth, state }: { parentPath: string; depth: n
   );
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
-
 export default function DataBrowserPage() {
   const { user, loading: authLoading } = useAuth();
   const permitted = canDownloadDataset(user);
@@ -1638,14 +1279,6 @@ export default function DataBrowserPage() {
     if (!(path in treeByPath)) loadFolder(path);
   }
 
-  /**
-   * Open a folder the user did not walk to — a search hit's "Show in folders".
-   *
-   * Selecting the leaf alone is not enough: the tree on the left renders a child only under an
-   * EXPANDED parent, and it only fetches a level it has been asked for, so a deep path would select
-   * a folder that is nowhere on screen. Expand and fetch every ancestor as well, and the row is
-   * visible in the tree at the same moment its contents appear on the right.
-   */
   function revealPath(path: string) {
     const segments = path.split("/").filter(Boolean);
     const ancestors: string[] = [""];
@@ -1664,16 +1297,12 @@ export default function DataBrowserPage() {
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  // Taxonomy metadata rides along with every tree level, so read it off whichever level is
-  // loaded — the current one first, falling back to the root.
   const taxonomies = useMemo<Taxonomy[]>(
     () => treeByPath[selectedPath]?.taxonomies ?? treeByPath[""]?.taxonomies ?? [],
     [treeByPath, selectedPath]
   );
   const activeTaxonomy = treeByPath[selectedPath]?.taxonomy ?? null;
 
-  // The bare root is only a chooser, so drop the user straight into the default taxonomy
-  // the first time it resolves. The ref guard means navigating back to the root still works.
   const landedRef = useRef(false);
   useEffect(() => {
     if (landedRef.current) return;
@@ -1681,7 +1310,6 @@ export default function DataBrowserPage() {
     if (!fallback) return;
     landedRef.current = true;
     selectFolder(fallback.path);
-    // selectFolder is re-created each render; the ref guard is what keeps this to one run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [treeByPath]);
 
@@ -1706,7 +1334,6 @@ export default function DataBrowserPage() {
       }
       return next;
     });
-    // Transcript bodies come from the manifest (content entries); fetch once per folder.
     if (!(folder in transcriptsByFolder)) {
       setTranscriptLoading((prev) => new Set(prev).add(folder));
       try {
@@ -1763,13 +1390,10 @@ export default function DataBrowserPage() {
           if (file.content != null) {
             zip.file(file.path, file.content);
           } else if (file.convertToMp4 && file.mediaId) {
-            // Audio needing conversion is streamed from the backend as MP4 (the session cookie
-            // authenticates it; this site's proxy streams the answer through).
             const response = await fetch(`${API_BASE}/api/data/media/${file.mediaId}/download?format=mp4`);
             if (response.ok) {
               zip.file(mp4Path(file.path), await response.blob());
             } else if (file.url) {
-              // Conversion failed (odd codec, oversized, ffmpeg missing) — keep the original.
               const original = await fetch(file.url);
               if (!original.ok) {
                 throw new Error("Couldn't download the audio.");
@@ -1832,7 +1456,6 @@ export default function DataBrowserPage() {
 
   const currentTree = treeByPath[selectedPath];
 
-  // Breadcrumbs come from the server response — clean names, never path segments.
   const crumbs = useMemo<Crumb[]>(() => {
     const fromServer = currentTree?.crumbs ?? [];
     if (fromServer.some((crumb) => crumb.path === "")) return fromServer;
@@ -1892,21 +1515,15 @@ export default function DataBrowserPage() {
       {header}
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">{error}</div> : null}
 
-      {/* Search first, then the taxonomy chooser, then the browser — the order the Android data
-          screen uses, and the order a researcher works in: they usually know the NAME. */}
       <DataSearchPanel onReveal={revealPath} />
 
-      {/* The same repository, re-rooted three ways. */}
       <TaxonomySwitcher taxonomies={taxonomies} active={activeTaxonomy} onSelect={selectFolder} />
 
-      {/* Jump straight to a record type without walking the tree. */}
       <BrowseByTypePanel />
 
-      {/* Every recording's transcript data, filtered by its recording fields, and its streamed downloads. */}
       <TranscriptDataPanel />
 
       <div className="grid items-start gap-5 lg:grid-cols-[290px_minmax(0,1fr)]">
-        {/* Left pane: lazy-loading directory tree */}
         <section className="panel p-3 lg:sticky lg:top-4">
           <div className="mb-2 flex items-center justify-between px-1">
             <span className="text-xs font-semibold uppercase tracking-wide text-ink-500">Folders</span>
@@ -1934,11 +1551,9 @@ export default function DataBrowserPage() {
           </div>
         </section>
 
-        {/* Right pane: record info + data tables + download panel + current folder contents */}
         <div className="grid gap-5">
           {currentTree?.info ? <RecordInfoCard info={currentTree.info} /> : null}
 
-          {/* Every folder level gets a spreadsheet view of its subtree (collapsed by default). */}
           <DataTablesPanel
             key={selectedPath || "__root"}
             path={selectedPath}
@@ -1950,8 +1565,6 @@ export default function DataBrowserPage() {
               <span className="text-xs font-semibold uppercase tracking-wide text-ink-500" aria-hidden>
                 Include
               </span>
-              {/* One multi-select over the seven kinds of content, not seven loose checkboxes
-                  (owner's rule, 2026-10-17). Same state, same "pick at least one" refusal below. */}
               <SearchableMultiSelect
                 className="min-w-0 flex-1 sm:max-w-md"
                 ariaLabel="Include in the download"
@@ -2079,8 +1692,6 @@ export default function DataBrowserPage() {
                       ]
                         .filter(Boolean)
                         .join(" · ");
-                      // A stored file opens its read-only page from anywhere on the card; a
-                      // generated text file (details.txt) has no page and is drawn plainly.
                       const fileHref = file.mediaId ? RECORD_VIEW_HREF.media(file.mediaId) : null;
                       return (
                         <OpenableCard as="li" key={file.path} href={fileHref} className="px-4 py-3">
@@ -2134,7 +1745,6 @@ export default function DataBrowserPage() {
                             </p>
                           ) : null}
                           {file.mediaType === "AUDIO" && file.url ? (
-                            // Preview always plays the original object, never the MP4 conversion.
                             <audio controls preload="none" src={file.url} className="mt-2 h-9 w-full max-w-md" />
                           ) : null}
                           {inlineOpen && file.content != null ? (

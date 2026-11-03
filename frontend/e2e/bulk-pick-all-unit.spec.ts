@@ -11,11 +11,6 @@ import {
   remainingOptions
 } from "@/components/designworkshop/bulkPick";
 
-/*
-  B3 — "All participants" / "All final products" beside a stage list's bulk picker, on both clients.
-  The shortcut is for the workshop's OWN records only; the artisan register never gets one.
-*/
-
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
@@ -37,7 +32,6 @@ test("an All press adds only what is not on the list, once each, in the list's o
 test("a cut-short All says 'the first N' only when every row fitted", () => {
   const trigger = "Add several from participants";
   expect(cutShortNote(true, 50, 50, trigger)).toBe("Added the first 50. Use add several from participants for the rest.");
-  // The cap refused some: the form's "Added 3 of 50" is the only count on screen.
   expect(cutShortNote(true, 50, 3, trigger)).toBeNull();
   expect(cutShortNote(false, 50, 50, trigger)).toBeNull();
   expect(cutShortNote(true, 50, 0, trigger)).toBeNull();
@@ -78,7 +72,6 @@ test("Android carries the same labels and the same bulk-field rule", () => {
   );
   expect(stage).toContain(`"${BULK_ALL_NOTHING_LEFT}"`);
   expect(stage).toContain("dwBulkAllLabel(bulkField.refModel)");
-  // Same cut-short words on the handset, built from the same trigger phrase.
   expect(kotlin).toContain('"Added the first ${outcome.created.size}. Use ${dwBulkTriggerPhrase(fieldLabel)} for the rest."');
   expect(kotlin).toContain('"add several from ${fieldLabel.lowercase()}"');
 });

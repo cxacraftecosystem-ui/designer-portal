@@ -12,12 +12,6 @@ import {
   type OutboxEntry
 } from "@/lib/offline";
 
-/*
-  A QUEUED ARTISAN THE SERVER HELD AS A LIKELY DUPLICATE. Its own arm, never read as a clash: the row
-  says "May already be recorded", "Same person" uploads the files to the existing record and creates
-  nothing, "Different person" sends it again with the candidates acknowledged.
-*/
-
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
@@ -54,7 +48,6 @@ test("Same person points the entry at the existing record and clears the questio
   expect(next.attachedToExisting).toBe(true);
   expect(next.failure).toBeNull();
   expect(next.possibleDuplicate).toBeNull();
-  // The queued record's fields are not copied anywhere: the body is untouched.
   expect(next.body).toBe(entry().body);
 });
 

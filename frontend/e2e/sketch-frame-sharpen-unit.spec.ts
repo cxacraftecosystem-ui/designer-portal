@@ -28,38 +28,6 @@ import {
   type EditablePixels
 } from "@/lib/trace/imageEdit";
 
-/**
- * The crop and the sharpen, as arithmetic — no browser, no worker, no React.
- *
- * WHY A `-unit` SPEC AND NOT A RENDERED ONE. `lib/trace/imageEdit.ts` was deliberately written with no
- * DOM, no `import.meta` and no `File` in it, precisely so this file can call it directly: the CI job
- * that runs `*-unit.spec.ts` does not install a browser (`.github/workflows/checks.yml` says so), and
- * the arithmetic is the half that is worth checking on every push. `e2e/sketch-trace-panel.spec.ts`
- * renders the panel that drives it, with the worker stood in for.
- *
- * FOUR OF THESE CASES EXIST BECAUSE OF A DUPLICATION THAT COULD NOT BE AVOIDED, and they are the thing
- * holding it in place:
- *
- *  · `lumaPlane` reproduces `engine/color.toGray` rather than calling it, because `toGray` takes an
- *    `RgbaImage` whose backing store is packed ARGB and building one would cost a full extra pass and
- *    4 bytes per pixel on the device with the least memory. The luminance the trace sees and the
- *    luminance the sharpen lifts have to be the SAME plane, so the parity case compares the two
- *    implementations sample by sample.
- *  · `sharpenKernelTaps` reproduces `engine/convolve.gaussianKernel`'s length rule, because the panel
- *    prints the tap count in a sentence before any engine module has been fetched — importing
- *    `convolve` to read a number would put the engine on the page's bundle, which
- *    `SketchTraceField.tsx`'s fourth property forbids. The case builds the real kernel and counts it.
- *  · `FramePanel.tsx` re-declares five bounds as literals for the same bundle reason. The case reads
- *    that file's source and checks the numbers still agree.
- *
- * Run it with: `cd frontend && npx playwright test sketch-frame-sharpen --reporter=line`
- */
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Fixtures
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** RGBA where every channel is a function of (x, y), so a mis-indexed read is visible rather than plausible. */
 function ramp(width: number, height: number): EditablePixels {
   const data = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y += 1) {
@@ -74,7 +42,6 @@ function ramp(width: number, height: number): EditablePixels {
   return { data, width, height };
 }
 
-/** A vertical step: black on the left half, white on the right. The classic thing to sharpen. */
 function step(width: number, height: number): EditablePixels {
   const data = new Uint8ClampedArray(width * height * 4);
   for (let y = 0; y < height; y += 1) {
@@ -95,13 +62,7 @@ function pixelAt(image: EditablePixels, x: number, y: number): [number, number, 
   return [image.data[i], image.data[i + 1], image.data[i + 2], image.data[i + 3]];
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The crop
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("clampCrop keeps a box inside the frame, whole-numbered, and no smaller than the minimum", () => {
-  // Fractional in, integer out. A fractional origin reaches `cropPixels` as a fractional row offset
-  // and silently truncates, which reads as a one-pixel drift nobody traces back to a rounding rule.
   expect(clampCrop({ x: 3.4, y: 9.6, width: 40.2, height: 30.8 }, 100, 100)).toEqual({
     x: 3,
     y: 10,
@@ -109,8 +70,6 @@ test("clampCrop keeps a box inside the frame, whole-numbered, and no smaller tha
     height: 31
   });
 
-  // Pushed off the far edge: the SIZE is honoured and the ORIGIN gives way, which is the order that
-  // makes a drag past the edge stop rather than shrink.
   expect(clampCrop({ x: 90, y: 90, width: 40, height: 40 }, 100, 100)).toEqual({
     x: 60,
     y: 60,
@@ -118,7 +77,6 @@ test("clampCrop keeps a box inside the frame, whole-numbered, and no smaller tha
     height: 40
   });
 
-  // Larger than the frame in both axes: the box becomes the frame, not a box hanging off it.
   expect(clampCrop({ x: -50, y: -50, width: 500, height: 500 }, 100, 80)).toEqual({
     x: 0,
     y: 0,
@@ -126,16 +84,12 @@ test("clampCrop keeps a box inside the frame, whole-numbered, and no smaller tha
     height: 80
   });
 
-  // Below the minimum edge on both axes.
   const tiny = clampCrop({ x: 10, y: 10, width: 1, height: 0 }, 100, 100);
   expect(tiny.width).toBe(CROP_MIN_EDGE_PX);
   expect(tiny.height).toBe(CROP_MIN_EDGE_PX);
 
-  // A frame SMALLER than the minimum is not made bigger than itself — the minimum stands down.
   expect(clampCrop({ x: 0, y: 0, width: 1, height: 1 }, 8, 4)).toEqual({ x: 0, y: 0, width: 8, height: 4 });
 
-  // NaN and Infinity are the values a `<input type="number">` produces mid-edit, so they are answered
-  // rather than propagated: an unguarded NaN reaches `new Uint8ClampedArray(NaN * 4)` as length 0.
   const broken = clampCrop({ x: Number.NaN, y: Number.POSITIVE_INFINITY, width: Number.NaN, height: 20 }, 60, 60);
   expect(Number.isInteger(broken.x)).toBe(true);
   expect(Number.isInteger(broken.y)).toBe(true);
@@ -151,9 +105,6 @@ test("wholeFrame and isWholeFrame agree about what 'no crop' is", () => {
 
 test("cropPixels copies exactly the region asked for, and never aliases the source", () => {
   const source = ramp(64, 48);
-  // AT OR ABOVE `CROP_MIN_EDGE_PX` ON BOTH EDGES. A smaller box is legal to ASK for and `clampCrop`
-  // grows it, which is the right behaviour and the wrong fixture: the case would then be checking the
-  // minimum rather than the copy.
   const box = { x: 3, y: 2, width: 20, height: 17 };
   const cropped = cropPixels(source, box);
 
@@ -161,25 +112,16 @@ test("cropPixels copies exactly the region asked for, and never aliases the sour
   expect(cropped.height).toBe(17);
   expect(cropped.data.length).toBe(20 * 17 * 4);
 
-  // Every pixel, against the source's own coordinates. A row-offset error of one shows up here and
-  // nowhere else — a photograph cropped one row out looks completely normal.
   for (let y = 0; y < box.height; y += 1) {
     for (let x = 0; x < box.width; x += 1) {
       expect(pixelAt(cropped, x, y)).toEqual(pixelAt(source, box.x + x, box.y + y));
     }
   }
 
-  // THE WHOLE FRAME STILL COPIES. `SketchTraceField` keeps the decoded photograph so a frame can be
-  // widened back out, and returning the caller's own array from the identity case would hand the
-  // worker a buffer it then transfers — detaching the page's copy of the photograph.
   const identity = cropPixels(source, wholeFrame(64, 48));
   expect(identity.data).not.toBe(source.data);
   expect(Array.from(identity.data)).toEqual(Array.from(source.data));
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The luminance parity — the duplication this file exists to hold in place
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("lumaPlane is the same plane engine/color.toGray produces, sample for sample", () => {
   const source = ramp(23, 17);
@@ -188,9 +130,6 @@ test("lumaPlane is the same plane engine/color.toGray produces, sample for sampl
 
   expect(mine.width).toBe(theirs.width);
   expect(mine.height).toBe(theirs.height);
-  // EXACTLY EQUAL, not close. Both compute `(0.299r + 0.587g + 0.114b) * (1/255)` in that order and
-  // store to float32, so any difference at all means the multiplication order drifted — and a
-  // tolerance here would let exactly that through while claiming the two agree.
   for (let i = 0; i < mine.data.length; i += 1) {
     expect(mine.data[i]).toBe(theirs.data[i]);
   }
@@ -201,10 +140,6 @@ test("sharpenKernelTaps counts the kernel engine/convolve actually builds", () =
     expect(sharpenKernelTaps(radius)).toBe(gaussianKernel(radius).length);
   }
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The sharpen
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("amount 0 is off, and off is a copy rather than the same buffer", () => {
   expect(isSharpenOff(NO_SHARPEN)).toBe(true);
@@ -226,24 +161,18 @@ test("a step edge gains overshoot on both sides, and the alpha channel is untouc
   const lightBefore = pixelAt(source, 17, y)[0];
   const lightAfter = pixelAt(out, 17, y)[0];
 
-  // An unsharp mask makes the dark side of an edge darker and the light side lighter. That IS the
-  // filter — a case that only asserted "something changed" would pass on a blur.
   expect(darkAfter).toBeLessThan(darkBefore);
   expect(lightAfter).toBeGreaterThan(lightBefore);
 
-  // Far from the edge nothing happens: the blur and the original agree there, so the difference is 0.
   expect(pixelAt(out, 1, y)[0]).toBe(pixelAt(source, 1, y)[0]);
   expect(pixelAt(out, 30, y)[0]).toBe(pixelAt(source, 30, y)[0]);
 
-  // ALPHA IS COPIED, NEVER SHARPENED. Adding an edge signal to alpha puts a halo of partial
-  // transparency around every stroke, visible only once something is composited behind it.
   for (let i = 3; i < out.data.length; i += 4) {
     expect(out.data[i]).toBe(source.data[i]);
   }
 });
 
 test("the delta is applied equally to all three channels, so nothing changes hue", () => {
-  // A coloured step, so a per-channel sharpen would pull the channels apart and this would fail.
   const width = 24;
   const height = 4;
   const data = new Uint8ClampedArray(width * height * 4);
@@ -251,9 +180,6 @@ test("the delta is applied equally to all three channels, so nothing changes hue
     for (let x = 0; x < width; x += 1) {
       const i = (y * width + x) * 4;
       const dark = x < width / 2;
-      // Well clear of 0 and 255 on both sides: an unsharp mask overshoots at an edge by design, and a
-      // channel that clips is a channel whose delta is no longer the shared one. That is correct
-      // behaviour and a useless fixture.
       data[i] = dark ? 70 : 150;
       data[i + 1] = dark ? 85 : 165;
       data[i + 2] = dark ? 100 : 180;
@@ -266,7 +192,6 @@ test("the delta is applied equally to all three channels, so nothing changes hue
   for (let x = 0; x < width; x += 1) {
     const before = pixelAt(source, x, 2);
     const after = pixelAt(out, x, 2);
-    // Not clipped anywhere in this fixture, so the three deltas must be identical integers.
     const deltas = [after[0] - before[0], after[1] - before[1], after[2] - before[2]];
     expect(deltas[1]).toBe(deltas[0]);
     expect(deltas[2]).toBe(deltas[0]);
@@ -274,8 +199,6 @@ test("the delta is applied equally to all three channels, so nothing changes hue
 });
 
 test("the threshold leaves small differences alone", () => {
-  // A very shallow ramp: every neighbouring difference is tiny, so a threshold above them all must
-  // reproduce the input exactly while a threshold of 0 must not.
   const width = 16;
   const data = new Uint8ClampedArray(width * 4);
   for (let x = 0; x < width; x += 1) {
@@ -294,10 +217,6 @@ test("the threshold leaves small differences alone", () => {
   expect(Array.from(ungated.data)).not.toEqual(Array.from(source.data));
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The cap, and the order of the two operations
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("planSharpen refuses over the cap, names the number, and points at the crop", () => {
   const inside = planSharpen(SHARPEN_MAX_PIXELS, 1.5);
   expect(inside.refusal).toBeNull();
@@ -306,7 +225,6 @@ test("planSharpen refuses over the cap, names the number, and points at the crop
 
   const over = planSharpen(SHARPEN_MAX_PIXELS + 1, 1.5);
   expect(over.refusal).not.toBeNull();
-  // The sentence has to carry the cap AND the way through, or it is a dead end wearing an explanation.
   expect(over.refusal).toContain("8.0 megapixels");
   expect(over.refusal).toContain("Crop it first");
 });
@@ -319,7 +237,6 @@ test("applyEdit crops first, so the sharpen runs on the smaller frame", () => {
   expect(out.height).toBe(16);
   expect(out.data.length).toBe(20 * 16 * 4);
 
-  // And with the sharpen off it is exactly the crop — the same bytes `cropPixels` would give.
   const plain = applyEdit(source, { crop, sharpen: NO_SHARPEN });
   expect(Array.from(plain.data)).toEqual(Array.from(cropPixels(source, crop).data));
 });
@@ -340,27 +257,10 @@ test("describeEdit says only what was done, and says the original is unchanged",
   expect(both).toContain("amount 1.25");
   expect(both).toContain("radius 2px");
   expect(both).toContain("threshold 0.05");
-  // THE PROMISE THE WHOLE FEATURE RESTS ON, written into the file that leaves this device.
   expect(both).toContain("The original photograph is unchanged.");
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The bounds FramePanel re-declares
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("FramePanel's copied bounds still match the module they came from", () => {
-  /*
-    WHY THE NUMBERS ARE COPIED AT ALL. `FramePanel.tsx` needs five bounds in order to draw its sliders,
-    and `lib/trace/imageEdit.ts` imports `engine/contrast` and `engine/convolve` — so importing it from
-    a component would put the convolution code on the sketches page's bundle for every visitor who
-    never touches a photograph. `SketchTraceField.tsx`'s fourth property forbids exactly that, in as
-    many words: "Do not add a top-level import from `@/lib/trace/*` to this file."
-
-    So the numbers are literals, and this case is what stops them drifting. Reading the source rather
-    than importing the component is deliberate: the component is a React module and this spec runs in
-    Node with no renderer, which is the same split `dropdown-sweep-unit.spec.ts` makes for the same
-    reason.
-  */
   const source = readFileSync(
     join(__dirname, "..", "components", "sketches", "upload", "FramePanel.tsx"),
     "utf8"
@@ -380,13 +280,6 @@ test("FramePanel's copied bounds still match the module they came from", () => {
 });
 
 test("the sharpening bounds are the engine's own, so two controls called 'sharpen' cannot disagree", () => {
-  /*
-    `traceParamTable.ts` already surfaces `preprocess.unsharpAmount` and `preprocess.unsharpSigma` as
-    "Sharpen amount" and "Sharpen radius". This panel's sliders are the same two names over the same
-    units applied one stage earlier, and the amount's ceiling is read off the engine's own range
-    (`params.ts`: 0..5). A panel whose "amount 2" meant something different from the group below it
-    would be the worst of both.
-  */
   expect(SHARPEN_AMOUNT_MAX).toBe(5);
   expect(SHARPEN_RADIUS_MIN).toBeGreaterThan(0.05);
   expect(SHARPEN_RADIUS_MAX).toBeLessThanOrEqual(32);

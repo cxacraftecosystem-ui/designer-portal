@@ -1,30 +1,5 @@
 "use client";
 
-/**
- * "Upload a filled-in pro-forma" — the door a designer's own questionnaire comes in through.
- *
- * ONE COMPONENT FOR BOTH UPLOAD ENDPOINTS, because they are the same act from the designer's side:
- * `POST /questionnaires/upload` makes a new questionnaire, `POST /questionnaires/{id}/upload` edits
- * an existing one, and which of the two runs is decided by `questionnaireId` being present. Two
- * dialogs would drift, and the half that drifted would be the re-upload — the rarer path, and the
- * one whose mistakes cost recorded answers.
- *
- * WHAT DIFFERS BETWEEN THE TWO, and it is only ever copy: a re-upload runs the edit-after-answers
- * rule, so this says so before the file is chosen rather than reporting it afterwards. A designer
- * about to re-upload needs to know that rewording an answered question will ADD a question rather
- * than change one, because the alternative is discovering it in the report.
- *
- * THE WORKSHOP DROPDOWN IS ONLY ON THE CREATE PATH. `POST /questionnaires/{id}/upload` accepts a
- * title and nothing else — attaching an existing questionnaire to a workshop is a PATCH, and it
- * lives on the detail page. Offering the picker here would build a control whose value the request
- * cannot carry.
- *
- * AND ON THAT PATH, A WORKSHOP THE READER INSPECTS OR SUPERVISES HOLDS THE UPLOAD (2026-10-09): the
- * create door refuses a post holder a questionnaire attached to it, with the 403 naming the post. The
- * picker stays live — choosing another workshop, or none, is the way forward — and the reason is said
- * above the footer. The re-upload's own hold is the detail page's, which does not offer it to them.
- */
-
 import { useId, useRef, useState } from "react";
 import { FileSpreadsheet, Upload } from "lucide-react";
 
@@ -43,19 +18,6 @@ import {
 } from "@/lib/questionnaireForms";
 import { designWorkshopOptions, NO_DESIGN_WORKSHOP, type DesignWorkshopRow } from "@/lib/workshopOptions";
 
-/**
- * A design workshop this questionnaire could be attached to.
- *
- * ── IT USED TO BE `{ id, title }`, AND THAT WAS THE WHOLE OF THE LABEL BUG ──────────────────────
- *
- * Two workshops in the same craft, started a fortnight apart, drew as two identical rows — and an
- * identical option is a choice a reader cannot make. Meanwhile the record forms' picker had been
- * showing `craft · cluster · the day it ran` beside every title for a year, so a designer who
- * attached a questionnaire here and filed a product there met two spellings of the same workshop in
- * one sitting. `DesignWorkshopRow` is the nine fields `lib/workshopOptions` reads; a `DwSummary`
- * satisfies it, so the pages hand their rows straight over and this file stays clear of the API
- * layer — which is also what lets a spec build one of these out of nine fields instead of thirty.
- */
 export type WorkshopChoice = DesignWorkshopRow;
 
 export function UploadDialog({
@@ -69,35 +31,18 @@ export function UploadDialog({
   open: boolean;
   onClose: () => void;
   onUploaded: (result: QFormUploadResult) => void;
-  /** Present = re-upload over this questionnaire; absent = create a new one. */
   questionnaireId?: string;
-  /** Design workshops this questionnaire may be attached to. Ignored on the re-upload path. */
   workshops?: WorkshopChoice[];
-  /**
-   * WHAT THE PAGE HAS TO SAY ABOUT THAT LIST — one string, chosen by the page, drawn here.
-   *
-   * A string rather than the list's state, because this dialog does not do the read and must not be
-   * able to describe it differently from the page that did. The page holds one
-   * `WorkshopListState`, asks `lib/workshopOptions` which of §3.5's four sentences is true — the
-   * read failed, the device never received the list, no workshop is open to this account, the
-   * repository is empty — or, when there ARE rows and some were cut, asks `cappedListNotice` for
-   * the numbered one. The two can never both be non-empty, so one slot holds either.
-   *
-   * Optional, and the fallback below is deliberately the weaker claim: a caller that passes nothing
-   * gets a sentence that does not say why the list is short, which is always true.
-   */
   workshopsNotice?: string;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const [designWorkshopId, setDesignWorkshopId] = useState("");
-  /** The kind, on the upload door. `""` is the blank row and means "not stated", which is allowed. */
   const [kind, setKind] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const editing = Boolean(questionnaireId);
-  /** The chosen workshop's hold, three states — none on the re-upload path, which chooses none. */
   const workshopHold = useHeldPostRefusal(editing ? null : designWorkshopId || null);
   const hold = attachHold(workshopHold, "this questionnaire");
   const holdNoticeId = useId();
@@ -107,9 +52,6 @@ export function UploadDialog({
     setTitle("");
     setDesignWorkshopId("");
     setError(null);
-    // The DOM input holds the chosen file independently of React state, so clearing only the state
-    // leaves the browser reporting the previous file name and re-choosing THE SAME file fires no
-    // change event at all — the second upload of a corrected workbook would silently do nothing.
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -120,7 +62,6 @@ export function UploadDialog({
   }
 
   async function submit() {
-    // A held Upload is disabled; this keeps the rule for any other way in.
     if (!file || writesHeld(hold)) return;
     setBusy(true);
     setError(null);
@@ -135,10 +76,6 @@ export function UploadDialog({
       reset();
       onUploaded(result);
     } catch (err) {
-      // Kept in the dialog rather than raised to the page: the file the designer picked is still
-      // chosen here, so the fix (pick the other file, save it as .xlsx) is one click from the
-      // message. A 415, a 413 and the "that workbook came from a different questionnaire" 409 all
-      // carry a sentence written to be shown as-is.
       setError(err instanceof Error ? err.message : "Unable to read that workbook");
     } finally {
       setBusy(false);
@@ -180,18 +117,10 @@ export function UploadDialog({
         ) : null}
 
         {editing ? (
-          // Said BEFORE the file is chosen, not reported afterwards. A designer who rewords an
-          // answered question is going to get a new question next to the old one; discovering that
-          // in the change report, after the fact, reads as the import having duplicated their form.
           <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
             Reworded questions that have answers are added as new questions; nothing is overwritten.
           </p>
         ) : (
-          // THE THREE FILES THIS DOOR ACCEPTS, named before one is chosen, because the third of them
-          // behaves in a way nobody would guess and finding out afterwards reads as the import
-          // having lost data. It has not: a workbook that came out of the app carries answers that
-          // are ALREADY recorded here under the names of the people who recorded them, and writing
-          // them again would duplicate somebody's fieldwork with a new author stamped on the copy.
           <div className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
             <p className="font-medium text-ink-900">You can upload:</p>
             <ul className="mt-1 grid gap-1">
@@ -238,31 +167,11 @@ export function UploadDialog({
         </Field>
 
         {editing ? null : (
-          /*
-            ── THE FIELD IS DRAWN EVEN WHEN THE LIST IS EMPTY, WHICH IS THE CHANGE ─────────────────
-
-            It used to be `{!editing && workshops?.length ? … : null}`: no rows, no field, no words.
-            A designer whose read had failed, or who had not been granted a workshop yet, opened this
-            dialog and simply did not have the control — which is the silent-empty-picker failure in
-            its purest form, because there is not even a greyed box to wonder about. The remedy is
-            R3's: draw it, disable it, and say which of the states it is in. What must NOT come back
-            is the hide, on any of the four grounds.
-
-            THE `editing` GATE IS A DIFFERENT THING AND STAYS. `POST /questionnaires/{id}/upload`
-            accepts a title and nothing else — attaching an existing questionnaire is a PATCH from
-            its own page — so on the re-upload path this is a control whose value the request cannot
-            carry. That is not an empty list; that is a field that does not exist here.
-          */
-          // FieldBlock rather than Field: `Field` is a <label>, and a <label> wrapped round a themed
-          // dropdown forwards a stray click into the menu and slams it shut after one pick.
           <FieldBlock
             label="Attach to a design workshop"
             hint={
               <p className="mt-1 text-xs leading-5 text-ink-500" aria-live="polite">
                 {workshopsNotice ||
-                  // The caller said nothing, so this says the one thing that is true whatever the
-                  // reason: absence from this list is never a refusal. It is the same route out the
-                  // reuse dialog offers, and it asks the server the identical question.
                   "Not listed? Leave it unattached and attach it later."}
               </p>
             }
@@ -270,50 +179,20 @@ export function UploadDialog({
             <Dropdown
               value={designWorkshopId}
               onChange={setDesignWorkshopId}
-              /*
-                ONE BUILDER, so this picker and the create form on the page behind it draw the same
-                workshop the same way. `group` is false: this dialog attaches a NEW questionnaire and
-                the list it is handed is one page of one status ordering — a heading over every row
-                says nothing. `offPage: "refuse"` because there is nothing to recover: a questionnaire
-                that does not exist yet has no stored workshop, and the only value this control can
-                hold is one of the rows it drew.
-              */
               options={
                 designWorkshopOptions(
                   { kind: "ok", rows: workshops ?? [], total: (workshops ?? []).length },
                   { group: false, offPage: { mode: "refuse" } }
                 ).options
               }
-              /*
-                THE UN-FILE ROW IS THE PRIMITIVE'S, and its label is the shared constant rather than
-                this dialog's own "Not attached to a workshop" — one of nine strings the app used to
-                have for four genuinely different meanings.
-              */
               noneLabel={NO_DESIGN_WORKSHOP}
               emptyLabel="No design workshop is listed here."
               ariaLabel="Attach to a design workshop"
               searchable
-              // R2: a control with nothing in it may not be the thing standing between a designer
-              // and their upload. It has nothing to offer but the un-file row, which is already the
-              // value, so there is nothing here to open.
               disabled={!workshops?.length}
             />
           </FieldBlock>
         )}
-        {/*
-          THE KIND, ON THE UPLOAD DOOR TOO — and behind the same `editing` gate as the workshop
-          picker above, for the identical reason: `POST /questionnaires/{id}/upload` (the RE-upload)
-          accepts a title and nothing else, so on that path this is a control whose value the request
-          cannot carry. On a re-upload the kind is changed from the questionnaire's own page, where
-          it already is.
-
-          WHY IT IS HERE AT ALL. The pro-forma has no kind cell and deliberately never will — see
-          `create_from_parsed`, which refuses to parse one, because every workbook already sitting in
-          a designer's Downloads folder predates it and would import as "not stated" while looking as
-          though it had been asked. So the upload FORM is the only place the uploader can say, and
-          without this control the spreadsheet path — which the page above calls the fast path and the
-          one most designers take — was the one door that could not answer the question.
-        */}
         {!editing && (
           <FieldBlock
             label="Kind"
@@ -335,8 +214,6 @@ export function UploadDialog({
             />
           </FieldBlock>
         )}
-        {/* Why Upload is held — the last thing above the footer that holds it, and mounted on both
-            paths so the answer that arrives after a workshop is picked is announced. */}
         <HeldPostNotice refusal={hold} id={holdNoticeId} className="" sayPending />
       </div>
     </FieldDialog>

@@ -23,7 +23,6 @@ import type {
   Workshop
 } from "@/lib/types";
 
-/** One row in a group: enough to name the record and say when it was created. */
 type ActivityRow = { id: string; name: string; createdAt?: string | null };
 
 type ActivityGroup = { title: string; href: string; rows: ActivityRow[] };
@@ -31,34 +30,13 @@ type ActivityGroup = { title: string; href: string; rows: ActivityRow[] };
 type WithCreator = { createdById?: string | null };
 type MediaWithUploader = MediaFile & { uploadedById?: string | null };
 
-/** /users/directory row — any authenticated user may list this. */
 type DirectoryUser = { id: string; name: string; email: string; role: string };
 
-/**
- * One person's fetched lists, STAMPED WITH WHOSE THEY ARE.
- *
- * The stamp is load-bearing now that the API does the owner filtering. Switching person used to be a
- * pure client-side re-filter of one unfiltered corpus; it is a re-fetch, and until the new request
- * lands the state still holds the PREVIOUS person's rows — every one of which the server already
- * narrowed to that person, so re-filtering them against the newly selected id matches nothing. The
- * page would show "no activity" for somebody with plenty of it, then correct itself a moment later.
- *
- * Comparing the stamp against the current selection is what turns that window into an honest
- * "loading" instead of a wrong answer, and doing it in the memo rather than by clearing state in the
- * effect means there is not even a one-frame flash — passive effects run after paint.
- */
 type RawLists = {
-  /** Whose rows these are. A mismatch with `activeUserId` means the switch is still in flight. */
   ownerId: string;
   artisans: Array<Artisan & WithCreator>;
   products: Array<ProductDocumentation & WithCreator>;
   tools: Array<ToolDocumentation & WithCreator>;
-  /**
-   * Processes were missing from this page while "Document process" has always been an entry in both
-   * clients' menus (`NAV_ITEMS`, Android's `AppNavigation`), so a record type this app can create
-   * was reported nowhere. Android's My Activity has always listed them — it owns the information
-   * architecture, so the web follows it here rather than the other way round.
-   */
   processes: Array<ProcessRecord & WithCreator>;
   workshops: Array<Workshop & WithCreator>;
   crafts: Array<Craft & WithCreator>;
@@ -73,34 +51,12 @@ export default function MyActivityPage() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * WHOSE activity is being read. Declared before the fetch because the fetch now depends on it: the
-   * API is asked for one person's records, so switching person is a re-fetch rather than a re-filter.
-   */
   const activeUserId = selectedUserId ?? user?.id ?? "";
 
-  /**
-   * ONE PERSON'S RECORDS, ASKED FOR BY NAME.
-   *
-   * This used to fetch page one of every list — a hundred rows apiece — and sift it client-side for
-   * `createdById === activeUserId`. That worked only by accident: reading the repository was itself
-   * owner-scoped, so "the first hundred artisans you can see" and "the first hundred artisans you
-   * recorded" were the same hundred rows. Reading is open now, so page one is a hundred rows of the
-   * WHOLE repository and a person's own records fall off the end of it — silently, with no empty
-   * state and no truncation notice, which reads as "I did not record that" rather than as a paging
-   * artefact.
-   *
-   * So the ownership filter moved to the server (`createdBy` / `uploadedBy` on every list route). The
-   * client-side filter below is KEPT as well, deliberately: it costs nothing, and against an older
-   * deployment that ignores the new parameter it is the difference between an over-long list and a
-   * wrong one.
-   */
   useEffect(() => {
     if (!user || !activeUserId) return;
     let cancelled = false;
     const pageSize = 100;
-    // The record lists own their rows through `createdById`; MediaFile owns its through
-    // `uploadedById`, and the query key follows the column on both sides of the wire.
     const mine = { pageSize, createdBy: activeUserId };
 
     async function load() {
@@ -146,9 +102,6 @@ export default function MyActivityPage() {
     };
   }, [user, activeUserId]);
 
-  // Hierarchy visibility: master admin sees everyone; admin sees the same rank and below (other
-  // admins included, master admins excluded); everyone else sees only ranks STRICTLY below their
-  // own — which leaves volunteers with nobody but themselves.
   const visibleOthers = useMemo(() => {
     if (!user) return [];
     const myRank = roleRank(user);
@@ -167,8 +120,6 @@ export default function MyActivityPage() {
   const selectedRole = viewingSelf ? user?.role : selectedEntry?.role;
 
   const groups = useMemo<ActivityGroup[] | null>(() => {
-    // `null` is the page's "still loading" signal, and rows belonging to somebody else are exactly
-    // that — not an empty result for the person now selected.
     if (!raw || !activeUserId || raw.ownerId !== activeUserId) return null;
     const by = <T extends WithCreator>(list: T[]): T[] => list.filter((item) => item.createdById === activeUserId);
     return [
@@ -187,9 +138,6 @@ export default function MyActivityPage() {
         href: "/tools",
         rows: by(raw.tools).map((t) => ({ id: t.id, name: t.toolkitName, createdAt: t.createdAt }))
       },
-      // After Tools and before Workshops, which is where Android's My Activity puts it — Android owns
-      // the information architecture and the two lists must not disagree about the order a designer
-      // reads their own work in.
       {
         title: "Processes",
         href: "/processes",
@@ -235,10 +183,6 @@ export default function MyActivityPage() {
       {user && visibleOthers.length > 0 ? (
         <div className="panel mb-4 max-w-md p-4">
           <Field label="Whose activity?">
-            {/* `searchable`: the options are accounts — records — so the count says how many
-                colleagues rank below the reader and nothing about this control. An admin sees the
-                whole roster here and a professor sees three, and the same control should behave the
-                same way for both. */}
             <Select value={activeUserId} searchable onChange={(event) => setSelectedUserId(event.target.value)}>
               <option value={user.id}>Me — {user.name}</option>
               {visibleOthers.map((entry) => (

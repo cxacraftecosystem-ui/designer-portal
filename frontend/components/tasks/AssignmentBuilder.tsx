@@ -24,19 +24,6 @@ import { handleFormEnter } from "@/lib/formNav";
 import type { UserRole } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * The assignment builder — one scope, many people, one POST.
- *
- * Every dimension the backend accepts is expressible here (record types, assignees, an optional
- * artisan subset, questionnaire sections, a target count, title/description/due date) and the panel
- * at the bottom says the combination back in a sentence before anything is written. That preview is
- * not decoration: five independent multi-selects produce combinations nobody can verify by reading
- * the controls, and an assignment sent to fifteen people is fifteen rows to unpick if it was wrong.
- *
- * The workshop lives one level up, on the page, because it scopes the accountability and batch views
- * too — this component receives it and narrows its own pickers to match.
- */
-
 function Step({ n, title, hint, children }: { n: number; title: string; hint?: string; children: React.ReactNode }) {
   return (
     <section className="grid gap-3">
@@ -54,7 +41,6 @@ function Step({ n, title, hint, children }: { n: number; title: string; hint?: s
   );
 }
 
-/** What a multi-select has actually got in it — the trigger only ever says "N selected". */
 function Picked({ labels, empty }: { labels: string[]; empty: string }) {
   if (!labels.length) return <p className="text-xs text-ink-500">{empty}</p>;
   const shown = labels.slice(0, 6);
@@ -67,15 +53,6 @@ function Picked({ labels, empty }: { labels: string[]; empty: string }) {
   );
 }
 
-/**
- * WHAT IS NOT AT STAKE when `/tasks/options` does not answer.
- *
- * The shared clause is *"this record can be saved without it"*, and nothing on this panel is a
- * record: the assignees are REQUIRED and a batch cannot be sent without them. What an admin needs
- * instead is that the pickers are short rather than the repository empty, and that the page's own
- * error banner above already names the failure. The OPENING of both sentences stays the shared one
- * -- see `WorkshopListVoice.reassurance`.
- */
 const READ_FAILED_HERE = "The error above says what happened.";
 
 export function AssignmentBuilder({
@@ -89,22 +66,9 @@ export function AssignmentBuilder({
 }: {
   options: TaskOptions | null;
   loading: boolean;
-  /**
-   * Did the last `/tasks/options` read FAIL? Distinct from `loading`, and distinct from an answer
-   * with nothing in it -- three states that this panel used to render as one empty list.
-   */
   optionsFailed: boolean;
   workshopId: string;
   workshopTitle: string | null;
-  /**
-   * The term the page last SENT to `GET /tasks/options`, for the truncation notices only.
-   *
-   * This component holds no search state and issues no request of its own — the workshop scope and
-   * the search term are both the page's, because one call fills every picker here. It is passed in
-   * so `flagCutNotice` can tell the two readings of a cut apart: a cut with no term means "search to
-   * reach the rest", and a cut WITH one means "narrow what you typed". Telling somebody to search
-   * when they already have is how a picker teaches a user that searching does not work.
-   */
   pickerSearch: string;
   onAssigned: (result: TaskBatchResult) => void;
 }) {
@@ -124,16 +88,6 @@ export function AssignmentBuilder({
   const allArtisans = useMemo(() => options?.artisans ?? [], [options]);
   const allSections = useMemo(() => options?.sections ?? [], [options]);
 
-  /*
-    ONE STATE FOR ALL THREE PICKERS, because one request fills all three: they arrive together or
-    not at all. `rows` is empty in the "ok" arm deliberately -- this value is only ever read for its
-    KIND, since each picker below keeps its own genuinely-empty sentence (they are three different
-    claims: nobody ranks below you, the questionnaire has no active sections, this workshop has no
-    artisans, and the shared "No {noun} have been recorded yet" is none of them).
-
-    `accessList: false`: none of the three is a grant set, so R6's reason for never keeping a list
-    on the device does not apply here and must not be printed as though it did.
-  */
   const listState: WorkshopListState<never> = loading
     ? { kind: "loading" }
     : optionsFailed
@@ -148,12 +102,9 @@ export function AssignmentBuilder({
     online: listOnline,
     reassurance: READ_FAILED_HERE
   });
-  /** The site's own sentence once the read has ANSWERED; the shared ones before that. */
   const emptyLabelFor = (noun: string, own: string) =>
     listState.kind === "ok" ? own : workshopEmptyLabel(listState, voiceFor(noun));
 
-  // Switching workshop reloads a narrower artisan list; anything picked from the previous workshop
-  // has to go, or the batch would silently carry artisans who are not at this workshop at all.
   useEffect(() => {
     const available = new Set(allArtisans.map((artisan) => artisan.id));
     setArtisanIds((prev) => {
@@ -162,7 +113,6 @@ export function AssignmentBuilder({
     });
   }, [allArtisans]);
 
-  /** The hierarchy filter: the roles that actually appear below this admin, highest tier first. */
   const roleOptions = useMemo(() => {
     const counts = new Map<string, number>();
     allAssignees.forEach((user) => counts.set(user.role, (counts.get(user.role) ?? 0) + 1));
@@ -242,7 +192,6 @@ export function AssignmentBuilder({
           targetCount: validTarget ?? undefined,
           title: title.trim() || undefined,
           description: description.trim() || undefined,
-          // The date input yields YYYY-MM-DD; send a full ISO instant at local midnight.
           dueAt: dueDate ? new Date(`${dueDate}T00:00:00`).toISOString() : undefined
         })
       });
@@ -264,15 +213,6 @@ export function AssignmentBuilder({
       >
         <div className="grid gap-3 md:grid-cols-2">
           <FieldBlock label="Filter by tier">
-            {/* Filters the list beside it rather than filling a field, so it must not steal focus.
-
-                NO `searchable`, and that is a decision rather than the pass missing it. `roleOptions`
-                is the seven-rung role ladder from `lib/permissions`, narrowed to the tiers actually
-                below the signed-in user — a closed vocabulary that cannot exceed seven rows however
-                many accounts exist, and the shortest of them all for a field contributor. A filter
-                box over "Everyone below me / Researcher / Field contributor" is a tab stop between
-                this control and the assignee picker it exists to narrow. The count rule already
-                reaches this answer on its own. */}
             <Dropdown
               value={roleFilter}
               onChange={setRoleFilter}
@@ -292,24 +232,9 @@ export function AssignmentBuilder({
               }))}
               searchable
               placeholder={loading ? "Loading people..." : "Select people"}
-              // "Nobody ranked below you" is a claim about the hierarchy and may only be made off an
-              // answer that arrived. Before that it is the app's one word for "an answer is
-              // outstanding", and on a failure it is the shared sentence.
               emptyLabel={emptyLabelFor("people", "Nobody in a role below yours")}
               confirmLabel="Confirm people"
             />
-            {/*
-              THE SERIOUS HALF OF THE THREE CAPS. Audit 2026-08-15 (MAJOR). `task_options` serves at
-              most 500 accounts against 3632 measured on this repository (docs/OPEN_FINDINGS.md,
-              2026-08-13), so this picker is cut TODAY — and an assignee who cannot be found here is
-              indistinguishable from a colleague who has no account, which is the exact failure the
-              design-workshop viewer picker cost this repository once already.
-
-              Note what the two controls above do NOT rescue. "Filter by tier" counts what ARRIVED,
-              so its "Everyone below me (312)" is a count of the slice; and the box inside the
-              MultiSelectDropdown filters the array it was handed. Neither can see past the cut. Only
-              the page's search box can, because only that one goes into the WHERE.
-            */}
             <CappedListNotice cuts={[flagCutNotice(options?.assigneesTruncated, "people", pickerSearch)]} />
           </FieldBlock>
         </div>
@@ -374,9 +299,6 @@ export function AssignmentBuilder({
                 value: kind.value,
                 label: kind.pluralLabel.charAt(0).toUpperCase() + kind.pluralLabel.slice(1)
               }))}
-              // NO `searchable`: `options.recordTypes` is the backend's closed list of record kinds
-              // (artisans, products, processes, tools, questionnaires, media) and there will not be
-              // a seventh this year. The count rule leaves it a plain list, correctly.
               placeholder="Artisans, products, tools..."
               confirmLabel="Confirm record types"
             />
@@ -394,12 +316,8 @@ export function AssignmentBuilder({
               values={sectionIds}
               onChange={setSectionIds}
               options={allSections.map((section) => ({ value: section.id, label: `${section.code} — ${section.title}` }))}
-              // `searchable`: sections are authored rows, and the label is `code — title`, so
-              // "3.2" or a word from the title is how anybody finds one. Left to the count, a
-              // questionnaire with seven active sections would offer no way to type either.
               searchable
               placeholder="Sections to cover"
-              // A claim about the questionnaire, so it waits for the questionnaire's answer.
               emptyLabel={emptyLabelFor("questionnaire sections", "No active questionnaire sections")}
               confirmLabel="Confirm sections"
             />
@@ -422,24 +340,14 @@ export function AssignmentBuilder({
                 value: artisan.id,
                 label: artisan.place ? `${artisan.name} · ${artisan.place}` : artisan.name
               }))}
-              // `searchable`: the artisan corpus, and capped — see the notice under this control.
               searchable
               placeholder={workshopId ? "All artisans at this workshop" : "All artisans"}
-              // Two claims about the repository, both of which need the read to have answered first.
               emptyLabel={emptyLabelFor(
                 "artisans",
                 workshopId ? "No artisans linked to this workshop" : "No artisans yet"
               )}
               confirmLabel="Confirm artisans"
             />
-            {/*
-              Milder than the assignee cut and still worth saying. Leaving this empty means "every
-              artisan in scope", so an artisan missing from the list is still COVERED by the task and
-              `_count_records` is not distorted — the loss is that a specific late-sorting artisan
-              cannot be named in a subset. 731 artisans measured against a 500 cap, so the unscoped
-              list is cut today; picking a workshop above usually takes it under the cap on its own,
-              which is why this sentence must not appear when it does not apply.
-            */}
             <CappedListNotice cuts={[flagCutNotice(options?.artisansTruncated, "artisans", pickerSearch)]} />
           </FieldBlock>
           <Field label="Target count">
@@ -480,8 +388,6 @@ export function AssignmentBuilder({
             />
           </Field>
           <div className="grid gap-3 md:grid-cols-2">
-            {/* Not <Field>, which wraps its child in a <label>: the calendar button would fold its
-                text into the box's accessible name. CalendarField labels as a sibling. */}
             <CalendarField id="task-due-date" label="Due date" value={dueDate} onChange={setDueDate} />
           </div>
         </div>

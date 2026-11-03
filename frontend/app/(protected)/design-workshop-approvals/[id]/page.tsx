@@ -1,32 +1,5 @@
 "use client";
 
-/**
- * ONE REPORT, READ FOR A SIGN-OFF — every stage as its designers recorded it, with its photographs,
- * what the officers asked for, every decision taken on it, and the approving authority's own:
- * approve, send back or withdraw an approval, hand on to the office.
- *
- * ── THE BUTTONS ARE THE SERVER'S ANSWER, DRAWN ──────────────────────────────────────────────────
- *
- * Which decisions this report offers, whether THIS reader may take each, and the sentence a refused
- * one shows all come from `approvalActions` (`lib/designWorkshopApprovals.ts`) over the read's
- * `mayDecide`, `decisionRefusal` and `refusals` — who may decide turns on rows no client can see. A
- * refused decision is drawn DISABLED WITH ITS SENTENCE rather than hidden.
- *
- * ── THE REVIEW LAYOUT (A18, B2, C13, 2026-10-17) ────────────────────────────────────────────────
- *
- * A fixed stage menu with completeness dots, a fixed decision bar that preselects the stage in view,
- * a Flag on every field that drafts a note into a tray, one "Send back with N notes", each note
- * marked "Edited since" or "Untouched" (A19), each inspector's "Checked, no corrections" (C5), and a
- * "Changed since round N" comparison against the copy kept at each hand-in. See
- * `components/designworkshop/review/`.
- *
- * ── AN APPROVAL IS OF THE REPORT AS IT WAS READ ─────────────────────────────────────────────────
- *
- * Approve sends the read's `submissionRound` and `updatedAt` back. If the designers saved a stage
- * after this page read the report, the server refuses with a sentence asking for a reload — and this
- * page offers the reload — rather than approving content nobody here looked at.
- */
-
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, Download, Loader2, MessageSquarePlus, Send, Stamp, Undo2 } from "lucide-react";
@@ -91,7 +64,6 @@ function describeFailure(error: unknown): string {
   return error.message;
 }
 
-/** The forms a decision opens, and the one that is open. */
 type OpenForm = DwApprovalVerb | null;
 
 const DECISION_ICON = { approve: Stamp, handOn: Send, revise: Undo2 } as const;
@@ -114,7 +86,6 @@ function DecisionPanel({
   setOpen: (next: OpenForm) => void;
   reasonStage: string;
   setReasonStage: (next: string) => void;
-  /** The tray: a send-back carries every drafted note. */
   drafts: DwNoteDraft[];
   onSent: () => void;
   onAnswer: (next: DwApprovalDetail) => void;
@@ -130,7 +101,6 @@ function DecisionPanel({
 
   const [busy, setBusy] = useState<DwApprovalVerb | "download" | "deliver" | "resend" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  /** True when the refusal means the report moved since it was read — the reload is offered. */
   const [stale, setStale] = useState(false);
   const [outcome, setOutcome] = useState<string | null>(null);
 
@@ -184,7 +154,7 @@ function DecisionPanel({
       });
       onAnswer(answer);
       setApproveNote("");
-      if (drafts.length) onSent(); // the confirm said they would be discarded
+      if (drafts.length) onSent();
       setOpen(null);
       setOutcome(answer.alreadyApproved ? `Already approved. ${signOffLines(answer).join(" ")}` : "Approved. Ready to hand on.");
       void refreshAwaitingApprovalCount();
@@ -299,7 +269,7 @@ function DecisionPanel({
       });
       onAnswer(answer);
       setApproveNote("");
-      if (approving && drafts.length) onSent(); // the confirm said they would be discarded
+      if (approving && drafts.length) onSent();
       setOpen(null);
       setDeliveryFailed(answer.deliveryFailed === true);
       setOutcome(
@@ -336,11 +306,9 @@ function DecisionPanel({
     setProblem(null);
     setDownload(null);
     try {
-      // `record: true` writes the export to the report's ledger, which a hand-on can then name.
       const file = await downloadReportForApproval(detail.id, { formats: [format], record: true, fresh });
       saveBlobToDisk(file.blob, file.fileName);
       const notes = file.warningCount > 0 ? ` Notes: ${file.warnings.join("; ")}` : "";
-      // A22: an unchanged report comes back from its stored file — said, with a way to rebuild.
       setDownload(
         file.reusedFrom
           ? { text: `Same as the file from ${formatDateTime(file.reusedFrom)} — nothing has changed.${notes}`, reused: format }
@@ -644,7 +612,6 @@ function DecisionPanel({
         </p>
       ) : null}
 
-      {/* BOTH REGIONS ARE MOUNTED FROM FIRST PAINT, so the first message in each is announced. */}
       <div
         role="alert"
         aria-live="assertive"
@@ -679,7 +646,6 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
-  /** Bumped to read the report again — after a download, or when a decision found it moved. */
   const [readCount, setReadCount] = useState(0);
   const [open, setOpen] = useState<OpenForm>(null);
   const [reasonStage, setReasonStage] = useState("");
@@ -700,7 +666,6 @@ export default function ReportForApprovalPage({ params }: { params: Promise<{ id
       })
       .catch((err) => {
         if (cancelled) return;
-        // What was on screen stays on screen; the sentence says the read failed.
         setError(describeFailure(err));
       });
     return () => {

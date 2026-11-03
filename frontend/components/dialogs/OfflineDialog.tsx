@@ -1,21 +1,5 @@
 "use client";
 
-/**
- * "You are offline" — the web's answer to the Android offline outbox.
- *
- * The web now has the same outbox the Android app has always had (`lib/offline`), so a save made
- * with no signal is queued on the device and sent when the connection returns. This dialog is the
- * announcement, not the mechanism: the moment the connection drops the researcher is told, rather
- * than discovering it at the Save button after twenty minutes of typing.
- *
- * What it must NOT do is imply the work is lost. It says what is true: the form is intact, saving
- * queues instead of failing, and the things that genuinely cannot work offline — uploading a file
- * that is not attached to a queued save, and searching the repository — will not work.
- *
- * It is dismissable — someone who knows they are offline and wants to keep typing must be able to get
- * the dialog out of the way — and it re-arms on the next disconnect, not on every render.
- */
-
 import { CloudOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -31,7 +15,6 @@ export function OfflineDialog({ open, onDismiss }: { open: boolean; onDismiss: (
       role="alertdialog"
       tone="warning"
       icon={<CloudOff className="h-4 w-4" aria-hidden />}
-      // Warning, not danger: a backdrop click is a fine way to say "yes, I know".
       dismissOnBackdrop
       zIndex={106}
       title="You are offline"
@@ -56,25 +39,11 @@ export function OfflineDialog({ open, onDismiss }: { open: boolean; onDismiss: (
   );
 }
 
-/**
- * Raises {@link OfflineDialog} on disconnect and confirms recovery with a toast. Mounted once.
- *
- * SILENT WHILE THE ACCOUNT OWES A NEW PASSWORD. It makes no request of its own, so it cannot bounce a
- * gated tab or park anything — but it sits beside `AppShell` rather than inside it, so it would go on
- * drawing over the password form, and both of its sentences are about the app the form has replaced:
- * "saving still works … held on this device" and "Saving and uploading work again" are false of a
- * screen whose one button is a password change no outbox can carry. The gate says for itself when
- * the server cannot be reached. The state is still tracked, so the dialog is there if the connection
- * is still down when the gate gives way to the app.
- */
 export function OfflineWatcher() {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const { passwordChangeRequired } = useAuth();
-  // Only announce "back online" to someone who was told they went offline in the first place.
   const wasOffline = useRef(false);
-  // Read through a ref by the `online` handler, so a change of gate does not re-run the listener
-  // effect below — whose mount half would re-raise the dialog over a connection already known.
   const gated = useRef(passwordChangeRequired);
   useEffect(() => {
     gated.current = passwordChangeRequired;
@@ -94,8 +63,6 @@ export function OfflineWatcher() {
   }, [toast]);
 
   useEffect(() => {
-    // A client-side navigation can land on a protected page while already offline, so check once on
-    // mount as well as listening for the transition.
     if (typeof navigator !== "undefined" && navigator.onLine === false) goOffline();
     window.addEventListener("offline", goOffline);
     window.addEventListener("online", goOnline);

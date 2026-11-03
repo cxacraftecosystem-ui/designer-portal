@@ -1,25 +1,3 @@
-/**
- * OFFLINE FORM AUTHORING WITH TEMPORARY IDS (UNIFY A15, web).
- *
- * A designer with no signal can make a form, add its sections and add their questions. Each is a
- * step in this outbox — `form`, `section`, `question` — written in order and given a temporary id
- * (`tmp-…`) the later steps point at. When the browser is back online the steps are sent oldest
- * first: each create's real id is recorded against its temporary one (the remap) and every later
- * step is resolved through it, so a question added to a section added to a form made offline lands
- * under the right rows. A form that already exists takes sections and questions offline the same way.
- *
- * RULES, AND WHY:
- * - One step at a time, in order. A step whose parent has not landed waits; one the server refused
- *   (a 4xx) is parked with the server's sentence and blocks only its own children. Send again and
- *   Discard are offered beside it; discarding a form or a section discards what was added under it.
- * - Nothing that only waited for a connection is ever marked: `lib/failureTriage` decides.
- * - Every POST carries an `Idempotency-Key` (the step's id), so a send that reached the server but
- *   whose answer was lost does not make the row twice on the retry.
- * - The outbox is stamped with the account that wrote it and is neither shown to nor sent by any
- *   other account on the device (the rule `lib/questionnaireFormCache` and `DwDraft` keep).
- * - Kept in localStorage: a few small JSON bodies, read synchronously by the screens that draw them.
- */
-
 import { apiFetch } from "@/lib/api";
 import { triageFailure } from "@/lib/failureTriage";
 import type { QForm } from "@/lib/questionnaireForms";
@@ -72,14 +50,12 @@ function write(next: Stored) {
   try {
     localStorage.setItem(KEY, JSON.stringify(next));
   } catch {
-    // A full or blocked store: the steps live for this tab, and the screen keeps saying "waiting".
   }
   listeners.forEach((l) => l());
 }
 
 const FOREIGN: Stored = Object.freeze({ ownerUserId: null, steps: [], remap: {} }) as Stored;
 
-/** The outbox as `owner` may see it: another account's steps are never shown or sent. */
 export function authoringState(owner: string | null): Stored {
   const stored = read();
   if (stored.steps.length && stored.ownerUserId && owner && stored.ownerUserId !== owner) return FOREIGN;
@@ -106,7 +82,6 @@ export function isTempId(id: string | null | undefined): boolean {
   return Boolean(id && id.startsWith(TEMP_PREFIX));
 }
 
-/** A real id for a temporary one, once its create has landed; the id itself otherwise. */
 export function resolveId(owner: string | null, id: string): string {
   return authoringState(owner).remap[id] ?? id;
 }
@@ -129,20 +104,17 @@ export function queueQuestion(owner: string | null, formRef: string, sectionRef:
   return tempId;
 }
 
-/** The steps that belong to one form (by its temporary or its real id). */
 export function stepsForForm(owner: string | null, formId: string): AuthoringStep[] {
   const state = authoringState(owner);
   const ids = new Set([formId, ...Object.entries(state.remap).filter(([, real]) => real === formId).map(([temp]) => temp)]);
   return state.steps.filter((s) => (s.kind === "form" ? ids.has(s.tempId) : ids.has(s.formRef)));
 }
 
-/** "Send again": a refused step goes back to waiting. */
 export function retryAuthoringStep(owner: string | null, stepId: string) {
   const state = authoringState(owner);
   write({ ...state, steps: state.steps.map((s) => (s.id === stepId ? { ...s, status: "PENDING", error: undefined } : s)) });
 }
 
-/** "Discard": the step, and everything added under what it would have made. */
 export function discardAuthoringStep(owner: string | null, stepId: string) {
   const state = authoringState(owner);
   const step = state.steps.find((s) => s.id === stepId);
@@ -160,13 +132,11 @@ export function discardAuthoringStep(owner: string | null, stepId: string) {
   write({ ...state, steps });
 }
 
-/** The new section in a create's answer: the last live one with this title (and code, when sent). */
 export function landedSectionId(form: QForm, body: SectionBody, taken: ReadonlySet<string>): string | null {
   const matches = form.sections.filter((s) => s.title === body.title && (!body.code || s.code === body.code) && !taken.has(s.id));
   return matches.at(-1)?.id ?? null;
 }
 
-/** The new question in a create's answer: the last one with this prompt in its section. */
 export function landedQuestionId(form: QForm, sectionId: string, body: QuestionBody, taken: ReadonlySet<string>): string | null {
   const section = form.sections.find((s) => s.id === sectionId);
   const matches = (section?.questions ?? []).filter((q) => q.prompt === body.prompt && !taken.has(q.id));
@@ -180,11 +150,6 @@ const post: Post = (path, body, idempotencyKey) =>
 
 let draining: Promise<number> | null = null;
 
-/**
- * Sends what can be sent, in order; resolves with how many steps landed. A step waiting on a parent
- * that has not landed (or was refused) is skipped, not failed. Stops at the first failure that only
- * needs a connection or time, keeping every step as it is.
- */
 export function drainAuthoring(owner: string | null, send: Post = post): Promise<number> {
   if (draining) return draining;
   draining = (async () => {
@@ -242,7 +207,6 @@ export function drainAuthoring(owner: string | null, send: Post = post): Promise
   return draining;
 }
 
-/** Test seam: forget the in-memory copy so the next read comes from storage. */
 export function resetAuthoringCache() {
   snapshot = null;
 }

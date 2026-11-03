@@ -1,37 +1,5 @@
 "use client";
 
-/**
- * A GEO field of a stage: a venue, a cluster, a workshop location.
- *
- * FOUR WAYS TO ANSWER IT, and a field app needs all four because each of the other three fails
- * somewhere this app is used:
- *
- *   1. **Type the two numbers.** The only one that works with no map tiles, no satellites and no
- *      network, and therefore the one that can never be taken away. It is also the keyboard route to
- *      a value the map can only express with a pointer.
- *   2. **Use the device's fix.** One tap, and it carries its own accuracy radius — which travels
- *      with the coordinate, because a point whose error radius is unknown is indistinguishable from
- *      a point that is wrong.
- *   3. **Point at it on the map.** The real MapLibre picker the location card uses, loaded from the
- *      shared module so the megabyte is downloaded once per session rather than once per surface.
- *   4. **Copy the stage's place of recording**, when one has been captured. A venue location and the
- *      place the stage was recorded are usually the same point, and re-answering it is the kind of
- *      friction that ends with the field left blank.
- *
- * WHAT IT SAYS BACK. Whatever the point is, the card asks the SAME closed lists the rest of the app
- * validates addresses against — `GET /reference/address` for the 36 states and 795 districts, and
- * MapTiler for the point — and prints the state and district it lands in. That readout is not stored
- * anywhere and is not meant to be: it exists so a designer can see, before they move on, that the
- * coordinate they just entered is in Rajasthan and not in the Bay of Bengal. A transposed latitude
- * and longitude is silent as two numbers and obvious as "West Bengal".
- *
- * ⚠ `region` IS THE STATE AND `subregion` IS THE DISTRICT in MapTiler's Indian hierarchy. `county`
- * is the trap — it answers "Sanganer Tehsil" for Bagru: a real name at the wrong administrative
- * level, plausible enough to be believed. This card does not choose between them; it calls
- * `resolvePoint`, which is the function the artisan form's location card uses and which was measured
- * against sixteen real coordinates.
- */
-
 import { useEffect, useRef, useState } from "react";
 import { ImageIcon, LocateFixed, MapPinned } from "lucide-react";
 
@@ -41,7 +9,6 @@ import { ActionGroup } from "@/components/ui/ActionGroup";
 import { geoValue, readNumber, type DwGeoValue, type DwValue } from "@/lib/designWorkshops";
 import { photoPosition, type PhotoPosition } from "@/lib/photoPosition";
 
-/** Shorter than the location card's own hunt: somebody is standing there with a finger on a button. */
 const FIX_TIMEOUT_MS = 30_000;
 
 export function StageGeoField({
@@ -49,7 +16,6 @@ export function StageGeoField({
   value,
   onChange,
   disabled,
-  /** The stage's place of recording, when the card at the top of the page has captured one. */
   recordingPlace
 }: {
   labelId: string;
@@ -66,7 +32,6 @@ export function StageGeoField({
   const [mapOpen, setMapOpen] = useState(false);
   const [place, setPlace] = useState<PointAddress | null>(null);
   const [placeLooking, setPlaceLooking] = useState(false);
-  /** A21: the position a chosen photo carries, offered until applied. */
   const [fromPhoto, setFromPhoto] = useState<PhotoPosition | null>(null);
   const photoInput = useRef<HTMLInputElement | null>(null);
 
@@ -83,22 +48,6 @@ export function StageGeoField({
     setFromPhoto(found);
   }
 
-  /*
-   * THERE IS DELIBERATELY NO EFFECT RE-SEEDING THESE TWO BOXES FROM `value`.
-   *
-   * It is unnecessary — the collection editor unmounts a row's panel when it collapses and keys each
-   * row by its client key, and the stage form keys each entity, so this component genuinely remounts
-   * whenever the record underneath it changes. And it is actively harmful: the commit below clears
-   * the stored value when either half stops parsing, so a re-seeding effect would fire on that clear
-   * and wipe the half-typed latitude out of the box the designer is still typing into.
-   */
-
-  /**
-   * Ask the closed lists where the stored point is. Read-only, always — see the file header.
-   *
-   * Keyed on the STORED coordinate rather than on the two text boxes, so a half-typed latitude does
-   * not fire a geocode per keystroke across a metered rural connection.
-   */
   const storedKey = stored ? `${stored.lat},${stored.lon}` : "";
   const lookup = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -115,8 +64,6 @@ export function StageGeoField({
         setPlace(found);
       })
       .catch(() => {
-        // Offline is the normal weather here and this readout is a sanity check, not a gate. It
-        // simply does not appear, which is honest: nothing claims a place that was never looked up.
       })
       .finally(() => {
         if (!controller.signal.aborted) setPlaceLooking(false);
@@ -133,8 +80,6 @@ export function StageGeoField({
       if (stored) onChange(null);
       return;
     }
-    // The same bounds the server's `coerce_value` enforces. Checking here means a transposed pair is
-    // refused at the keyboard rather than at Save, forty fields later.
     if (latNumber < -90 || latNumber > 90 || lonNumber < -180 || lonNumber > 180) {
       setProblem("Latitude is -90 to 90; longitude -180 to 180.");
       return;
@@ -165,8 +110,6 @@ export function StageGeoField({
       },
       (failure) => {
         setBusy(false);
-        // The three refusals are kept apart because the next move differs: unblock the browser, turn
-        // location on, or go outside. "Location failed" tells a designer none of the three.
         setProblem(
           failure.code === failure.PERMISSION_DENIED
             ? "Location blocked. Allow it for this site, or use the map."
@@ -182,9 +125,6 @@ export function StageGeoField({
   function pick(nextLat: string, nextLon: string) {
     setLat(nextLat);
     setLon(nextLon);
-    // A hand-placed pin carries no accuracy and must not inherit the previous fix's: the researcher
-    // pointed at the place, and a pointer has no error radius. Reusing the old radius would attach a
-    // measurement to a point that was never measured.
     commit(nextLat, nextLon);
   }
 
@@ -215,16 +155,12 @@ export function StageGeoField({
         />
       </div>
 
-      {/* The two real buttons go through the shared row rule; the text links and the accuracy note
-          sit on their own line under them, so they never count as buttons in the row. */}
       <ActionGroup align="start">
         <button type="button" className="field-button-secondary" disabled={disabled || busy} onClick={useDeviceFix}>
           <LocateFixed className="h-4 w-4" aria-hidden />
           {busy ? "Getting a fix…" : "Use current GPS"}
         </button>
 
-        {/* Offered only when the build has a map key. A "Pick on map" button that opens onto a grey
-            rectangle reads as a broken app rather than as an unconfigured tenant. */}
         {mapPickerAvailable() ? (
           <button
             type="button"
@@ -325,9 +261,6 @@ export function StageGeoField({
         />
       ) : null}
 
-      {/* The sanity readout. Never stored, and it says which half it could not resolve rather than
-          printing a confident half-answer: an empty district under a named state is a real result
-          out here, not a failure. */}
       {stored && (placeLooking || place) ? (
         <p className="text-xs leading-5 text-ink-500">
           {placeLooking

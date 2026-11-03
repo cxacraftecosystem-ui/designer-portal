@@ -7,35 +7,11 @@ import {
   sessionOwesPasswordChange,
   type ApiFetchOptions
 } from "@/lib/api";
-// "Is this the network?" is asked in ONE place for the whole web client, and this module is not
-// exempt from it just because its second leg talks to a bucket instead of to the API. `StorageError`
-// is DECLARED there rather than here so the classification can read its `status`: an S3 403 or 413
-// used to reach the outbox drain as an unrecognised error, default to "the connection is at fault",
-// and be re-thrown for ever under "Still no connection" — the whole jam, through the storage leg.
 import { LocalRefusalError, StorageError, triageFailure, underlyingError } from "@/lib/failureTriage";
 import { byCount, bytes } from "@/lib/format";
 import { field, questionSequence, recordingFilename, sectionSequence, splitExtension } from "@/lib/naming";
 import { processingFor } from "@/lib/transcript/uploadChoice";
 import type { MediaFile, MediaType } from "@/lib/types";
-
-/**
- * The web media pipeline. Mirrors the tactics the Android app uses (see docs/MEDIA_PIPELINE.md):
- *
- * - **Eager pre-upload** — bytes start moving to object storage the moment a file is attached, so the
- *   slow transfer overlaps the minutes the researcher spends filling the form and saving is instant.
- * - **Multipart above a size threshold** — big videos go up in parts, each retried independently,
- *   with the whole upload aborted (never left half-written) on failure.
- * - **Safe-request retry** — presign / multipart-setup / complete are re-issued on 502/503/504 and on
- *   anything that never reached a server at all; record-creating calls are never auto-retried. The
- *   classification is `lib/failureTriage.ts`'s, not this module's; the NARROWING (no 429, no 500 in a
- *   tight four-attempt loop) is this module's and is argued at {@link isRetriableApiFailure}.
- * - **Idempotent completion** — `/media/complete` de-duplicates on `objectKey`, so a retried finish
- *   returns the row the first attempt created instead of duplicating it.
- * - **Orphan cleanup** — every staged object is journalled; discarding a file, closing the page, or
- *   simply never saving the record all end with the object being deleted rather than lingering in S3.
- * - **One naming scheme** — every upload is renamed here, by the one implementation below, so no two
- *   capture screens can drift into naming the same kind of file differently.
- */
 
 export function inferMediaType(file: File): MediaType {
   if (file.type.startsWith("image/")) return "IMAGE";
@@ -45,27 +21,6 @@ export function inferMediaType(file: File): MediaType {
   return "DOCUMENT";
 }
 
-// ---------------------------------------------------------------------------
-// Nomenclature — the only place a stored file gets its name
-// ---------------------------------------------------------------------------
-
-/**
- * Every file this app uploads is named by the one convention both portals use (`lib/naming.ts`,
- * docs/conventions/NAMING_2026-10-18.md):
- *
- *     Portal_Entity_Date_Time_Place_Craft_Subject_What_Sequence.ext
- *
- *     DesignWorkshop_Interview_2026-07-01_1824_Bagru-Jaipur_Hand-Block-Printing_Giriraj-Prasad-Chhipa_Recording_D-Q03.m4a
- *     DesignWorkshop_Product_2026-06-22_1043_Indigo-Dabu-Saree_Photo_03.jpg
- *     DesignWorkshop_Process_2026-06-23_1519_Preparation-Of-Bamboo_Step-4-Video_01.mp4
- *
- * because the researcher reads that name with the folder gone — out of an extracted zip, in a
- * downloads list, on a laptop that never saw this app. The name is also the S3 leaf, so it is ASCII.
- * backend/app/services/media_naming.py rebuilds the same shape at read time for everything already
- * uploaded under an older code.
- */
-
-/** What each kind of file is, as the What field. Plain words, never the app's IMG/VID/AUD codes. */
 const KIND_WORD: Record<MediaType, string> = {
   IMAGE: "Photo",
   VIDEO: "Video",
@@ -79,10 +34,8 @@ export function mediaKindWord(subject: File | MediaType): string {
   return KIND_WORD[typeof subject === "string" ? subject : inferMediaType(subject)] ?? "File";
 }
 
-/** What a file IS (the What field) and which of its kind (the Sequence field). */
 export type MediaDescriptor = { what: string; sequence?: string };
 
-/** 1-based, whole, and never zero. */
 function positiveIndex(index: number | null | undefined): number {
   const value = Math.trunc(index ?? 0);
   return value > 0 ? value : 1;
@@ -92,19 +45,10 @@ function twoDigits(index: number | null | undefined): string {
   return String(positiveIndex(index)).padStart(2, "0");
 }
 
-/**
- * `Photo` + `02`: what a file is when it is simply one of a record's captures. The index is its place
- * among that record's media of every kind, so it continues past the files already attached.
- */
 export function describeMedia(subject: File | MediaType, index: number): MediaDescriptor {
   return { what: mediaKindWord(subject), sequence: twoDigits(index) };
 }
 
-/**
- * `Recording` + `K-Q01` for a clip answering one question, `D-All` for a recording covering a whole
- * section — which answers no single question, so it claims no number. A clip that names no section
- * falls back to what it plainly is.
- */
 export function describeInterviewAudio({
   sectionCode,
   answerNumber,
@@ -122,10 +66,6 @@ export function describeInterviewAudio({
   return { what, sequence: sectionSequence(sectionCode) };
 }
 
-/**
- * `Grid-Measurement-Length-Breadth` / `Grid-Measurement-Height`. A grid photo whose axis the screen
- * did not record gets the bare `Grid-Measurement` rather than a guess.
- */
 export function describeMeasurementGrid(
   axis: "lengthBreadth" | "height" | null | undefined,
   index = 1
@@ -135,7 +75,6 @@ export function describeMeasurementGrid(
   return { what, sequence: twoDigits(index) };
 }
 
-/** `Step-4-Video` + `01`: the step's number, then what the file is. */
 export function describeProcessStep({
   stepNumber,
   subject,
@@ -150,20 +89,14 @@ export function describeProcessStep({
   return { what: `${head}-${mediaKindWord(subject)}`, sequence: twoDigits(index) };
 }
 
-/** `Pre-Process-Video` + `01` — a capture of what happens before the documented process begins. */
 export function describePreProcess(subject: File | MediaType, index: number): MediaDescriptor {
   return { what: `Pre-Process-${mediaKindWord(subject)}`, sequence: twoDigits(index) };
 }
 
-/** What a file is named after: the record it hangs off, what it is, and when it was captured. */
 export type MediaNameSpec = {
-  /** The Entity: Artisan, Product, Tool, Process, Workshop, Interview, Group-Interview. */
   recordType: string;
-  /** That record's own name, as stored — the artisan, the product, the process (the Subject). */
   recordName: string;
-  /** What this file IS and which of its kind. */
   descriptor: MediaDescriptor;
-  /** Capture time; defaults to now, which is when a browser upload is being named. */
   at?: Date;
   place?: string | null;
   craft?: string | null;
@@ -173,7 +106,6 @@ function extensionOf(filename: string): string {
   return splitExtension(filename)[1];
 }
 
-/** The NAMING 2.1 name for one captured file (ASCII, at most 150 characters). */
 export function mediaFileName(file: File, spec: MediaNameSpec): string {
   return recordingFilename(spec.recordType, extensionOf(file.name), {
     capturedAt: spec.at ?? new Date(),
@@ -185,13 +117,6 @@ export function mediaFileName(file: File, spec: MediaNameSpec): string {
   });
 }
 
-/**
- * The same file under its archive name, ready to hand to any upload path in this module.
- *
- * Renaming the File itself (rather than carrying a parallel name) is what lets every capture screen
- * share the one resilient upload path — and it is safe for the eager pre-upload, whose fallback
- * match is on size + last-modified + MIME, all of which a rename preserves (see `signatureOf`).
- */
 export function renameMediaFile(file: File, spec: MediaNameSpec): File {
   const name = mediaFileName(file, spec);
   return new File([file], name, { type: file.type, lastModified: file.lastModified });
@@ -199,72 +124,17 @@ export function renameMediaFile(file: File, spec: MediaNameSpec): File {
 
 const UPLOAD_MAX_ATTEMPTS = 3;
 
-/** Gateway codes that mean "the origin was too slow", not "the request was bad" (Android parity). */
 const RETRIABLE_GATEWAY_CODES = new Set([502, 503, 504]);
 const SAFE_RETRY_ATTEMPTS = 4;
 
-/**
- * Files at/under this size go up as one PUT; larger ones switch to an S3 multipart upload that the
- * server stitches back into a single object.
- *
- * ── WHY THIS IS ONE PART'S WORTH OF BYTES, AND WAS 64 MiB UNTIL 2026-08-30 ──────────────────────
- *
- * THE TWO LEGS ARE SIGNED ON COMPLETELY DIFFERENT BUDGETS, and the old threshold ignored that.
- * `presign_put_url` signs a whole-file PUT for **900 seconds** (`backend/app/services/s3.py:204`);
- * `presign_upload_part` signs each part for **3600** (`:266`). So the single PUT is the leg with a
- * quarter of the time, and — until this change — the leg carrying the biggest files.
- *
- * What that cost. A 40 MB loom video uploaded from a browser on a field connection at ~30 kB/s needs
- * about 22 minutes on the wire. Its signature dies at 15, S3 answers 403, and the transfer is thrown
- * away whole — THERE IS NO RESUMING A SINGLE PUT. `uploadWhole` then mints another 900-second
- * signature, sends the same 40 MB from byte zero, and dies at exactly the same place; three attempts
- * later the file is reported failed. That is not a slow upload, it is a file that **can never be
- * sent at all** — and the retry loop is what disguised it, because a fresh presign per attempt looks
- * like the signature window is handled right up until one transfer is longer than the window itself.
- *
- * `MULTIPART_PART_SIZE` on the server is 16 MiB (`backend/app/api/routes/media.py:85`), so this is
- * the honest statement of the rule rather than a guess about link speed: **a file bigger than one
- * part is sent as parts.** Above it every chunk is separately signed, separately retried and — on a
- * 403 — separately RE-signed mid-upload (see `sendPart`), so a signature expiring costs one 16 MiB
- * part instead of the whole video. Below it nothing changes: a 12-megapixel photograph is 3-6 MB and
- * takes the identical path it took before, so the files that move are exactly the ones that failed.
- *
- * WHAT LOWERING IT COSTS, STATED SO NOBODY HAS TO REDERIVE IT: files between 16 and 64 MiB now try
- * multipart first, so on a bucket whose CORS rule omits `ExposeHeaders: ["ETag"]` they take the
- * `EtagUnavailableError` fallback — one aborted multipart, then the same single PUT they used to do
- * directly. That is bounded at one part, by construction: `uploadInParts` probes part 1 alone before
- * fanning out precisely so this is discovered after 16 MiB rather than after 400 MB, and the abort
- * leaves no billable parts behind. See {@link multipartAvailable}, which then holds for the session.
- *
- * KEEP IN STEP WITH Android's `MULTIPART_THRESHOLD` in `data/WorkshopRepository.kt`, whose KDoc
- * names this constant. The two clients disagreeing does not break either of them, but it means a
- * video that uploads from the phone and fails from the browser has no explanation that reads the
- * same on both.
- */
 export const MULTIPART_THRESHOLD = 16 * 1024 * 1024;
 const PART_CONCURRENCY = 3;
 const PART_MAX_ATTEMPTS = 3;
 
-/**
- * How many files of one batch transfer at once. Three saturates a rural link far better than the
- * strict sequence this used to run, while staying low enough that no single upload is starved into
- * the stall watchdog below (which is exactly what a high fan-out does on a bad connection).
- */
 export const UPLOAD_CONCURRENCY = 3;
 
-/**
- * Above this, the SHA-256 content hash is skipped: `crypto.subtle.digest` needs the whole file in
- * memory at once, and a 300 MB video would cost more than the corruption check is worth.
- */
 const CHECKSUM_MAX_BYTES = 32 * 1024 * 1024;
 
-/**
- * The transfer is killed only when it STOPS MOVING, never on a flat deadline. A fixed five-minute
- * timeout dooms a large video on a slow link and then burns every retry doing it again; a stall
- * watchdog lets a slow-but-alive upload run for as long as it needs and still kills a dead socket
- * quickly. Once the last byte is handed to the socket we are waiting on S3 to finalise the object,
- * which produces no progress events at all — hence the longer second window.
- */
 const STALL_TIMEOUT_MS = 60_000;
 const FINALIZE_TIMEOUT_MS = 5 * 60_000;
 
@@ -272,9 +142,6 @@ function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Ordered by preference. Safari/iOS cannot record WebM at all (it produces audio/mp4), so hardcoding
-// "audio/webm" there yields a file whose extension and MIME lie about its contents — which breaks
-// both playback and server-side transcription. Ask MediaRecorder what it actually supports instead.
 const AUDIO_RECORDER_MIME_TYPES = [
   "audio/webm;codecs=opus",
   "audio/webm",
@@ -284,35 +151,11 @@ const AUDIO_RECORDER_MIME_TYPES = [
   "audio/ogg"
 ];
 
-/** The best container this browser can record, or null to let MediaRecorder pick its own default. */
 export function pickAudioRecorderMimeType(): string | null {
   if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return null;
   return AUDIO_RECORDER_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) ?? null;
 }
 
-/**
- * Capture constraints for a spoken-word recording — the web's half of the noise handling Android
- * already does in `createAudioRecorder`, which asks the platform for the `VOICE_RECOGNITION` source
- * to get voice pre-processing tuned for clean speech.
- *
- * Both web recorders used to pass a bare `{ audio: true }`, which accepts whatever the browser
- * happens to default to — and those defaults vary by browser and by device. So one client was
- * suppressing noise and the other was recording raw. What these fields capture is interviews in
- * working workshops, over looms, hammering and open courtyards, and the audio is fed to
- * speech-to-text: background noise is transcription accuracy, not a cosmetic concern.
- *
- * Every flag is named explicitly rather than left to a default, because absent is not the same as
- * off and because naming them says what the recording is for. `autoGainControl` earns its place
- * here in particular — an artisan working at a bench sits further from the microphone than a caller
- * does, and without it their voice arrives quiet underneath the workshop.
- *
- * Plain (non-`exact`) constraints on purpose: a browser that cannot honour one ignores it and still
- * returns a stream, whereas `exact` would reject the request outright and leave the researcher
- * unable to record at all — far worse than a noisier file.
- *
- * Exported as a shared constant because two screens record audio (the media capture field and the
- * questionnaire) and a second copy is how the two drift apart.
- */
 export const SPEECH_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   noiseSuppression: true,
   echoCancellation: true,
@@ -321,7 +164,6 @@ export const SPEECH_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   sampleRate: 44_100
 };
 
-/** File extension for a recorded blob's REAL mime type (recorder.mimeType), never a guess. */
 export function audioExtensionForMimeType(mimeType: string | null | undefined): string {
   const type = (mimeType ?? "").toLowerCase();
   if (type.includes("webm")) return "webm";
@@ -332,58 +174,14 @@ export function audioExtensionForMimeType(mimeType: string | null | undefined): 
   return "webm";
 }
 
-// ---------------------------------------------------------------------------
-// Transport primitives
-// ---------------------------------------------------------------------------
-
-/** Raised when S3 answered a part PUT without an ETag the browser is allowed to read. */
 class EtagUnavailableError extends Error {}
 
-/**
- * May {@link apiRetry} send this SAFE request again, right now, inside the same call?
- *
- * ── DELIBERATELY NARROWER THAN "IS IT WORTH RETRYING", AND THE DIFFERENCE IS THE POINT ──────────
- *
- * This is a TIGHT loop — four attempts, 800ms apart, while a researcher watches a progress bar — and
- * not the outbox, which retries on the next connection an hour later. The two want different sets,
- * and this function used to express that by holding its own private copy of the network rules
- * (`Set([502, 503, 504])` plus `error instanceof TypeError`). That copy was the sixth answer to "is
- * this the network" in a repository whose whole defect class is answers that disagree, and it was the
- * one no sweep could see, because `Set.has(...)` does not look like `status === 408`.
- *
- * So the CLASSIFICATION comes from `lib/failureTriage.ts` now and only the NARROWING lives here:
- *
- *   • nothing answered at all — a `fetch` TypeError, DNS, a dropped connection, a 408 from a proxy
- *     saying the request never completed — is repeated. Nothing was decided, and every call this
- *     wraps (presign, multipart create/abort, `/media/complete`) is safe to repeat by construction.
- *   • of the answers, only the GATEWAY codes are repeated: 502/503/504 mean the origin was too slow
- *     or is being deployed, which is what an 800ms wait is for. Android's OkHttp interceptor uses the
- *     same three, which is where they came from.
- *   • A 429 IS NOT REPEATED HERE, and that is the one place this must differ from the drains. The
- *     server has explicitly asked for time; four requests in three seconds is the opposite of giving
- *     it any, and on a metered rural connection it is somebody's data being spent to be refused
- *     again. The outbox's `underlyingIsTransient` keeps the work and comes back later, which is the
- *     right answer at that timescale and the wrong one at this.
- *   • A 500 IS NOT REPEATED HERE either: it is a fault in the request's own handling rather than a
- *     gateway being slow, so an immediate repeat reproduces it. The batch result still carries it
- *     out to the drain, which keeps the file and tries again on the next connection.
- */
 function isRetriableApiFailure(error: unknown): boolean {
   const { kind, status } = triageFailure(error);
   if (kind === "unreachable") return true;
   return status !== null && RETRIABLE_GATEWAY_CODES.has(status);
 }
 
-/**
- * `apiFetch` with the retry policy Android's OkHttp interceptor applies — but only ever used for
- * calls that are SAFE to repeat: presigning, multipart setup/abort, and `/media/complete` (which the
- * API de-duplicates on `objectKey`). Record-creating calls stay single-shot.
- *
- * `options` is `apiFetch`'s own third argument, carried through unchanged so a caller that must not
- * navigate on a 401 can say so — see {@link ObjectUploadOptions.redirectOn401}. It is deliberately
- * placed BEFORE `attempts`, which no call site has ever passed, so the flag is the argument in the
- * position a reader looks at.
- */
 async function apiRetry<T>(
   path: string,
   init: RequestInit,
@@ -397,131 +195,32 @@ async function apiRetry<T>(
     } catch (error) {
       lastError = error;
       if (attempt >= attempts || !isRetriableApiFailure(error)) throw error;
-      // Linear-ish backoff with a hard cap, so a struggling origin gets air without long stalls.
       await delay(Math.min(4_000, 600 * attempt));
     }
   }
   throw lastError;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * "Object storage upload failed: network error" — the sentence that could not be true
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * WHAT A BROWSER IS ALLOWED TO KNOW WHEN A PUT TO THE BUCKET FAILS, AND WHAT IT IS NOT.
- *
- * ── THE INCIDENT ────────────────────────────────────────────────────────────────────────────────
- *
- * The media bucket's CORS rule was written in `infra/terraform/main.tf` and never applied to the
- * deployed bucket, so `OPTIONS <bucket>/<key>` carrying `Access-Control-Request-Method: PUT`
- * answered 403 and EVERY upload from the web client died in `xhr.onerror`. What a designer read was
- *
- *     Upload failed — Object storage upload failed: network error
- *
- * on each tile, and, when a whole batch was lost, "Check your internet connection and try again —
- * the record was saved, so re-open it and re-attach the media."
- *
- * Both sentences were false, and false in the most expensive direction available. The connection was
- * fine — the API leg of the same upload had answered seconds earlier, from the same page, over the
- * same link. So the advice sent people out of a workshop to hunt for signal they already had, told
- * them to re-open a record and do the identical thing again, and pointed nobody at the one setting
- * that was actually wrong. A configuration fault wearing an offline message is not a cosmetic defect:
- * it is the difference between an afternoon lost and a one-line change to a bucket.
- *
- * ── WHY THE OLD SENTENCE COULD NOT BE FIXED WHERE IT WAS WRITTEN ────────────────────────────────
- *
- * `xhr.onerror` fires with `xhr.status === 0`, `getAllResponseHeaders()` empty and no body — for a
- * blocked preflight, a blocked response, a DNS failure, a pulled cable and a TLS failure ALIKE. That
- * is the platform working as designed (telling a page why a cross-origin request was refused is
- * itself the information leak CORS exists to prevent), so no amount of inspecting the XHR will ever
- * separate them. "network error" was therefore never a wording bug. It was a guess printed as a fact,
- * and the honest replacement for a guess is not a better guess — it is naming both possibilities and
- * the one observation a person can make to decide between them.
- *
- * ── THE THREE THINGS THAT ARE ACTUALLY KNOWABLE, WHICH IS ALL THIS SECTION SPENDS ───────────────
- *
- * 1. WHETHER ANY BYTES LEFT THE DEVICE. A refused preflight fails before the request body is ever
- *    sent, so `xhr.upload.onprogress` never fires once; a connection that dies mid-transfer fires it
- *    first. One boolean, zero requests, and when it is TRUE it exonerates the bucket outright — S3
- *    does not take four megabytes of a body it was going to refuse cross-origin.
- * 2. WHICH HOST AND WHICH PAGE. `new URL(uploadUrl).origin` is the bucket the presign signed against
- *    and `location.origin` is the site being refused. Both are already in hand at the instant of
- *    failure, so the message can NAME the two ends of the rule that is missing. See
- *    {@link probeTargetFor} for why nothing had to be added to the presign response to get them.
- * 3. WHETHER THAT HOST ANSWERS THIS SITE AT ALL. Measurable, cheaply, decisively, and only from a
- *    browser — {@link measureStorageReach}.
- *
- * NOTHING ELSE IS INVENTED. `navigator.onLine` is deliberately not consulted: it reports whether the
- * device has a link, not whether anything is reachable over it, and a captive portal or a dead uplink
- * both report true. Timing is deliberately not used either — a refused preflight and a connection
- * refused by a firewall both fail in single-digit milliseconds, so a threshold there would be the
- * next guess printed as a fact.
- */
-
-/**
- * What {@link measureStorageReach} can establish. Four states, and each maps to one sentence that is
- * true of it — there is no arm here that means "probably".
- */
 export type StorageReach =
-  /** Not measured: no probe ran, or none could. The message keeps the honest either/or. */
   | "unmeasured"
-  /** Not even an opaque response came back. This device has no route to the bucket's host. */
   | "no-route"
-  /** The host answered the opaque probe and refused the readable one: no CORS rule covers this site. */
   | "site-refused"
-  /** The host answered BOTH: reads from this site are allowed, so it is neither headline cause. */
   | "reads-allowed";
 
-/** Everything the transport failure knows about itself, and the whole input to its sentence. */
 export type StorageTransportFacts = {
-  /** Fact 1 above. True once a single byte of the body has reached the socket. */
   bytesMoved: boolean;
   sentBytes: number;
   totalBytes: number;
-  /** Fact 2: the bucket's origin, e.g. `https://s3.dualstack.ap-south-1.amazonaws.com`. */
   bucketOrigin: string | null;
-  /** Fact 2: the origin being refused, e.g. `https://designer-repository.vercel.app`. */
   pageOrigin: string | null;
-  /** Fact 3, once measured. */
   reach: StorageReach;
 };
 
-/**
- * A PUT that produced no HTTP answer at all — `xhr.onerror`, the one failure a browser is forbidden
- * to explain — carrying the facts above so that the sentence, and every reading of it downstream, is
- * true of what actually happened.
- *
- * ── IT EXTENDS `StorageError` WITH A NULL STATUS, AND THAT IS LOAD-BEARING RATHER THAN TIDY ─────
- *
- * `kindForStorage` in `lib/failureTriage.ts` sorts a `StorageError` whose `status` is null to kind
- * `unreachable`, whose row is `retry: "connection"` and `drain: "stop-and-keep"`: nothing was decided
- * about the object, so NOTHING MAY BE MARKED and the bytes stay the designer's. Every keep-the-work
- * path in this client hangs off that one verdict — the outbox drain leaves the entry queued rather
- * than recording a failure against it, and `components/designworkshop/FieldInput.tsx` asks
- * `isTransient` and answers a true by writing the captured photographs into the local draft store.
- *
- * A SUBCLASS IS STILL `instanceof StorageError`, so all of that goes on holding, unchanged and
- * unre-tested. Had this been a new error type of its own it would have fallen to the classifier's
- * default (which is also `unreachable`, but by accident rather than by declaration); had it carried a
- * fabricated status to make itself read as `refused` — tempting, because a bucket refusing this site
- * IS a refusal in plain English — the drains would have begun recording failures against photographs
- * and `FieldInput` would have stopped staging them. A cross-origin misconfiguration would have
- * started DELETING captures. The classification is therefore deliberately left exactly as it was.
- *
- * WHAT WAS WRONG WAS NEVER THE RETRY POLICY. `unreachable` is the honest kind: no server decided
- * anything about this object, and keeping the work is right whichever of the two causes it turns out
- * to be. What was wrong was `ScreenAction: "say-offline"` being read as licence to blame a connection
- * that was demonstrably working. That is a SENTENCE defect, so it is fixed here, where the facts are,
- * and not by adding a seventh kind to a table this module does not own.
- */
 export class StorageTransportError extends StorageError {
   readonly facts: StorageTransportFacts;
-  /** The unsigned object URL {@link measureStorageReach} may probe, or null when none can be formed. */
   readonly probeUrl: string | null;
 
   constructor(facts: StorageTransportFacts, probeUrl: string | null) {
-    // `status` STAYS NULL. See the note above: it is the null that keeps the designer's bytes.
     super(storageTransportSentence(facts), null);
     this.name = "StorageTransportError";
     this.facts = facts;
@@ -529,20 +228,8 @@ export class StorageTransportError extends StorageError {
   }
 }
 
-/**
- * The sentence itself — pure, so `e2e/storage-transport-diagnosis-unit.spec.ts` can walk every arm
- * without a browser, a bucket or a network. The wording is the deliverable of this whole section, and
- * a wording nothing can assert against is the wording that drifts back to "network error".
- *
- * EVERY ARM NAMES A CAUSE THE READER CAN ACT ON, and the `unmeasured` arm names BOTH plus the
- * observation that separates them — "if the rest of the app is still loading". That clause is the one
- * a designer can actually run: the API leg of this very upload succeeded moments ago, so a page that
- * is still working is proof the link is up and the fault is at the bucket.
- */
 export function storageTransportSentence(facts: StorageTransportFacts): string {
   if (facts.bytesMoved) {
-    // Fact 1, decisive on its own: the bucket had already accepted the request and was taking the
-    // body, which a cross-origin refusal never does. No probe is run for this case.
     return (
       `The upload didn't finish: the connection dropped after ` +
       `${bytes(facts.sentBytes)} of ${bytes(facts.totalBytes)} had been sent. Try again when the ` +
@@ -553,27 +240,6 @@ export function storageTransportSentence(facts: StorageTransportFacts): string {
     case "no-route":
       return `The upload didn't finish: this device couldn't connect, and nothing was sent.`;
     case "site-refused":
-      /*
-        WHAT THIS ARM MAY SAY IS BOUNDED BY WHAT THE PROBE MEASURED, WHICH IS A **READ**.
-
-        It used to end "that bucket's CORS rule does not allow this site … retrying cannot clear it",
-        and that last clause was the same kind of mistake as "network error": a certainty asserted
-        from a measurement that does not carry it. `measureStorageReach` is two GETs. An S3 CORS rule
-        matches on the METHOD as well as the origin, so a rule reading `AllowedMethods: ["PUT"]` —
-        correct for this site, uploads working — refuses the read probe and lands here. Verified in
-        Chromium against a server with exactly that rule: the probe returns `site-refused` while a
-        real cross-origin PUT from the same page succeeds. On such a bucket the FIRST ordinary blip
-        that killed a PUT before any byte moved (a dead spot, a reset connection — the field case
-        this product exists for) would have been reported as a permanent misconfiguration, and the
-        designer told in as many words to stop trying.
-
-        The KDoc on {@link measureStorageReach} already names the opposite asymmetry — GET allowed,
-        PUT not, which reads as `reads-allowed` — and this is that same hole in the other direction.
-        So the arm keeps everything the probe DID establish (the host is up; it will not answer this
-        site; that is a setting and not a signal problem, which is the whole point of the diagnosis)
-        and states the step it did not measure as the inference it is. "Unlikely to help" is the
-        strongest form the evidence supports, and it still sends a designer to the right person.
-      */
       return (
         `The upload didn't finish because of a problem on our side rather than your connection. ` +
         `Trying again is unlikely to help until it is fixed.`
@@ -582,9 +248,6 @@ export function storageTransportSentence(facts: StorageTransportFacts): string {
       return `The upload didn't finish. It may have been interrupted as it started.`;
     case "unmeasured":
     default:
-      // THE HONEST EITHER/OR. Reached when no probe could run (no `fetch`, no usable object URL), and
-      // it is the sentence "network error" should always have been: both causes named, plus the one
-      // thing a person can look at to decide between them.
       return (
         `The upload didn't finish and nothing was sent. Either this device has no connection, or the ` +
         `problem is on our side. If the rest of the app is still working, it is on our side.`
@@ -592,43 +255,15 @@ export function storageTransportSentence(facts: StorageTransportFacts): string {
   }
 }
 
-/**
- * The object URL to probe, derived from the PRESIGNED PUT URL by dropping its query string.
- *
- * ── WHY THE BACKEND WAS NOT ASKED FOR THIS ──────────────────────────────────────────────────────
- *
- * The obvious move is to widen `PresignResponse` with a `bucketOrigin` and the origins the bucket is
- * expected to allow. It was not made, for two reasons, and the second is the real one:
- *
- *   • EVERYTHING NEEDED IS ALREADY HERE. A presigned S3 URL is `https://<host>/<key>?X-Amz-…`, so
- *     the origin and the object path are both in the string this function is handed, and
- *     `location.origin` is the other end of the rule. A round trip that returns a fact the caller
- *     already holds is a fact that can go out of step with the URL actually being PUT to.
- *   • THE ONE FACT THE BACKEND COULD ADD IS ABOUT A DIFFERENT SERVER. `settings.cors_origins` is the
- *     list the API accepts, not the list the bucket accepts, and the API's IAM user is granted
- *     `s3:PutObject`/`s3:GetObject`/`s3:DeleteObject` and NOT `s3:GetBucketCors` — so the backend
- *     cannot read the bucket's real rule and could only ever send what it assumes that rule should
- *     be. Printing an assumption as "the origin the bucket allows" would put a second
- *     confident-and-wrong sentence beside the one this section exists to delete.
- *
- * The browser makes the one measurement it alone can make ({@link measureStorageReach}), and nobody
- * asserts anything nobody measured.
- *
- * DROPPING THE QUERY IS WHAT MAKES THE PROBE SAFE: the unsigned URL cannot write, so S3 answers it
- * with a 403 or a 404 — and a 403 carrying the CORS headers is exactly as informative as a 200,
- * because what is measured is whether the browser is permitted to READ the answer, not what it says.
- */
 function probeTargetFor(uploadUrl: string): string | null {
   try {
     const parsed = new URL(uploadUrl);
     return `${parsed.origin}${parsed.pathname}`;
   } catch {
-    // A relative or malformed URL (MinIO behind a proxy, a test double). No probe; honest either/or.
     return null;
   }
 }
 
-/** The bucket's origin for the message, or null when the URL cannot be parsed. */
 function originOf(uploadUrl: string): string | null {
   try {
     return new URL(uploadUrl).origin;
@@ -637,70 +272,8 @@ function originOf(uploadUrl: string): string | null {
   }
 }
 
-/**
- * The whole diagnosis gets this long, for BOTH probes together. Generous enough that a slow rural
- * link still answers, short enough that it can never be mistaken for the app having hung — see the
- * bound argued on {@link measureStorageReach}. It is not a network timeout in the ordinary sense: the
- * upload has already failed by the time it starts, so everything this budget buys is an explanation.
- */
 const STORAGE_PROBE_TIMEOUT_MS = 8_000;
 
-/**
- * THE ONE MEASUREMENT THAT SEPARATES "NO NETWORK" FROM "THE BUCKET REFUSES THIS SITE".
- *
- * Two requests, and the pair is what makes it decisive rather than another guess:
- *
- *   1. `mode: "no-cors"` IS NOT SUBJECT TO CORS AT ALL. It resolves with an opaque response whenever
- *      the host was reached and answered anything — 200, 403, 404 alike — and rejects only when the
- *      network genuinely failed. So a rejection here is proof of "no route", full stop.
- *   2. AN ORDINARY FETCH of the same URL IS CORS-checked, and rejects when the response carries no
- *      `Access-Control-Allow-Origin` this page satisfies. A rejection here, after (1) resolved, is
- *      proof the host is up and is refusing this site: the CORS misconfiguration, named.
- *
- * BOTH ARE GETs, DELIBERATELY. A HEAD would be marginally cheaper and would be wrong: S3 attaches the
- * CORS response headers only when the request's method matches an `AllowedMethods` entry, so a rule
- * listing GET and not HEAD would make a perfectly healthy bucket read as "site-refused". GET is in
- * every S3 CORS rule anyone writes. A PUT probe would be sharper still — it is the method that is
- * actually failing — and is not made: it would be an unsigned write attempt against a real object key.
- *
- * WHAT IT CANNOT SEE, STATED SO NOBODY READS MORE INTO IT, AND IT CUTS BOTH WAYS. AN S3 CORS RULE
- * MATCHES ON THE METHOD AS WELL AS THE ORIGIN, AND THIS MEASURES ONLY GET:
- *
- *   - a rule that allows GET but not PUT answers both (1) and (2) and comes back `reads-allowed`.
- *     That is why `reads-allowed` is its own arm with its own sentence rather than being folded into
- *     "unmeasured" — it rules out the two headline causes and says so, instead of pretending to have
- *     found the third;
- *   - a rule that allows PUT but not GET — `AllowedMethods: ["PUT"]`, correct for this site, uploads
- *     working — refuses (2) and comes back `site-refused`. Verified in Chromium against a server
- *     with exactly that rule: this returns `site-refused` while a real cross-origin PUT from the same
- *     page succeeds. So `site-refused` is evidence of a setting, NOT proof that the upload is
- *     refused, and its two sentences are worded to claim only the first. Read them before widening
- *     what they say.
- *
- * A PUT PROBE WOULD CLOSE BOTH, AND IS STILL NOT MADE: it means an unsigned write against a real
- * object key, and a diagnostic that writes to the customer's bucket to explain a failure is a worse
- * trade than a sentence that says "unlikely" instead of "cannot".
- *
- * ── IT IS BOUNDED, AND THAT IS NOT BELT-AND-BRACES ──────────────────────────────────────────────
- *
- * `fetch` has NO default timeout, and the very failure this runs after is the one most likely to make
- * it hang: a black-holed route or a captive portal accepts the connection and never answers, so both
- * probes can sit for a browser's full connect timeout. This function is awaited before the upload's
- * error reaches the screen, so an unbounded probe would turn a clear, immediate failure into a
- * multi-minute silence — which is precisely the trade the stall watchdog (see {@link STALL_TIMEOUT_MS})
- * exists to refuse, reintroduced one layer up by the diagnosis meant to help.
- *
- * A CAP THAT FIRES YIELDS `"unmeasured"`, NEVER A VERDICT. An aborted second probe looks exactly like
- * a refused one, so reading a timeout as `"site-refused"` would be a new confident lie in place of the
- * old one. Nothing measured, nothing claimed: the message falls back to the honest either/or.
- *
- * `timeoutMs` is a parameter and not only a constant so that
- * `e2e/storage-transport-diagnosis-unit.spec.ts` can pin the bound without waiting out its default.
- * Production has one caller and it passes nothing.
- *
- * Exported for the same spec, to drive the decision table against a stubbed `fetch`. This measurement
- * chooses which sentence a designer reads; leaving it untestable is how the wrong sentence ships again.
- */
 export async function measureStorageReach(probeUrl: string, timeoutMs = STORAGE_PROBE_TIMEOUT_MS): Promise<StorageReach> {
   if (typeof fetch !== "function" || typeof AbortController === "undefined") return "unmeasured";
   const controller = new AbortController();
@@ -710,8 +283,6 @@ export async function measureStorageReach(probeUrl: string, timeoutMs = STORAGE_
     const reached = await fetch(probeUrl, { method: "GET", mode: "no-cors", cache: "no-store", signal })
       .then(() => true)
       .catch(() => false);
-    // The abort check comes FIRST, deliberately: a capped fetch also reports `reached === false`, and
-    // reporting that as "no route" would blame a connection this function never actually measured.
     if (signal.aborted) return "unmeasured";
     if (!reached) return "no-route";
     const readable = await fetch(probeUrl, { method: "GET", cache: "no-store", signal })
@@ -724,48 +295,17 @@ export async function measureStorageReach(probeUrl: string, timeoutMs = STORAGE_
   }
 }
 
-/**
- * How long one reach verdict may be reused. SHORT ON PURPOSE, and the reason is a lie it would
- * otherwise tell. The natural implementation caches it for the session exactly as
- * {@link multipartAvailable} does one screen up — but that flag records a capability which cannot come
- * back during a session, whereas a bucket's CORS rule is one `terraform apply` away. A session-long
- * verdict would go on blaming a bucket that had been fixed twenty minutes earlier, the first time a
- * real signal drop happened. A minute is long enough that one failing batch of three files measures
- * once, and short enough that the next attempt asks again.
- */
 const STORAGE_REACH_TTL_MS = 60_000;
 let storageReachCache: { at: number; probe: Promise<StorageReach> } | null = null;
 
-/** The cached, in-flight-deduplicated reading of {@link measureStorageReach}. */
 function reachOfStorage(probeUrl: string): Promise<StorageReach> {
   const now = Date.now();
   if (storageReachCache && now - storageReachCache.at < STORAGE_REACH_TTL_MS) return storageReachCache.probe;
-  // `.catch` rather than a rejecting promise: a probe that throws must leave the message at the
-  // honest either/or, never turn a failed upload into an unhandled rejection somewhere up the stack.
   const probe = measureStorageReach(probeUrl).catch((): StorageReach => "unmeasured");
   storageReachCache = { at: now, probe };
   return probe;
 }
 
-/**
- * Turn a transport failure that has run out of retries into one that names what happened — or leave
- * it exactly as it is.
- *
- * ── IT RUNS AFTER THE RETRIES, NEVER INSTEAD OF THEM ────────────────────────────────────────────
- *
- * Called once, from {@link uploadObject}, on the error that survived `uploadWhole`'s three
- * fresh-presign attempts or `uploadInParts`' per-part retries. Nothing about those loops, the stall
- * watchdog (see {@link STALL_TIMEOUT_MS}) or cancellation is touched, and the probe costs nothing on
- * the happy path or on a blip the retries absorb — it spends its two requests only on an upload that
- * has already definitively failed.
- *
- * THREE CASES ARE RETURNED UNTOUCHED, EACH FOR ITS OWN REASON:
- *   • an ABORTED upload — the designer cancelled, or the stall watchdog fired. Probing a transfer
- *     somebody stopped would spend two requests explaining a non-event, and "Upload cancelled" and the
- *     stall sentence are both already true of what happened.
- *   • anything that is NOT a transport failure — an HTTP answer classifies itself by its status.
- *   • a failure where bytes MOVED — fact 1 has already decided it; see {@link storageTransportSentence}.
- */
 async function sharpenTransportFailure(error: unknown, signal?: AbortSignal): Promise<StorageTransportError | null> {
   if (signal?.aborted) return null;
   if (!(error instanceof StorageTransportError)) return null;
@@ -774,24 +314,10 @@ async function sharpenTransportFailure(error: unknown, signal?: AbortSignal): Pr
   const reach = await reachOfStorage(error.probeUrl);
   if (reach === "unmeasured") return null;
   const sharper = new StorageTransportError({ ...error.facts, reach }, error.probeUrl);
-  /*
-    THE ORIGINAL IS CARRIED AS A STACK AND EMPHATICALLY NOT AS A `cause`.
-
-    `underlyingError` in `lib/failureTriage.ts` recurses to the DEEPEST cause, by design — it exists
-    so that a `MediaBatchError` wrapping an S3 refusal is classified by the refusal. Chaining the
-    unmeasured error underneath the measured one would therefore hand every reader downstream the
-    error whose reach is still `"unmeasured"`, and the probe would have been spent to produce a
-    sentence nothing ever reads. This is the SAME failure with more known about it, not a second
-    failure wrapping a first, so it carries the original's throw site and nothing else.
-  */
   sharper.stack = error.stack;
   return sharper;
 }
 
-/**
- * PUT a blob to object storage with real byte-level progress, via XHR (fetch cannot report upload
- * progress). Returns the ETag when the response exposes one — S3 multipart completion needs it.
- */
 function putBlob({
   url,
   headers,
@@ -813,8 +339,6 @@ function putBlob({
     const total = body.size;
     const xhr = new XMLHttpRequest();
     let stalled = false;
-    // Fact 1 of the three above `StorageTransportError`: whether the body ever started moving, and
-    // how far it got if it did. Written only by `xhr.upload.onprogress`, read only by `xhr.onerror`.
     let moved = false;
     let sent = 0;
     let watchdog: number | null = null;
@@ -835,15 +359,9 @@ function putBlob({
 
     xhr.open("PUT", url, true);
     Object.entries(headers ?? {}).forEach(([key, value]) => xhr.setRequestHeader(key, value));
-    // No flat deadline — see STALL_TIMEOUT_MS.
     xhr.timeout = 0;
     xhr.upload.onprogress = (event) => {
       arm(STALL_TIMEOUT_MS);
-      // RECORDED BEFORE THE `lengthComputable` GUARD, AND DELIBERATELY NOT BEHIND IT. The question
-      // this answers is "did the transfer START", not "how far did it get", and a browser that
-      // cannot compute a total still reports `loaded` honestly. A refused preflight never reaches
-      // this handler at all, because the body is never sent — which is why one boolean here clears
-      // the bucket of a mid-transfer drop without spending a single request to ask.
       if (event.loaded > 0) {
         moved = true;
         sent = event.loaded;
@@ -863,10 +381,6 @@ function putBlob({
     xhr.onerror = () =>
       settle(() =>
         reject(
-          // NOT "network error", which was a guess printed as a fact — see the section above this
-          // function. `status` is 0, the headers are empty and there is no body, identically, for a
-          // blocked preflight and for a pulled cable, so all this handler may do is carry the facts
-          // it does have. The verdict is sharpened once, after the retries, in `uploadObject`.
           new StorageTransportError(
             {
               bytesMoved: moved,
@@ -897,11 +411,6 @@ function putBlob({
   });
 }
 
-/**
- * Run `worker` over `items` with at most `limit` in flight, preserving each item's index. Stops
- * handing out new work after the first rejection and rethrows it once the in-flight ones have
- * settled — a worker that swallows its own errors therefore never stops the pool.
- */
 async function runPool<T>(items: T[], limit: number, worker: (item: T, index: number) => Promise<void>): Promise<void> {
   let cursor = 0;
   let firstError: unknown = null;
@@ -920,17 +429,6 @@ async function runPool<T>(items: T[], limit: number, worker: (item: T, index: nu
   if (firstError !== null) throw firstError;
 }
 
-/**
- * SHA-256 of the file, as `sha256:<hex>`, stored on the media row so a later integrity sweep can
- * prove the bytes in S3 are the bytes that left the device. Null when the file is too big to hash in
- * one allocation, or when WebCrypto is unavailable (an insecure origin) — the upload still proceeds.
- *
- * EXPORTED so the selection-time duplicate check (lib/imageQuality.ts) hashes a newly-chosen file
- * with exactly this implementation. The check compares that value against the `checksum` already
- * stored on the media rows this workshop has attached, so the comparison is only meaningful if both
- * sides were produced the same way — a second SHA-256 helper with, say, a different prefix or hex
- * casing would silently never match anything and duplicate detection would simply never fire.
- */
 export async function computeChecksum(file: File): Promise<string | null> {
   if (file.size === 0 || file.size > CHECKSUM_MAX_BYTES) return null;
   const subtle = globalThis.crypto?.subtle;
@@ -945,11 +443,6 @@ export async function computeChecksum(file: File): Promise<string | null> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Object upload (presign -> PUT -> [multipart complete])
-// ---------------------------------------------------------------------------
-
-/** A file already pushed to object storage but not yet attached to a saved record. */
 export type StagedObject = {
   objectKey: string;
   bucket: string;
@@ -987,81 +480,23 @@ type ObjectUploadOptions = {
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
   onProgress?: (loaded: number, total: number) => void;
-  /** Called with every key we presign, so a half-written object can be cleaned up later. */
   onObjectKey?: (objectKey: string) => void;
   signal?: AbortSignal;
-  /**
-   * Let a 401 met on the way send the browser to /login. Defaults to true, which is right for a
-   * capture screen somebody is looking at: their session is over and a sign-in form is what they
-   * need next.
-   *
-   * PASS FALSE FROM ANYTHING RUNNING IN THE BACKGROUND. `lib/offline.ts` replays its outbox on an
-   * `online` event and on mount, with nobody having asked for anything — and a replay that resumes
-   * an entry whose record ALREADY EXISTS sends its very first request from the media leg. Its
-   * create leg has always opted out (`redirectOn401: false`); until this option existed the media
-   * leg could not, so a seven-day token expiring in exactly that window hard-navigated a researcher
-   * off whatever they were editing and took the unsaved screen with it. The token is still cleared
-   * by `apiFetch` either way — that is not this flag — and `AppShell` does the soft redirect for a
-   * protected route once `AuthProvider` notices.
-   */
   redirectOn401?: boolean;
 };
 
-/**
- * Set to false the first time S3/MinIO answers a part PUT without a readable ETag: without
- * `ExposeHeaders: ["ETag"]` in the bucket CORS rule no browser can ever complete a multipart upload,
- * so the whole session falls back to single PUTs instead of failing every large file.
- */
 let multipartAvailable = true;
 
-/**
- * Push a file to object storage and stop there — no MediaFile row, no record link.
- *
- * Everything else in this module ends by calling `/media/complete`, which is right for field media:
- * a photo that is not attached to a record is an orphan. An Android APK is the one thing that is
- * legitimately just an object: the release is recorded against `/app/release` by object key, and a
- * MediaFile row for it would put a 25 MB binary into the researcher's media lists.
- */
 export function uploadStorageObject(options: ObjectUploadOptions): Promise<StagedObject> {
   return uploadObject(options);
 }
 
 async function uploadObject(options: ObjectUploadOptions): Promise<StagedObject> {
   const { file } = options;
-  /*
-    A `LocalRefusalError` AND NOT A BARE `Error`, WHICH IS THE WHOLE POINT OF THE TYPE.
-
-    Presign rejects a zero-byte object (`sizeBytes > 0`), so this refusal is correct and is made here
-    to save a round trip. It used to be a bare `new Error`, and a bare `Error` is indistinguishable
-    from a `TypeError` out of `fetch` to every classifier downstream — whose default is, correctly,
-    "the connection is at fault". So an empty file came out of the outbox drain classified as OFFLINE:
-    the batch escalation stopped the whole pass, nothing was recorded, no Discard was offered, and the
-    next connection met the identical empty file. A queue jammed for ever by a file no server saw.
-
-    `lib/offline.ts` also separates empty files out BEFORE calling here (`splitUnsendableFiles`), and
-    should go on doing so — not sending is better than sending and being refused. But that only
-    protects the callers that remember it. The type protects the ones that do not: see
-    `lib/failureTriage.ts`, where it is the one thing that resolves to kind `permanent`.
-  */
   if (file.size === 0) throw new LocalRefusalError(`"${file.name}" is empty (0 bytes) — there is nothing to upload.`);
   const mediaType = inferMediaType(file);
   const mimeType = file.type || "application/octet-stream";
-  // Hashed alongside the transfer, not before it, so it never delays the bytes leaving the device.
   const checksum = computeChecksum(file);
-  /*
-    THE ONE PLACE A TRANSPORT FAILURE IS EXPLAINED, AND IT IS HERE BECAUSE THIS IS THE FUNNEL.
-
-    Both legs below end in the same `putBlob`, so both can produce the same unexplainable
-    `xhr.onerror`, and both have already spent their own retries by the time they throw —
-    `uploadWhole` three attempts each with a fresh presign, `uploadInParts` three per part with a
-    re-sign on a 403. Asking for the diagnosis HERE means it is asked once, on an upload that has
-    definitively failed, instead of inside either loop where it would fire on the blip the next
-    attempt absorbs.
-
-    NOTHING ABOUT THE RETRY, STALL OR CANCEL BEHAVIOUR IS TOUCHED. `sharpenTransportFailure` returns
-    null for everything it has learned nothing new about — an abort, a stall, an HTTP answer, a
-    failure where bytes moved — and this rethrows the original in every one of those cases.
-  */
   let target: UploadTarget;
   try {
     target =
@@ -1081,12 +516,6 @@ async function uploadWhole(options: ObjectUploadOptions, mediaType: MediaType, m
   let lastError: unknown;
   let previousKey: string | null = null;
   for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt += 1) {
-    // A fresh presign per attempt keeps the 15-minute signature window from expiring BETWEEN
-    // attempts — the backoff below can spend seconds, and a slow first attempt can spend minutes.
-    // It does nothing whatever for a SINGLE transfer that is itself longer than the window: that
-    // one dies at 403 at the fifteen-minute mark and restarts from byte zero to die there again.
-    // Only {@link MULTIPART_THRESHOLD} keeps such a file off this path at all; read its note before
-    // trusting this line to cover a large upload, because it reads as though it does and it does not.
     const presign = await apiRetry<PresignResponse>(
       "/media/presign",
       {
@@ -1102,7 +531,6 @@ async function uploadWhole(options: ObjectUploadOptions, mediaType: MediaType, m
       },
       { redirectOn401 }
     );
-    // The previous attempt's key is now abandoned: stop keeping it alive so the sweeper reclaims it.
     if (previousKey) liveObjectKeys.delete(previousKey);
     previousKey = presign.objectKey;
     onObjectKey?.(presign.objectKey);
@@ -1119,11 +547,6 @@ async function uploadWhole(options: ObjectUploadOptions, mediaType: MediaType, m
   throw lastError instanceof Error ? lastError : new StorageError(`“${file.name}” couldn't be uploaded.`);
 }
 
-/**
- * S3 multipart upload for a large file: chunk -> upload parts (in parallel, each retried on its own)
- * -> S3 stitches them into one object. The win over a single PUT is that a blip costs one 16 MiB
- * part instead of restarting a 400 MB video.
- */
 async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType, mimeType: string): Promise<UploadTarget> {
   const { file, linkedRecordType, linkedRecordId, onProgress, onObjectKey, signal, redirectOn401 } = options;
   const create = await apiRetry<MultipartCreateResponse>(
@@ -1167,8 +590,6 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
     let lastError: unknown;
     for (let attempt = 1; attempt <= PART_MAX_ATTEMPTS; attempt += 1) {
       try {
-        // Content-Type is deliberately unset: the part presign does not sign it, so sending one
-        // would not match the signature. `File.slice` yields a type-less Blob, so XHR sends none.
         const { etag } = await putBlob({
           url,
           body: file.slice(start, Math.min(file.size, start + create.partSize)),
@@ -1184,8 +605,6 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
         lastError = error;
         loaded[partNumber - 1] = 0;
         report();
-        // A 403 on a part means the hour-long part signature expired mid-transfer — re-sign just
-        // that part rather than failing (and restarting) a multi-hundred-megabyte upload.
         if (error instanceof StorageError && error.status === 403) {
           const refreshed = await presignParts([partNumber]).catch(() => null);
           const fresh = refreshed?.urls?.[String(partNumber)];
@@ -1198,9 +617,6 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
   }
 
   try {
-    // Probe part 1 on its own. S3 identifies each part by the ETag it returns, which the browser can
-    // only read when the bucket's CORS rule lists ETag under ExposeHeaders — if it does not, NO
-    // multipart upload can ever be completed from a browser, so find out after 16 MiB, not 400 MB.
     const firstEtag = await sendPart(1);
     if (!firstEtag) throw new EtagUnavailableError();
     etags[0] = firstEtag;
@@ -1223,8 +639,6 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
     );
     return { objectKey: done.objectKey, bucket: done.bucket, publicUrl: done.publicUrl ?? null };
   } catch (error) {
-    // Never leave half-written parts behind: they are billable, invisible, and never expire on their
-    // own unless the bucket has a lifecycle rule for them.
     await apiFetch(
       "/media/multipart/abort",
       {
@@ -1244,18 +658,12 @@ async function uploadInParts(options: ObjectUploadOptions, mediaType: MediaType,
   }
 }
 
-// ---------------------------------------------------------------------------
-// Staged-object journal — nothing we upload is ever allowed to become a silent orphan
-// ---------------------------------------------------------------------------
-
 const STAGED_JOURNAL_KEY = "field_repo_staged_objects";
-/** A journalled key untouched for this long is assumed abandoned (closed tab, crash, navigation). */
 const STAGED_STALE_MS = 5 * 60 * 1000;
 const STAGED_HEARTBEAT_MS = 60 * 1000;
 const STAGED_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const STAGED_SWEEP_BATCH = 20;
 
-/** Keys this tab is actively using — heart-beaten, and never swept out from under a live form. */
 const liveObjectKeys = new Set<string>();
 let heartbeatTimer: number | null = null;
 let sweepTimer: number | null = null;
@@ -1277,7 +685,6 @@ function writeJournal(entries: Record<string, number>) {
   try {
     window.localStorage.setItem(STAGED_JOURNAL_KEY, JSON.stringify(entries));
   } catch {
-    // Private mode / quota: the journal is a safety net, never a hard dependency.
   }
 }
 
@@ -1298,11 +705,6 @@ function forgetStagedObject(objectKey: string) {
   }
 }
 
-/**
- * Keep every key this tab still owns looking fresh. A tab that closes (or a form the user navigated
- * away from) stops refreshing, and its keys age past STAGED_STALE_MS into the sweeper's sights —
- * which is what makes it safe to delete stale objects without ever hitting a form still in use.
- */
 function startHeartbeat() {
   if (heartbeatTimer !== null || typeof window === "undefined") return;
   heartbeatTimer = window.setInterval(() => {
@@ -1320,18 +722,6 @@ function startHeartbeat() {
   }, STAGED_HEARTBEAT_MS);
 }
 
-/**
- * Bin one staged object.
- *
- * `redirectOn401: false` FOR THE SAME REASON THE OUTBOX DRAIN PASSES IT, and this one needs no
- * outbox at all: {@link scheduleStagedObjectSweep} calls this from a five-minute `setInterval`, so a
- * researcher with a form open and a token that has just expired was hard-navigated to /login BY A
- * TIMER — losing the screen to an orphan cleanup nobody asked for. The other callers (the ✕ on a
- * staged file, a released owner, a failed eager attempt) are bookkeeping behind a local action, and
- * none of them is the thing the person is waiting on either. The token is still cleared by
- * `apiFetch`, so a genuinely dead session is still noticed — by `AuthProvider`, which is where a
- * decision about the session belongs.
- */
 async function deleteStagedObject(objectKey: string) {
   liveObjectKeys.delete(objectKey);
   try {
@@ -1342,31 +732,12 @@ async function deleteStagedObject(objectKey: string) {
     );
     forgetStagedObject(objectKey);
   } catch (error) {
-    // ONLY A REFUSAL FORGETS THE OBJECT — 403 / 404 / 409 are terminal answers ("not yours" / "gone"
-    // / "now attached to a record"), and there is nothing left to reclaim. Every other verdict keeps
-    // the journal entry for the next sweep.
-    //
-    // A 401 IS AN `ApiError` AND IS EMPHATICALLY NOT ONE OF THEM, and that only became load-bearing
-    // when this call stopped navigating. Before, the first 401 replaced the document and the tab
-    // took the journal with it — at most one key lost. Now the sweep keeps going, and since
-    // `apiFetch` clears the stored token on that same 401, every following DELETE is unauthenticated
-    // and 401s too: forgetting here would empty the journal a batch at a time and strand every
-    // staged object in the bucket with nothing left to reclaim it by — the one outcome this journal
-    // exists to prevent. The object is still there and still ours; only the credential died. A 5xx
-    // says the same thing about the server rather than the object, so it keeps the entry as well.
-    //
-    // WRITTEN AS `kind === "refused"` RATHER THAN `status !== 401 && status < 500`, which is what it
-    // said and which was a seventh private copy of the network rules. The rewrite also fixes two
-    // statuses the hand-rolled version got wrong in the dangerous direction: a 408 (the request never
-    // completed — the server was never asked about this object) and a 429 (the server asking for
-    // time) both used to FORGET the key and strand the object. See `lib/failureTriage.ts`.
     if (triageFailure(error).kind === "refused") {
       forgetStagedObject(objectKey);
     }
   }
 }
 
-/** Delete a staged object during page unload, where a normal fetch would be cancelled mid-flight. */
 function beaconDeleteStagedObject(objectKey: string) {
   if (!getSessionMarker()) return;
   liveObjectKeys.delete(objectKey);
@@ -1376,24 +747,10 @@ function beaconDeleteStagedObject(objectKey: string) {
       keepalive: true
     }).catch(() => undefined);
   } catch {
-    // Best effort only — the journal sweep is the durable backstop.
   }
 }
 
-/**
- * Delete staged objects nobody claimed: uploads whose `/media/complete` never ran because the tab
- * was closed, the browser crashed, or the record was simply abandoned. Safe by construction — a key
- * still being used by THIS tab is in `liveObjectKeys`, and one used by another tab is still being
- * heart-beaten, so only genuinely stale keys are touched.
- *
- * Returns how many keys were actually ATTEMPTED, which is not always how many were stale: the loop
- * stops the moment the credential dies, and a key it never reached is still in the journal for the
- * next pass. Nothing branches on the number today — it is a signal for the console and for tests.
- */
 export async function sweepStagedObjects(): Promise<number> {
-  // Nor while the account owes a new password: the server refuses every DELETE until it is chosen,
-  // and this runs on a timer that a gated tab would otherwise go on spending them on. The journal is
-  // untouched either way (a 401 never forgets a key), so this costs nothing but the wait.
   if (typeof window === "undefined" || !getSessionMarker() || sessionOwesPasswordChange()) return 0;
   const journal = readJournal();
   const now = Date.now();
@@ -1404,23 +761,15 @@ export async function sweepStagedObjects(): Promise<number> {
   for (const key of stale) {
     await deleteStagedObject(key);
     attempted += 1;
-    // The token check above is a snapshot, and `apiFetch` clears the stored token the moment one of
-    // these DELETEs comes back 401. Carrying on would fire the rest of the batch with no
-    // Authorization header at all — nineteen guaranteed failures, and nineteen more chances for a
-    // future edit to decide they were terminal. Stop; the journal is durable and the next sweep,
-    // under a live session, still has every key. A gated 401 KEEPS the token, so the gate is asked
-    // for separately — `apiFetch` raises it on that same refusal.
     if (!getSessionMarker() || sessionOwesPasswordChange()) break;
   }
   return attempted;
 }
 
-/** Run the orphan sweep shortly after the first media surface mounts, then periodically. */
 export function scheduleStagedObjectSweep() {
   if (typeof window === "undefined") return;
   if (!sweptThisSession) {
     sweptThisSession = true;
-    // Let the page finish its own data fetches first; abandoned objects are in no hurry.
     window.setTimeout(() => void sweepStagedObjects(), 4_000);
   }
   if (sweepTimer === null) {
@@ -1428,13 +777,8 @@ export function scheduleStagedObjectSweep() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Eager pre-upload store
-// ---------------------------------------------------------------------------
-
 export type StageStatus = "uploading" | "ready" | "error";
 
-/** The read-only view of one eagerly-uploading attachment, as rendered by the capture UI. */
 export type StageEntry = {
   file: File;
   status: StageStatus;
@@ -1445,11 +789,6 @@ export type StageEntry = {
   staged: StagedObject | null;
 };
 
-/**
- * Identity is the primary key, but a few call sites rename a File before saving
- * (`new File([file], niceName, …)`), which keeps the bytes and drops the object identity. Size +
- * last-modified + MIME survives that rename and is what the fallback match uses.
- */
 function signatureOf(file: File): string {
   return `${file.size}:${file.lastModified}:${file.type}`;
 }
@@ -1470,8 +809,6 @@ class StageRecord {
     this.file = file;
     this.signature = signatureOf(file);
     this.promise = runStage(this);
-    // Nobody may be awaiting yet (the record is saved minutes later) — keep Node/browsers from
-    // reporting an unhandled rejection. The original promise still rejects for real awaiters.
     void this.promise.catch(() => undefined);
   }
 
@@ -1517,7 +854,6 @@ export function getServerStagingSnapshot(): ReadonlyMap<File, StageEntry> {
   return EMPTY_STAGING;
 }
 
-/** Whole-percent throttling, so a 400 MB video does not re-render the tile grid thousands of times. */
 function setStageProgress(record: StageRecord, loaded: number) {
   const before = record.total > 0 ? Math.floor((record.loaded * 100) / record.total) : 0;
   const after = record.total > 0 ? Math.floor((loaded * 100) / record.total) : 0;
@@ -1545,7 +881,6 @@ async function runStage(record: StageRecord): Promise<StagedObject> {
   } catch (error) {
     record.status = "error";
     record.error = error instanceof Error ? error.message : "Upload failed";
-    // Let the sweeper reclaim whatever the failed attempt left behind.
     if (record.objectKey) liveObjectKeys.delete(record.objectKey);
     notifyStaging();
     throw error;
@@ -1561,12 +896,9 @@ function installLifecycleHooks() {
     const busy = Array.from(stagedByFile.values()).some((record) => record.status === "uploading");
     if (!busy) return;
     event.preventDefault();
-    // Still required by Chrome/Safari to actually show the "leave site?" prompt.
     event.returnValue = "";
   });
   window.addEventListener("pagehide", (event) => {
-    // A bfcache freeze may be restored with the form (and its attachments) intact — deleting the
-    // staged objects there would silently break a page the user is about to come back to.
     if (event.persisted) return;
     stagedByFile.forEach((record) => {
       record.controller.abort();
@@ -1576,11 +908,6 @@ function installLifecycleHooks() {
   });
 }
 
-/**
- * Start streaming every newly attached file to object storage right now. Idempotent per File, so a
- * component may call it on every render pass; `ownerId` ties the files to the surface that attached
- * them so they can be cleaned up when it goes away.
- */
 export function stageFiles(files: File[], ownerId: string) {
   if (typeof window === "undefined" || !getSessionMarker()) return;
   cancelStagedOwnerRelease(ownerId);
@@ -1588,7 +915,6 @@ export function stageFiles(files: File[], ownerId: string) {
   scheduleStagedObjectSweep();
   let changed = false;
   files.forEach((file) => {
-    // Presign rejects a zero-byte file (sizeBytes > 0); let the save path report that clearly.
     if (file.size === 0) return;
     let record = stagedByFile.get(file);
     if (!record) {
@@ -1601,7 +927,6 @@ export function stageFiles(files: File[], ownerId: string) {
   if (changed) notifyStaging();
 }
 
-/** Abort a still-running eager upload and bin whatever it already wrote (the user pressed ✕). */
 export function discardStagedFile(file: File) {
   const record = stagedByFile.get(file);
   if (!record) return;
@@ -1611,7 +936,6 @@ export function discardStagedFile(file: File) {
   discardRecordObject(record);
 }
 
-/** Re-run a failed eager upload from scratch (the per-file "Retry" affordance). */
 export function retryStagedFile(file: File) {
   const previous = stagedByFile.get(file);
   if (!previous) return;
@@ -1633,12 +957,6 @@ function cancelStagedOwnerRelease(ownerId: string) {
   releaseTimers.delete(ownerId);
 }
 
-/**
- * The surface that attached these files is gone (unmounted, or the user navigated away in the SPA).
- * Anything nobody else owns is aborted and deleted — after a short grace period, because React's
- * StrictMode tears every effect down and immediately re-runs it on mount in development, and that
- * must not throw away a perfectly good in-flight upload.
- */
 export function releaseStagedOwner(ownerId: string) {
   if (typeof window === "undefined") return;
   cancelStagedOwnerRelease(ownerId);
@@ -1668,10 +986,6 @@ function discardRecordObject(record: StageRecord) {
     });
 }
 
-/**
- * Claim the staged uploads for these files, synchronously and before any await, so a form that
- * unmounts the instant it saves can never delete an object the save is about to link.
- */
 function takeStagedFor(files: File[]): Array<StageRecord | null> {
   const taken = new Array<StageRecord | null>(files.length).fill(null);
   const unmatched: number[] = [];
@@ -1694,8 +1008,6 @@ function takeStagedFor(files: File[]): Array<StageRecord | null> {
     unmatched.forEach((index) => {
       const signature = signatureOf(files[index]);
       const candidates = bySignature.get(signature);
-      // Only an UNAMBIGUOUS signature match is honoured: attaching the wrong photo to a record is
-      // far worse than re-uploading a file whose eager copy we could not confidently identify.
       if (!candidates || candidates.length !== 1) return;
       const record = candidates[0];
       stagedByFile.delete(record.file);
@@ -1707,7 +1019,6 @@ function takeStagedFor(files: File[]): Array<StageRecord | null> {
   return taken;
 }
 
-/** Await a claimed eager upload, forwarding its live byte progress to the batch's progress bar. */
 async function awaitStaged(record: StageRecord, onProgress?: (loaded: number, total: number) => void) {
   if (!onProgress) return record.promise;
   onProgress(record.loaded, record.total);
@@ -1719,23 +1030,10 @@ async function awaitStaged(record: StageRecord, onProgress?: (loaded: number, to
   }
 }
 
-// ---------------------------------------------------------------------------
-// Save-time: link the staged object, or upload it now
-// ---------------------------------------------------------------------------
-
 type CompleteParams = {
   caption?: string;
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
-  /**
-   * THE DESIGN & PROTOTYPE WORKSHOP a MISCELLANEOUS upload is filed under, from that form's dropdown.
-   *
-   * NOT DERIVED FROM `linkedRecordType`, deliberately: a stage photograph already carries the tag
-   * `"designWorkshop"` and must keep carrying only the tag. `records.media_relation_data` on the
-   * server holds the argument — the orphan-recovery machinery is split precisely on whether a link
-   * has a typed foreign key, and deriving this would put every stage photograph in scope of both
-   * halves at once. Every caller but the Miscellaneous Media page leaves it undefined.
-   */
   designWorkshopId?: string | null;
   location?: unknown;
   extraMetadata?: Record<string, unknown>;
@@ -1754,7 +1052,6 @@ async function completeUpload(
   params: CompleteParams,
   redirectOn401?: boolean
 ): Promise<MediaFile> {
-  // Safe to retry: the API de-duplicates on objectKey and returns the row the first call created.
   return apiRetry<MediaFile>(
     "/media/complete",
     {
@@ -1783,11 +1080,6 @@ async function completeUpload(
   );
 }
 
-/**
- * The one path every upload takes at save time: prefer the eagerly pre-uploaded object (awaiting it
- * if it is still in flight), fall back to a fresh upload when there is none or it failed, then link
- * the object to the record.
- */
 async function linkOrUpload({
   file,
   record,
@@ -1799,13 +1091,11 @@ async function linkOrUpload({
   record: StageRecord | null;
   params: CompleteParams;
   onProgress?: (loaded: number, total: number) => void;
-  /** See {@link ObjectUploadOptions.redirectOn401} — false for a background pass. */
   redirectOn401?: boolean;
 }): Promise<MediaFile> {
   let staged: StagedObject | null = null;
   if (record) {
     if (record.status === "error") {
-      // The eager attempt gave up; bin what it left behind and upload from scratch below.
       discardRecordObject(record);
     } else {
       try {
@@ -1826,7 +1116,6 @@ async function linkOrUpload({
     });
   }
   const media = await completeUpload(file, staged, params, redirectOn401);
-  // Linked: it is a real MediaFile now, not an orphan candidate.
   forgetStagedObject(staged.objectKey);
   return media;
 }
@@ -1849,7 +1138,6 @@ export async function uploadMediaFile({
   file: File;
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
-  /** See `CompleteParams.designWorkshopId`. */
   designWorkshopId?: string | null;
   caption?: string;
   location?: unknown;
@@ -1890,165 +1178,40 @@ export type BatchProgress = {
   currentFileName: string;
 };
 
-/** One file that did not land, with the error that stopped it kept intact for classification. */
 export type BatchFailure = {
   name: string;
   error: string;
-  /** The ORIGINAL thrown value — an `ApiError` when the server answered. See {@link MediaBatchError}. */
   cause?: unknown;
 };
 
-/**
- * ONE INPUT FILE'S FATE, WITH THE FILE ITSELF ATTACHED.
- *
- * The shape a caller cannot mis-zip, because there is nothing to zip: the `File`, what it became and
- * why it did not are one object, at the position the caller passed the file in. Everything else on
- * {@link BatchResult} is a view of this array, kept because a dozen call sites read them.
- */
 export type BatchOutcome = {
-  /** The `File` the caller passed at this position. Identity, not name — see {@link BatchResult.outcomes}. */
   file: File;
-  /** What it became, or null when it did not land. */
   media: MediaFile | null;
-  /** Why it did not land, or null when it did. Exactly one of these two is non-null. */
   failure: BatchFailure | null;
 };
 
 export type BatchResult = {
-  /**
-   * ONE ENTRY PER INPUT FILE, AT ITS POSITION, CARRYING THE FILE. The authoritative result; the three
-   * fields below are derived from it and exist because a dozen call sites already read them.
-   *
-   * ── WHY THE AUTHORITATIVE SHAPE IS THIS ONE ──────────────────────────────────────────────
-   * This function RESOLVES on a partly-failed batch and throws only when nothing landed, so
-   * `const { uploaded } = await uploadMediaBatch(...)` reads as success and is not. Two ship-blockers
-   * came out of that, and both were index arithmetic on top of it: `uploaded` is COMPACTED (the
-   * by-index array with its nulls filtered out) so its ORDER is the caller's and its POSITIONS are
-   * not, and a caller that walked it with a counter into its own `File[]` recorded every surviving
-   * file against the wrong one. `FieldInput` did exactly that, and its reader is `IdentityCardReader`,
-   * which prints a file's name beside the identity number it OCR'd out of the bytes — so the misfile
-   * showed a designer one photograph's name over another photograph's identity number, defeating the
-   * one cross-check that surface relies on. On identity data.
-   *
-   * `uploadedByIndex` was added to close that instance. This closes the CLASS: with the file inside
-   * the record there is no second array to line up, so the arithmetic that produced both defects has
-   * nowhere to happen. `e2e/batch-result-sweep-unit.spec.ts` is the other half — it fails if any
-   * caller destructures `uploaded` without also taking `failed` or `outcomes`.
-   *
-   * NEVER MATCHED BACK BY `file.name`. Two photographs off one handset are routinely both
-   * `IMG_0001.jpg`; a name match would misfile them and look like it had worked.
-   */
   outcomes: BatchOutcome[];
   uploaded: MediaFile[];
   failed: BatchFailure[];
-  /**
-   * The same results, but at the POSITION of the file that produced each one — `null` where that
-   * file did not land.
-   *
-   * ── THE DEFECT THIS EXISTS FOR, AND WHY `uploaded` COULD NOT ANSWER IT ────────────────────────
-   * `uploaded` is COMPACTED: the by-index array is built at `files.length` and then filtered of its
-   * nulls on the way out. Its ORDER is the caller's; its POSITIONS are not, and the two were
-   * described by one sentence above for long enough that a caller zipped them together.
-   * `FieldInput`'s media field did exactly that — `uploaded.forEach((media, index) => originals[
-   * media.id] = chosen[index])` — so in any batch where an earlier file failed and a later one
-   * succeeded, every surviving file was recorded against the wrong `File`. The reader that consumes
-   * that map is `IdentityCardReader`, which OCRs the original bytes and prints the file's name
-   * beside the digits it read: the mismatch shows a designer one photograph's name over another
-   * photograph's identity number, which defeats the one cross-check its own header relies on.
-   *
-   * ── ADDITIVE, NOT A REPLACEMENT ───────────────────────────────────────────────────────────────
-   * Every existing caller reads `uploaded` and `failed` and is unaffected. A caller that needs to
-   * know WHICH file produced a result reads this instead of counting, and can never fall back to
-   * matching on `file.name` — two photographs off one handset are routinely both `IMG_0001.jpg`,
-   * and a name match would misfile them with no failure anywhere to notice it by.
-   */
   uploadedByIndex: Array<MediaFile | null>;
 };
 
-/**
- * Raised when a batch landed NOTHING — carrying the per-file causes, not just a sentence.
- *
- * The caller that needs this is the design-workshop sync, which uploads one file per call: for it
- * "the whole batch failed" and "the server refused this photograph" are the same event, and the two
- * demand opposite responses. A refusal must be recorded against the file and the pass must carry on;
- * a dropped connection must stop the pass and change nothing. `isUnreachable` decides that, and it
- * decides on the ERROR'S TYPE — so an escalation that flattened the cause to a string forced every
- * refusal down the "you appear to be offline" path and retried it for ever.
- */
 export class MediaBatchError extends Error {
   readonly failures: BatchFailure[];
 
   constructor(message: string, failures: BatchFailure[]) {
-    // `cause` is the FIRST underlying error, which is the whole of it for a one-file batch and the
-    // representative one otherwise — the batch either met one refusal or lost the connection.
     super(message, { cause: failures[0]?.cause });
     this.name = "MediaBatchError";
     this.failures = failures;
   }
 }
 
-/**
- * The second half of {@link MediaBatchError}'s sentence — what to DO, chosen by what happened.
- *
- * ── THE ONE STRING THAT STAYED HAND-ROLLED AFTER THE RULE WAS SHARED ────────────────────────────
- *
- * This clause was a constant: "Check your internet connection and try again — the record was saved,
- * so re-open it and re-attach the media", appended to every total failure whatever caused it. The
- * classification underneath had already been unified — `cause` is carried, `triageFailure` reads it,
- * every drain acts on the verdict — and the SENTENCE went on saying the one thing the verdict most
- * often contradicts. A 413 on an over-size video, a 415 on a heic the server will not take, a 422
- * naming a key the two builds disagree about: the server answered all three, and each of them told
- * the researcher to go and look for signal they already had. `e2e/draft-store-drift-unit.spec.ts`
- * pins the worst of them, where the advice arrived stacked with two others that contradicted it.
- *
- * IT BRANCHES ON `screen`, WHICH IS THE FIELD FOR EXACTLY THIS. `ScreenAction` in
- * `lib/failureTriage.ts` is the triage's own answer to "what must a screen somebody is looking at
- * say", so this function is a lookup and not a seventh opinion — nothing here decides anything
- * about a status, and the `default` arm exists only so a kind added there cannot silently lose its
- * sentence.
- *
- * THE PREFIX IS UNCHANGED and so is the shape: a reason clause, then an advice clause. Callers that
- * strip the advice and keep the reason — `batchCause` on the questionnaire page is the one that does,
- * because an interview has no edit screen to "re-open" — go on working unaltered, and callers that
- * surface `.message` whole get a sentence that is true of what happened instead of one that is true
- * a third of the time.
- */
-/**
- * The advice half of the sentence for a transport failure — what to DO, given what was measured.
- *
- * The REASON half is `StorageTransportError.message`, which `uploadMediaBatch` has already put in
- * front of this, so no clause here repeats a cause; each is only the next action.
- *
- * `site-refused` IS THE CLAUSE THAT HAD TO EXIST. "Re-open it and re-attach the media" is an
- * instruction that cannot work while a bucket is refusing this site, and an instruction that cannot
- * work is how a designer spends an afternoon proving the app right. It is also the only clause that
- * does not promise a retry, because it is the only case where the client can be certain a retry is
- * futile: `reads-allowed` and `unmeasured` both leave a real possibility that the next attempt lands,
- * and saying otherwise would be the same overconfidence in the opposite direction.
- *
- * Exported for the same reason {@link measureStorageReach} is: these five clauses ARE the fix, and a
- * clause nothing can assert against is the clause that drifts back to "check your internet connection".
- */
 export function adviceForTransportFailure(error: StorageTransportError): string {
   if (error.facts.bytesMoved)
     return "The record was saved, so re-open it and re-attach the media once the signal is steady.";
   switch (error.facts.reach) {
     case "site-refused":
-      /*
-        THE CLAUSE THIS WHOLE SECTION EXISTS FOR, MINUS THE ONE PROMISE IT COULD NOT KEEP.
-
-        It read "re-attaching them now will fail in exactly the same way", and that is a guarantee
-        about a PUT drawn from two GETs — see the arm of the same name in
-        {@link storageTransportSentence} for the bucket rule that makes it false. Telling a designer
-        their files are unsendable is the most expensive thing on this screen to get wrong in this
-        direction: it is the one clause that asks somebody to STOP, so unlike every other message
-        here, being wrong costs the upload that would have worked rather than a wasted attempt.
-
-        What survives is everything that was measured and everything that is worth acting on — the
-        bytes are safe, the page cannot fix a bucket, and the person to tell is whoever administers
-        it. "May well fail the same way" carries the same instruction to a reader and claims only
-        what the probe supports.
-      */
       return (
         "Nothing you saved is lost and these files are still on this device, but trying again may well fail " +
         "the same way. Keep them, and contact support."
@@ -2070,21 +1233,6 @@ export function adviceForTransportFailure(error: StorageTransportError): string 
 }
 
 function adviceForALostBatch(cause: unknown): string {
-  /*
-    THE ONE CASE `screen` CANNOT DECIDE, AND WHY THIS BRANCH IS NOT A SEVENTH OPINION.
-
-    A cross-origin refusal and a genuine loss of signal are the SAME kind — `unreachable` — and they
-    have to stay the same kind, because what must be done with the WORK is identical for both: keep it
-    (see {@link StorageTransportError}). So `screen` is `say-offline` for both, and `say-offline`'s
-    clause — "Check your internet connection and try again" — is exactly right for one of them and
-    exactly wrong for the other. That is the whole of the incident this module was audited over.
-
-    The transport error is the only value in the client holding the fact that separates them, so it is
-    read here rather than pushed into `lib/failureTriage.ts` as a seventh kind: a kind is a statement
-    about what to DO, and there is nothing new to do. Nothing about the classification is overridden —
-    the verdict, the retry policy and the drain action are untouched and the batch is still kept. Only
-    the ADVICE CLAUSE is chosen by what was measured.
-  */
   const transport = underlyingError(cause);
   if (transport instanceof StorageTransportError) return adviceForTransportFailure(transport);
   const { screen } = triageFailure(cause);
@@ -2105,31 +1253,6 @@ function adviceForALostBatch(cause: unknown): string {
   }
 }
 
-/**
- * Upload many files resiliently: files that were eagerly pre-uploaded only need linking (so saving is
- * near-instant), the rest transfer now — up to {@link UPLOAD_CONCURRENCY} at a time. Each file
- * retries independently, a failure of one does not abort the rest, and per-byte progress + ETA is
- * reported across the whole batch.
- *
- * IT RESOLVES ON A PARTLY-FAILED BATCH and throws only when NOTHING landed, so a resolved promise is
- * not a success and `const { uploaded } = await uploadMediaBatch(...)` is a bug in the reading of it.
- * Take {@link BatchResult.outcomes} — one entry per input file, at its position, with the `File`
- * attached — or at minimum take `failed` alongside `uploaded` and say what did not make it.
- * `e2e/batch-result-sweep-unit.spec.ts` fails the build if a call site does neither.
- *
- * `uploaded` KEEPS THE CALLER'S ORDER AND NOT THE CALLER'S POSITIONS, and the difference is a bug
- * this sentence used to hide: it is the by-index array with its nulls removed, so `uploaded[2]` is
- * the third file that LANDED, not the third file that was passed in. See {@link BatchResult.outcomes}
- * for what that zip cost, on identity data, twice.
- *
- * `redirectOn401` IS HOW A BACKGROUND PASS STOPS BEING A NAVIGATION. Every request this makes went
- * out with `apiFetch`'s default, which sends the browser to /login on an expired token — right for a
- * researcher watching a save, and wrong for the outbox drain in `lib/offline.ts`, which runs on an
- * `online` event with nobody having asked. A resumed entry whose record already exists sends its
- * FIRST request from here, so a seven-day token dying in that window threw the researcher off
- * whatever they were editing. See {@link ObjectUploadOptions.redirectOn401}, which carries it the
- * rest of the way.
- */
 export async function uploadMediaBatch({
   files,
   linkedRecordType,
@@ -2147,11 +1270,8 @@ export async function uploadMediaBatch({
   redirectOn401
 }: {
   files: File[];
-  // Nullable so the Miscellaneous Media page (where the linked entry is optional) can share this
-  // path instead of keeping its own upload implementation.
   linkedRecordType?: string | null;
   linkedRecordId?: string | null;
-  /** See `CompleteParams.designWorkshopId`. */
   designWorkshopId?: string | null;
   caption?: string;
   location?: unknown;
@@ -2162,19 +1282,10 @@ export async function uploadMediaBatch({
   transcribe?: readonly (boolean | undefined)[];
   processingRequests?: string[];
   onProgress?: (progress: BatchProgress) => void;
-  /**
-   * Defaults to true, exactly as `apiFetch` does. Pass FALSE from anything that is not a screen
-   * somebody is looking at — see the note above.
-   */
   redirectOn401?: boolean;
 }): Promise<BatchResult> {
-  // Claimed synchronously, before the first await, so nothing can reclaim these objects mid-save.
   const records = takeStagedFor(files);
   const uploadedByIndex = new Array<MediaFile | null>(files.length).fill(null);
-  // BY INDEX, NOT BY ARRIVAL. `runPool` runs UPLOAD_CONCURRENCY files at once, so a pushed array is
-  // in COMPLETION order — which read like input order in every test with one slow file and was not.
-  // `failed` below is rebuilt from this in the caller's own order, so `failed[0]` is the first file
-  // the caller passed that did not land, rather than whichever request happened to lose first.
   const failureByIndex = new Array<BatchFailure | null>(files.length).fill(null);
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0) || 1;
   const loaded = new Array<number>(files.length).fill(0);
@@ -2226,26 +1337,17 @@ export async function uploadMediaBatch({
         }
       });
     } catch (error) {
-      // `cause` keeps the ORIGINAL error, `ApiError` and all. Reducing it to `.message` here is what
-      // made a refusal indistinguishable from a dropped connection two callers away: every test of
-      // "did the server actually answer" is `error instanceof ApiError`, and a string is not.
       failureByIndex[index] = {
         name: file.name,
         error: error instanceof Error ? error.message : "Upload failed",
         cause: error
       };
     }
-    // Settled either way — count its bytes so the bar still reaches the end of the batch.
     loaded[index] = file.size;
     completedFiles += 1;
     report();
   });
 
-  /*
-    THE ONE ARRAY EVERYTHING ELSE IS A VIEW OF. Built here, at `files.length`, so a position in it is
-    a position in the caller's own array and the two can never be a different length. See
-    {@link BatchResult.outcomes} for the two ship-blockers that came out of lining up two arrays.
-  */
   const outcomes: BatchOutcome[] = files.map((file, index) => ({
     file,
     media: uploadedByIndex[index],
@@ -2253,13 +1355,6 @@ export async function uploadMediaBatch({
   }));
   const failed = outcomes.map((outcome) => outcome.failure).filter((failure): failure is BatchFailure => failure !== null);
 
-  // Total failure (nothing got through) is escalated so every caller surfaces it — the record was
-  // already saved before this ran, so the fix is to retry the media, not redo the whole form.
-  //
-  // THE THROW CARRIES `cause`, AND THAT IS NOT A DETAIL. The offline sync uploads ONE file per call,
-  // so for it "every file failed" is simply "this file was refused" — and a bare `new Error` made a
-  // 415 on a video the server will never accept look exactly like a lost signal to `isUnreachable`,
-  // which stopped the pass as offline and came back to the same refusal for ever.
   if (files.length > 0 && failed.length === files.length) {
     throw new MediaBatchError(
       `${byCount(files.length, "The media file", `All ${files.length} media files`)} failed to upload (${failed[0]?.error ?? "network error"}). ` +
@@ -2269,15 +1364,8 @@ export async function uploadMediaBatch({
   }
   return {
     outcomes,
-    // COMPACTED, and the three lines that say so are the whole reason `outcomes` exists: this is the
-    // by-index array with its nulls removed, so its ORDER is the caller's and its POSITIONS are not.
-    // Callers that only need "what landed" go on reading it; callers that need "what THIS file
-    // became" read `outcomes`, where the file is attached and there is nothing to line up.
     uploaded: uploadedByIndex.filter((item): item is MediaFile => item !== null),
     failed,
-    // The uncompacted array, kept for the callers that already read it by position. New readers
-    // should take `outcomes` instead — it is the same information with the `File` attached, so a
-    // wrong index is a type error rather than a photograph filed under another photograph's name.
     uploadedByIndex
   };
 }
@@ -2300,26 +1388,6 @@ export async function transcribeMediaFile(file: File, mediaType = inferMediaType
   };
 }
 
-/**
- * HOW A DIMENSION CAME TO BE KNOWN, in the shape a client echoes back UNCHANGED when it saves the
- * value it was given.
- *
- * `backend/app/services/measurement_provenance.py` composes this (`MeasurementProvenance.marker()`)
- * and reads it back off the save body; the server then writes the method BESIDE the `{by, byName,
- * at}` stamp, so the row reads *a vision model estimated this, and this person accepted it into the
- * record at that moment* rather than as a measurement that person took.
- *
- * DELIBERATELY ONE FORMAT FOR EVERY ORIGIN — a client composes the same shape by hand for a typed
- * measurement (`{method: "TYPED"}`) or for the on-device geometry path
- * (`{method: "PHOTO_GEOMETRY", technique: "SCALE" | "RECTIFIED"}`). Keys whose answer is not a known
- * fact are OMITTED rather than sent as a placeholder: a `provider` on a hand-typed dimension is a
- * question that does not apply.
- *
- * SENDING NOTHING IS LEGAL AND MEANS `UNRECORDED`; **it must never mean TYPED.** The rows already in
- * this database include model estimates that auto-filled a form field, so defaulting an absent marker
- * to TYPED would assert a human measured a number a machine guessed, for exactly the rows where the
- * assertion is false.
- */
 export type MeasurementMethodMarker = {
   method: string;
   provider?: string;
@@ -2328,25 +1396,6 @@ export type MeasurementMethodMarker = {
   technique?: string;
 };
 
-/**
- * What `POST /media/analyze-measurement` answers with.
- *
- * EVERY PROVENANCE KEY IS OPTIONAL, and that is not laziness. A web build outlives a backend deploy,
- * and a client that required `methodMarker` would break outright against a server that predates it —
- * the same reasoning that makes `ApiClient.kt` build its `Json` with `ignoreUnknownKeys = true` in the
- * other direction. An absent marker is read as "this server does not say", never as "typed".
- *
- * `requiresAcceptance` is `true` on every response this endpoint can produce, INCLUDING the failures:
- * it is a statement about what kind of thing this endpoint produces, not about one reading. Nothing
- * here branches on it — `components/media/gridProposal.ts` treats every reading as a proposal
- * unconditionally, which is the stronger reading of the same rule — but it is declared so a future
- * caller can see that the server has an opinion about it.
- *
- * `confidenceIsCalibrated` is hard `false` server-side and there is no code path that sets it true.
- * It exists so `selfReportedConfidence` can never be mistaken for a measured error bar — which is
- * what `lib/photoMeasure.ts`'s `uncertainty` is, and the two must not look alike on a wire that
- * carries both.
- */
 export type MeasurementAnalysisResponse = {
   available: boolean;
   status: string;
@@ -2366,18 +1415,6 @@ export type MeasurementAnalysisResponse = {
   methodMarker?: MeasurementMethodMarker | null;
 };
 
-/**
- * THIS CLIENT STOPPED WAITING. Thrown by {@link analyzeMeasurementImage} and by nothing else.
- *
- * A TYPE RATHER THAN AN ERROR NAME, and the reason is that the alternative does not work. An aborted
- * `fetch` rejects with a `DOMException` whose `name` is `"AbortError"` or `"TimeoutError"` depending
- * on the runtime and on how the signal was built — and, worse, a CALLER's abort (the designer replaced
- * the photograph, the component unmounted, the group was unchecked) produces the identical rejection.
- * Only the layer that started the clock can tell the two apart, so it says which happened instead of
- * leaving `lib/measurementFailure.ts` to guess from a string. A caller's own abort is deliberately NOT
- * this: it is not a timeout, and reporting it as one would put a sentence about a slow connection
- * under a photograph the designer themselves discarded.
- */
 export class MeasurementTimeoutError extends Error {
   constructor(public readonly timeoutMs: number) {
     super(`Measuring took too long: no answer came back within ${Math.round(timeoutMs / 1000)} seconds.`);
@@ -2385,36 +1422,8 @@ export class MeasurementTimeoutError extends Error {
   }
 }
 
-/**
- * The wait before this client gives up on a grid reading, in milliseconds.
- *
- * ABOVE THE SERVER'S OWN BUDGET, DELIBERATELY, AND THE MARGIN IS THE POINT.
- * `_post_gemini_measurement` calls the provider with `timeout=90` (seconds) and ROTATES ONTO THE NEXT
- * KEY on a network error, so a request that is going to succeed can legitimately still be in flight
- * well past a minute. A client timeout under that would abort calls that were about to answer and
- * report them as "timed out" — the same class of lie the rest of this work exists to end, with the
- * added cost that the deployment has already paid the provider for the reading that got thrown away.
- *
- * A TIMEOUT AT ALL, RATHER THAN NONE, because a connection that opens and then stalls never rejects
- * `fetch` on its own — a captive portal, a lift, a tower handover halfway through an 8 MB upload. Until
- * this existed the status line said "Analyzing…" until the designer navigated away, which is the one
- * outcome with no sentence at all.
- *
- * True on 2026-08-27; re-check the server's half with `grep -n "timeout=90" backend/app/services/ai.py`.
- */
 export const MEASUREMENT_TIMEOUT_MS = 120_000;
 
-/**
- * Send one grid photograph to be read, and wait no longer than {@link MEASUREMENT_TIMEOUT_MS}.
- *
- * THROWS RATHER THAN RETURNING A VERDICT, and the classification lives in `lib/measurementFailure.ts`
- * — `classifyMeasurementFailure` for what this throws, `measurementBodyFailure` for the two 200 bodies
- * that are failures anyway. Kept apart so that this function is only the wire and the sentences are
- * only in one place; `components/media/gridProposal.ts` is the caller that reads both.
- *
- * @param options.signal the CALLER's cancellation — a replaced photograph, an unmounted component. It
- *   aborts the request like the timeout does and is deliberately NOT reported as a timeout.
- */
 export async function analyzeMeasurementImage(
   file: File,
   dimension?: "length" | "breadth" | "height",
@@ -2441,9 +1450,6 @@ export async function analyzeMeasurementImage(
       signal: controller.signal
     });
   } catch (error) {
-    // The flag is read rather than the rejection, for the reason on {@link MeasurementTimeoutError}.
-    // Anything else — including the caller's own abort — is re-thrown exactly as it arrived, so the
-    // triage sees the `ApiError` or the `TypeError` the server or the transport actually produced.
     if (weStoppedWaiting) throw new MeasurementTimeoutError(timeoutMs);
     throw error;
   } finally {
@@ -2452,42 +1458,12 @@ export async function analyzeMeasurementImage(
   }
 }
 
-/**
- * Read ONLY the capture clock off an image, for the bulk photo intake (`lib/photoIntake.ts`).
- *
- * A separate reader from {@link extractImageExifMetadata} rather than a second caller of it, for two
- * reasons that both matter at two hundred files:
- *
- *  - **`pick` stops the parse at the two tags wanted.** The full reader asks for the whole TIFF, EXIF
- *    and GPS blocks so it can write a provenance remark; this one names its tags, so exifr reads the
- *    APP1 segment header and stops. Over a camera dump that is the difference between a spinner and
- *    a list.
- *  - **`reviveValues: false` is load-bearing here, not a preference.** Left on, exifr hands back a
- *    `Date` built by parsing the naive EXIF string in the BROWSER'S timezone — which is precisely the
- *    off-by-hours bug `photoIntake.ts` exists to avoid, arriving before that module ever sees the
- *    value. Measured, on one hand-built JPEG whose `DateTimeOriginal` reads `2026:02:14 19:40:12`:
- *    with `reviveValues: true` exifr returns `2026-02-14T14:10:12.000Z` on a machine set to IST and
- *    `2026-02-14T19:40:12.000Z` on one set to UTC — the same file, two different instants, decided by
- *    the reader's laptop. The raw string is passed through untouched and parsed in `photoIntake.ts`,
- *    where the timezone rule is written down and tested.
- *
- * NOTHING IS WRITTEN, DECODED OR RE-ENCODED. exifr reads bytes out of the file; the `File` handed in
- * is the same object that is later uploaded, unchanged. `docs/MEDIA_PIPELINE.md` §5 records why this
- * repository refuses to re-encode an image at all — the original IS the artifact — and a feature that
- * read EXIF by round-tripping a canvas would strip the very tag it came for.
- *
- * Returns nulls rather than throwing. A file with no EXIF, a PNG screenshot, a truncated download and
- * a format exifr cannot parse are all ordinary here, and all of them must reach the intake table as a
- * row a designer can assign by hand — never as a failed import.
- */
 export async function readCaptureStamp(file: File): Promise<{ takenAt: string | null; takenAtOffset: string | null }> {
   const empty = { takenAt: null, takenAtOffset: null };
   if (!file.type.startsWith("image/")) return empty;
   try {
     const exifr = await import("exifr");
     const metadata = await exifr.parse(file, {
-      // `tiff` must stay on: DateTimeOriginal lives in the EXIF IFD, which is reached THROUGH the
-      // TIFF header. Picking the tag without it returns undefined on every file.
       tiff: true,
       exif: true,
       gps: false,
@@ -2495,9 +1471,6 @@ export async function readCaptureStamp(file: File): Promise<{ takenAt: string | 
       reviveValues: false
     });
     if (!metadata) return empty;
-    // CreateDate is the fallback the existing reader already accepts. It is the digitisation time
-    // rather than the shutter time and the two differ only for scans — where DateTimeOriginal is
-    // absent anyway, so taking it changes nothing for a photograph and rescues a scan.
     const takenAt = metadata.DateTimeOriginal ?? metadata.CreateDate ?? null;
     return {
       takenAt: typeof takenAt === "string" ? takenAt : null,
@@ -2575,40 +1548,10 @@ export function appendRemarksWithExif(remarks: string | null, exifRemark: string
   return [base, exifRemark].filter(Boolean).join("\n\n");
 }
 
-// ---------------------------------------------------------------------------
-// The media processing queue
-//
-// Audio uploads do not transcribe inline — `/media/complete` enqueues a
-// MediaProcessingJob and a background worker (app/main.py -> app/worker.py)
-// drains it. That works, so nobody noticed for months that the queue had no
-// client at all: a job that exhausted its attempts sat in FAILED with its
-// reason in a column no screen read, and there was no way to run it again from
-// any client. A transcription that failed was indistinguishable from one that
-// was never requested. These four calls are what make the queue visible and
-// re-runnable; the panel that uses them is components/media/MediaJobsPanel.
-// ---------------------------------------------------------------------------
-
-/** MediaProcessingJobStatus in prisma/schema.prisma — the five states, verbatim. */
 export type MediaProcessingJobStatus = "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
-/** MediaProcessingJobType in prisma/schema.prisma. */
 export type MediaProcessingJobType = "TRANSCRIPTION" | "MEASUREMENT";
 
-/**
- * One row of `GET /media/jobs`.
- *
- * The nested `mediaFile` comes back through `public_encode(jobs)` with NO viewer, so it is the
- * masked shape: **`url` and `objectKey` are absent from every job row**, for a master admin as much
- * as for anyone else. Hence `Pick<...>` rather than `MediaFile` — typing it as the full row would
- * compile and then render a dead player, which is exactly the lie lib/types warns about on
- * `MediaFile.url`. Use the media table (or `GET /media/{id}`) when the bytes are wanted.
- *
- * THE PICK CARRIES THE FILE'S TWO WORKSHOP LINKS (`designWorkshopId`, and the `linkedRecordType` /
- * `linkedRecordId` tag), which the masking leaves in place — the encoder drops the bytes and the
- * transcript, nothing else. They are what `MediaJobsPanel` holds Retry on: a re-queued transcription
- * is written back onto the file later, and the server refuses that re-queue to whoever inspects or
- * supervises a workshop the file belongs to (`retry_media_processing_job`, 2026-10-09).
- */
 export type MediaProcessingJob = {
   id: string;
   jobType: MediaProcessingJobType | string;
@@ -2616,13 +1559,10 @@ export type MediaProcessingJob = {
   priority: number;
   attempts: number;
   maxAttempts: number;
-  /** WHY it failed, straight from the provider ("...(NoSuchKey)... The specified key does not exist"). */
   error?: string | null;
   result?: unknown;
-  /** Set while a worker holds the job; a crashed worker's lock is recovered by the queue itself. */
   lockedAt?: string | null;
   lockedBy?: string | null;
-  /** Backoff gate — a QUEUED job with a future `runAfter` is waiting out a retry delay, not stuck. */
   runAfter?: string | null;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -2643,15 +1583,8 @@ export type MediaProcessingJob = {
   requestedBy?: { id: string; name?: string | null; email?: string | null } | null;
 };
 
-/** `POST /media/jobs/process` — how much of the queue this drain actually moved. */
 export type MediaQueueRunResult = { processed: number; succeeded: number; failed: number };
 
-/**
- * `GET /media/jobs` — open to every signed-in account, but **scoped server-side**: an admin sees
- * every job, everyone else sees only the jobs they requested (`requestedById == me`). So this needs
- * no client-side permission check, and a panel that hid it from non-admins would hide a
- * contributor's own failed transcription from the only person who noticed it was missing.
- */
 export function listMediaProcessingJobs(params: {
   page?: number;
   pageSize?: number;
@@ -2664,42 +1597,15 @@ export function listMediaProcessingJobs(params: {
   });
 }
 
-/**
- * `POST /media/jobs/{id}/retry` — back to QUEUED, `runAfter` now, lock and error cleared, so the
- * next drain picks it up. **`require_admin`**: gate any control that calls this on `isAdmin(user)`,
- * not on ownership — the uploader of the failed file may not re-run it. And hold it for an admin who
- * inspects or supervises a workshop the job's file belongs to: the server refuses them with the 403
- * naming the post (`useHeldPostRefusals` over `mediaWorkshopIds(job.mediaFile)`, as the panel does).
- */
 export function retryMediaProcessingJob(jobId: string) {
   return apiFetch<MediaProcessingJob>(`/media/jobs/${jobId}/retry`, { method: "POST" });
 }
 
-/**
- * `POST /media/jobs/process` — drain up to `limit` jobs (1–25) synchronously instead of waiting for
- * the background worker's next tick. **`require_admin`.**
- *
- * TRANSCRIPTION jobs may still be skipped even when this returns: the queue only runs them inside
- * the configured off-peak window or while the server is idle, and never during a rate-limit
- * cooldown. `processed: 0` therefore means "nothing was eligible right now", not "nothing to do" —
- * say so, or an admin presses this twice and concludes the button is broken.
- */
 export function runMediaProcessingQueue(limit?: number) {
   const query = limit ? `?limit=${limit}` : "";
   return apiFetch<MediaQueueRunResult>(`/media/jobs/process${query}`, { method: "POST" });
 }
 
-/**
- * `POST /media/{id}/transcribe-now` — transcribe this audio file on the spot, applying the
- * settings-page transcription mode and bypassing both the queue and the off-peak window. Returns
- * the updated MediaFile.
- *
- * **`require_admin`, and the route 400s anything that is not AUDIO**, so a caller must check both
- * before offering the control. Android has offered this since it shipped
- * (MainActivity `MediaWithTranscript` -> `TranscribeNowButton`, labelled "Transcribe now" /
- * "Re-transcribe now"); the web had no equivalent, so a researcher who could re-run a transcript on
- * a phone could not do it at a desk.
- */
 export function transcribeMediaNow(mediaId: string) {
   return apiFetch<MediaFile>(`/media/${mediaId}/transcribe-now`, { method: "POST" });
 }

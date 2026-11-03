@@ -2,28 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { signIn } from "./support/session";
 
-/**
- * A DESIGN WORKSHOP CREATED WITHOUT A CONNECTION KEEPS THE WORKSHOP RECORD IT WAS STARTED FROM.
- *
- * The create form builds one `header` object — title, template, craft, cluster, state, district,
- * the dates and `workshopId`, the link to the `Workshop` row the designer picked out of "Start from
- * a recorded workshop" — and hands the whole thing to the create call. The offline fallback
- * (`createLocalOffline`) declared its own parameter type and re-enumerated NINE of those fields by
- * hand into `createLocalDraft`. `workshopId` was in neither list, so it was silently dropped and
- * `emptyHeader`'s null stood. The sync pass then created the workshop unlinked, permanently, with
- * nothing on screen ever saying so.
- *
- * NOTHING CAUGHT IT. TypeScript does not apply excess-property checking to a variable, so the extra
- * key was legal; and every OTHER field survived, so the row looked correctly pre-filled. The cost
- * lands a fortnight later on the stages whose reference pickers are scoped to the linked workshop:
- * `refScope: "WORKSHOP"` falls back to the whole table and prints "This design workshop is not
- * linked to a workshop record yet, so every documented record is offered" — a designer choosing
- * participants from the entire repository instead of this workshop's roster.
- *
- * The spec drives the real picker and then asks the SERVER, after the app's own sync has sent it,
- * whether the link is there — a draft read alone would not prove the field survives the push.
- */
-
 const EMAIL = process.env.E2E_EMAIL ?? "";
 const PASSWORD = process.env.E2E_PASSWORD ?? "";
 const API = process.env.E2E_API_URL ?? "http://localhost:8000";
@@ -71,7 +49,6 @@ test("a workshop created with no connection keeps the workshop link the designer
   await page.goto("/design-workshops");
   await page.getByRole("button", { name: /new design workshop/i }).click();
 
-  // Pick a real workshop to start from. The first option is the "do not link" sentinel.
   const picker = page.getByRole("button", { name: "Start from a recorded workshop" });
   await expect(picker).toBeVisible({ timeout: 30_000 });
   await picker.click();
@@ -83,13 +60,6 @@ test("a workshop created with no connection keeps the workshop link the designer
   await options.nth(1).click();
   await page.locator('input[name="title"]').fill(title);
 
-  /*
-    THE COURTYARD. The create POST never reaches a server, which is the path the form is written
-    for — and it is also the path taken when the request merely fails while online, so this is not
-    an exotic case. Expressed as an aborted request rather than an offline context because
-    `router.push` cannot fetch the next route's payload with no connection, and the tab then lands
-    on the browser's own error page where IndexedDB cannot be read.
-  */
   await page.route("**/api/design-workshops", async (route) => {
     if (route.request().method() !== "POST") return route.fallback();
     await route.abort("internetdisconnected");
@@ -104,7 +74,6 @@ test("a workshop created with no connection keeps the workshop link the designer
     `the chosen workshop ("${picked}") is still linked in the local draft`
   ).toBeTruthy();
 
-  /* ── And it survives the push. ────────────────────────────────────────────────────────── */
   await page.unroute("**/api/design-workshops");
   let remoteId: string | null = null;
   for (let attempt = 0; attempt < 20 && !remoteId; attempt += 1) {

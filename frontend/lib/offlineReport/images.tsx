@@ -1,22 +1,5 @@
 "use client";
 
-/**
- * The browser half of writing a report file with no connection: finding a photograph's bytes on
- * the device, and drawing the charts and the map as pictures.
- *
- * WHERE A PHOTOGRAPH COMES FROM. A `dwlocal:` reference is a photograph taken on this device and
- * not yet uploaded — its bytes are in the draft store (`readLocalMedia`). Anything else is a server
- * media id, and its bytes are in the report cache if this account has opened it before
- * (`reportCache.getMedia`). A photograph in neither is left out of the file and named beside the
- * download, exactly as the server names a photograph it could not fetch.
- *
- * EVERY PICTURE IS RE-ENCODED HERE, so the two writers never see a format they cannot embed
- * (HEIC, WebP) or a camera's EXIF orientation: `createImageBitmap(…, { imageOrientation:
- * "from-image" })` applies the rotation, a canvas scales the long side to at most
- * {@link MAX_EDGE_PX} — the server's raster ceiling for a report image — and the result is a JPEG,
- * or a PNG where the source carries transparency (a logo).
- */
-
 import type { FigureRasteriser, ImageLoader, LoadedImage } from "@/lib/offlineReport/docx";
 import type { ChartBlock, ImageRef, MapBlock } from "@/lib/offlineReport/model";
 import { getMedia } from "@/lib/offlineReport/reportCache";
@@ -26,7 +9,6 @@ import type { ReportPalette } from "@/lib/reportTheme";
 export const MAX_EDGE_PX = 2000;
 const PX_PER_MM = 96 / 25.4;
 
-/** The bytes of a photograph this device holds, or null. */
 export async function mediaBlob(source: string, userId: string | null): Promise<Blob | null> {
   if (isLocalMediaRef(source)) {
     const local = await readLocalMedia(source);
@@ -40,7 +22,6 @@ async function canvasBytes(canvas: HTMLCanvasElement, type: "image/png" | "image
   return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
 }
 
-/** A photograph, oriented, bounded and re-encoded for embedding. */
 export async function encodeForReport(blob: Blob): Promise<LoadedImage | null> {
   let bitmap: ImageBitmap;
   try {
@@ -67,7 +48,6 @@ export async function encodeForReport(blob: Blob): Promise<LoadedImage | null> {
   return data ? { data, type: png ? "png" : "jpg", widthPx: width, heightPx: height } : null;
 }
 
-/** The loader both writers take: device bytes, re-encoded. */
 export function deviceImageLoader(userId: string | null): ImageLoader {
   return async (image: ImageRef) => {
     const blob = await mediaBlob(image.source, userId);
@@ -106,7 +86,6 @@ function escapeXml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c] ?? c);
 }
 
-/** The map as an SVG string: India's outline, the state borders, and the pins numbered in order. */
 async function mapSvg(block: MapBlock, palette: ReportPalette): Promise<{ svg: string; width: number; height: number }> {
   const { VIEW_BOX, bordersToPath, indiaOutlinePath, project } = await import("@/components/map/projection");
   const { loadBorders } = await import("@/components/map/borderGeometry");
@@ -150,10 +129,7 @@ async function mapSvg(block: MapBlock, palette: ReportPalette): Promise<{ svg: s
   return { svg, width, height };
 }
 
-/** A chart as an SVG string, drawn by the same component the preview draws it with. */
 async function chartSvg(block: ChartBlock, palette: ReportPalette): Promise<{ svg: string; width: number; height: number }> {
-  // Rendered into a detached element with the client renderer, so the preview's own chart component
-  // draws the file's figure and no server renderer is pulled into the browser bundle.
   const [{ createRoot }, { flushSync }, chart] = await Promise.all([
     import("react-dom/client"),
     import("react-dom"),
@@ -179,7 +155,6 @@ async function chartSvg(block: ChartBlock, palette: ReportPalette): Promise<{ sv
   return { svg, width, height };
 }
 
-/** The rasteriser both writers take. */
 export function browserFigureRasteriser(palette: ReportPalette): FigureRasteriser {
   return async (block, widthMm) => {
     const drawn = block.type === "MAP" ? await mapSvg(block, palette) : await chartSvg(block, palette);

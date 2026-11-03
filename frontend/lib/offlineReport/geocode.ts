@@ -1,14 +1,3 @@
-/**
- * Placing an address on the report's map with no connection: `report_builder._geocode` and the
- * three server modules it reads (`address`, `place_atlas`, `geography`), ported over the tables in
- * `gazetteer.json`.
- *
- * THE TABLES ARE GENERATED, NOT RE-TYPED. `backend/tools/report_offline_parity.py --write` exports
- * the closed state and district lists, the place atlas and the state seats from the server's own
- * modules, and `backend/tests/test_report_offline_parity.py` fails if the committed file is stale.
- * What is ported here is only the procedure: fold a name, look it up, fall back a rung.
- */
-
 import gazetteer from "@/lib/offlineReport/gazetteer.json";
 
 type Place = {
@@ -42,12 +31,10 @@ const STATES = new Set(G.states);
 const ALIAS_TO_PLACE = new Map<string, Place>();
 for (const place of G.places) for (const alias of place.aliases) ALIAS_TO_PLACE.set(alias, place);
 
-/** `address._fold`. */
 export function fold(value: string): string {
   return value.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
 }
 
-/** `address.normalize_state`. */
 function normalizeState(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
@@ -55,7 +42,6 @@ function normalizeState(value: unknown): string | null {
   return G.stateLookup[fold(text)] ?? text;
 }
 
-/** `address.canonical_state`: the canonical name, or null for anything off the closed list. */
 export function canonicalState(value: unknown): string | null {
   const normalized = normalizeState(value);
   return normalized !== null && STATES.has(normalized) ? normalized : null;
@@ -69,7 +55,6 @@ function districtKeys(value: string): string[] {
   return [folded];
 }
 
-/** `address.canonical_district`: the district within `state`, or null when the pair is not real. */
 export function canonicalDistrict(state: unknown, value: unknown): string | null {
   const resolvedState = canonicalState(state);
   if (resolvedState === null) return null;
@@ -90,13 +75,11 @@ export function canonicalDistrict(state: unknown, value: unknown): string | null
   return (G.districtsByState[resolvedState] ?? []).includes(normalized) ? normalized : null;
 }
 
-/** `geography.state_seat`. */
 export function stateSeat(state: unknown): [string, number, number] | null {
   const canonical = canonicalState(state);
   return canonical ? (G.stateSeats[canonical] ?? null) : null;
 }
 
-/** The district anchors the atlas alone gives, keyed `State|District` — the map's floor offline. */
 export function atlasDistrictPoints(): Record<string, [number, number]> {
   return { ...G.atlasDistrictAnchors };
 }
@@ -120,7 +103,6 @@ function resolveStateRun(run: string): string | null {
   return null;
 }
 
-/** `place_atlas.resolve_place`: a named place, or the state's seat, or nothing. */
 export function resolvePlace(text: string | null | undefined): Place | null {
   if (!text || !text.trim()) return null;
   const words = tokens(text);
@@ -166,7 +148,6 @@ export function resolvePlace(text: string | null | undefined): Place | null {
 
 export type Located = { lat: number; lon: number; state: string; label: string; precise: boolean };
 
-/** `report_builder._geocode`. */
 export function geocode(
   text: unknown,
   stateHint: unknown,

@@ -6,11 +6,6 @@ import { expect, test } from "@playwright/test";
 import type { DwEntity, DwField, DwStage } from "@/lib/designWorkshops";
 import { isEmptyStageValue, prefillPatch } from "@/lib/designerPrefill";
 
-/*
-  The designer's profile fills a stage's EMPTY boxes when it opens (2026-10-21). One case per family
-  of mapped keys, the never-overwrite rule, and the page wiring.
-*/
-
 const field = (key: string, extra: Partial<DwField> = {}) => ({ key, label: key, type: "TEXT", ...extra }) as DwField;
 const entity = (key: string, cardinality: DwEntity["cardinality"], keys: string[]) =>
   ({ key, name: key, cardinality, title: key, description: "", parent: "", labelField: "", fields: keys.map((k) => field(k)) }) as DwEntity;
