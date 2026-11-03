@@ -29,10 +29,8 @@ SHARED_FILES_EXTRA = (
     "frontend/components/settings/TranscriptionPanel.tsx",
     "backend/tests/test_transcription_service.py",
     "backend/tests/test_transcription_parity.py",
-    # The one consent store (19 Oct 2026): its migration and its tests, beside the rule in the package.
     "backend/prisma/migrations/20261103090000_one_consent_store/migration.sql",
     "backend/tests/test_consent_ledger.py",
-    # The transcript pipeline (31 Oct 2026): the API contract and UI strings both clients build on.
     "shared/transcript-contract.json",
     "shared/strings/transcript.json",
     "backend/app/services/transcript_store.py",
@@ -46,21 +44,17 @@ SHARED_FILES_EXTRA = (
     "backend/app/services/audio_isolation.py",
     "backend/prisma/migrations/20261115090000_audio_isolation/migration.sql",
     "backend/tests/test_audio_isolation.py",
-    # D37 (0.0.6): the sized, swept working directory and the download that never leaks a temp file.
     "backend/tests/test_transcription_workdir.py",
-    # Transcripts in View data / Download data (0.0.6): the shared loader, its routes and its tests.
     "backend/app/services/transcript_export.py",
     "backend/app/api/routes/transcript_data.py",
     "backend/tests/test_transcript_export.py",
     "backend/tests/test_transcript_export_db.py",
-    # D38 (0.0.9): the one-off sweep that queues the translation old transcripts never got.
     "backend/app/scripts/queue_pending_translations.py",
     "backend/app/services/transcribe_choice.py",
     "backend/app/services/transcript_backfill.py",
     "backend/prisma/migrations/20261120090000_media_transcribe_choice/migration.sql",
     "backend/tests/test_media_transcribe_choice.py",
 )
-#: Recorded provider responses the transcript tests read, every file in the folder.
 FIXTURE_DIR = "backend/tests/fixtures/transcript"
 
 

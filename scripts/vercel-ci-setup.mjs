@@ -1,57 +1,4 @@
 #!/usr/bin/env node
-/**
- * One-shot setup so the release pipeline publishes the web app without anyone's laptop.
- *
- * Run it once, with a Vercel token:
- *
- *     VERCEL_TOKEN=xxxxxxxx node scripts/vercel-ci-setup.mjs          # interactive: it asks first
- *     VERCEL_TOKEN=xxxxxxxx node scripts/vercel-ci-setup.mjs --yes    # non-interactive: flag required
- *     node --env-file=.env.vercel scripts/vercel-ci-setup.mjs         # token AND project ids from the
- *                                                                     # gitignored root .env.vercel
- *
- * Create the token at https://vercel.com/account/tokens → Create Token, scoped to the TEAM that
- * owns the Vercel project this script resolves (see "WHERE THE PROJECT AND TEAM IDS COME FROM"
- * below; not "Personal Account", or every call below 403s). This script never prints it and never
- * writes it to disk.
- *
- * ─── WHICH REPOSITORY IT WRITES TO, AND WHY THAT IS NOT A LITERAL ANY MORE ──────────────────────
- * This file used to carry `const REPO = "cxacraftecosystem-ui/documentation-portal"`, hard-coded,
- * while `git remote get-url origin` in this checkout is `cxacraftecosystem-ui/designer-portal`.
- * Those are two different repositories with divergent histories, so running it sealed THIS portal's
- * live Vercel token, org id and project id into ANOTHER repository's Actions secrets — where they
- * are readable by every workflow that repository runs — and left this one with no token at all,
- * which is the very failure the script exists to fix. A wrong deploy target that AUTHENTICATES is
- * the dangerous kind: nothing 403s, nothing looks wrong, and the run goes green.
- *
- * So the slug is now DERIVED, from `GITHUB_REPOSITORY` if the process has one and otherwise from
- * the `origin` remote of the checkout the script is sitting in, and the script exits non-zero
- * rather than guessing. Everything it is about to touch — owner/name, Vercel project name, project
- * and org id — is printed before the first API call, and a run that cannot ask a human for
- * confirmation has to be told `--yes` in as many words.
- *
- * What it does, and why each step is needed:
- *
- *  1. Sets the project's **Root Directory to `frontend`**. This is the actual cause of the
- *     "No Next.js version detected" build failure: with it unset, Vercel builds the repository
- *     root, whose package.json has no `next` in it. It is also what `vercel build` in
- *     .github/workflows/deploy-frontend.yml reads, so the same setting fixes both paths at once.
- *     It cannot be set from vercel.json — it is a project setting, so it has to be this or the
- *     dashboard.
- *
- *  2. **Turns off Git-triggered deployments.** Two publishers for one site is the bug: Vercel's
- *     own Git integration starts building the moment `main` moves, which is *before* the backend
- *     has deployed and migrated, so the live site spends that window calling endpoints that answer
- *     404. GitHub Actions becomes the single publisher and the backend→frontend order holds.
- *     (`vercel.json`'s `ignoreCommand` already does this belt-and-braces for Git builds; this makes
- *     it explicit at the project level. CLI deploys — which is what Actions does — are unaffected.)
- *
- *  3. Writes **VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID** into the repository's Actions
- *     secrets, encrypted with the repo's public key (libsodium sealed box), so stage 2 of the
- *     pipeline stops skipping and actually publishes.
- *
- * For step 3 it needs a GitHub token with `repo` scope. It reuses the one in your git credential
- * helper automatically — the same credential `git push` uses — or you can pass GITHUB_TOKEN.
- */
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -64,21 +11,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..");
 const CONFIRMED = process.argv.includes("--yes") || process.argv.includes("-y");
 
-/**
- * `owner/name` out of anything git or GitHub Actions is likely to hand us — an HTTPS clone URL, an
- * `ssh://` or `git@host:` remote, or the bare `owner/name` that `GITHUB_REPOSITORY` holds. Returns
- * null rather than a half-parse, because a half-parse here is a secret written somewhere else.
- *
- * `.` is in the character class because real repository names contain dots (`foo.github.io`), and
- * that let a RELATIVE PATH through: `../sibling-repo` matched and yielded the slug
- * `../sibling-repo`, which this script then interpolates into
- * `https://api.github.com/repos/<slug>/actions/secrets/...`, where WHATWG normalisation eats the
- * `repos/` segment and leaves `https://api.github.com/sibling-repo/...`. No secret actually left
- * the machine — the public-key GET 404s and throws long before any PUT — but a `..` reaching a
- * value that names where a token gets written is precisely the input this function exists to
- * refuse, and "it happens to fail later" is not the contract stated above. So a segment that is
- * exactly `.` or `..` is rejected here, at the parse, where the refusal is the documented one.
- */
 function repoSlug(value) {
   const match = String(value || "")
     .trim()
@@ -88,34 +20,10 @@ function repoSlug(value) {
   return `${match[1]}/${match[2]}`;
 }
 
-/**
- * A remote with its userinfo taken out, for printing — 2026-10-09. An HTTPS remote can carry a
- * credential (`https://user:token@github.com/owner/name.git` is what some setups write into
- * `.git/config`), `repoSlug` reads such a remote happily, and this script prints where it found the
- * repository before it asks to go on: the token went to the terminal with it. Everything between the
- * scheme and the LAST `@` before the first `/` goes, which is where a URL parser ends the userinfo; an
- * scp-style `git@host:owner/name` loses its user too, which costs a reader nothing.
- */
 function withoutCredentials(remote) {
   return String(remote || "").replace(/^([a-z][a-z\d+.-]*:\/\/)?[^/]*@/i, "$1");
 }
 
-/**
- * ─── WHERE THE PROJECT AND TEAM IDS COME FROM — 2026-10-09 ───────────────────────────────────────
- * This used to read `frontend/.vercel/project.json` unconditionally. That file is in no checkout
- * any more, so the script died with ENOENT before printing a word: the documented way to re-seed
- * the deploy secrets did not run at all. It now takes the two sources the Vercel CLI itself accepts:
- *
- *   1. `frontend/.vercel/project.json`, which `vercel link` writes inside frontend/;
- *   2. the VERCEL_ORG_ID and VERCEL_PROJECT_ID environment variables, which is how CI links, and
- *      how the gitignored root `.env.vercel` links a workstation (see the usage line above).
- *
- * The CLI silently prefers the environment when both exist. This script must not: it writes a
- * deploy TARGET into another system's secrets, so two sources that name different projects mean
- * one of them describes another product, and it refuses rather than picks. Half of the environment
- * pair is refused too, as the CLI refuses it. Returns `{ error }` instead of exiting, so the caller
- * owns every message the user sees.
- */
 function resolveVercelLink() {
   const file = path.join(REPO_ROOT, "frontend", ".vercel", "project.json");
   let fromFile = null;
@@ -163,7 +71,6 @@ function resolveRepo() {
     origin = "";
   }
   const fromGit = repoSlug(origin);
-  // `source` is printed, so it carries the remote without its credentials — see `withoutCredentials`.
   if (fromGit) return { slug: fromGit, source: `git remote origin (${withoutCredentials(origin)})` };
   return null;
 }
@@ -186,8 +93,6 @@ if (!resolved) {
 }
 const REPO = resolved.slug;
 
-// projectId/orgId are identifiers, not credentials. Where they come from is the note above
-// `resolveVercelLink`.
 const linked = resolveVercelLink();
 if (linked.error) {
   console.error(`${linked.error}\n`);
@@ -198,23 +103,14 @@ if (linked.error) {
 }
 const { projectId, orgId } = linked;
 
-// ONE READ before anything is printed or changed. An id is not something a person recognises and a
-// project name is, and the environment route above carries no name at all. Nothing has been written
-// when this throws, so a wrong token or a wrong id stops the script here.
 const target = await vercel("GET", `/v9/projects/${projectId}`);
 const projectName = target.name || "<no name returned>";
-// The one name known to be wrong, refused for the reason deploy-frontend.yml refuses it: the field
-// repository's project is a DIFFERENT product in the same team, and writing its id into this
-// repository's secrets would point this pipeline at that product's live site.
 if (projectName === "field-repository") {
   console.error(`${projectId} is the Vercel project 'field-repository', a different product in the same team.`);
   console.error("This repository publishes to 'designer-repository'. Nothing has been changed; see docs/CI.md §2.\n");
   process.exit(1);
 }
 
-// Printed BEFORE the first call that CHANGES anything, because every one of these is a thing that
-// can be wrong in a way that still succeeds. The token itself is never printed, here or anywhere below,
-// and neither is a credential the origin remote carries (`withoutCredentials`).
 console.log("About to change:");
 console.log(`  GitHub repository   ${REPO}   [from ${resolved.source}]`);
 console.log(`  Vercel project      ${projectName}  (${projectId} in ${orgId})   [from ${linked.source}]`);
@@ -238,7 +134,6 @@ if (!CONFIRMED) {
   }
 }
 
-// --- GitHub token: whatever `git push` already uses -----------------------------------------
 function githubToken() {
   if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
   const out = execFileSync("git", ["credential", "fill"], {
@@ -262,7 +157,6 @@ async function vercel(method, url, body) {
   return text ? JSON.parse(text) : {};
 }
 
-// --- 1 + 2: project settings ------------------------------------------------------------------
 console.log("\n[1/3] Root Directory -> frontend, framework -> nextjs");
 const project = await vercel("PATCH", `/v9/projects/${projectId}`, {
   rootDirectory: "frontend",
@@ -276,7 +170,6 @@ await vercel("PATCH", `/v9/projects/${projectId}`, {
 });
 console.log("      done");
 
-// --- 3: GitHub Actions secrets ----------------------------------------------------------------
 console.log("[3/3] Writing Actions secrets");
 await sodium.ready;
 const gh = githubToken();

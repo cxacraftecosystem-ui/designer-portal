@@ -1,21 +1,3 @@
-"""The questionnaire's shared Android trees: digest, generate, copy (UNIFY_2026-10-21.md, U10).
-
-The trees below are the same Kotlin in designer-portal and documentation-portal once the package
-prefix is normalised (``com.designprototype.workshop`` and ``com.fieldrepository.app`` both read as
-``<pkg>``). ``questionnaire/portal/`` is NOT shared: it is each portal's own adapter (its HTTP client,
-its workshops, its artisan create, its live QR reader), and the shared code reaches the portal only
-through it. Edit the trees in designer-portal, then run ``scripts/sync_questionnaire.py``, which
-calls :func:`sync` here; never hand-copy.
-
-``shared/android-questionnaire.sha256`` lists every shared file with its normalised digest. It sits
-outside the ``shared/questionnaire*`` glob on purpose: it is the Android twin of
-``shared/questionnaire.sha256`` and is checked by the Android unit test
-``questionnaire/AndroidSharedTreeTest`` (itself shared), not by the backend parity test.
-
-Each file keeps its own line endings: digests are over LF-normalised text, and a copy writes the
-target with the line endings the source has.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -27,7 +9,6 @@ PKG = {"designer-portal": "com.designprototype.workshop", "documentation-portal"
 PKG_PATH = {k: v.replace(".", "/") for k, v in PKG.items()}
 TOKEN = "<pkg>"
 MANIFEST = Path("shared/android-questionnaire.sha256")
-#: (source set, tree) pairs that are shared. ``questionnaire/portal`` is each portal's own.
 TREES = (
     ("main", "questionnaire/data"),
     ("main", "questionnaire/ui"),
@@ -50,7 +31,6 @@ def _base(root: Path, source_set: str) -> Path:
 
 
 def shared_files(root: Path) -> list[tuple[str, Path]]:
-    """``(rel, absolute)`` for every shared file; ``rel`` is ``<source set>/<tree path>``."""
     out: list[tuple[str, Path]] = []
     for source_set, tree in TREES:
         base = _base(root, source_set)
@@ -87,8 +67,6 @@ def _kotlin_name(value: str) -> str:
 
 
 def enums_text(root: Path, portal: str) -> str:
-    """The Kotlin enums: every list of ``shared/enums.json``, then the unification's own lists
-    (``shared/questionnaire-enums.json``) that the first file does not already carry."""
     enums = json.loads((root / "shared/enums.json").read_text(encoding="utf-8"))["enums"]
     unify = json.loads((root / "shared/questionnaire-enums.json").read_text(encoding="utf-8"))["enums"]
     languages = json.loads((root / "shared/languages.json").read_text(encoding="utf-8"))
@@ -125,7 +103,6 @@ def enums_text(root: Path, portal: str) -> str:
 
 
 def write_enums(root: Path) -> bool:
-    """Regenerate the enums file; True when it changed."""
     target = _base(root, "main") / ENUMS
     text = enums_text(root, portal_of(root))
     if target.is_file() and target.read_text(encoding="utf-8").replace("\r\n", "\n") == text:
@@ -147,9 +124,6 @@ def check(root: Path) -> list[str]:
 
 
 def sync(root: Path, target: Path | None) -> int:
-    """Regenerate the enums and the manifest here; with ``target``, copy every shared file there with
-    its package rewritten (and nothing else), remove shared files the source no longer has, and write
-    the same manifest there. Returns the number of files copied."""
     write_enums(root)
     text = manifest_text(root)
     (root / MANIFEST).write_text(text, encoding="utf-8", newline="\n")

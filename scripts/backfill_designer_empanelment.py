@@ -146,11 +146,6 @@ async def _connect() -> None:
         ) from exc
 
 
-#: A ceiling on the two candidate reads, so a script pointed at a large production database cannot
-#: pull the whole user table into memory. Far above any plausible programme; if a run reports that it
-#: was hit, the answer is to raise it deliberately rather than to trust a cut list — the same
-#: reasoning as ``access_roster.BARRED_EMAIL_READ_LIMIT``, and the same failure direction, because a
-#: cut candidate list is a designer this backfill silently did not fix.
 CANDIDATE_READ_LIMIT = 50_000
 
 
@@ -246,28 +241,6 @@ async def plan() -> dict[str, list[tuple[str, str]]]:
     if not wanted:
         return {"create": [], "already": [], "suspended": [], "needs_admin": []}
 
-    # Every roster row there is. This used to be a narrow `IN` over `wanted` PLUS a whole-table read
-    # for the Gmail near-miss warning; the narrow one is gone, because once Fix 2 landed it answered
-    # the wrong question. `ensure_empanelled` now looks a candidate up under BOTH spellings of their
-    # mailbox, so somebody whose Gmail twin already has a row is ALREADY EMPANELLED and the create is
-    # declined. A plan keyed on the literal address would file that person under "WOULD CREATE" and
-    # then report the decline as "a row appeared between the plan and the write" — a sentence about a
-    # race that never happened, printed at an operator who would reasonably re-run the script.
-    # The plan and the write have to ask one question or the report is fiction; this is that question.
-    #
-    # ``+ 1`` AND THE WARNING BELOW, FOR THE SAME REASON THE TWO CANDIDATE READS CARRY THEM — and
-    # this is the read where a silent cut does the most damage, so it must not be the one read that
-    # cannot detect one. A ``DesignerRoster`` row that falls past the cap is invisible to the
-    # ``empanelment`` map, and its owner is therefore filed under WOULD CREATE. For an active row
-    # that is merely embarrassing: ``ensure_empanelled`` refuses the create at the write and the run
-    # reports "a row appeared between the plan and the write", a sentence about a race that never
-    # happened. FOR A SUSPENDED ROW IT IS THE REPORT SAYING THE OPPOSITE OF THE TRUTH ABOUT THE ONE
-    # BUCKET THIS SCRIPT'S SAFETY RESTS ON: somebody an administrator revoked is listed as about to
-    # be empanelled, under a heading promising nothing suspended is being revived. Nothing would in
-    # fact be revived — the refusal lives in ``ensure_empanelled`` and not in this plan, which is
-    # exactly why the create-only rule was put there — but an operator reading a revoked designer's
-    # address under WOULD CREATE has been told this script does the one thing it must never do, and
-    # the reasonable thing for them to do next is stop the rollout.
     all_roster = await db.designerroster.find_many(take=CANDIDATE_READ_LIMIT + 1)
     if len(all_roster) > CANDIDATE_READ_LIMIT:
         print(
@@ -280,23 +253,11 @@ async def plan() -> dict[str, list[tuple[str, str]]]:
         all_roster = all_roster[:CANDIDATE_READ_LIMIT]
     empanelment: dict[str, Any] = {}
     for row in all_roster:
-        # A SUSPENDED ROW WINS THE SLOT, matching `roster_allows`, which refuses where any spelling
-        # of one mailbox carries a revocation. If the two disagree, the bucket has to be "suspended
-        # — LEFT ALONE": creating nothing is right, and saying "already empanelled" about somebody
-        # the gate is currently refusing would send the operator away satisfied.
         key = canonical_email(row.email)
         current = empanelment.get(key)
         if current is None or (current.isActive and not row.isActive):
             empanelment[key] = row
 
-    # EVERY SPELLING OF EVERY CANDIDATE, and not one literal key apiece, because of the candidates
-    # `User.role` nominates on its own. An account stored as `sandy.craft3@gmail.com` whose ACTIVE
-    # allow-list row an admin typed as `sandycraft3@gmail.com` is admitted by `auth.login` — the
-    # gate looks the mailbox up under both spellings — and a narrow `IN` over the literal address
-    # would find nothing here and file that person under NEEDS AN ADMINISTRATOR. Nothing would be
-    # written either way, so this is not a dangerous error, but it is a REPORT THAT SENDS AN
-    # OPERATOR TO THE ACCESS SCREEN TO APPROVE SOMEBODY WHO IS ALREADY APPROVED, and they will find
-    # an ACTIVE row sitting there and conclude the script is broken.
     keys = sorted({key for address in wanted for key in email_match_keys(address)})
     access_rows = await db.accessroster.find_many(where={"email": {"in": keys}})
     access_by_key = {normalise_email(row.email): row for row in access_rows}
@@ -318,18 +279,6 @@ async def plan() -> dict[str, list[tuple[str, str]]]:
                 (address, "revoked by an administrator — LEFT ALONE" + _stored_as(address, row))
             )
             continue
-        # THE SAME TEST ``auth.login`` MAKES. Anything the allow-list does not currently admit is a
-        # decision for a person, not for a script; see the module docstring.
-        #
-        # WHERE TWO SPELLINGS OF ONE MAILBOX BOTH HAVE ALLOW-LIST ROWS, EVERY ONE OF THEM HAS TO
-        # SAY ACTIVE. `access_roster._the_row_that_decides` picks a winner for the gate, and this
-        # deliberately does not borrow that rule: reproducing an authentication tie-break in a
-        # script is the second copy this repository keeps refusing to have, and the answer it would
-        # give — refuse where the pair disagrees — is the answer this weaker test already gives.
-        # The residual difference is a pair that disagrees in the ADMITTING direction, which the
-        # gate lets in and this reports instead of empanelling. Reporting a live disagreement
-        # between two rows about one person, rather than writing a third row on the strength of it,
-        # is the outcome to want; `scripts/backfill_email_canonicalisation.py` lists those pairs.
         rows = [
             found
             for key in email_match_keys(address)
@@ -342,13 +291,6 @@ async def plan() -> dict[str, list[tuple[str, str]]]:
             )
             buckets["needs_admin"].append((address, f"{why}; allow-list says {standing}"))
             continue
-        # NOTHING IS SAID HERE ABOUT A GMAIL TWIN, AND THE ABSENCE IS THE CORRECTION. Reaching this
-        # line means the canonical lookup above found no row under ANY spelling of this mailbox, so
-        # there is no twin to warn about — a twin holding a row is precisely what sends somebody to
-        # ``already`` or ``suspended``, where :func:`_stored_as` names the spelling it is filed
-        # under. The clause that used to sit here could therefore never fire; it was written while
-        # the plan was still keyed on the literal address, and it survived the re-keying as a
-        # sentence that read like a safeguard while checking a condition that is now always false.
         buckets["create"].append((address, why))
     return buckets
 
@@ -421,9 +363,6 @@ async def main() -> None:
         help="actually create the rows. Without it this is a DRY RUN and writes nothing.",
     )
     parser.add_argument(
-        # The older spelling, kept working on purpose and documented in the module docstring: there
-        # are runbook notes carrying it, and an unrecognised flag at the moment somebody is applying
-        # a fix costs more than a second entry in --help. Same ``dest``, so the two cannot disagree.
         "--execute",
         dest="fix",
         action="store_true",
@@ -446,10 +385,6 @@ async def main() -> None:
         report(buckets, fix=args.fix)
 
         if not args.fix:
-            # THE FINAL LINE OF A DRY RUN SAYS THAT NOTHING HAPPENED, in those words, at the bottom
-            # where somebody who scrolled past four sections of addresses is looking. A report that
-            # lists thirty people under "WOULD CREATE" and then stops reads, to a tired operator,
-            # like a report of thirty rows created.
             print(f"\nCOUNT — {_counts(buckets)}. NOTHING WAS WRITTEN; re-run with --fix to apply.")
             return
 
@@ -457,17 +392,10 @@ async def main() -> None:
         created = 0
         declined = 0
         for address, _why in wanted:
-            # ``ensure_empanelled`` and not a create of this script's own: the create-only-where-no-
-            # row-exists rule, the unique-violation handling and the untouched ``firstSeenAt`` all
-            # live in that one function, and a second implementation here is a second place for them
-            # to be got wrong. ``actor_id`` stays None — no administrator ran this at anybody.
             if await ensure_empanelled(address, note=backfill_note()):
                 created += 1
                 print(f"  empanelled {address}")
             else:
-                # Not an error and worth printing: between the plan above and this write, a row
-                # appeared — the person signed in, or an admin added them — and the create was
-                # correctly declined.
                 declined += 1
                 print(f"  skipped {address} (a row appeared between the plan and the write)")
         if args.limit > 0 and len(buckets["create"]) > args.limit:
@@ -475,8 +403,6 @@ async def main() -> None:
                 f"CAPPED at --limit {args.limit}; {len(buckets['create']) - args.limit} candidate(s) "
                 "remain. Run again to continue."
             )
-        # ``created`` AND NOT ``len(wanted)``: the two differ by every row that appeared between the
-        # plan and the write, and the count line is the one an operator pastes into a ticket.
         print(
             f"\nCOUNT — {_counts(buckets)}. {created} empanelment(s) CREATED, "
             f"{declined} declined at the write."

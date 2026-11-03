@@ -26,31 +26,23 @@ import questionnaire_android  # noqa: E402  (the shared Android trees; see its d
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path("shared/questionnaire.sha256")
 PACKAGE = "backend/app/questionnaire"
-#: Each portal's own capture form; it differs between the portals on purpose and is not shared.
 NOT_SHARED = {"shared/questionnaire-form-contract.json", "shared/questionnaire.sha256"}
 SHARED_FILES_EXTRA = (
-    # The generated vocabulary the package and its schemas read, and its sources.
     "backend/app/shared_vocab.py",
     "shared/enums.json",
     "shared/languages.json",
     "shared/strings/questionnaire.json",
-    # The generator of the shared web vocabularies (strings.ts, enums.ts) and its sources above.
     "scripts/generate_questionnaire_web.py",
-    # The tests that hold the two portals together.
     "backend/tests/test_questionnaire_parity.py",
     "backend/tests/test_questionnaire_schema_parity.py",
     "backend/tests/test_questionnaire_feature_parity.py",
     "backend/tests/test_questionnaire_core.py",
-    # Recording chips and the shared filters (owner, 31 Oct 2026): the rules, then a real database.
     "backend/tests/test_questionnaire_chips.py",
     "backend/tests/test_questionnaire_filters_db.py",
-    # The safety rails every questionnaire data script shares (dry run, host allow-list, approval).
     "backend/scripts/qv2_guard.py",
 )
 
 
-#: The shared web client (UNIFY 2.4, Web): byte-identical in both portals, synced from here.
-#: Each portal keeps its own ``frontend/lib/questionnairePortal.ts`` beside them (not shared).
 WEB_TREES = ("frontend/lib/questionnaire", "frontend/components/questionnaire")
 
 
@@ -99,7 +91,6 @@ def main() -> int:
         print("questionnaire manifest OK")
         return 0
 
-    # The Android trees first: the generated enums are a shared file of their own.
     copied = questionnaire_android.sync(ROOT, args.to.resolve() if args.to else None)
     if args.to:
         print(f"synced {copied} Android files to {args.to.resolve()}")

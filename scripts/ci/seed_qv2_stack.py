@@ -1,18 +1,3 @@
-"""Seed a THROWAWAY CI database for designer-portal's web client against a real stack (stream U1).
-
-Run from ``backend/`` by the ``web-v2-stack`` job in ``.github/workflows/checks.yml``, against the
-job's own Postgres service container and nothing else: it refuses a DATABASE_URL whose host is not
-loopback. It writes a design workshop and a form whose sections live in the shared instrument
-tables (as the U5 migration leaves designer-portal's forms), bound to the workshop as its primary
-form, three artisans on the workshop, and four accounts: the lead researcher (the workshop's
-creator), a second researcher, a content admin and a researcher who is on no session.
-
-Writes a JSON file (the path is the first argument) the spec reads: ids, question lineages and
-short-lived bearer tokens for that throwaway database, which die with the runner.
-
-Usage:  python ../scripts/ci/seed_qv2_stack.py "$RUNNER_TEMP/qv2-seed.json"
-"""
-
 from __future__ import annotations
 
 import asyncio

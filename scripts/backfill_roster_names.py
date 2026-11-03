@@ -92,10 +92,6 @@ from app.services.designers import (  # noqa: E402
     email_match_keys,
 )
 
-#: How many roster rows are read per round trip. The designer roster is a table an administrator
-#: types into by hand — hundreds of rows at the outside — but an unbounded ``find_many`` on a table
-#: whose size this script does not control is the kind of thing that is fine until the day it is
-#: not, and paging costs one loop.
 PAGE = 200
 
 
@@ -218,19 +214,6 @@ async def plan() -> dict[str, list[Any]]:
     unnamed rows found, and an operator who expected fifteen and reads three knows to look at the
     query rather than at the buckets.
     """
-    # THE WHOLE ALLOW-LIST, ONCE, INDEXED UNDER BOTH ITS STORED SPELLING AND ITS CANONICAL FORM.
-    #
-    # The second key is the one that matters and it is the whole reason this is a bulk read rather
-    # than a query per address: ``email_match_keys`` can walk from a dotted address to a row stored
-    # either way and CANNOT walk back, so a roster row filed under the mailbox — which is every row
-    # ``ensure_empanelled`` ever wrote — can never reach an allow-list row an administrator typed
-    # with dots. That pairing is not hypothetical; it is what ``tanyavanvari.nift@gmail.com`` looks
-    # like on the live table today. Indexing both sides makes every combination resolve.
-    #
-    # A LIST PER KEY, NOT A ROW. Two spellings of one mailbox are two allow-list rows (``email`` is
-    # unique, and the strings differ), so both can land on the same canonical key. Keeping both and
-    # letting ``_the_name_the_allow_list_holds`` choose is what keeps the choice deterministic and
-    # in ONE place; overwriting here would make it depend on the order Postgres returned the rows.
     access_by_key: dict[str, list[Any]] = {}
     skip = 0
     while True:
@@ -256,16 +239,6 @@ async def plan() -> dict[str, list[Any]]:
             if _name_of(row):
                 buckets["already"].append((address, _name_of(row)))
                 continue
-            # EVERY SPELLING OF THE MAILBOX, ON BOTH SIDES. ``email_match_keys`` widens the
-            # roster address; the canonical entries in ``access_by_key`` widen the allow-list. An
-            # admin typed ``tanyavanvari.nift@gmail.com``; the empanelment was created under
-            # ``tanyavanvarinift@gmail.com``. They are one person, and a lookup that could not see
-            # across the dot would report "no name on the allow-list" while the administrator is
-            # looking straight at the name.
-            #
-            # DE-DUPLICATED BY ROW ID because one row is reachable under two keys — its own spelling
-            # and its canonical form — and a duplicate would be harmless for choosing a name but
-            # would make the ``no_source`` report's "allow-list row carries no name" count wrong.
             seen: set[str] = set()
             matches: list[Any] = []
             for key in email_match_keys(address):
@@ -293,9 +266,6 @@ def report(buckets: dict[str, list[Any]], *, fix: bool) -> None:
     if buckets["fill"]:
         print(f"{verb} — {len(buckets['fill'])} empanelment(s) will take the allow-list's name:")
         for address, name, spelling in buckets["fill"]:
-            # The allow-list's spelling is printed ONLY when it differs from the roster's, because
-            # on most rows the two are identical and repeating the address on every line would bury
-            # the handful of Gmail-alias matches that are actually worth an operator's attention.
             alias = "" if spelling == address else f"  [allow-list row is filed as {spelling}]"
             print(f"  {address}  ->  {name!r}{alias}")
         print()
@@ -311,8 +281,6 @@ def report(buckets: dict[str, list[Any]], *, fix: bool) -> None:
         print()
 
     if buckets["already"]:
-        # A COUNT AND NOT A LIST. These rows are the ordinary case and there may be hundreds of
-        # them; printing every one would push the two sections that need reading off the screen.
         print(f"ALREADY NAMED — {len(buckets['already'])} empanelment(s), untouched.")
         print()
 
@@ -335,8 +303,6 @@ async def main() -> None:
         help="actually write the names. Without it this is a DRY RUN and writes nothing.",
     )
     parser.add_argument(
-        # The spelling the two backfills beside this one already accept. Same ``dest``, so the two
-        # cannot disagree about what was asked for.
         "--execute",
         dest="fix",
         action="store_true",
@@ -359,10 +325,6 @@ async def main() -> None:
         report(buckets, fix=args.fix)
 
         if not args.fix:
-            # THE LAST LINE OF A DRY RUN SAYS THAT NOTHING HAPPENED, in those words, at the bottom
-            # where somebody who scrolled past a list of addresses is looking. A report that lists
-            # fifteen names under "WOULD FILL" and then stops reads, to a tired operator, like a
-            # report of fifteen names written.
             print(f"\nCOUNT — {_counts(buckets)}. NOTHING WAS WRITTEN; re-run with --fix to apply.")
             return
 
@@ -370,17 +332,10 @@ async def main() -> None:
         written = 0
         declined = 0
         for address, name, _spelling in wanted:
-            # ``adopt_allow_list_name`` and not an update of this script's own: the
-            # fill-never-overwrite rule, the both-spellings lookup and the blank-is-a-no-op rule all
-            # live in that one function, and a second implementation here is a second place for them
-            # to be got wrong.
             if await adopt_allow_list_name(address, name):
                 written += 1
                 print(f"  named {address}  {name!r}")
             else:
-                # Not an error, and worth printing: between the plan above and this write somebody
-                # typed a name on this row, and the fill was correctly declined rather than
-                # overwriting it.
                 declined += 1
                 print(f"  skipped {address} (a name appeared between the plan and the write)")
         if args.limit > 0 and len(buckets["fill"]) > args.limit:
@@ -388,8 +343,6 @@ async def main() -> None:
                 f"CAPPED at --limit {args.limit}; {len(buckets['fill']) - args.limit} row(s) "
                 "remain. Run again to continue."
             )
-        # ``written`` AND NOT ``len(wanted)``: the two differ by every row that gained a name between
-        # the plan and the write, and the count line is what an operator pastes into a ticket.
         print(
             f"\nCOUNT — {_counts(buckets)}. {written} name(s) WRITTEN, "
             f"{declined} declined at the write."
