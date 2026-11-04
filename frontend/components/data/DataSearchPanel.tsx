@@ -134,7 +134,7 @@ const KIND_CLASS: Record<Row["kind"], string> = {
   "Design workshop": "bg-purple-200 text-purple-900"
 };
 
-export function DataSearchPanel({ onReveal }: { onReveal: (path: string) => void }) {
+export function DataSearchPanel({ onReveal, toolbar = false }: { onReveal: (path: string) => void; toolbar?: boolean }) {
   const { user } = useAuth();
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<SearchFilters>(EMPTY_SEARCH_FILTERS);
@@ -225,7 +225,8 @@ export function DataSearchPanel({ onReveal }: { onReveal: (path: string) => void
   }
 
   return (
-    <section className="panel mb-4 grid gap-3 p-4">
+    <section role="search" aria-label="Search the repository" className={toolbar ? "grid gap-2" : "panel mb-4 grid gap-3 p-4"}>
+      {toolbar ? null : (
       <div>
         <h2 className="font-display text-base font-bold text-ink-900">Search the repository</h2>
         <p className="mt-0.5 text-xs text-ink-500">
@@ -234,6 +235,7 @@ export function DataSearchPanel({ onReveal }: { onReveal: (path: string) => void
           caption. Open a hit, or show it where it sits in the folders below.
         </p>
       </div>
+      )}
 
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-300" aria-hidden />
@@ -257,7 +259,14 @@ export function DataSearchPanel({ onReveal }: { onReveal: (path: string) => void
         ) : null}
       </div>
 
-      <SearchFilterBar value={filters} onChange={setFilters} className="" offeredTypes={offeredTypes} />
+      {toolbar ? (
+        <details className="text-xs">
+          <summary className="min-h-9 cursor-pointer py-2 font-semibold text-purple-700 dark:text-purple-300 pointer-coarse:min-h-11">Filters</summary>
+          <SearchFilterBar value={filters} onChange={setFilters} className="" offeredTypes={offeredTypes} />
+        </details>
+      ) : (
+        <SearchFilterBar value={filters} onChange={setFilters} className="" offeredTypes={offeredTypes} />
+      )}
 
       {error ? <p className="text-xs text-error-600">{error}</p> : null}
 

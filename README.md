@@ -268,8 +268,8 @@ work is on both clients.
 
 | Export | How | Notes |
 |---|---|---|
-| Data browser | `/data`: workshops, users and media types as folders | zip assembled in the browser; audio converted to `.mp4` |
-| Data page report | *Load tables* on click | JSON preview of 200 rows a sheet; the `.xlsx` stays complete; one build at a time, `503` + `Retry-After` when busy (D39) |
+| Data browser | `/data`: the folder tree with search as its toolbar, every download in one panel | zips stream to disk in a background worker, keep going in a hidden tab, resume into a folder ([DATA_EXPLORER_WEB.md](docs/DATA_EXPLORER_WEB.md)) |
+| Data page report | subfolders load their tables, the root on click | 200-row preview searched on the server, a CSV per sheet; the `.xlsx` stays complete; "Busy, retrying in 60 s" when another report is building (D39) |
 | Transcripts | a sheet in every report, `.md` / `.docx` / `.srt` / `.vtt` per recording | the hand-added English travels with every copy |
 | Datasets | `/api/datasets/{name}.ndjson` and `.csv`, streamed, keyset-paged | `X-Dataset-Total` proves completeness; admin credentials only |
 | Questionnaires | workbook export, artisan record CSV, corpus export | |

@@ -1036,13 +1036,21 @@ export type DwDictationAllowance = {
   dictationDay: string;
 };
 
-let dictationAllowanceInFlight: Promise<DwDictationAllowance | null> | null = null;
+export const DICTATION_ALLOWANCE_TTL_MS = 10 * 60 * 1000;
 
-export function dwDictationAllowance(): Promise<DwDictationAllowance | null> {
+let dictationAllowanceInFlight: Promise<DwDictationAllowance | null> | null = null;
+let dictationAllowanceHeld: { at: number; answer: DwDictationAllowance } | null = null;
+
+export function dwDictationAllowance(now: number = Date.now()): Promise<DwDictationAllowance | null> {
+  if (dictationAllowanceHeld && now - dictationAllowanceHeld.at < DICTATION_ALLOWANCE_TTL_MS) return Promise.resolve(dictationAllowanceHeld.answer);
   if (dictationAllowanceInFlight) return dictationAllowanceInFlight;
   const asking: Promise<DwDictationAllowance | null> = apiFetch<DwDictationAllowance>(
     "/design-workshops/dictation-allowance"
   )
+    .then((answer) => {
+      dictationAllowanceHeld = { at: now, answer };
+      return answer;
+    })
     .catch(() => null)
     .finally(() => {
       if (dictationAllowanceInFlight === asking) dictationAllowanceInFlight = null;
@@ -1051,8 +1059,13 @@ export function dwDictationAllowance(): Promise<DwDictationAllowance | null> {
   return asking;
 }
 
+export function rememberDictationAllowance(answer: DwDictationAllowance, now: number = Date.now()): void {
+  dictationAllowanceHeld = { at: now, answer };
+}
+
 export function forgetDictationAllowanceInFlight(): void {
   dictationAllowanceInFlight = null;
+  dictationAllowanceHeld = null;
 }
 
 export type DwConsentDecision = "GRANTED" | "REFUSED";

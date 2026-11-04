@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { dwDictationAllowance, forgetDictationAllowanceInFlight } from "@/lib/designWorkshops";
+import { DICTATION_ALLOWANCE_TTL_MS, dwDictationAllowance, forgetDictationAllowanceInFlight, rememberDictationAllowance } from "@/lib/designWorkshops";
 
 const ROOT = join(__dirname, "..");
 const read = (relative: string) => readFileSync(join(ROOT, relative), "utf8").split("\r\n").join("\n");
@@ -77,13 +77,31 @@ test("eleven microphones on one stage ask the server ONCE between them", async (
   }
 });
 
-test("the shared request is released once it settles, so a later stage gets a fresh count", async () => {
+test("a later stage within ten minutes reuses the count, and asks again after", async () => {
   forgetDictationAllowanceInFlight();
   const net = interceptFetch(() => Promise.resolve(jsonResponse(ALLOWANCE)));
   try {
-    await dwDictationAllowance();
-    await dwDictationAllowance();
-    expect(net.calls.length, "two separate mounts, two requests").toBe(2);
+    const start = 1_000_000;
+    await dwDictationAllowance(start);
+    await dwDictationAllowance(start + DICTATION_ALLOWANCE_TTL_MS - 1);
+    expect(net.calls.length, "two mounts inside ten minutes, one request").toBe(1);
+    await dwDictationAllowance(start + DICTATION_ALLOWANCE_TTL_MS);
+    expect(net.calls.length, "ten minutes later, a fresh count").toBe(2);
+  } finally {
+    net.restore();
+    forgetDictationAllowanceInFlight();
+  }
+});
+
+test("a dictation updates the held count, so no stage asks the server for it", async () => {
+  forgetDictationAllowanceInFlight();
+  const net = interceptFetch(() => Promise.resolve(jsonResponse(ALLOWANCE)));
+  try {
+    rememberDictationAllowance({ ...ALLOWANCE, dictationsUsed: 4, dictationsRemaining: 16 });
+    const answer = await dwDictationAllowance();
+    expect(answer?.dictationsRemaining).toBe(16);
+    expect(net.calls.length).toBe(0);
+    expect(read("components/designworkshop/Dictation.tsx")).toContain("rememberDictationAllowance(counted)");
   } finally {
     net.restore();
     forgetDictationAllowanceInFlight();
