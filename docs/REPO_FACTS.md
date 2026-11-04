@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**592 operations** in the working tree — 278 GET, 205 POST, 45 DELETE,
+**602 operations** in the working tree — 286 GET, 207 POST, 45 DELETE,
 33 PATCH, 31 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -47,6 +47,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `annual_plan.py` | 13 |
 | `data_access.py` | 13 |
 | `usage.py` | 13 |
+| `data_explorer.py` | 11 |
 | `design_workshop_approvals.py` | 11 |
 | `artisans.py` | 10 |
 | `auth.py` | 10 |
@@ -70,7 +71,6 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `map_coverage.py` | 6 |
 | `ai_keys.py` | 5 |
 | `answer_drafts.py` | 5 |
-| `data_browser.py` | 5 |
 | `datasets.py` | 5 |
 | `export.py` | 5 |
 | `processes.py` | 5 |
@@ -80,6 +80,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `transcription_admin.py` | 5 |
 | `workshop_types.py` | 5 |
 | `craft_codes.py` | 4 |
+| `data_browser.py` | 4 |
 | `design_ratings.py` | 4 |
 | `preferences.py` | 4 |
 | `transcript_insights.py` | 4 |
@@ -148,10 +149,10 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 377 | 6577 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 310 | 3437 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Backend unit (`backend/tests/`) | 381 | 6618 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 313 | 3490 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 399 | 4270 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
-| Android instrumented (`android/app/src/androidTest/`) | 25 | 96 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
+| Android instrumented (`android/app/src/androidTest/`) | 26 | 100 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
 parametrised cases expand.
@@ -176,10 +177,10 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 392 | 136,628 | 392 | 136,628 |
-| `frontend/app` | 129 | 38,116 | 129 | 38,116 |
-| `frontend/components` | 462 | 100,628 | 462 | 100,628 |
-| `frontend/lib` | 236 | 56,585 | 236 | 56,585 |
+| `backend/app` | 405 | 138,494 | 405 | 138,494 |
+| `frontend/app` | 129 | 36,559 | 129 | 36,559 |
+| `frontend/components` | 472 | 103,193 | 472 | 103,193 |
+| `frontend/lib` | 250 | 58,814 | 250 | 58,814 |
 | `android/app/src/main/java` | 484 | 166,277 | 484 | 166,277 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
