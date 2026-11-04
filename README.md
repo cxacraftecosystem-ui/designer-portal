@@ -276,6 +276,13 @@ work is on both clients.
 | Questionnaires | workbook export, artisan record CSV, corpus export | |
 | Ministry packs | monthly registers-only pack | off until D8 |
 
+**Tools across workshops** (0.0.11): a tool linked to several artisans shows under every workshop
+those artisans belong to, on every read surface: the data browser, reports and `.xlsx`, the folder
+zip, the dataset bundle, the tools filters, both searches and the datasets API. The tool sheet's
+**Linked workshops** column names the tool's own workshop and every workshop of its artisans, and
+**Artisan** names every linked artisan, both pruned to what the reader may see
+([DATA_MODEL.md](docs/DATA_MODEL.md#where-a-linked-tool-shows-up-added-2026-11-04)).
+
 The **craft master list** is the Ministry's Annexure I, seeded by migration `20261104090000_craft_master_list`
 from `backend/app/data/craft_master_list.json` (byte-identical in both portals). Pickers read
 `GET /crafts/catalogue` (with `ETag`); stage 1 accepts only a craft on the list.
