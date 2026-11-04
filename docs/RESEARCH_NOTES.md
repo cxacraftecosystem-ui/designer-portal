@@ -1,5 +1,10 @@
 # Research notes: architecture and engineering results from a rural craft-documentation pilot
 
+> **Dated snapshot.** These notes describe the system at the snapshot commit below, the week production
+> was a 1 GiB t3.micro on Ubuntu 24.04 with its database in another region. Production has since moved:
+> a 4 GiB t3.medium on Ubuntu 26.04 since 10 Oct 2026, the database co-located in ap-south-1 since
+> 2 Sep 2026. Read every figure here as of its date.
+
 Source material for a paper. Every claim below carries a provenance label and the method that
 produced it. Sections are written to be lifted whole.
 

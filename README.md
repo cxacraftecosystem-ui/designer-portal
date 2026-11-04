@@ -423,7 +423,7 @@ One release per platform at a time: everything is batched, checked once and depl
 | 0.0.6 | 1 Nov 2026 | 32 | clean previews, coverage hover, reading mode, marks, auto-follow, transcripts in the data browser, temp-file fix (D37) |
 | 0.0.7 | 1 Nov 2026 | 33 | Python 3.15.2, Node 26, AGP 9.5, Gradle 9.8.2, Next 16.4 |
 | 0.0.9 | 3 Nov 2026 | 34 | old transcripts translate (D38), Data page report on click (D39) |
-| 0.0.10 | Nov 2026 | 35 | video transcription, the upload choice, admin switches, backfill switch (off, D40), Gemini 3.8 Flash first with GPT-6 Luna and Claude Sonnet 5.5 only when selected, refine on the web, AI suggestions on Android, no comments in code, the README kit |
+| 0.0.10 | Nov 2026 | 35 | video transcription, the upload choice, admin switches, backfill switch (off, D40), Gemini 3.8 Flash first with GPT-6 Luna and Claude Sonnet 5.5 only when selected, refine on every client, AI suggestions on Android, no comments in code, the README kit |
 
 ## <img src="docs/readme-kit/assets/icons/box.svg" width="32" align="top" alt="">&nbsp; Built with
 

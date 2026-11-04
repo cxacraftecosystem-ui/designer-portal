@@ -34,13 +34,25 @@ timeline
 | 0.0.7 | 2026-11-01 | 33 | 28 | The latest stable stack: Python 3.15.2, Node 26, Next.js 16.4, AGP 9.5, Gradle 9.8 |
 | 0.0.8 | 2026-11-01 | · | · | `requires-python >=3.14` so Dependabot scans the backend; no app release |
 | 0.0.9 | 2026-11-03 | 34 | 29 | Old transcripts queue their translation and a declined one takes a person's English (D38); the Data page report on a click (D39); the backup freshness check |
-| 0.0.10 | 2026-11 | 35 | 30 | Video transcribed as its sound; the Transcribe and translate choice per file; admin auto switches; the backfill switch, off (D40); Gemini-first AI defaults with GPT-6 Luna and Claude Sonnet 5.5 only when selected; refine on every client; Android AI suggestions and summary edit; no comments in source, enforced in Checks; the README kit |
+| 0.0.10 | 2026-11 | 35 | 30 | Video transcribed as its sound; the Transcribe and translate choice per file; admin auto switches; the backfill switch, off, with its cost estimate (D40); Gemini-first AI defaults with GPT-6 Luna and Claude Sonnet 5.5 only when selected; refine on every client; Android AI suggestions and summary edit; no comments in source, enforced in Checks; the README kit |
 
-## 0.0.10: no data step
+## Video, the upload choice and the backfill switch (DR 0.0.10, FR 0.0.10)
 
-Nothing to run. The backfill switch (`transcriptBackfillEnabled`) ships off and stays off until the owner turns it on (D40); turning it on asks for the estimate first.
+No data step runs on deploy. The migration adds the per-file choice columns and the three admin
+switches, all off, and the release ships with them off.
 
-## The craft master list (DR 0.0.24, FR 0.0.19)
+1. Deploy.
+2. When the owner asks (launch list D40), see what a backfill would cost first: on the server,
+   through SSM, from the backend directory, `python scripts/backfill_transcripts.py`. It prints counts,
+   hours and the estimated cost only.
+3. Turn on "Transcribe and translate all previously uploaded media" in Settings. The clients show the
+   same estimate and ask before they send `confirmBackfill: true`; the queue worker then queues at most
+   25 at a time, oldest first, inside the month's budget.
+
+Release note: researchers now tick **Transcribe and translate** per audio or video file at upload.
+Videos are transcribed from their sound; nothing about the video changes.
+
+## The craft master list (DR 0.0.24, FR 0.0.19, before the 21 Oct version reset)
 
 The migration `20261104090000_craft_master_list` seeds the master list and marks every craft recorded before it LEGACY. The mapping is a separate, reviewed step ([CRAFTS.md](CRAFTS.md)):
 
@@ -67,4 +79,5 @@ Release note (Designer Repository): stage 1 now requires a craft from the list. 
 | The mapping's dry run, its curated table and its idempotence | `test_map_crafts.py` |
 | The translation sweep's counts, dry run and idempotence | `test_transcript_db.py` |
 | The migration name and what it seeds | `test_craft_master_migration.py` |
+| The backfill's estimate, batch size and budget stop | `backend/scripts/backfill_transcripts.py` and its tests; the switch's 409 without `confirmBackfill` |
 | The release table | the `Cut 0.0.x` commits, the `v0.0.x` tags and `appVersionCode` in each portal's `android/app/build.gradle.kts` |

@@ -1,5 +1,11 @@
 # Scalability: what breaks first, and what it costs to fix
 
+> **Dated analysis.** The measurements and bounds below were taken when production was a 1 GiB
+> t3.micro with its database in another region. The database has sat in ap-south-1 beside the box since
+> 2 Sep 2026, and since 10 Oct 2026 the box is a 4 GiB t3.medium on Ubuntu 26.04 that releases blue/green,
+> with the API at 281 MB and the worker at 186 MB PSS (measured 4 Nov 2026). Every bound written for 1 GiB
+> still holds; read "1 GiB" below as the design ceiling, not the box.
+
 What this system runs into as it grows, ranked by *when* each thing starts to hurt rather than by
 how interesting it is. Every entry carries the evidence it rests on, the scale at which it begins
 to bite, the fix, and — because this deployment is a 1 GiB EC2 box and must stay one — what the fix

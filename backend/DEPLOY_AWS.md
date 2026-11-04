@@ -1,5 +1,12 @@
 # Deploying the Design Prototype Workshop backend + media storage on AWS (free tier)
 
+> **Where the box stands on 4 Nov 2026.** The API runs on a **t3.medium** (4 GiB, encrypted gp3) on
+> **Ubuntu 26.04.1**, instance `i-06c0f0069a6ee942f`, launched 10 Oct 2026. The interpreter is **upstream
+> CPython 3.15.2** from the pinned python-build-standalone build `20261026` (since 0.0.7), releases are
+> **blue/green** on ports 8000 and 8001 behind nginx, and the release venv is built on the GitHub runner.
+> Measured that day: API 281 MB and worker 186 MB PSS, 46 MB of swap in use. Sections that describe the
+> 24.04 box, the t3.micro or t3.small, deadsnakes or Python 3.12 and 3.14 are the record of how it got here.
+
 Architecture for the cheapest durable setup:
 
 | Concern        | Service                | Persistence |
@@ -21,7 +28,8 @@ anytime without data loss. That is the whole reason this guide provisions no dat
   `infra/terraform/main.tf` declares since 2026-10-09 for the Ubuntu 26.04 rebuild: Python 3.14 holds
   ~170 MiB more per process than 3.12, ~356 MB across uvicorn and the queue worker, and on 2 GiB that
   comes out of the memory the app sizes its media reads by ([docs/OPEN_FINDINGS.md](../docs/OPEN_FINDINGS.md)).
-  Production has run on a **`t3.small`** (2 GiB, $0.0224/hr) since 2026-09-17, until that rebuild replaces it.
+  Production ran on a **`t3.small`** (2 GiB, $0.0224/hr) from 2026-09-17 until the rebuild went live on
+  2026-10-10; it has been a `t3.medium` on Ubuntu 26.04.1 since.
 - **`t3.micro` (1 GiB, free-tier eligible) is no longer enough, and that is a measurement rather
   than caution.** It was the recommendation here until 2026-09-17, when a deploy failed with the
   API unable to answer `/health` on its own loopback for five minutes. The box was thrashing —
@@ -36,7 +44,8 @@ anytime without data loss. That is the whole reason this guide provisions no dat
 - **Do NOT** try to `npm run build` the Next.js frontend on this box either way — deploy the
   frontend to **Vercel**, which is what this project does (see `docs/DEPLOYMENT_VERCEL.md`).
 - AMI: **Ubuntu Server 26.04 LTS** (resolute) for a new box — what `infra/terraform/main.tf` selects
-  since 2026-10-09; the box running today is 24.04 (noble), and both are covered below. Storage:
+  since 2026-10-09, and what production runs since 2026-10-10. The 24.04 (noble) steps below are the record
+  of the box before it. Storage:
   **30 GiB gp3** (free-tier max).
 - Add a **2 GiB swap file** (below) so `pip install` / `prisma generate` don't get OOM-killed.
 

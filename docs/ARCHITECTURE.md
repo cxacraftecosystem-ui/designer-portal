@@ -47,11 +47,11 @@ flowchart LR
   android[Android app<br/>Kotlin + Compose]
   cf{{CloudFront<br/>dual-stack TLS}}
   api[FastAPI on EC2<br/>behind nginx]
-  db[(PostgreSQL<br/>managed, another region)]
+  db[(PostgreSQL 17<br/>managed, ap-south-1)]
   s3[(S3 · ap-south-1<br/>dual-stack endpoint)]
   worker[fieldrepo-queue<br/>separate systemd unit]
   stt{{ElevenLabs → Deepgram → Whisper}}
-  gem{{Gemini · grid measurement}}
+  gem{{Gemini 3.8 Flash<br/>English, AI text, measurement}}
 
   researcher --> web
   researcher --> android
