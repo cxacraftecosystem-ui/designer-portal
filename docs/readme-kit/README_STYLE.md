@@ -401,7 +401,7 @@ and the generated `assets/` differ. Improve the kit in designer-portal first, th
 | xmllint | an SVG is not well-formed XML |
 | Image references | a local image is missing, a GIF is over 3 MB, a raster is over 1 MB, a `<picture>` lacks the dark source or `alt` |
 | Mermaid | any block in `README.md`, `docs/**` or `.claude/skills/**` fails to render in mermaid-cli; a block without `%%{init}%%` is a warning (`--strict` makes it an error) |
-| GitHub render | `gh api markdown` escapes an HTML tag, leaks a code fence, or drops a `<picture>` or mermaid block |
+| GitHub render | `gh api markdown` escapes an HTML tag, leaks a code fence, or drops a `<picture>` or mermaid block; a file over the API's 400 KB limit is skipped with a warning |
 
 The `readme-preview` artifact holds PNGs of every asset and diagram in light, dark and reduced motion, and
 full-page screenshots of `README.md` and `docs/README.md` as GitHub renders them (`gh api markdown`), with

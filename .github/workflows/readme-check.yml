@@ -91,7 +91,15 @@ jobs:
           status=0
           for md in $(node docs/readme-kit/tools/check.mjs files); do
             html="$RUNNER_TEMP/rendered/${md//\//_}.html"
-            jq -Rs --arg ctx "$GITHUB_REPOSITORY" '{text: ., mode: "gfm", context: $ctx}' "$md" | gh api markdown --input - > "$html"
+            if [ "$(wc -c < "$md")" -gt 400000 ]; then
+              echo "::warning file=$md::larger than the 400 KB the Markdown API renders; its mermaid blocks are still checked above"
+              continue
+            fi
+            if ! jq -Rs --arg ctx "$GITHUB_REPOSITORY" '{text: ., mode: "gfm", context: $ctx}' "$md" | gh api markdown --input - > "$html"; then
+              echo "::error file=$md::gh api markdown refused this file"
+              status=1
+              continue
+            fi
             node docs/readme-kit/tools/check.mjs rendered "$html" "$md" || status=1
           done
           exit "$status"
