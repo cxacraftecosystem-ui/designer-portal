@@ -98,6 +98,96 @@ async function inspect(section) {
       if (!svg) return { body, svg: null };
       const box = svg.getBoundingClientRect();
       const labels = [...svg.querySelectorAll("text, foreignObject")].map((n) => n.textContent || "");
+      const vb = svg.viewBox && svg.viewBox.baseVal;
+      const scale = vb && vb.width ? box.width / vb.width : 1;
+      const visible = (el) => {
+        for (let n = el; n && n !== svg; n = n.parentElement) {
+          const cs = getComputedStyle(n);
+          if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) === 0) return false;
+        }
+        return true;
+      };
+      const union = (rects) => {
+        let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+        for (const q of rects) {
+          if (!q.width && !q.height) continue;
+          l = Math.min(l, q.left); t = Math.min(t, q.top); r = Math.max(r, q.right); b = Math.max(b, q.bottom);
+        }
+        return l === Infinity ? null : { left: l, top: t, right: r, bottom: b, width: r - l, height: b - t };
+      };
+      const glyphs = (el) => {
+        const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const range = document.createRange();
+        const rects = [];
+        for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+          if (!n.textContent.trim()) continue;
+          range.selectNodeContents(n);
+          rects.push(...range.getClientRects());
+        }
+        return union(rects);
+      };
+      const shapes = [...svg.querySelectorAll("rect, path, polygon, circle, ellipse")]
+        .filter((s) => !s.closest("defs, marker, foreignObject, clipPath, mask, pattern, symbol"))
+        .filter((s) => ![...s.classList].some((c) => /^activation|^pieCircle|^pieOuterCircle/.test(c)))
+        .filter((s) => {
+          const cs = getComputedStyle(s);
+          const fill = cs.fill || "";
+          return fill !== "none" && fill !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(fill) && Number(cs.fillOpacity) > 0 && visible(s);
+        })
+        .map((s) => ({ s, r: s.getBoundingClientRect() }))
+        .filter(({ r }) => r.width > 4 * scale && r.height > 4 * scale);
+      const kindOf = (el) => {
+        if (el.closest(".edgeLabel, .edgeLabels, .relationshipLabel, .er.relationshipLabel")) return "edge";
+        if (el.closest(".cluster-label, .cluster")) return "cluster";
+        if (el.closest(".note, .noteText") || /note/i.test(el.getAttribute("class") || "")) return "note";
+        if (/actor/i.test(el.getAttribute("class") || "") || el.closest(".actor, [class*=actor]")) return "actor";
+        if (el.closest(".attribute-type, .attribute-name, .attribute-keys, .attribute-comment") || /attribute/i.test(el.closest("g")?.getAttribute("class") || "")) return "attribute";
+        if (el.closest(".messageText") || /messageText|labelText|loopText/.test(el.getAttribute("class") || "")) return "message";
+        if (el.closest(".node, .entityBox, [id*=entity]")) return svg.getAttribute("aria-roledescription") === "er" ? "entity" : "node";
+        return "label";
+      };
+      const TOL = 2;
+      const clips = [];
+      const seen = new Set();
+      const owners = [...svg.querySelectorAll("foreignObject"), ...[...svg.querySelectorAll("text")].filter((t) => !t.closest("foreignObject"))];
+      let font = "";
+      for (const el of owners) {
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text || !visible(el)) continue;
+        const t = el.tagName.toLowerCase() === "foreignobject" ? glyphs(el) : union([el.getBoundingClientRect()]);
+        if (!t) continue;
+        if (!font) {
+          const leaf = el.tagName.toLowerCase() === "foreignobject" ? el.querySelector("span, p, div") || el : el;
+          const cs = getComputedStyle(leaf);
+          font = `${cs.fontSize} ${cs.fontFamily.split(",")[0]}`;
+        }
+        const over = [];
+        if (el.tagName.toLowerCase() === "foreignobject") {
+          const f = el.getBoundingClientRect();
+          const dx = Math.max(f.left - t.left, t.right - f.right, 0) / scale;
+          const dy = Math.max(f.top - t.top, t.bottom - f.bottom, 0) / scale;
+          if (dx > TOL || dy > TOL) over.push({ box: "label box", dx, dy, tw: t.width / scale, bw: f.width / scale });
+        }
+        const cx = (t.left + t.right) / 2;
+        const cy = (t.top + t.bottom) / 2;
+        let best = null;
+        for (const sh of shapes) {
+          const r = sh.r;
+          if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) continue;
+          if (!best || r.width * r.height < best.r.width * best.r.height) best = sh;
+        }
+        if (best) {
+          const r = best.r;
+          const dx = Math.max(r.left - t.left, t.right - r.right, 0) / scale;
+          if (dx > TOL) over.push({ box: `${best.s.tagName.toLowerCase()} shape`, dx, dy: 0, tw: t.width / scale, bw: r.width / scale });
+        }
+        if (!over.length) continue;
+        const key = `${text}|${Math.round(cx)}|${Math.round(cy)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const o = over.sort((a, b) => Math.max(b.dx, b.dy) - Math.max(a.dx, a.dy))[0];
+        clips.push({ kind: kindOf(el), text: text.slice(0, 80), box: o.box, dx: Math.round(o.dx * 10) / 10, dy: Math.round(o.dy * 10) / 10, tw: Math.round(o.tw), bw: Math.round(o.bw) });
+      }
       return {
         body,
         svg: {
@@ -107,6 +197,9 @@ async function inspect(section) {
           nan: /NaN|Infinity/.test(svg.outerHTML),
           labels: labels.join(" │ "),
           nodes: svg.querySelectorAll("g, path, rect, text").length,
+          count: owners.length,
+          font,
+          clips,
         },
       };
     })
@@ -118,7 +211,12 @@ async function inspect(section) {
   if (inner.svg.nan) return { state: "error", detail: "the SVG has NaN or Infinity coordinates, so the layout is broken" };
   const g = inner.svg.labels.match(GARBLED_TEXT);
   if (g) return { state: "error", detail: `a label shows raw markup "${g[0]}": ${inner.svg.labels.slice(Math.max(0, g.index - 60), g.index + 60)}` };
-  return { state: "ok", detail: `${inner.svg.role || "svg"} ${Math.round(inner.svg.w)}x${Math.round(inner.svg.h)}` };
+  const summary = `${inner.svg.role || "svg"} ${Math.round(inner.svg.w)}x${Math.round(inner.svg.h)}, ${inner.svg.count} labels, ${inner.svg.font}`;
+  if (inner.svg.clips.length) {
+    const list = inner.svg.clips.map((c) => `${c.kind} "${c.text}" ${c.tw}px in a ${c.bw}px ${c.box} (+${Math.max(c.dx, c.dy)}px)`);
+    return { state: "error", clips: inner.svg.clips, detail: `clipped text: ${inner.svg.clips.length} label(s) overflow their box: ${list.join("; ")} [${summary}]` };
+  }
+  return { state: "ok", detail: summary };
 }
 
 const VIEW = { width: 1280, height: 1000 };
@@ -144,6 +242,7 @@ const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: VIEW, colorScheme: "light", deviceScaleFactor: 1 });
 const page = await context.newPage();
 const results = [];
+const clipped = [];
 let failed = 0;
 for (const e of lintErrors) {
   failed += 1;
@@ -151,7 +250,7 @@ for (const e of lintErrors) {
   console.log(`::error file=${e.file},line=${e.line}::${e.detail}`);
 }
 
-const DETERMINISTIC = /Parse error|Lexical error|Syntax error|No diagram type|Maximum text size|raw markup|NaN|mermaid block\(s\) in the source/i;
+const DETERMINISTIC = /Parse error|Lexical error|Syntax error|No diagram type|Maximum text size|raw markup|clipped text|NaN|mermaid block\(s\) in the source/i;
 const ATTEMPTS = 3;
 
 async function checkFile(file, lines) {
@@ -179,8 +278,8 @@ async function checkFile(file, lines) {
       if (r.state !== "pending") break;
       await page.waitForTimeout(1000);
     }
-    if (r.state === "ok") {
-      await page.waitForTimeout(800);
+    if (r.state === "ok" || r.clips) {
+      await page.waitForTimeout(1500);
       r = await inspect(section).catch((e) => ({ state: "error", detail: String(e) }));
     }
     if (r.state === "pending") r = { state: "error", detail: `no diagram after ${WAIT_MS / 1000}s${r.detail ? ` (${r.detail})` : ""}` };
@@ -209,7 +308,12 @@ for (const { file, lines } of files) {
     if (r.state === "ok") console.log(`ok    ${file}:${r.line}  ${r.detail}`);
     else {
       failed += 1;
-      console.log(`::error file=${file},line=${r.line}::GitHub cannot render this mermaid block: ${r.detail.replace(/\s+/g, " ")}`);
+      if (r.clips) {
+        for (const c of r.clips) {
+          clipped.push({ file, line: r.line, ...c });
+          console.log(`::error file=${file},line=${r.line}::clipped ${c.kind} label "${c.text}": ${c.tw}px of text in a ${c.bw}px ${c.box}, ${Math.max(c.dx, c.dy)}px over`);
+        }
+      } else console.log(`::error file=${file},line=${r.line}::GitHub cannot render this mermaid block: ${r.detail.replace(/\s+/g, " ")}`);
     }
   }
 }
@@ -217,9 +321,12 @@ for (const { file, lines } of files) {
 
 await browser.close();
 writeFileSync(join(out, "report.tsv"), results.map((r) => `${r.state}\t${r.file}:${r.line}\t${(r.detail || "").replace(/\s+/g, " ")}`).join("\n") + "\n");
+writeFileSync(join(out, "clipped.tsv"), clipped.map((c) => [`${c.file}:${c.line}`, c.kind, c.text, c.tw, c.bw, c.box, Math.max(c.dx, c.dy)].join("\t")).join("\n") + (clipped.length ? "\n" : ""));
 if (process.env.GITHUB_STEP_SUMMARY) {
   const rows = results.map((r) => `| ${r.state === "ok" ? "ok" : "**fail**"} | \`${r.file}:${r.line}\` | ${(r.detail || "").replace(/\s+/g, " ").replace(/\|/g, "\\|").slice(0, 300)} |`);
-  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Mermaid on github.com at ${sha.slice(0, 7)}\n\n| | Block | Result |\n|---|---|---|\n${rows.join("\n")}\n\n`);
+  const clipRows = clipped.map((c) => `| \`${c.file}:${c.line}\` | ${c.kind} | ${c.text.replace(/\|/g, "\\|")} | ${c.tw} | ${c.bw} |`);
+  const clipTable = clipped.length ? `#### Clipped labels\n\n| Block | Kind | Label | Text px | Box px |\n|---|---|---|---|---|\n${clipRows.join("\n")}\n\n` : "";
+  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Mermaid on github.com at ${sha.slice(0, 7)}\n\n| | Block | Result |\n|---|---|---|\n${rows.join("\n")}\n\n${clipTable}`);
 }
-console.log(`${results.length} block(s) opened on github.com, ${failed} failed`);
+console.log(`${results.length} block(s) opened on github.com, ${failed} failed, ${clipped.length} clipped label(s) in ${new Set(clipped.map((c) => `${c.file}:${c.line}`)).size} block(s)`);
 process.exit(failed ? 1 : 0);
