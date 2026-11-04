@@ -27,6 +27,14 @@ from app.services.record_fields import cell, info_panel, info_text, interview_la
 from app.services.records import owned_or_granted_where
 from app.services.s3 import presign_get_url
 from app.services.text_format import by_count, count_noun
+from app.services.tool_scope import (
+    TOOL_SCOPE_INCLUDE,
+    artisan_workshop_ids,
+    hide_unseen,
+    tool_artisan_ids,
+    tool_fits,
+    with_tool_scope,
+)
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -54,7 +62,7 @@ _ARTISAN_INCLUDE = {
     "location": True,
 }
 _PRODUCT_INCLUDE = {"workshop": True}
-_TOOL_INCLUDE = {"workshop": True}
+_TOOL_INCLUDE = TOOL_SCOPE_INCLUDE
 _PROCESS_INCLUDE = {"steps": True, "product": True}
 _INTERVIEW_INCLUDE = {
     "artisans": {"include": {"artisan": True}},
@@ -180,6 +188,8 @@ async def dataset_manifest(
         products = [p for p in products if _in_scope("product", p.id)]
         tools = [t for t in tools if _in_scope("tool", t.id)]
         interviews = [i for i in interviews if _in_scope("questionnaire", i.id)]
+    tool_viewer = rec_where if ownerId is None else await owned_or_granted_where(current_user)
+    await hide_unseen(tools, tool_viewer)
     from app.services import questionnaire_readers
 
     v2_answers = await questionnaire_readers.session_answers([i.id for i in interviews])
@@ -370,16 +380,29 @@ async def dataset_manifest(
     for product in products:
         if product.workshopId and product.artisanId:
             products_by_slot.setdefault((product.workshopId, product.artisanId), []).append(product)
-    tools_by_slot: dict[tuple[str, str], list[Any]] = {}
+    tools_by_artisan: dict[str, list[Any]] = {}
+    tools_by_workshop: dict[str, list[Any]] = {}
     for tool in tools:
-        if tool.workshopId and tool.artisanId:
-            tools_by_slot.setdefault((tool.workshopId, tool.artisanId), []).append(tool)
+        for artisan_id in tool_artisan_ids(tool):
+            tools_by_artisan.setdefault(artisan_id, []).append(tool)
+        if tool.workshopId:
+            tools_by_workshop.setdefault(tool.workshopId, []).append(tool)
 
     for ws in workshops:
         wbase = _uniq(f"Workshops/{_seg(ws.title, ws.id)}", used_dirs)
         add_text(wbase, "details.txt", _details("workshop", ws))
         add_media(wbase, "workshop", ws.id)
-        ws_artisans = [a for a in artisans if workshop_reaches_artisan(ws, a)]
+        reached = {a.id for a in artisans if workshop_reaches_artisan(ws, a)}
+        orphans = {
+            artisan_id
+            for tool in tools_by_workshop.get(ws.id, [])
+            if reached.isdisjoint(tool_artisan_ids(tool))
+            for artisan_id in tool_artisan_ids(tool)
+        }
+        ws_artisans = [a for a in artisans if a.id in reached or a.id in orphans]
+        members = {link.artisanId for link in ws.artisans or []} | {
+            a.id for a in ws_artisans if ws.id in artisan_workshop_ids(a)
+        }
 
         craft_names: dict[str, str] = {}
         for link in ws.crafts or []:
@@ -406,8 +429,9 @@ async def dataset_manifest(
                 add_media(abase, "artisan", artisan.id)
                 for product in products_by_slot.get((ws.id, artisan.id), []):
                     emit_product(abase, product)
-                for tool in tools_by_slot.get((ws.id, artisan.id), []):
-                    emit_tool(abase, tool)
+                for tool in tools_by_artisan.get(artisan.id, []):
+                    if tool_fits(tool, ws.id, artisan.id, members):
+                        emit_tool(abase, tool)
                 for it in interviews_for_artisan.get(artisan.id, []):
                     emit_interview(abase, it)
 
@@ -415,10 +439,6 @@ async def dataset_manifest(
     for product in products:
         if product.artisanId:
             products_by_artisan.setdefault(product.artisanId, []).append(product)
-    tools_by_artisan: dict[str, list[Any]] = {}
-    for tool in tools:
-        if tool.artisanId:
-            tools_by_artisan.setdefault(tool.artisanId, []).append(tool)
     for artisan in artisans:
         if artisan.id in placed_artisans:
             continue
@@ -566,12 +586,14 @@ async def export_products(current_user: Any = Depends(get_current_user)) -> Resp
 @router.get("/tools.csv")
 async def export_tools(current_user: Any = Depends(get_current_user)) -> Response:
     _require_dataset_download(current_user)
+    visible = await owned_or_granted_where(current_user)
     records = await db.tooldocumentation.find_many(
-        where=await owned_or_granted_where(current_user),
-        include=_CSV_INCLUDE,
+        where=visible,
+        include=with_tool_scope(_CSV_INCLUDE),
         take=EXPORT_TAKE,
         order=_EXPORT_ORDER,
     )
+    await hide_unseen(records, visible)
     body = records_to_csv("tool", records, truncated=len(records) >= EXPORT_TAKE)
     return csv_response(naming.export_filename("Tool", "Export", "csv"), body)
 

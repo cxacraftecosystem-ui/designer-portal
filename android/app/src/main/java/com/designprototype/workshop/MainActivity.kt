@@ -4,6 +4,7 @@ import com.designprototype.workshop.transcript.data.TranscribeChoices
 import com.designprototype.workshop.transcript.ui.TranscribeChoiceItem
 import com.designprototype.workshop.transcript.ui.TranscribeChoiceRows
 import com.designprototype.workshop.data.workshopDisplayTitle
+import com.designprototype.workshop.data.toolRowLabel
 import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.data.interviewAnswersToSend
 import com.designprototype.workshop.ui.ActionRow
@@ -6160,7 +6161,7 @@ private fun RecordPickerScreen(
                 EntryMode.CRAFT -> repository.craftPage(search).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.place?.let { pl -> " · $pl" } ?: "")) } }
                 EntryMode.PRODUCT -> repository.productPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.productName} · ${it.artisanName}", it.completeness) } }
                 EntryMode.PROCESS -> repository.processPage(search).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.product?.productName?.let { pr -> " · $pr" } ?: "")) } }
-                EntryMode.TOOL -> repository.toolPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.toolkitName} · ${it.artisanName}", it.completeness) } }
+                EntryMode.TOOL -> repository.toolPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, it.toolRowLabel(), it.completeness) } }
                 EntryMode.WORKSHOP -> repository.workshopPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place), it.completeness) } }
                 EntryMode.MEDIA -> repository.mediaPage(search, if (mediaNarrowed) mediaFilters.mediaParams() else emptyMap()).let { p ->
                     p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename, chips = m.questionnaireChips, preview = m.transcriptPreview) }
@@ -9444,7 +9445,7 @@ private suspend fun loadViewEntries(repository: WorkshopRepository, mode: EntryM
     EntryMode.CRAFT -> repository.crafts().sortedByDescending { it.createdAt ?: "" }.map { it.id to (it.name + (it.place?.let { p -> " · $p" } ?: "")) }
     EntryMode.PRODUCT -> repository.products().sortedByDescending { it.createdAt ?: "" }.map { it.id to "${it.productName} · ${it.artisanName}" }
     EntryMode.PROCESS -> repository.processes().sortedByDescending { it.createdAt ?: "" }.map { it.id to (it.name + (it.product?.productName?.let { p -> " · $p" } ?: "")) }
-    EntryMode.TOOL -> repository.tools().sortedByDescending { it.createdAt ?: "" }.map { it.id to "${it.toolkitName} · ${it.artisanName}" }
+    EntryMode.TOOL -> repository.tools().sortedByDescending { it.createdAt ?: "" }.map { it.id to it.toolRowLabel() }
     EntryMode.WORKSHOP -> repository.workshops().sortedByDescending { it.createdAt ?: "" }.map { it.id to workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place) }
     EntryMode.QUESTIONNAIRE -> repository.interviews().sortedByDescending { it.createdAt ?: "" }.map { it.id to it.title.ifBlank { "Untitled interview" } }
     EntryMode.MEDIA -> repository.mediaList().sortedByDescending { it.createdAt ?: "" }.map { m ->
@@ -10750,7 +10751,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
                 when (t.lowercase()) {
                     "questionnaire", "questionnaireinterview" -> repository.interviews().map { it.id to it.title.ifBlank { "Untitled interview" } }
                     "product" -> repository.products().map { it.id to "${it.productName} · ${it.artisanName}" }
-                    "tool" -> repository.tools().map { it.id to "${it.toolkitName} · ${it.artisanName}" }
+                    "tool" -> repository.tools().map { it.id to it.toolRowLabel() }
                     "artisan" -> repository.artisans().map { it.id to it.name }
                     "craft" -> repository.crafts().map { it.id to it.name }
                     "workshop" -> repository.workshops().map { it.id to workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place) }

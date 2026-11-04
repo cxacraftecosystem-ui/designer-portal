@@ -55,6 +55,7 @@ import {
   canViewDesignWorkshopData
 } from "@/lib/permissions";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
+import { toolRowLabel } from "@/lib/toolArtisans";
 import type {
   Artisan,
   Craft,
@@ -626,7 +627,7 @@ const BROWSE_TYPES: Record<string, BrowseTypeDef> = {
     load: async (page) =>
       browsePage(await listResource<ToolDocumentation>("/tools", { page, pageSize: LIST_PAGE_CEILING }), (x) => ({
         id: x.id,
-        name: `${x.toolkitName} · ${x.artisanName}`,
+        name: toolRowLabel(x),
         creator: x.createdBy?.name ?? "-",
         createdAt: x.createdAt
       }))

@@ -72,9 +72,16 @@ from app.services.record_fields import (
     sheet_columns,
     sheet_row,
 )
+from app.services.record_filters import tools_in_workshop_clause
 from app.services.records import owned_or_granted_where
 from app.services.rich_text import plain_from_stored
 from app.services.s3 import ObjectTooLarge, discard_temp, download_to_temp, head_object
+from app.services.tool_scope import (
+    TOOL_SCOPE_INCLUDE,
+    hide_unseen,
+    tool_artisan_ids,
+    with_tool_scope,
+)
 from app.services.transcript_format import transcript_cell
 from app.services.xlsx_report import XLSX_MIME, build_report_workbook
 from app.transcription import workdir
@@ -713,9 +720,41 @@ async def _list_level(path: str, scope: Scope) -> Level:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown data path")
 
 
+async def _filed_tool_artisan_ids(wid: str, reached: list[str], scope: Scope) -> list[str]:
+    filed: list[dict[str, Any]] = [{"workshopId": wid}]
+    if reached:
+        filed.extend(
+            [
+                {"OR": [{"artisanId": None}, {"artisanId": {"not_in": reached}}]},
+                {"artisanLinks": {"none": {"artisanId": {"in": reached}}}},
+            ]
+        )
+    tools = await db.tooldocumentation.find_many(
+        where=_and({"AND": filed}, scope.records),
+        include={"artisanLinks": True},
+        take=TAKE,
+    )
+    ids: list[str] = []
+    for tool in tools:
+        for artisan_id in tool_artisan_ids(tool):
+            if artisan_id not in ids:
+                ids.append(artisan_id)
+    return ids
+
+
 async def _linked_artisans(ws: Any, scope: Scope) -> list[Any]:
+    reach = workshop_artisan_reach(ws)
+    reached = await db.artisan.find_many(
+        where=_and({"OR": reach}, scope.records),
+        include={"craft": True},
+        take=TAKE,
+        order={"name": "asc"},
+    )
+    orphans = await _filed_tool_artisan_ids(ws.id, [a.id for a in reached], scope)
+    if not orphans:
+        return reached
     return await db.artisan.find_many(
-        where=_and({"OR": workshop_artisan_reach(ws)}, scope.records),
+        where=_and({"OR": [*reach, {"id": {"in": orphans}}]}, scope.records),
         include={"craft": True},
         take=TAKE,
         order={"name": "asc"},
@@ -932,20 +971,7 @@ async def _list_artisan_level(segs: list[str], parent: str, scope: Scope) -> Lev
     if sub == "tools":
         if len(segs) == 5:
             tools = await db.tooldocumentation.find_many(
-                where=_and(
-                    {
-                        "AND": [
-                            {
-                                "OR": [
-                                    {"artisanId": aid},
-                                    {"artisanLinks": {"some": {"artisanId": aid}}},
-                                ]
-                            },
-                            {"OR": [{"workshopId": wid}, {"workshopId": None}]},
-                        ]
-                    },
-                    scope.records,
-                ),
+                where=_and(tools_in_workshop_clause(wid, [aid]), scope.records),
                 take=TAKE,
                 order={"createdAt": "asc"},
             )
@@ -955,7 +981,14 @@ async def _list_artisan_level(segs: list[str], parent: str, scope: Scope) -> Lev
                 for t in tools
             ], None
         if len(segs) == 6:
-            tool = await _require(db.tooldocumentation, segs[5], "Tool", scope_where=scope.records)
+            tool = await _require(
+                db.tooldocumentation,
+                segs[5],
+                "Tool",
+                include=TOOL_SCOPE_INCLUDE,
+                scope_where=scope.records,
+            )
+            await hide_unseen([tool], scope.records)
             info = _tool_info(tool)
             entries = []
             details = _text(parent, "details.txt", _info_text(info))
@@ -1975,7 +2008,7 @@ _PROCESS_INCLUDE = {
     "product": {"include": {"workshop": True}},
     "createdBy": True,
 }
-_TOOL_INCLUDE = {"workshop": True, "createdBy": True}
+_TOOL_INCLUDE = with_tool_scope({"createdBy": True})
 _INTERVIEW_INCLUDE = {
     "artisans": {"include": {"artisan": True}},
     "responses": {"include": {"question": True}},
@@ -2363,20 +2396,7 @@ async def _report_records(segs: list[str], scope: Scope) -> dict[str, list[Any]]
                 )
             ]
         return await db.tooldocumentation.find_many(
-            where=_and(
-                {
-                    "AND": [
-                        {
-                            "OR": [
-                                {"artisanId": {"in": aids}},
-                                {"artisanLinks": {"some": {"artisanId": {"in": aids}}}},
-                            ]
-                        },
-                        {"OR": [{"workshopId": wid}, {"workshopId": None}]},
-                    ]
-                },
-                scope.records,
-            ),
+            where=_and(tools_in_workshop_clause(wid, aids), scope.records),
             take=REPORT_TAKE,
             order={"createdAt": "desc"},
             include=_TOOL_INCLUDE,
@@ -3382,6 +3402,7 @@ async def _build_report(path: str, fmt: str, current_user: Any) -> Response:
     norm = _norm(path)
     segs = [s for s in norm.split("/") if s]
     records = await _report_records(segs, scope)
+    await hide_unseen(records["tools"], scope.records)
     await transcript_export.withhold_refused(records["media"])
     transcribed = [str(m.id) for m in records["media"] if transcript_export.has_text(m)]
     texts = await transcript_export.transcript_texts(

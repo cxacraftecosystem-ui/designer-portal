@@ -148,10 +148,10 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 375 | 6559 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 309 | 3434 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 394 | 4230 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
-| Android instrumented (`android/app/src/androidTest/`) | 22 | 82 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
+| Backend unit (`backend/tests/`) | 377 | 6577 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 310 | 3437 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 395 | 4233 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Android instrumented (`android/app/src/androidTest/`) | 23 | 83 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
 parametrised cases expand.
@@ -176,11 +176,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 391 | 136,301 | 391 | 136,301 |
-| `frontend/app` | 129 | 38,114 | 129 | 38,114 |
+| `backend/app` | 392 | 136,628 | 392 | 136,628 |
+| `frontend/app` | 129 | 38,116 | 129 | 38,116 |
 | `frontend/components` | 462 | 100,628 | 462 | 100,628 |
-| `frontend/lib` | 235 | 56,563 | 235 | 56,563 |
-| `android/app/src/main/java` | 460 | 163,114 | 460 | 163,114 |
+| `frontend/lib` | 236 | 56,585 | 236 | 56,585 |
+| `android/app/src/main/java` | 461 | 163,131 | 461 | 163,131 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is

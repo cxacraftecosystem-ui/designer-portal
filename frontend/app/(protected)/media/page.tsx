@@ -54,6 +54,7 @@ import { inferMediaType, transcribeMediaNow, uploadMediaBatch, type BatchProgres
 import { CraftSelect } from "@/components/forms/CraftSelect";
 import { isContentAdmin } from "@/lib/permissions";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
+import { toolRowLabel } from "@/lib/toolArtisans";
 import { UploadsProvider, useUploads } from "@/lib/uploads";
 import { WORKSHOP_OPTION_PAGE_SIZE, fieldWorkshopOptions } from "@/lib/workshopOptions";
 import type {
@@ -130,7 +131,7 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
     case "tool": {
       const page = await listResource<ToolDocumentation>("/tools", params);
       return {
-        options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.toolkitName} · ${x.artisanName}` })),
+        options: sortRecent(page.items).map((x) => ({ value: x.id, label: toolRowLabel(x) })),
         cut: listCut(page, "tools"),
         filings: filedUnder(page.items)
       };
