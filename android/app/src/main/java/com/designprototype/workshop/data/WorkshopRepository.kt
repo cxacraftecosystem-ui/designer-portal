@@ -2312,6 +2312,7 @@ class WorkshopRepository(
         runCatching { DwQuestionnaireFormCache.forgetAll(context) }
         runCatching { NotificationSync.signOut(context, signedOut) }
         runCatching { ReadCache.evictAll(context) }
+        runCatching { com.designprototype.workshop.explorer.data.ExplorerDownloads.forgetAll(context) }
     }
 
     suspend fun currentUser(): UserDto = api.me()
