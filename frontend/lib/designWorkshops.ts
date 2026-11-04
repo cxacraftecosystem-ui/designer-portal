@@ -1039,16 +1039,30 @@ export type DwDictationAllowance = {
 export const DICTATION_ALLOWANCE_TTL_MS = 10 * 60 * 1000;
 
 let dictationAllowanceInFlight: Promise<DwDictationAllowance | null> | null = null;
-let dictationAllowanceHeld: { at: number; answer: DwDictationAllowance } | null = null;
+let dictationAllowanceKnown: { value: DwDictationAllowance; at: number } | null = null;
 
-export function dwDictationAllowance(now: number = Date.now()): Promise<DwDictationAllowance | null> {
-  if (dictationAllowanceHeld && now - dictationAllowanceHeld.at < DICTATION_ALLOWANCE_TTL_MS) return Promise.resolve(dictationAllowanceHeld.answer);
+function knownDictationAllowance(): DwDictationAllowance | null {
+  if (!dictationAllowanceKnown) return null;
+  if (Date.now() - dictationAllowanceKnown.at > DICTATION_ALLOWANCE_TTL_MS) {
+    dictationAllowanceKnown = null;
+    return null;
+  }
+  return dictationAllowanceKnown.value;
+}
+
+export function rememberDictationAllowance(value: DwDictationAllowance): void {
+  dictationAllowanceKnown = { value, at: Date.now() };
+}
+
+export function dwDictationAllowance(): Promise<DwDictationAllowance | null> {
+  const known = knownDictationAllowance();
+  if (known) return Promise.resolve(known);
   if (dictationAllowanceInFlight) return dictationAllowanceInFlight;
   const asking: Promise<DwDictationAllowance | null> = apiFetch<DwDictationAllowance>(
     "/design-workshops/dictation-allowance"
   )
     .then((answer) => {
-      dictationAllowanceHeld = { at: now, answer };
+      if (answer) rememberDictationAllowance(answer);
       return answer;
     })
     .catch(() => null)
@@ -1059,13 +1073,9 @@ export function dwDictationAllowance(now: number = Date.now()): Promise<DwDictat
   return asking;
 }
 
-export function rememberDictationAllowance(answer: DwDictationAllowance, now: number = Date.now()): void {
-  dictationAllowanceHeld = { at: now, answer };
-}
-
 export function forgetDictationAllowanceInFlight(): void {
   dictationAllowanceInFlight = null;
-  dictationAllowanceHeld = null;
+  dictationAllowanceKnown = null;
 }
 
 export type DwConsentDecision = "GRANTED" | "REFUSED";

@@ -187,14 +187,14 @@ export function DictationButton({
         try {
           const result = await dictateAudio(blob, languageRef.current, workshopId);
           if (typeof result.dictationDay === "string") {
-            const counted = {
+            const next: DwDictationAllowance = {
               dictationsLimit: result.dictationsLimit ?? null,
               dictationsUsed: result.dictationsUsed ?? 0,
               dictationsRemaining: result.dictationsRemaining ?? null,
               dictationDay: result.dictationDay
             };
-            rememberDictationAllowance(counted);
-            setAllowance(counted);
+            rememberDictationAllowance(next);
+            setAllowance(next);
           }
           setLastMediaId(result.mediaId ?? null);
           const text = (result.text ?? "").trim();
