@@ -211,7 +211,7 @@ ${textLines(sub, x, Y + 90, 19, `class="s" fill="${t.ink500}" font-size="13" tex
   const track = `M${x0} ${Y} H${x1}`;
   const len = r(x1 - x0);
   const css = `.flow{stroke-dasharray:3 13;animation:flow 1.6s linear infinite}@keyframes flow{to{stroke-dashoffset:-32}}.prog{stroke-dasharray:${len};stroke-dashoffset:0;animation:prog ${D}s linear infinite}@keyframes prog{0%{stroke-dashoffset:${len}}${r(((D - hold) / D) * 1000) / 10}%{stroke-dashoffset:0}${r(((D - 0.4) / D) * 1000) / 10}%{stroke-dashoffset:0;opacity:1}100%{stroke-dashoffset:0;opacity:0}}.ring{opacity:0;animation:ring ${D}s ease-out infinite;transform-box:fill-box;transform-origin:center}@keyframes ring{0%{opacity:.85;transform:scale(1)}${r((1.2 / D) * 1000) / 10}%{opacity:0;transform:scale(1.55)}100%{opacity:0}}${delays(n, 0.12)}`;
-  const defs = `<linearGradient id="pg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${t.accent}"/><stop offset="1" stop-color="${t.gold}"/></linearGradient>
+  const defs = `<linearGradient id="pg" gradientUnits="userSpaceOnUse" x1="${x0}" y1="0" x2="${x1}" y2="0"><stop offset="0" stop-color="${t.accent}"/><stop offset="1" stop-color="${t.gold}"/></linearGradient>
 <filter id="glow" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
   const body = `<path d="${track}" stroke="${t.s300}" stroke-width="4" stroke-linecap="round" fill="none"/>
 <path class="prog" d="${track}" stroke="url(#pg)" stroke-width="4" stroke-linecap="round" fill="none"/>
@@ -260,7 +260,7 @@ ${textLines(sub, x, Y + 67, 19, `class="s" fill="${t.ink500}" font-size="13" tex
   }).join("\n");
   const len = r(xNow - x0) || 1;
   const css = `.prog{stroke-dasharray:${len};stroke-dashoffset:0;animation:prog 2.4s cubic-bezier(.4,0,.2,1) .2s both}@keyframes prog{from{stroke-dashoffset:${len}}to{stroke-dashoffset:0}}.halo{animation:halo 2.4s ease-out infinite;transform-box:fill-box;transform-origin:center}@keyframes halo{0%{transform:scale(1);opacity:.55}100%{transform:scale(2.8);opacity:0}}.ahead{stroke-dasharray:2 10}${delays(n, 0.16)}`;
-  const defs = `<linearGradient id="pg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${t.accent}"/><stop offset="1" stop-color="${t.accentMid}"/></linearGradient>`;
+  const defs = `<linearGradient id="pg" gradientUnits="userSpaceOnUse" x1="${x0}" y1="0" x2="${r(Math.max(xNow, x0 + 1))}" y2="0"><stop offset="0" stop-color="${t.accent}"/><stop offset="1" stop-color="${t.accentMid}"/></linearGradient>`;
   const body = `<path class="ahead" d="M${x0 - 40} ${Y} H${x1 + 40}" stroke="${t.s300}" stroke-width="3" stroke-linecap="round" fill="none"/>
 ${nowIdx > 0 ? `<path class="prog" d="M${x0} ${Y} H${r(xNow)}" stroke="url(#pg)" stroke-width="4" stroke-linecap="round" fill="none"/>` : ""}
 ${items}`;
