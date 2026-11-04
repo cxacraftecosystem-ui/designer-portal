@@ -296,10 +296,13 @@ fix and a test that fails without the fix.
 
 ### [MEDIUM] The browser assembles the whole archive as one in-memory `Blob` — three `JSZip.generateAsync({type:"blob"})` sites (frontend)
 
-`frontend/app/(protected)/data/page.tsx:651`, `:1161` and `sharing/page.tsx:519` each build the
+The data page (two sites, before 0.0.12) and `sharing/page.tsx:519` each build the
 complete zip in the tab's heap: every media object is `await response.blob()`-ed into `JSZip`, and
 `generateAsync({type:"blob"})` then produces one more `Blob` holding the entire archive before a
 byte is written to disk. On a repository whose media runs to a gigabyte the tab dies.
+
+**Status (0.0.12):** fixed on `/data`: the shared explorer streams a zip64 archive to disk from a
+Web Worker ([DATA_EXPLORER_WEB.md](DATA_EXPLORER_WEB.md)). `sharing/page.tsx` still builds in memory.
 
 **This is deliberately NOT filed as part of the manifest defect closed alongside it, and conflating
 the two would have produced a fix that misses.** The handset failure was a single *contiguous*

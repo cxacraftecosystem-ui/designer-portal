@@ -304,29 +304,17 @@ test("the craft picker in every record form can draw its own current value", () 
 });
 
 test("View Data's browse panel has a pager, a total and a notice", () => {
-  const source = read("app", "(protected)", "data", "page.tsx");
-
-  expect(source).toContain("load: (page: number) => Promise<BrowsePage>");
-  expect(source, "the envelope must survive the mapping").toContain("function browsePage<T>(");
-  expect(source, "no pager was the finding").toContain("<Pagination");
-  expect(source).toContain('reach="pager"');
-  expect(source).not.toContain("pageSize: 100");
+  const panel = read("components", "dataExplorer", "BrowseByType.tsx");
+  expect(panel, "the cut is stated in words").toContain("const cut = current ? browseCutLine(current, noun) : null;");
+  expect(panel, "no pager was the finding").toContain("aria-label={`${def.label} pages`}");
+  expect(panel).toContain("Page {current.page} of {current.pages}");
+  const page = read("app", "(protected)", "data", "page.tsx");
+  expect(page).toContain("pageSize: LIST_PAGE_CEILING");
+  expect(page).not.toContain("pageSize: 100");
 });
 
-test("changing the record type restarts at page one without closing the open record", () => {
-  const source = read("app", "(protected)", "data", "page.tsx");
-  expect(between(source, "setPage(1);", "}, [typeKey]);")).toContain("setSelected(null)");
-  expect(source).toContain("}, [typeKey, page]);");
-
-  const code = codeOf(source);
-  expect(code, "the open record must be held, not looked up in whichever page is loaded").toContain(
-    'const recordId = selected?.id ?? ""'
-  );
-  expect(code, "recovering the card from the loaded page IS closing it on a page turn").not.toContain("rows?.find(");
-  expect(
-    between(code, "setBrowse(null)", "[typeKey, page]"),
-    "clearing the record's media in the LIST loader empties the open record on a page turn"
-  ).not.toContain("setRecordMedia(");
+test("changing the record type restarts at page one", () => {
+  expect(read("components", "dataExplorer", "BrowseByType.tsx")).toContain('onChange({ type: value, page: 1, q: "" })');
 });
 
 test("the media upload form says how much of the record type its entry picker holds", () => {

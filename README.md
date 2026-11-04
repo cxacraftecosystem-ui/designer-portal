@@ -268,8 +268,8 @@ work is on both clients.
 
 | Export | How | Notes |
 |---|---|---|
-| Data browser | `/data`: workshops, users and media types as folders | sizes before download, multi-select, streamed zips, previews and thumbnails; removed recordings never ship; audio streamed to `.mp4` with the original as fallback ([DATA_EXPLORER.md](docs/DATA_EXPLORER.md)) |
-| Data page report | *Load tables* on click | JSON preview of 200 rows a sheet; search runs over every row on the server; one sheet as `.csv`; the `.xlsx` stays complete; one build at a time, `503` + `Retry-After` when busy (D39) |
+| Data browser | `/data`: the folder tree with search as its toolbar, every download in one panel | sizes before download, multi-select, previews and thumbnails; zips stream to disk in a background worker and keep going in a hidden tab; removed recordings never ship; audio streamed to `.mp4` with the original as fallback ([DATA_EXPLORER.md](docs/DATA_EXPLORER.md), [DATA_EXPLORER_WEB.md](docs/DATA_EXPLORER_WEB.md)) |
+| Data page report | subfolders load their tables, the root on click | 200-row preview searched over every row on the server, a CSV per sheet; the `.xlsx` stays complete; one build at a time, "Busy, retrying in 60 s" on `503` + `Retry-After` (D39) |
 | Transcripts | a sheet in every report, `.md` / `.docx` / `.srt` / `.vtt` per recording, or all formats in one zip per recording or per folder | the hand-added English travels with every copy |
 | Datasets | `/api/datasets/{name}.ndjson` and `.csv`, streamed, keyset-paged | `X-Dataset-Total` proves completeness; admin credentials only |
 | Questionnaires | workbook export, artisan record CSV, corpus export | |

@@ -3,59 +3,36 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8");
+const read = (...parts: string[]) => readFileSync(join(__dirname, "..", ...parts), "utf8").split("\r\n").join("\n");
 
-function codeOf(source: string): string {
-  const blanked = (match: string) => match.replace(/[^\n]/g, " ");
-  return source.replace(/\/\*[\s\S]*?\*\//g, blanked).replace(/\/\/[^\n]*/g, blanked);
-}
+const BROWSE = ["components", "dataExplorer", "BrowseByType.tsx"] as const;
+const EXPLORER = ["components", "dataExplorer", "DataExplorer.tsx"] as const;
 
-function between(source: string, from: string, to: string): string {
-  const start = source.indexOf(from);
-  expect(start, `${from} not found — has the panel been restructured?`).toBeGreaterThan(-1);
-  const end = source.indexOf(to, start);
-  expect(end, `${to} not found after ${from}`).toBeGreaterThan(-1);
-  return source.slice(start, end);
-}
-
-const PAGE = ["app", "(protected)", "data", "page.tsx"] as const;
-
-test("the open record is held, not looked up in whichever page is loaded", () => {
-  const code = codeOf(read(...PAGE));
-
-  expect(code).toContain("const [selected, setSelected] = useState<BrowseRow | null>(null)");
-  expect(code).toContain('const recordId = selected?.id ?? ""');
-
-  expect(code, "the open record must not be recovered from the loaded page").not.toContain("rows?.find(");
-  expect(code, "recordId is derived from `selected`; a setter for it would be a second source of truth").not.toContain(
-    "setRecordId("
-  );
+test("a row opens its record page, so a page turn has no open record to lose", () => {
+  const code = read(...BROWSE);
+  expect(code).toContain("onClick={(event) => openRow(event, view)}");
+  expect(code, "no record picker that only searches the loaded page").not.toContain("<ComboBox");
 });
 
-test("a page load does not empty the open record's media", () => {
-  const code = codeOf(read(...PAGE));
-  const loader = between(code, "setBrowse(null)", "[typeKey, page]");
-
-  expect(loader, "clearing the record's media in the LIST loader closes the record on a page turn").not.toContain(
-    "setRecordMedia("
-  );
-  expect(loader).toContain("setBrowse(null)");
+test("the type, page and search live in the URL, so Back and a shared link land on the same page", () => {
+  const code = read(...EXPLORER);
+  expect(code).toContain("navigate({ browse: next.type, browsePage: next.page, browseQ: next.q })");
+  expect(code).toContain("type={url.browse}");
+  expect(code).toContain("page={url.browsePage}");
 });
 
-test("changing the record TYPE still goes back to page 1 and closes the record", () => {
-  const code = codeOf(read(...PAGE));
-  const reset = between(code, "setPage(1)", "[typeKey]");
-
-  expect(reset).toContain("setSelected(null)");
+test("changing the record TYPE goes back to page 1 and clears the search", () => {
+  expect(read(...BROWSE)).toContain('onChange={(value) => onChange({ type: value, page: 1, q: "" })}');
 });
 
-test("the pagination the reset effect was added for is still wired", () => {
-  const source = read(...PAGE);
-  const code = codeOf(source);
+test("a page turn keeps the type and the search", () => {
+  const code = read(...BROWSE);
+  expect(code).toContain("onChange({ type, page: current.page + 1, q })");
+  expect(code).toContain("onChange({ type, page: current.page - 1, q })");
+});
 
-  expect(code).toContain(".load(page)");
-  expect(code).toContain("[typeKey, page]");
-  expect(code).toContain("onPage={setPage}");
-  expect(code).toContain("<Pagination");
-  expect(code).toContain('reach="pager"');
+test("the search reaches every row on the server, not the page in the browser", () => {
+  const code = read(...BROWSE);
+  expect(code).toContain("fetchBrowse({ type: chosen.value, page, q, workshopIds: scopeIds })");
+  expect(code).toContain("return chosen.legacy(page, q, scopeIds);");
 });

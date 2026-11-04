@@ -302,6 +302,8 @@ test("`cause` is touched in two places in the whole web client, and read in one"
 
 const HAND_ROLLED_NETWORK_TESTS = [
 
+  "lib/dataExplorer/engine.ts",
+
   "lib/media.ts",
 
   "lib/questionnaire/queue.ts"
