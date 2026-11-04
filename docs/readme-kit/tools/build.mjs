@@ -96,7 +96,7 @@ function hero(t, c) {
   const titleLines = wrap(c.name, c.titleWrap || 18, 2);
   const titleSize = titleLines.length > 1 ? 56 : 64;
   const tag = wrap(c.tagline, 60, 3);
-  const eyebrowW = c.eyebrow.length * 8 + 52;
+  const eyebrowW = c.eyebrow.length * 8.7 + 50;
   let y = 172;
   const title = textLines(titleLines, X, y, titleSize * 1.08, `class="d sweep" fill="url(#sweep)" font-size="${titleSize}" font-weight="800" letter-spacing="-1.5"`);
   y += (titleLines.length - 1) * titleSize * 1.08 + 46;
@@ -113,7 +113,7 @@ function hero(t, c) {
   const LX = 812, LY = 62, LW = 330, LH = 268;
   const warps = Array.from({ length: 11 }, (_, i) => 32 + i * 26.6);
   const rows = 7;
-  const rowY = (i) => 64 + i * 26;
+  const rowY = (i) => 50 + i * 22.6;
   const weft = Array.from({ length: rows }, (_, i) => {
     const pts = warps.map((x, j) => `${r(x)} ${r(rowY(i) + ((i + j) % 2 ? 3.5 : -3.5))}`);
     if (i % 2) pts.reverse();
@@ -123,7 +123,7 @@ function hero(t, c) {
   const serp = Array.from({ length: rows }, (_, i) => {
     const a = i % 2 ? warps[warps.length - 1] : warps[0];
     const b = i % 2 ? warps[0] : warps[warps.length - 1];
-    return `${i ? "L" : "M"}${r(a)} ${rowY(i)} L${r(b)} ${rowY(i)}`;
+    return `${i ? "L" : "M"}${r(a)} ${r(rowY(i))} L${r(b)} ${r(rowY(i))}`;
   }).join(" ");
   const cycle = rows + 3;
   const loom = `<g transform="translate(${LX} ${LY})">
@@ -271,7 +271,7 @@ function divider(t, c) {
   const W = 1200, H = 40, Y = 20, M = W / 2;
   const label = c && c.label ? c.label : "Section divider";
   const css = `.glint{animation:glint 6s cubic-bezier(.5,0,.3,1) infinite}@keyframes glint{0%{transform:translateX(0)}70%,100%{transform:translateX(1500px)}}.spin{animation:spin 9s linear infinite;transform-box:fill-box;transform-origin:center}@keyframes spin{to{transform:rotate(360deg)}}`;
-  const defs = `<linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${W}" y2="0"><stop offset="0" stop-color="${t.accentLine}" stop-opacity="0"/><stop offset=".5" stop-color="${t.accentLine}"/><stop offset="1" stop-color="${t.accentLine}" stop-opacity="0"/></linearGradient>
+  const defs = `<linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${W}" y2="0"><stop offset="0" stop-color="${t.accentMid}" stop-opacity="0"/><stop offset=".5" stop-color="${t.accentMid}" stop-opacity=".7"/><stop offset="1" stop-color="${t.accentMid}" stop-opacity="0"/></linearGradient>
 <linearGradient id="gl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${t.accent}" stop-opacity="0"/><stop offset=".6" stop-color="${t.accent}"/><stop offset="1" stop-color="${t.gold}" stop-opacity="0"/></linearGradient>
 <clipPath id="lane"><rect x="0" y="${Y - 3}" width="${M - 26}" height="6"/><rect x="${M + 26}" y="${Y - 3}" width="${M - 26}" height="6"/></clipPath>`;
   const body = `<rect x="0" y="${Y - 0.75}" width="${M - 26}" height="1.5" fill="url(#fade)"/>

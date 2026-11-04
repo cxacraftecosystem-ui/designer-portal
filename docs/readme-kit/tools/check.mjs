@@ -172,7 +172,7 @@ function checkRendered(htmlFile, mdFile) {
   const src = stripFences(readFileSync(mdFile, "utf8"));
   const name = rel(resolve(mdFile));
   if (html.trim().length < 20) fail(`${name}: GitHub rendered almost nothing`);
-  const prose = html.replace(/<pre[\s\S]*?<\/pre>/g, "").replace(/<code[\s\S]*?<\/code>/g, "");
+  const prose = html.replace(/<pre[^]*?<\/pre>/g, "").replace(/<code[^]*?<\/code>/g, "").replace(/<[^>]*>/g, "");
   for (const tag of ["picture", "source", "img", "p", "div", "table", "td", "tr", "br", "sub", "b", "a"]) {
     if (new RegExp(`&lt;/?${tag}\\b`).test(prose)) fail(`${name}: GitHub escaped a <${tag}> tag, so the HTML around it is malformed`);
   }
@@ -181,8 +181,8 @@ function checkRendered(htmlFile, mdFile) {
   const got = (html.match(/<picture>/g) || []).length;
   if (want !== got) fail(`${name}: ${want} <picture> in the source, ${got} after rendering`);
   const wantMermaid = mermaidBlocks(resolve(mdFile)).length;
-  const gotMermaid = (html.match(/(?:lang="mermaid"|highlight-source-mermaid|data-type="mermaid")/g) || []).length;
-  if (gotMermaid < wantMermaid) fail(`${name}: ${wantMermaid} mermaid block(s) in the source, ${gotMermaid} recognised after rendering`);
+  const gotMermaid = (html.match(/data-type="mermaid"/g) || []).length;
+  if (gotMermaid !== wantMermaid) fail(`${name}: ${wantMermaid} mermaid block(s) in the source, ${gotMermaid} recognised after rendering`);
   console.log(`${name}: rendered ${html.length} bytes, ${got} <picture>, ${gotMermaid} mermaid block(s)`);
 }
 
