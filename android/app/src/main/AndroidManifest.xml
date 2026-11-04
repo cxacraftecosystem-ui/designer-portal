@@ -15,6 +15,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
@@ -51,6 +52,20 @@
             android:name="com.designprototype.workshop.recording.RecordingService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+        <receiver
+            android:name="com.designprototype.workshop.explorer.data.ExplorerSystemReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="com.designprototype.workshop.explorer.data.ExplorerCancelReceiver"
+            android:exported="false" />
         <provider
             android:name="com.designprototype.workshop.ui.DwInductionFlushProvider"
             android:authorities="${applicationId}.inductionflush"

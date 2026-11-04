@@ -269,6 +269,7 @@ work is on both clients.
 | Export | How | Notes |
 |---|---|---|
 | Data browser | `/data`: workshops, users and media types as folders | zip assembled in the browser; audio converted to `.mp4` |
+| Android data browser | *Data* screen: tree first, search on top, one *Download* button | zips run in the background with a notification and Cancel ([Play declaration](docs/ANDROID_BACKGROUND_DOWNLOADS.md)) |
 | Data page report | *Load tables* on click | JSON preview of 200 rows a sheet; the `.xlsx` stays complete; one build at a time, `503` + `Retry-After` when busy (D39) |
 | Transcripts | a sheet in every report, `.md` / `.docx` / `.srt` / `.vtt` per recording | the hand-added English travels with every copy |
 | Datasets | `/api/datasets/{name}.ndjson` and `.csv`, streamed, keyset-paged | `X-Dataset-Total` proves completeness; admin credentials only |
