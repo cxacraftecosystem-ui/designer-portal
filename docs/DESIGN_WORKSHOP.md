@@ -469,8 +469,9 @@ count is the sum of `REFERENCE_HYDRATION`'s mappings and belongs in the registry
 The requirement behind `fieldProvenance` is "do not duplicate the record per designer". They
 meet like this: **the value is copied and stays copied; only authorship is attributed.** Nothing
 resolves a hydrated field through its `refId` at render time, and making it do so would reintroduce
-exactly the defect hydration exists to prevent. The full argument is the module docstring of
-`backend/app/services/entry_provenance.py`, which also records the private per-designer overlay that
+exactly the defect hydration exists to prevent. The full argument was the module docstring of
+`backend/app/services/entry_provenance.py` until the 0.0.10 comment strip; read it at tag `v0.0.9`
+(`git show v0.0.9:backend/app/services/entry_provenance.py`). It also records the private per-designer overlay that
 was deliberately **not** built and the two written policies it would contradict.
 
 `GET /design-workshops/{id}/provenance` (admin and master admin only) adds the one thing no other

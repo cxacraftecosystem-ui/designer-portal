@@ -21,6 +21,7 @@ edit. Each entry names the code it governs and where its full original text can 
 | 11 | Ranks are stored comparisons; new tiers go in the gaps | `backend/app/core/deps.py` |
 | 12 | `MINISTRY_ADMIN` is not an admin | `backend/app/core/deps.py` |
 | 13 | Shared trees are byte-identical and edited here first | `shared/*.sha256` and the sync scripts in `scripts/` |
+| 14 | A tool's workshops and artisans come from one rule on every surface (0.0.11) | `backend/app/services/tool_scope.py`, `backend/app/services/record_filters.py`, `frontend/lib/toolArtisans.ts`, `android/app/src/main/java/com/designprototype/workshop/data/ToolArtisans.kt` |
 
 ## 1. The queue worker is its own process
 
@@ -147,6 +148,18 @@ both portals, each pinned by a manifest in `shared/`. Edit them here, then run t
 `scripts/transcript_android.py`). `shared/questionnaire-features.json` is identical in both and lists
 every cross-client feature with its test tag on each client.
 
+## 14. One rule for where a tool shows up
+
+A tool belongs to a workshop through its own `workshopId` or through any linked artisan (`artisanId` or
+a `ToolArtisan` row) who is a member of that workshop. The data browser, the reports, the folder zip,
+the dataset bundle, `GET /tools`, search and the datasets API all read that rule from
+`tool_scope.py` and the clause builders in `record_filters.py` (`tool_workshop_clause`,
+`tool_artisan_clause`, `tool_craft_clause`). A surface that tests `workshopId` alone loses every tool
+filed under one workshop and shared by an artisan of another. The names a reader sees are pruned by
+`hide_unseen`, so a workshop the reader cannot open never lends its title or its tools. Web and Android
+name a tool's artisans through `toolArtisanNames`, and both are checked against the same cases in
+`shared/tool-scope-vectors.json`. See [DATA_MODEL.md](DATA_MODEL.md#where-a-linked-tool-shows-up-added-2026-11-04).
+
 ## How this document is kept true
 
 | Claim class | Kept true by |
@@ -156,6 +169,7 @@ every cross-client feature with its test tag on each client.
 | The rank values | `backend/tests/test_role_ladder_parity.py` |
 | The work directory defaults | `backend/tests/test_transcription_workdir.py` |
 | The shared trees | `backend/tests/test_transcription_parity.py` and the questionnaire parity job in `checks.yml` |
+| The tool rule | `backend/tests/test_tool_multi_scope_db.py`, `backend/tests/test_tool_scope_vectors.py`, `frontend/e2e/tool-scope-parity-unit.spec.ts` and `android/app/src/test/java/com/designprototype/workshop/data/ToolScopeParityTest.kt`, all against `shared/tool-scope-vectors.json` |
 | The history | the original comment text at tag `v0.0.9` |
 
 **Review trigger:** any change to the code in the table at the top. When a comment-worthy reason is

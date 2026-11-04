@@ -412,6 +412,48 @@ its recording goes. **`MediaFile.transcriptSummary` is not a summary** — the q
 provider text there — and nothing here writes to it. Not `DwAiLayer`: that table needs a design
 workshop, and most recordings have none. The Field Repository has the identical table.
 
+### Transcripts — added 0.0.4 to 0.0.10
+
+A transcript is no longer a text column. Each run of the pipeline writes a numbered
+`TranscriptVersion` of `TranscriptTurn`s; an edit is a `TranscriptTurnEdit`, never an overwrite; and
+speaker names live once per recording, so a rename reaches every version and every copy.
+
+```mermaid
+%%{init: {"theme":"base","fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","themeVariables":{"fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","lineColor":"#AA69E9","textColor":"#857F9E","attributeBackgroundColorOdd":"#FFFFFF","attributeBackgroundColorEven":"#F9F5FF","relationColor":"#AA69E9","relationLabelBackground":"#F9F5FF","relationLabelColor":"#1E1B2E"}}}%%
+erDiagram
+  MediaFile ||--o{ TranscriptVersion : "is transcribed as"
+  TranscriptVersion ||--o{ TranscriptTurn : "holds"
+  TranscriptTurn ||--o{ TranscriptTurnEdit : "keeps history in"
+  MediaFile ||--o{ TranscriptSpeaker : "names its speakers"
+  MediaFile ||--o{ TranscriptInsight : "is summarised by"
+  MediaFile ||--o{ TranscriptSpend : "costs"
+  TranscriptGlossaryTerm ||--o{ TranscriptGlossarySighting : "is heard in"
+
+  TranscriptVersion {
+    int version "UNIQUE with mediaFileId"
+    string sttModel "scribe_v2"
+    string translationModel "gemini-3.8-flash"
+    datetime supersededAt
+  }
+  TranscriptTurn {
+    int position "UNIQUE with versionId"
+    string speakerKey
+    string machineText
+    string editedText
+    string machineEnglish
+    string editedEnglish
+  }
+```
+
+| What | Where it is kept |
+|---|---|
+| The upload choice | `MediaFile.transcribeRequested`, `transcribeRequestSource` (`UPLOAD`, `AUTO_AUDIO`, `AUTO_VIDEO`, `BUTTON`, `BACKFILL`), `transcribeRequestedAt`; `null` means the row predates 0.0.10 |
+| Machine and edited text side by side | `machineText`/`editedText` and `machineEnglish`/`editedEnglish` on the turn; the machine output is never overwritten |
+| Spend | `SttUsage` (Scribe, per hour) and `TranscriptSpend` (Gemini, per call), read against `AppSetting.transcriptMonthlyBudgetUsd` |
+| Consent | the one `Consent` ledger (below), re-read before every send |
+| The design-workshop stage save | re-queues only the clips whose `transcribeRequested` is true |
+| The switches | `AppSetting`: `transcriptionPaused`, `autoTranscribeVideo`, `autoTranscribeAudio`, `transcriptBackfillEnabled`, `audioIsolationEnabled` |
+
 ### `Consent` — the one consent store, added 2026-10-19
 
 Every consent either portal holds is an append-only row: who it is about (`subjectType` +

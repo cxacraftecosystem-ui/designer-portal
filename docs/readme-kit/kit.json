@@ -69,14 +69,14 @@
     ]
   },
   "timeline": {
-    "label": "Releases: 0.0.3 one questionnaire engine, 0.0.4 the transcript pipeline, 0.0.6 the viewer, 0.0.7 latest runtimes, 0.0.9 old transcripts and the Data page, 0.0.10 video and the upload choice",
+    "label": "Releases: 0.0.4 the transcript pipeline, 0.0.6 the viewer, 0.0.7 latest runtimes, 0.0.9 old transcripts and the Data page, 0.0.10 video and the upload choice, 0.0.11 tools across workshops",
     "items": [
-      { "date": "23 Oct", "title": "0.0.3", "sub": "One questionnaire engine" },
       { "date": "31 Oct", "title": "0.0.4", "sub": "Scribe v2 and Gemini" },
       { "date": "1 Nov", "title": "0.0.6", "sub": "Viewer, marks, reading mode" },
       { "date": "1 Nov", "title": "0.0.7", "sub": "Python 3.15, Node 26" },
       { "date": "3 Nov", "title": "0.0.9", "sub": "Old transcripts, Data page" },
-      { "date": "Nov", "title": "0.0.10", "sub": "Video, upload choice", "now": true }
+      { "date": "4 Nov", "title": "0.0.10", "sub": "Video, upload choice" },
+      { "date": "4 Nov", "title": "0.0.11", "sub": "Tools across workshops", "now": true }
     ]
   },
   "divider": { "label": "Section divider" },

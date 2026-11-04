@@ -13,9 +13,20 @@ and of every trick either client plays.
 - Web: `frontend/lib/media.ts`, `frontend/lib/uploads.tsx`, `frontend/components/forms/MediaCaptureField.tsx`
 - API: `backend/app/api/routes/media.py`, `backend/app/services/s3.py`
 
-**Scope.** This document ends where the bytes land. What happens to an audio file *after* it is
-stored — the three-provider transcription chain, its failover semantics and the queue's cooldown
-behaviour — is [ARCHITECTURE.md §6](ARCHITECTURE.md).
+**Scope.** This document ends where the bytes land. What happens to an audio or video file *after*
+it is stored — the provider chain, its failover semantics and the queue's cooldown behaviour — is
+[ARCHITECTURE.md §6](ARCHITECTURE.md), and the Scribe v2 + Gemini turn pipeline that follows is
+[TRANSCRIPT_PIPELINE.md](TRANSCRIPT_PIPELINE.md).
+
+**The one thing an upload decides about transcription (0.0.10).** Every audio or video file carries
+its own **Transcribe and translate** box at upload, on the web and on Android, plus a batch toggle.
+The box travels as `processingRequests: ["TRANSCRIPTION"]` on `POST /api/media/complete`, and the
+server stores the choice on the row (`MediaFile.transcribeRequested`, `transcribeRequestSource`,
+`transcribeRequestedAt`). A complete without it queues nothing. When a master admin has switched on
+"all new videos" or "all new audio", clients read `GET /settings/transcription/upload-policy` and show
+the box ticked and locked with a short note. The outbox keeps the choice per file, so a clip saved
+offline is queued the way it was ticked. Questionnaire takes have no box and are always queued. A video
+is sent as its sound only; the stored file never changes.
 
 > **Citations are by symbol name, not by line number.** They used to be by line — `MainActivity.kt:2126`,
 > `WorkshopRepository.kt:1094` — and every one of them had silently drifted by 60 to 170 lines within a

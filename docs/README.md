@@ -61,8 +61,8 @@ flowchart TD
 | [PERMISSIONS.md](PERMISSIONS.md) | The **eleven**-tier role ladder (**eight** until 2026-09-13, when the three directorate tiers landed), the full capability matrix, the review state machine, the late-submission gate, and the **six** access systems layered on top — including the design-workshop viewer grant, the questionnaire visibility that follows it, the read-only inspector scope the `INSPECTOR` tier reaches a workshop through (§4.5, added 2026-08-27; this row said “four” until that day), and the oversight scope an Assistant or Regional Director monitors a workshop through (§4.6, added 2026-09-13; this row said “five” until 2026-09-16, and §4.6's own heading had called itself the sixth all along). Also the three rulings of 2026-09-15 — who may be OFFERED as a workshop's designer and why that set was narrower than the set who may write in one (closed on 2026-10-09, §4.4.5), who may appoint an inspector, and why the officer's designer picker had to be a fifth door rather than a widened gate. And the two rulings of 2026-10-09: **account provisioning** — who creates password accounts, sets temporary passwords, requires a change and issues password links, and what only an admin still does — with the **forced password change the server now enforces** (§1.2); and **serving on one workshop** — the administering tiers appointed as a workshop's designer, director or inspector, and the separation of duties that keeps an inspection or a supervision independent of the work (§4.8) |
 | [COVERAGE_MAP.md](COVERAGE_MAP.md) | The coverage view of `/map`: what each district is shaded by, the gaps, the Survey of India outline and the shape checks that hold it, LGD codes resolved at read time, unmatched places and their aliases, and the Field Repository row that is never summed in |
 | [CRAFTS.md](CRAFTS.md) | The craft master list: the categories, sub-categories and crafts both portals share, the catalogue every picker reads, the craft routes, and how crafts recorded before the list are mapped onto it |
-| [RELEASE.md](RELEASE.md) | Every release from 0.0.1 to 0.0.10 and what it shipped, and the data steps a release takes on production after its migrations, such as mapping crafts onto the master list |
-| [INVARIANTS.md](INVARIANTS.md) | The reasons and traps that used to be code comments, kept since the 0.0.10 no-comments rule: the queue unit name, the Prisma split, additive migrations under blue/green, memory ceilings, the work directory, rank gaps |
+| [RELEASE.md](RELEASE.md) | Every release from 0.0.1 to 0.0.11 and what it shipped, and the data steps a release takes on production after its migrations, such as mapping crafts onto the master list |
+| [INVARIANTS.md](INVARIANTS.md) | The reasons and traps that used to be code comments, kept since the 0.0.10 no-comments rule: the queue unit name, the Prisma split, additive migrations under blue/green, memory ceilings, the work directory, rank gaps, the one rule for where a tool shows up |
 | [MEDIA_PIPELINE.md](MEDIA_PIPELINE.md) | Every tactic both clients use to get a photograph off a phone on a bad network without losing it, and the on-device quality checks that run before it leaves |
 | [TRANSCRIPT_PIPELINE.md](TRANSCRIPT_PIPELINE.md) | Scribe v2 turns, Gemini 3.8 Flash English, the transcript API, its switches, budget, keys and backfill |
 | [EDGE-COMPUTE-SPLIT.md](EDGE-COMPUTE-SPLIT.md) | Which work runs on the machine a designer is holding and which needs the server, feature by feature — the measurement paths, sketch rectification, the vendored tracer — and what is still doable with no signal |
@@ -243,24 +243,21 @@ It verifies the four things about documentation that *can* be verified:
 It deliberately does **not** check whether a sentence is true. Nothing can. That is what each
 document's own maintenance table is for.
 
-**Mermaid, for certainty.** The lint above is structural. A real parse needs `mermaid` itself, which
-is not a dependency of this repository, so it is run out-of-tree when diagrams change:
+**Mermaid, for certainty.** The lint above is structural. The real render runs in CI since 0.0.10:
+`.github/workflows/readme-check.yml` extracts every mermaid block in `README.md`, `docs/**` and
+`.claude/skills/**`, renders each one with mermaid-cli on the mermaid release github.com ships, and
+then opens every file that has a block on github.com with Playwright at the pushed commit. A block
+fails when GitHub's viewer shows an error or draws no diagram, when a label prints an HTML tag or
+entity raw, or when a label's text is wider than its box. Every block starts with the kit's
+`%%{init}%%`, with the font stack as the top-level `fontFamily`, so diagrams read on GitHub's light and
+dark themes alike and every box is sized for the font it draws
+([readme-kit/README_STYLE.md](readme-kit/README_STYLE.md)). The out-of-tree `mermaid.parse` run this
+paragraph used to describe (last run 2026-08-07) is retired.
 
-```bash
-mkdir /tmp/mmd && cd /tmp/mmd && npm init -y && npm i mermaid jsdom
-# Set window/document/DOMParser/Element/Node/HTMLElement/SVGElement/NodeFilter/getComputedStyle
-# from a JSDOM instance, then for each fenced block:  await mermaid.parse(block)
-```
-
-Two things that run found and the structural lint would not have: a semicolon inside a sequence
-message, and HTML entities (`&lt;`) inside one. **Normalise CRLF before matching** — half these files
+Two traps the structural lint would not catch, and the render does: a semicolon inside a sequence
+message, and HTML entities (`&lt;`) inside one. **Normalise CRLF before matching**: half these files
 are CRLF, and a `\n`-anchored regex silently finds zero blocks in them, which is exactly how ten
-diagrams went unvalidated while the run looked green.
-
-**Every mermaid block in this documentation set parsed on the last out-of-tree run, 2026-08-07** —
-`mermaid.parse` against a JSDOM global, over every fenced block in `docs/*.md` and `../README.md`,
-zero failures. The block *count* is deliberately not written here: the checker prints it on every
-run, and a number in this paragraph would be wrong the next time anybody draws a diagram.
+diagrams went unvalidated while a run looked green.
 
 Findings in documents owned by another workstream are reported as **warnings**, not failures, so the
 exit code speaks for the documents whose owner can act on it.
@@ -274,10 +271,12 @@ document above**, and listing them is the least dishonest thing to do about that
 module is invisible to the checker, to a new reader, and to the review triggers that are supposed to
 catch drift.
 
-Every one of them carries a substantial module docstring or file header, and **that header is the
-interim source of truth** — this repository's convention is that the reasoning lives next to the
-code, so the gap is a discoverability gap rather than an explanation gap. The third column is the
-thing a document would otherwise be relied on to tell you, and it was checked rather than assumed.
+Until 0.0.10 each of them carried a substantial module docstring or file header that served as the
+interim source of truth. The source has carried no comments since the 0.0.10 strip, so that text is
+now read at tag `v0.0.9` (`git show v0.0.9:<file>`), and the reasons that still bind the code are in
+[INVARIANTS.md](INVARIANTS.md). The table here is the description that remains in the tree. The third
+column is the thing a document would otherwise be relied on to tell you, and it was checked rather
+than assumed.
 
 ### Frontend — `frontend/lib/`
 
