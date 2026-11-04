@@ -24,12 +24,11 @@ def test_the_ceiling_and_the_count_are_read_together(monkeypatch):
     started: list[str] = []
     both = asyncio.Event()
 
-    async def settings_row():
+    async def settings_row() -> None:
         started.append("settings")
         if len(started) == 2:
             both.set()
         await asyncio.wait_for(both.wait(), 1)
-        return None
 
     async def used_today(user_id, day):
         started.append("used")
