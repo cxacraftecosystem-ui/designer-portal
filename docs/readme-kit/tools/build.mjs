@@ -320,11 +320,16 @@ function build(configPath, outDir) {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   mkdirSync(outDir, { recursive: true });
   const written = [];
-  for (const [name, fn] of Object.entries(TEMPLATES)) {
-    if (!(name in config)) continue;
+  for (const f of readdirSync(outDir)) if (/-(light|dark)\.svg$/.test(f)) rmSync(join(outDir, f));
+  for (const [key, value] of Object.entries(config)) {
+    const [name, variant] = key.split(":");
+    const fn = TEMPLATES[name];
+    if (!fn) continue;
+    if (variant !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(variant)) throw new Error(`kit.json: "${key}" needs a lower-case variant name after the colon`);
+    const base = variant ? `${name}-${variant}` : name;
     for (const [mode, t] of Object.entries(THEMES)) {
-      const file = join(outDir, `${name}-${mode}.svg`);
-      writeFileSync(file, fn(t, config[name]));
+      const file = join(outDir, `${base}-${mode}.svg`);
+      writeFileSync(file, fn(t, value));
       written.push(file);
     }
   }

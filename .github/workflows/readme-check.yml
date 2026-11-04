@@ -5,11 +5,15 @@ on:
     paths:
       - "README.md"
       - "docs/readme-kit/**"
+      - "docs/**/*.md"
+      - ".claude/skills/**"
       - ".github/workflows/readme-check.yml"
   push:
     paths:
       - "README.md"
       - "docs/readme-kit/**"
+      - "docs/**/*.md"
+      - ".claude/skills/**"
       - ".github/workflows/readme-check.yml"
   workflow_dispatch:
 
@@ -70,7 +74,7 @@ jobs:
           status=0
           while IFS=$'\t' read -r name origin; do
             [ -n "$name" ] || continue
-            if mmdc -q -p "$RUNNER_TEMP/puppeteer.json" -i "$out/$name" -o "$out/${name%.mmd}.svg"; then
+            if mmdc -q -b transparent -p "$RUNNER_TEMP/puppeteer.json" -i "$out/$name" -o "$out/${name%.mmd}.svg"; then
               echo "ok    $origin"
             else
               echo "::error::$origin: the mermaid block does not render"
@@ -96,7 +100,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           npm install --prefix "$RUNNER_TEMP/pp" --no-save "puppeteer@${PUPPETEER_VERSION}"
-          PUPPETEER_DIR="$RUNNER_TEMP/pp/node_modules" node docs/readme-kit/tools/preview.mjs "$RUNNER_TEMP/preview" "$RUNNER_TEMP/mermaid"
+          PUPPETEER_DIR="$RUNNER_TEMP/pp/node_modules" node docs/readme-kit/tools/preview.mjs "$RUNNER_TEMP/preview" "$RUNNER_TEMP/mermaid" "$RUNNER_TEMP/rendered"
 
       - name: Upload the preview
         if: ${{ !cancelled() }}

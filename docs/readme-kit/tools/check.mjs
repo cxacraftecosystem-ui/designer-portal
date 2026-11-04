@@ -24,7 +24,14 @@ function walk(dir, pred, out = []) {
 }
 
 function markdownFiles(extra) {
-  const files = [join(REPO, "README.md"), ...walk(KIT, (p) => p.endsWith(".md")), ...extra.map((p) => resolve(p))];
+  const md = (p) => p.endsWith(".md");
+  const files = [
+    join(REPO, "README.md"),
+    ...walk(KIT, md),
+    ...walk(join(REPO, "docs"), md).sort(),
+    ...walk(join(REPO, ".claude", "skills"), md).sort(),
+    ...extra.map((p) => resolve(p)),
+  ];
   return [...new Set(files.filter(existsSync))];
 }
 

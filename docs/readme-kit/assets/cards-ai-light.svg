@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" role="img" aria-label="The AI suite: transcription, translation, Ask, drafts, quote cards, glossary, measurement and reading, on-device models, and the budget">
+<title>The AI suite: transcription, translation, Ask, drafts, quote cards, glossary, measurement and reading, on-device models, and the budget</title>
+<defs>
+<style>.d{font-family:'Plus Jakarta Sans','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}.s{font-family:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}.m{font-family:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace}.rise{animation:rise .9s cubic-bezier(.2,.7,.2,1) both}@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}.shine{animation:shine 5.6s cubic-bezier(.5,0,.3,1) infinite}@keyframes shine{0%{transform:translateX(0)}45%,100%{transform:translateX(562.7px)}}.r0{animation-delay:0.1s}.r1{animation-delay:0.2s}.r2{animation-delay:0.3s}.r3{animation-delay:0.5s}.r4{animation-delay:0.6s}.r5{animation-delay:0.7s}@media (prefers-reduced-motion:reduce){*{animation:none!important}.smil{display:none}.sweep{fill:url(#still)}}</style>
+<radialGradient id="halo"><stop offset="0" stop-color="#AA69E9" stop-opacity=".16"/><stop offset="1" stop-color="#AA69E9" stop-opacity="0"/></radialGradient>
+<linearGradient id="glint" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#762CB1" stop-opacity="0"/><stop offset=".5" stop-color="#762CB1"/><stop offset="1" stop-color="#CD9200" stop-opacity="0"/></linearGradient>
+<clipPath id="k0"><rect x="6" y="6" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k1"><rect x="408.7" y="6" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k2"><rect x="811.3" y="6" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k3"><rect x="6" y="240" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k4"><rect x="408.7" y="240" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k5"><rect x="811.3" y="240" width="382.7" height="214" rx="18"/></clipPath>
+</defs>
+<g class="rise r0">
+<rect x="6" y="6" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k0)"><circle cx="358.7" cy="26" r="120" fill="url(#halo)"/><rect x="6" y="6" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:0s" x="-174" y="6" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="30" y="30" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(42 42) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></g>
+<text x="364.7" y="52" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">SPEECH</text>
+<text x="30" y="116" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Scribe v2</text>
+<text x="30" y="146" class="s" fill="#615D7A" font-size="15">ElevenLabs speech-to-text with speaker</text><text x="30" y="169" class="s" fill="#615D7A" font-size="15">turns, word timings and key terms from</text><text x="30" y="192" class="s" fill="#615D7A" font-size="15">the craft. USD 0.22 an hour.</text>
+</g>
+<g class="rise r1">
+<rect x="408.7" y="6" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k1)"><circle cx="761.3" cy="26" r="120" fill="url(#halo)"/><rect x="408.7" y="6" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:0.7s" x="228.7" y="6" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="432.7" y="30" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(444.7 42) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></g>
+<text x="767.3" y="52" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">LANGUAGE</text>
+<text x="432.7" y="116" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Gemini 3.8 Flash</text>
+<text x="432.7" y="146" class="s" fill="#615D7A" font-size="15">One structured pass per transcript:</text><text x="432.7" y="169" class="s" fill="#615D7A" font-size="15">English for every turn, a summary,</text><text x="432.7" y="192" class="s" fill="#615D7A" font-size="15">quotes and craft terms.</text>
+</g>
+<g class="rise r2">
+<rect x="811.3" y="6" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k2)"><circle cx="1164" cy="26" r="120" fill="url(#halo)"/><rect x="811.3" y="6" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:1.4s" x="631.3" y="6" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="835.3" y="30" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(847.3 42) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></g>
+<text x="1170" y="52" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">ASK</text>
+<text x="835.3" y="116" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Ask this interview</text>
+<text x="835.3" y="146" class="s" fill="#615D7A" font-size="15">Answers come only from the transcript,</text><text x="835.3" y="169" class="s" fill="#615D7A" font-size="15">with the moments they came from.</text><text x="835.3" y="192" class="s" fill="#615D7A" font-size="15">Otherwise it says so.</text>
+</g>
+<g class="rise r3">
+<rect x="6" y="240" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k3)"><circle cx="358.7" cy="260" r="120" fill="url(#halo)"/><rect x="6" y="240" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:2.1s" x="-174" y="240" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="30" y="264" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(42 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z"/><path d="m18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18"/><path d="m2.3 2.3 7.286 7.286"/><circle cx="11" cy="11" r="2"/></g>
+<text x="364.7" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">DRAFT</text>
+<text x="30" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Autodraft and refine</text>
+<text x="30" y="380" class="s" fill="#615D7A" font-size="15">Draft questionnaire answers from a</text><text x="30" y="403" class="s" fill="#615D7A" font-size="15">recording, or refine a transcript, and</text><text x="30" y="426" class="s" fill="#615D7A" font-size="15">approve before anything is saved.</text>
+</g>
+<g class="rise r4">
+<rect x="408.7" y="240" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k4)"><circle cx="761.3" cy="260" r="120" fill="url(#halo)"/><rect x="408.7" y="240" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:2.8s" x="228.7" y="240" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="432.7" y="264" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(444.7 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></g>
+<text x="767.3" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">VISION</text>
+<text x="432.7" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Measure and read</text>
+<text x="432.7" y="380" class="s" fill="#615D7A" font-size="15">Grid measurement, photo captions and</text><text x="432.7" y="403" class="s" fill="#615D7A" font-size="15">identity-card OCR, with on-device text</text><text x="432.7" y="426" class="s" fill="#615D7A" font-size="15">recognition on Android.</text>
+</g>
+<g class="rise r5">
+<rect x="811.3" y="240" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k5)"><circle cx="1164" cy="260" r="120" fill="url(#halo)"/><rect x="811.3" y="240" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:3.5s" x="631.3" y="240" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="835.3" y="264" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(847.3 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></g>
+<text x="1170" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">ON DEVICE</text>
+<text x="835.3" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Models on the phone</text>
+<text x="835.3" y="380" class="s" fill="#615D7A" font-size="15">On-device dictation, sherpa-onnx speech</text><text x="835.3" y="403" class="s" fill="#615D7A" font-size="15">and Gemma 4 on LiteRT, so help works</text><text x="835.3" y="426" class="s" fill="#615D7A" font-size="15">with the radio off.</text>
+</g>
+</svg>

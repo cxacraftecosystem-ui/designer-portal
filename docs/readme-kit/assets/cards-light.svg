@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" role="img" aria-label="What the portal does: capture, offline, reports, review, media and access">
-<title>What the portal does: capture, offline, reports, review, media and access</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="694" viewBox="0 0 1200 694" role="img" aria-label="What the portal does: capture, offline, reports, interviews, questionnaires, AI help, data, the Ministry and security">
+<title>What the portal does: capture, offline, reports, interviews, questionnaires, AI help, data, the Ministry and security</title>
 <defs>
-<style>.d{font-family:'Plus Jakarta Sans','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}.s{font-family:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}.m{font-family:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace}.rise{animation:rise .9s cubic-bezier(.2,.7,.2,1) both}@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}.shine{animation:shine 5.6s cubic-bezier(.5,0,.3,1) infinite}@keyframes shine{0%{transform:translateX(0)}45%,100%{transform:translateX(562.7px)}}.r0{animation-delay:0.1s}.r1{animation-delay:0.2s}.r2{animation-delay:0.3s}.r3{animation-delay:0.5s}.r4{animation-delay:0.6s}.r5{animation-delay:0.7s}@media (prefers-reduced-motion:reduce){*{animation:none!important}.smil{display:none}.sweep{fill:url(#still)}}</style>
+<style>.d{font-family:'Plus Jakarta Sans','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}.s{font-family:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}.m{font-family:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace}.rise{animation:rise .9s cubic-bezier(.2,.7,.2,1) both}@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}.shine{animation:shine 5.6s cubic-bezier(.5,0,.3,1) infinite}@keyframes shine{0%{transform:translateX(0)}45%,100%{transform:translateX(562.7px)}}.r0{animation-delay:0.1s}.r1{animation-delay:0.2s}.r2{animation-delay:0.3s}.r3{animation-delay:0.5s}.r4{animation-delay:0.6s}.r5{animation-delay:0.7s}.r6{animation-delay:0.8s}.r7{animation-delay:0.9s}.r8{animation-delay:1.1s}@media (prefers-reduced-motion:reduce){*{animation:none!important}.smil{display:none}.sweep{fill:url(#still)}}</style>
 <radialGradient id="halo"><stop offset="0" stop-color="#AA69E9" stop-opacity=".16"/><stop offset="1" stop-color="#AA69E9" stop-opacity="0"/></radialGradient>
 <linearGradient id="glint" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#762CB1" stop-opacity="0"/><stop offset=".5" stop-color="#762CB1"/><stop offset="1" stop-color="#CD9200" stop-opacity="0"/></linearGradient>
 <clipPath id="k0"><rect x="6" y="6" width="382.7" height="214" rx="18"/></clipPath>
@@ -10,6 +10,9 @@
 <clipPath id="k3"><rect x="6" y="240" width="382.7" height="214" rx="18"/></clipPath>
 <clipPath id="k4"><rect x="408.7" y="240" width="382.7" height="214" rx="18"/></clipPath>
 <clipPath id="k5"><rect x="811.3" y="240" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k6"><rect x="6" y="474" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k7"><rect x="408.7" y="474" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k8"><rect x="811.3" y="474" width="382.7" height="214" rx="18"/></clipPath>
 </defs>
 <g class="rise r0">
 <rect x="6" y="6" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
@@ -36,33 +39,60 @@
 <g transform="translate(847.3 42) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></g>
 <text x="1170" y="52" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">REPORTS</text>
 <text x="835.3" y="116" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">.docx and PDF</text>
-<text x="835.3" y="146" class="s" fill="#615D7A" font-size="15">One shared document model renders prose,</text><text x="835.3" y="169" class="s" fill="#615D7A" font-size="15">tables and photographs to Word and PDF,</text><text x="835.3" y="192" class="s" fill="#615D7A" font-size="15">on the server and on the phone.</text>
+<text x="835.3" y="146" class="s" fill="#615D7A" font-size="15">One document model renders prose,</text><text x="835.3" y="169" class="s" fill="#615D7A" font-size="15">tables, maps and photographs to Word and</text><text x="835.3" y="192" class="s" fill="#615D7A" font-size="15">PDF, on the server and on the phone.</text>
 </g>
 <g class="rise r3">
 <rect x="6" y="240" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
 <g clip-path="url(#k3)"><circle cx="358.7" cy="260" r="120" fill="url(#halo)"/><rect x="6" y="240" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:2.1s" x="-174" y="240" width="180" height="3" fill="url(#glint)"/></g>
 <rect x="30" y="264" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
-<g transform="translate(42 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></g>
-<text x="364.7" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">REVIEW</text>
-<text x="30" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Rounds and inspection</text>
-<text x="30" y="380" class="s" fill="#615D7A" font-size="15">Reviewers rate, comment and clear each</text><text x="30" y="403" class="s" fill="#615D7A" font-size="15">round, and every decision is kept with</text><text x="30" y="426" class="s" fill="#615D7A" font-size="15">who made it and when.</text>
+<g transform="translate(42 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></g>
+<text x="364.7" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">INTERVIEWS</text>
+<text x="30" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Heard, then read in English</text>
+<text x="30" y="380" class="s" fill="#615D7A" font-size="15">Scribe v2 writes speaker turns, Gemini</text><text x="30" y="403" class="s" fill="#615D7A" font-size="15">3.8 Flash translates them, and the</text><text x="30" y="426" class="s" fill="#615D7A" font-size="15">viewer plays them word by word.</text>
 </g>
 <g class="rise r4">
 <rect x="408.7" y="240" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
 <g clip-path="url(#k4)"><circle cx="761.3" cy="260" r="120" fill="url(#halo)"/><rect x="408.7" y="240" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:2.8s" x="228.7" y="240" width="180" height="3" fill="url(#glint)"/></g>
 <rect x="432.7" y="264" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
-<g transform="translate(444.7 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></g>
-<text x="767.3" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">MEDIA</text>
-<text x="432.7" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Interviews that transcribe</text>
-<text x="432.7" y="380" class="s" fill="#615D7A" font-size="15">Recordings, photos and video upload</text><text x="432.7" y="403" class="s" fill="#615D7A" font-size="15">resumably and interviews come back as</text><text x="432.7" y="426" class="s" fill="#615D7A" font-size="15">editable, speaker-labelled transcripts.</text>
+<g transform="translate(444.7 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13.4 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7.4"/><path d="M2 6h4"/><path d="M2 10h4"/><path d="M2 14h4"/><path d="M2 18h4"/><path d="M21.378 5.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/></g>
+<text x="767.3" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">QUESTIONNAIRES</text>
+<text x="432.7" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">One engine, four clients</text>
+<text x="432.7" y="380" class="s" fill="#615D7A" font-size="15">Forms, sessions, takes and answers share</text><text x="432.7" y="403" class="s" fill="#615D7A" font-size="15">one engine and one parity registry</text><text x="432.7" y="426" class="s" fill="#615D7A" font-size="15">across both portals.</text>
 </g>
 <g class="rise r5">
 <rect x="811.3" y="240" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
 <g clip-path="url(#k5)"><circle cx="1164" cy="260" r="120" fill="url(#halo)"/><rect x="811.3" y="240" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:3.5s" x="631.3" y="240" width="180" height="3" fill="url(#glint)"/></g>
 <rect x="835.3" y="264" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
-<g transform="translate(847.3 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></g>
-<text x="1170" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">ACCESS</text>
-<text x="835.3" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Who may do what</text>
-<text x="835.3" y="380" class="s" fill="#615D7A" font-size="15">Roles, consent and scoped data grants</text><text x="835.3" y="403" class="s" fill="#615D7A" font-size="15">are enforced on every route, web and</text><text x="835.3" y="426" class="s" fill="#615D7A" font-size="15">Android alike.</text>
+<g transform="translate(847.3 276) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></g>
+<text x="1170" y="286" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">AI HELP</text>
+<text x="835.3" y="350" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Ask, draft, quote</text>
+<text x="835.3" y="380" class="s" fill="#615D7A" font-size="15">Ask an interview, draft answers from it,</text><text x="835.3" y="403" class="s" fill="#615D7A" font-size="15">make quote cards and grow a craft</text><text x="835.3" y="426" class="s" fill="#615D7A" font-size="15">glossary, inside a monthly budget.</text>
+</g>
+<g class="rise r6">
+<rect x="6" y="474" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k6)"><circle cx="358.7" cy="494" r="120" fill="url(#halo)"/><rect x="6" y="474" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:4.2s" x="-174" y="474" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="30" y="498" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(42 510) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></g>
+<text x="364.7" y="520" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">DATA</text>
+<text x="30" y="584" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Browse and export</text>
+<text x="30" y="614" class="s" fill="#615D7A" font-size="15">A data browser, Excel and CSV reports,</text><text x="30" y="637" class="s" fill="#615D7A" font-size="15">streamed datasets and transcripts in</text><text x="30" y="660" class="s" fill="#615D7A" font-size="15">every export.</text>
+</g>
+<g class="rise r7">
+<rect x="408.7" y="474" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k7)"><circle cx="761.3" cy="494" r="120" fill="url(#halo)"/><rect x="408.7" y="474" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:4.9s" x="228.7" y="474" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="432.7" y="498" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(444.7 510) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" x2="21" y1="22" y2="22"/><line x1="6" x2="6" y1="18" y2="11"/><line x1="10" x2="10" y1="18" y2="11"/><line x1="14" x2="14" y1="18" y2="11"/><line x1="18" x2="18" y1="18" y2="11"/><polygon points="12 2 20 7 4 7"/></g>
+<text x="767.3" y="520" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">MINISTRY</text>
+<text x="432.7" y="584" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Plans, orders, inspections</text>
+<text x="432.7" y="614" class="s" fill="#615D7A" font-size="15">Sanction orders, the annual plan,</text><text x="432.7" y="637" class="s" fill="#615D7A" font-size="15">inspections, ratings and the dashboard,</text><text x="432.7" y="660" class="s" fill="#615D7A" font-size="15">on the web.</text>
+</g>
+<g class="rise r8">
+<rect x="811.3" y="474" width="382.7" height="214" rx="18" fill="#FFFFFF" stroke="#E4E2EF"/>
+<g clip-path="url(#k8)"><circle cx="1164" cy="494" r="120" fill="url(#halo)"/><rect x="811.3" y="474" width="382.7" height="3" fill="#E7D5FE"/><rect class="shine" style="animation-delay:5.6s" x="631.3" y="474" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="835.3" y="498" width="48" height="48" rx="14" fill="#F9F5FF" stroke="#E7D5FE"/>
+<g transform="translate(847.3 510) scale(1)" fill="none" stroke="#762CB1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></g>
+<text x="1170" y="520" class="m" fill="#615D7A" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">SECURITY</text>
+<text x="835.3" y="584" class="d" fill="#1E1B2E" font-size="20" font-weight="700" letter-spacing="-.3">Who may do what</text>
+<text x="835.3" y="614" class="s" fill="#615D7A" font-size="15">Eleven roles, two-factor sign-in,</text><text x="835.3" y="637" class="s" fill="#615D7A" font-size="15">consent before any send and scoped</text><text x="835.3" y="660" class="s" fill="#615D7A" font-size="15">grants on every route.</text>
 </g>
 </svg>

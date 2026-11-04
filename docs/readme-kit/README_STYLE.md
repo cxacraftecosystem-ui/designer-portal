@@ -1,6 +1,6 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
-  <img src="assets/hero-light.svg" width="100%" alt="Design Prototype Workshop: capture every stage of a craft design workshop and leave with the finished report">
+  <img src="assets/hero-light.svg" width="100%" alt="The hero template, as this repository fills it">
 </picture>
 
 # README style guide
@@ -40,7 +40,7 @@ paragraph would do, motion that explains or delights and never distracts.
 |---|---|
 | `README_STYLE.md` | this guide |
 | `kit.json` | the repo's content: every word that appears in an SVG |
-| `assets/*-light.svg`, `assets/*-dark.svg` | generated templates, one pair per template |
+| `assets/*-light.svg`, `assets/*-dark.svg` | generated templates, one pair per `kit.json` key |
 | `assets/icons/*.svg` | 48 px heading icons, one file that works on both themes |
 | `tools/build.mjs` | generates `assets/` from `kit.json` |
 | `tools/icons.mjs` | icon geometry (Lucide, ISC licence, see `LICENSE-lucide.txt`) |
@@ -153,22 +153,22 @@ All templates are 1200 px wide and scale to the column with `width="100%"`.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/stats-dark.svg">
-  <img src="assets/stats-light.svg" width="100%" alt="At a glance: three capture tiers, two clients, two report formats, reports offline">
+  <img src="assets/stats-light.svg" width="100%" alt="The stats template, as this repository fills it">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/cards-dark.svg">
-  <img src="assets/cards-light.svg" width="100%" alt="What the portal does: capture, offline, reports, review, media and access">
+  <img src="assets/cards-light.svg" width="100%" alt="The cards template, as this repository fills it">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/pipeline-dark.svg">
-  <img src="assets/pipeline-light.svg" width="100%" alt="How a workshop flows: capture, sync, review, report, archive">
+  <img src="assets/pipeline-light.svg" width="100%" alt="The pipeline template, as this repository fills it">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/timeline-dark.svg">
-  <img src="assets/timeline-light.svg" width="100%" alt="A workshop from sanction to report">
+  <img src="assets/timeline-light.svg" width="100%" alt="The timeline template, as this repository fills it">
 </picture>
 
 | Template | Height | `kit.json` keys | Motion | Limits |
@@ -183,6 +183,11 @@ All templates are 1200 px wide and scale to the column with `width="100%"`.
 | `icons` | 48 | `"all"` or a list of names | none | one file for both themes |
 
 `label` becomes both `<title>` and `aria-label`; write it as the sentence a screen reader should say.
+
+A template can be used more than once. A key with a variant after a colon builds a second pair: `"cards:ai"`
+writes `assets/cards-ai-light.svg` and `assets/cards-ai-dark.svg`, `"pipeline:transcript"` writes
+`assets/pipeline-transcript-*.svg`. Variant names are lower-case words joined by hyphens. `build.mjs` deletes
+every generated pair before it writes, so a key removed from `kit.json` removes its files too.
 
 Stats are for design facts that do not drift (tiers, platforms, formats). A count that changes with the
 code (models, endpoints, tests) belongs in `docs/REPO_FACTS.md`, never in an image.
@@ -387,7 +392,7 @@ and the generated `assets/` differ. Improve the kit in designer-portal first, th
 
 ## 12. CI
 
-`.github/workflows/readme-check.yml` runs on any change to `README.md`, the kit or the workflow:
+`.github/workflows/readme-check.yml` runs on any change to `README.md`, a Markdown file under `docs/` or `.claude/skills/`, the kit or the workflow. It checks every one of those files, not only the README:
 
 | Step | Fails when |
 |---|---|
@@ -395,10 +400,12 @@ and the generated `assets/` differ. Improve the kit in designer-portal first, th
 | SVG rules | over 60 KB; `<script>`, `<foreignObject>`, `<image>`, event attributes, external `href`/`url()`, `@import`, `@font-face`; no `<title>`, `aria-label` or `role="img"`; animated without a reduced-motion rule |
 | xmllint | an SVG is not well-formed XML |
 | Image references | a local image is missing, a GIF is over 3 MB, a raster is over 1 MB, a `<picture>` lacks the dark source or `alt` |
-| Mermaid | any block in `README.md` or the kit fails to render in mermaid-cli; a block without `%%{init}%%` is a warning (`--strict` makes it an error) |
+| Mermaid | any block in `README.md`, `docs/**` or `.claude/skills/**` fails to render in mermaid-cli; a block without `%%{init}%%` is a warning (`--strict` makes it an error) |
 | GitHub render | `gh api markdown` escapes an HTML tag, leaks a code fence, or drops a `<picture>` or mermaid block |
 
-The `readme-preview` artifact holds PNGs of every asset and diagram in light, dark and reduced motion.
+The `readme-preview` artifact holds PNGs of every asset and diagram in light, dark and reduced motion, and
+full-page screenshots of `README.md` and `docs/README.md` as GitHub renders them (`gh api markdown`), with
+every mermaid block drawn in place and the `<picture>` sources chosen by the light or dark colour scheme.
 
 ## 13. How this is kept true
 
@@ -411,5 +418,5 @@ The `readme-preview` artifact holds PNGs of every asset and diagram in light, da
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/footer-dark.svg">
-  <img src="assets/footer-light.svg" width="100%" alt="Made for the people who make things by hand. AI CoE, IIT Kharagpur, Ministry of Textiles.">
+  <img src="assets/footer-light.svg" width="100%" alt="The footer template, as this repository fills it">
 </picture>
