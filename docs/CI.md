@@ -132,10 +132,10 @@ Three properties of that wait are worth knowing before you rely on it:
 | 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → ship the venv the runner built from `requirements.lock`, Prisma client inside, at the box's own paths (the box runs no `pip`) → `backend/deploy/blue_green.sh release`: `prisma migrate deploy` with the live API still serving → start the release on the idle loopback port → poll its `/health` (ten minutes) → **switch nginx** → stop the old port, **flip the `current` symlink**, restart `fieldrepo-queue`. See §1.2 for the release layout and the rollback command. |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** (and, since 2026-10-09, *warn* when the project's Node.js Version differs from the build's major or the pulled env holds a database credential) → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → `vercel alias set` onto the production alias → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 25 → `compileDebugKotlin` → `testDebugUnitTest` plus the four `:core-*` engine suites → `lintDebug` (advisory) → `assembleDebug` → upload APK |
-| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Four independent jobs plus a packaging job. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is the fourth and is deliberately advisory** — a `postgres:17` service container (production's major), `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. |
+| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Fourteen independent jobs. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is deliberately advisory** — a `pgvector/pgvector:pg17` service container (production's major), `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. The other ten are just as red when they fail and just as outside `GATING_JOBS`: `Map coverage view in a browser`, `Questionnaire screens in a browser`, `Transcript viewer in a browser` and `Back to the list in a browser` (Playwright specs for that screen in Chromium), `Questionnaire client against a real stack` (the web questionnaire client against a migrated database and the API on the runner), `Container and manifest packaging` (the manifest tree and compose profiles [DOCKER.md](DOCKER.md) describes), `Questionnaire parity (both portals)` (the shared manifests and `shared/questionnaire-features.json` against a checkout of documentation-portal), `Questionnaire unify migration` (the unify backfill on an empty Postgres), `Deploy scripts` (shellcheck, `backend/deploy/test_blue_green.sh` against stubs, and `scripts/ci/test_backup_freshness.sh` against fixed clocks) and `Comment stripper` (`scripts/tools/strip_comments.py`: its self-test, a stripped copy that still parses, then `--check`, which fails when any comment is left in code; 0.0.10). |
 
-**The other six workflows in this repository.** Naming them rather than counting them is the rule
-this document learned the hard way (§5); at 2026-09-03 there are **ten files** under
+**The other ten workflows in this repository.** Naming them rather than counting them is the rule
+this document learned the hard way (§5); at 0.0.11 (2026-11-04) there are **fourteen files** under
 `.github/workflows/`, and the four above are the pipeline.
 
 * `.github/workflows/keep-supabase-active.yml` — a nightly cron that pings Postgres so a free-tier
@@ -143,7 +143,8 @@ this document learned the hard way (§5); at 2026-09-03 there are **ten files** 
   2026-09-02** (while production sat on a provider that woke idle compute by itself), **live again
   since**: the two `schedule:` lines are restored and the database secret is set. It asserts nothing
   about the code either way — a red run means the runner could not reach the production database.
-  The file's header carries the story; the provider itself is named in `docs/ENVIRONMENT.md` only.
+  The file's header carried the story until the 0.0.10 comment strip; the provider itself is named in
+  `docs/ENVIRONMENT.md` only.
 * `.github/workflows/codeql.yml` — code scanning (CodeQL advanced setup, since 2026-10-17):
   Kotlin, JavaScript/TypeScript, Python and the workflows, on every pull request and push to `main`
   and weekly. The Kotlin job compiles `:app` the way `android-build.yml` does, AAR included, which
@@ -153,6 +154,20 @@ this document learned the hard way (§5); at 2026-09-03 there are **ten files** 
 * `.github/workflows/backup-db.yml`, `.github/workflows/monitor.yml`,
   `.github/workflows/e2e-live.yml` and `.github/workflows/android-emulator.yml` — all four added
   2026-09-03, all four described in §1.5. None of them is a gate.
+* `.github/workflows/google-signin-devices.yml` — drives the Google sign-in button in emulated
+  phones and tablets, on a push that touches the sign-in code or by hand (input `target`: `live`, `branch` or
+  `both`). Gates nothing.
+* `.github/workflows/recover-backend.yml` — run by hand only. Finds the API instance behind the
+  deploy security group (or by `EC2_HOST`), reports what it can see of it, and reboots it only when the
+  `reboot` input is ticked and SSH is unreachable. Gates nothing.
+* `.github/workflows/readme-check.yml` (0.0.10) — on a push or pull request that touches `README.md`,
+  a Markdown file under `docs/`, `.claude/skills/**` or the README kit. Rebuilds the kit's SVGs from
+  `docs/readme-kit/kit.json` and fails on drift, checks every SVG and image reference, renders every
+  mermaid block in mermaid-cli on the mermaid release github.com ships, renders each file through
+  `gh api markdown`, and then opens every file with a mermaid block on github.com with Playwright and
+  fails on a block GitHub cannot draw, a label that prints an HTML tag or entity raw, or a label wider
+  than its box. Screenshots come back as the `github-mermaid` and `readme-preview` artifacts. The rules
+  are in [readme-kit/README_STYLE.md](readme-kit/README_STYLE.md). Not in `GATING_JOBS`.
 
 ### Why the order is a dependency, not a preference
 
@@ -243,8 +258,8 @@ filter is exactly how `android-build.yml` ended up unreachable from a backend pu
 runs on **pull requests with no path filter at all**, which is the gap it was written for. Stages 1
 and 2 have no `pull_request` trigger whatever; stage 3 does, but filtered to `android/**` and its own
 workflow file — **so before `checks.yml` a pull request touching only `backend/` and `frontend/` ran
-nothing**, which is the hole, stated the way `android-build.yml`'s own header states it rather than
-as "none of the three run on PRs". **Its result now holds BOTH deploy stages back — corrected
+nothing**, which is the hole, stated the way `android-build.yml`'s own header stated it (until the
+0.0.10 comment strip) rather than as "none of the three run on PRs". **Its result now holds BOTH deploy stages back — corrected
 2026-09-03.** This sentence used to read *"Its result does not hold any of the other three back"*, and
 that was true until each deploy workflow grew a `wait-for-checks` job (§1.1). What has not changed is
 stage 3: `android-build.yml` chains on `workflow_run` with no conclusion filter and has no `needs:`,
@@ -482,37 +497,33 @@ and a developer's venv resolve to the **same** versions; before it, three machin
 the index offered that day, which is how an unpinned transitive dependency turns a green branch red
 overnight with no commit behind it.
 
-**It is compiled for Python 3.14 in a Linux container.** 3.14 because the owner's rule is the newest
+**It is compiled for Python 3.15 in a Linux container.** 3.15 because the owner's rule is the newest
 stable release of everything, production included, and because the Python that resolves the lock
-must be the Python that runs it. Since 2026-10-09 that is 3.14 everywhere: the EC2 box builds every
-release venv with **upstream CPython 3.14.8**, a python-build-standalone build pinned by URL and
-SHA-256 and installed root-owned under `/opt/cpython/3.14.8+20261009` (`BOX_PYTHON_*` in
+must be the Python that runs it. Since 0.0.7 (2026-11-01) that is 3.15 everywhere: every release venv, built on
+the runner, runs on **upstream CPython 3.15.2**, a python-build-standalone build pinned by URL and
+SHA-256 and installed on the box root-owned under `/opt/cpython/3.15.2+20261026` (`BOX_PYTHON_*` in
 `deploy-backend.yml`, the same four values in `infra/terraform/user_data.sh`, held together by
-`backend/tests/test_box_interpreter_pin.py`) — not Ubuntu 26.04's own 3.14.4 and not the deadsnakes
-PPA; `backend/Dockerfile` is on `python:3.14-slim-trixie`; CI's two backend jobs and `e2e-live.yml`
-run 3.14 with `check-latest`, and the backend job annotates any run whose patch has moved past the
-box's pin; and `backend/pyproject.toml` requires `>= 3.14`. **3.15.0 reached python.org on
-2026-10-09 and is not the target yet**: that evening setup-python's manifest stopped at
-3.15.0-rc.3, Docker Hub had only `python:3.15-rc`, PyYAML 6.0.3 (uvicorn[standard]'s, its newest)
-had no cp315 wheel, and prisma-client-py was never tested on it — python-build-standalone alone
-carried 3.15.0, from its 20261009 release. (httptools, uvicorn[standard]'s other compiled
-dependency, gained cp315 wheels in 0.9.0 at 19:53Z that day; the lock still pins 0.8.0.)
-`deploy-backend.yml`'s job env says how to raise the pin.
+`backend/tests/test_box_interpreter_pin.py`) — not Ubuntu 26.04's own Python and not the deadsnakes
+PPA; `backend/Dockerfile` is on `python:3.15-slim-trixie`; CI's backend jobs and `e2e-live.yml` run
+3.15 with `check-latest`, and the backend job warns on any run whose patch differs from the box's pin;
+and the lock's header says it was compiled with Python 3.15. `backend/pyproject.toml` requires `>= 3.14` (0.0.8), not `>= 3.15`, only so Dependabot's pip scan, which supports 3.10 to 3.14,
+keeps reading `backend/`; ruff targets `py315`. The step from 3.14.8 to 3.15 is in
+[RELEASE.md](RELEASE.md) (0.0.7), and the 2026-10-09 reasons it waited are in this file's history.
 Linux and not a developer's Windows venv, because a lock compiled there carries that platform's
 environment markers: `uvloop` is marker-excluded on Windows and would silently drop out of the
 production install. Refresh it deliberately, never as a side effect of something else:
 
 ```bash
-docker run --rm -v "$PWD/backend:/w" -w /w python:3.14-slim sh -c \
+docker run --rm -v "$PWD/backend:/w" -w /w python:3.15-slim sh -c \
   "pip install -q pip-tools && pip-compile -q --strip-extras --extra dev --upgrade \
    --output-file requirements.lock pyproject.toml"
 ```
 
 `--upgrade` moves every pin to its newest release, which is what the repository's "latest stable
 everywhere" rule asks for; drop it to keep every pin that still satisfies `pyproject.toml` and resolve
-only what a range change forces. `python:3.14-slim` suffices because every pin ships a cp314
-manylinux wheel (measured 2026-10-09); if a future dependency needs a compiler just to report its
-metadata, use `python:3.14`, the full image.
+only what a range change forces. `python:3.15-slim` suffices while every pin installs without a
+compiler; if a future dependency needs a compiler just to report its metadata, use
+`python:3.15`, the full image.
 
 Two traps, both already sprung once:
 
@@ -620,8 +631,8 @@ must be believed.
 It brings the stack up with a **bare `docker compose up -d`**, which is a dependency on a promise
 [DOCKER.md](DOCKER.md) makes and `checks.yml`'s packaging job asserts: a profileless `up` starts
 exactly three services — postgres, minio, and the one-shot bucket creator. Adding a fourth service
-outside a profile breaks this suite as well as that job. Its header records **two departures from the
-document it scripts**, both forced by CI rather than chosen: the **host ports are pinned in the job's
+outside a profile breaks this suite as well as that job. Its header recorded (until the 0.0.10 comment
+strip) **two departures from the document it scripts**, both forced by CI rather than chosen: the **host ports are pinned in the job's
 `env:`** (`55432` for Postgres, `9010` for MinIO) because 55442 is an override in a gitignored `.env`
 on one laptop and a runner has no such file, and it runs **`prisma migrate deploy`**, which the
 document does not mention because that laptop's database already had the schema.
@@ -761,7 +772,7 @@ preinstalled. Moving to the next image is the same one-word change in every job,
 | `BACKEND_ENV` | backend | The full contents of the production `backend/.env`: `DATABASE_URL`, `JWT_SECRET`, `AWS_*`, `OPENAI_API_KEY`, `GEMINI_API_KEYS`, `ELEVENLABS_*`, `DEEPGRAM_*`, `BACKEND_CORS_ORIGINS`, … Every key and its meaning is in [ENVIRONMENT.md](ENVIRONMENT.md). Easiest source of truth, over an SSM session on the box: `cat /home/ubuntu/app/current/backend/.env` — `current` is the symlink to the live release (§1.2), and each release carries the `.env` it was deployed with, so reading the path without `current/` reads whichever release happens to be there. The workflow pipes the value over the SSH tunnel; it is never on a command line. |
 | `VERCEL_TOKEN` | frontend | <https://vercel.com/account/tokens> → **Create Token**. Scope it to the **team that owns `designer-repository`**, not "Personal Account", or the CLI 403s. Set an expiry you will actually remember — the deploy starts failing with `Error: Not authorized` the day it lapses. This is the only genuinely sensitive value of the three Vercel ones. **Measured 2026-10-09 (token metadata, never the value):** the token this repository uses had USER scope and NO expiry, so a leak would give permanent control of every project on the account. Replacing it with a team-scoped, expiring one, then revoking the old one, is an open owner decision; record the expiry date here when it is made. |
 | `VERCEL_ORG_ID` | frontend | `team_pcTf4Alb2DCIwq2IZcdu00dS`. Also at Vercel → Team Settings → General → **Team ID**, or in the `.vercel/project.json` that a local `vercel link` writes inside `frontend/` (`orgId`). An identifier, not a credential. Both products live in this one team, so it is the one Vercel value that is the same either way — and therefore the one that cannot warn you. |
-| `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`designer-repository`** → Settings → General → **Project ID**. CORRECTED 2026-08-23: this row said `design-repository`, and the owner has confirmed the production target is **`designer-repository`** — measured, `designer-repository.vercel.app/login` answers 200 and `design-repository.vercel.app/login` answers 404. A root-path probe returns 200 for both and proves nothing. (Until 2026-10-09 this sentence named `designer-repository` on both sides, which made the evidence a tautology; `deploy-backend.yml`'s CORS comment keeps the original measurement.) The id was written by `vercel link`, whose `.vercel/project.json` recorded `projectName: designer-repository`; that file is gone from every checkout. **Corroborated 2026-10-09 against the live record instead:** the deployment the alias serves carries `githubRepo` `designer-portal` and a `deployedRunId` that is one of this repository's runs, which only a correct `VERCEL_PROJECT_ID` can produce. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `designer-repository.vercel.app`, so the correct target is also the only one the API will answer. |
+| `VERCEL_PROJECT_ID` | frontend | `prj_uRYcc64FRwcrkvMDZg9Gp7ZEtCoc` — Vercel → Project **`designer-repository`** → Settings → General → **Project ID**. CORRECTED 2026-08-23: this row said `design-repository`, and the owner has confirmed the production target is **`designer-repository`** — measured, `designer-repository.vercel.app/login` answers 200 and `design-repository.vercel.app/login` answers 404. A root-path probe returns 200 for both and proves nothing. (Until 2026-10-09 this sentence named `designer-repository` on both sides, which made the evidence a tautology; `deploy-backend.yml`'s CORS comment kept, until the 0.0.10 comment strip, the original measurement.) The id was written by `vercel link`, whose `.vercel/project.json` recorded `projectName: designer-repository`; that file is gone from every checkout. **Corroborated 2026-10-09 against the live record instead:** the deployment the alias serves carries `githubRepo` `designer-portal` and a `deployedRunId` that is one of this repository's runs, which only a correct `VERCEL_PROJECT_ID` can produce. An identifier, not a credential, but it is the **deploy target**: `prj_EzXN8hhGKpMciFBrZRdxpcgUUzN0` is the field repository's project, and publishing there succeeds — it replaces another product's live site with this one's build. `deploy-backend.yml` pins `BACKEND_CORS_ORIGINS` to `designer-repository.vercel.app`, so the correct target is also the only one the API will answer. |
 | `SUPABASE_DATABASE_URL` *or* `DATABASE_URL` | keep-alive cron — **live again since 2026-09-02** (dormant 2026-08-22 → 2026-09-02) | A PostgreSQL connection string for the keep-alive ping. `SUPABASE_DATABASE_URL` is **set** (2026-09-02): the provider hosting production today pauses idle free-tier projects, which is the case the cron exists for. The secret holds the session DSN; the script rewrites `:5432 → :6543` itself for a `.pooler.supabase.com` host so the nightly ping lands on the transaction pooler and never occupies a session slot. Unrelated to deploys either way. |
 
 > `.vercel/` is gitignored and is created by `vercel link`, so it is absent from a fresh clone —
@@ -915,14 +926,14 @@ same value in two places. Change one there and re-run this workflow (or push) to
   prints "N passed" in the step's own log on every run, so a total kept in prose can only ever be
   wrong between edits. This bullet carried "536 tests in about 31 s" long enough for both halves to
   go stale, and a replacement figure was then written here — on the same day, and it is gone again,
-  because the number had already moved: `checks.yml`'s `Unit specs` comment records **550** for this
+  because the number had already moved: `checks.yml`'s `Unit specs` comment recorded **550** for this
   exact selection on 2026-08-20, and running it here on 2026-08-20 with nothing on :3000 gives **564
   passed**. Nobody was wrong; sibling lanes were adding `*-unit.spec.ts` files between the two. That
   is the whole argument for keeping no total in prose, and it is why the two numbers in this sentence
   are the last ones — they are evidence that the figure rots within a day, not a figure to quote.
-  `checks.yml`'s `Unit specs` step takes the same line and says why; the one measurement it does keep
-  is of the EXCLUSION — what the pattern collects without the two excluded files, and how they fail —
-  which is there to justify the exclusion list and not to describe the suite's size. **The specs that
+  Until the 0.0.10 comment strip, `checks.yml`'s `Unit specs` step took the same line in a comment and
+  kept one measurement, of the EXCLUSION — what the pattern collects without the two excluded files,
+  and how they fail — to justify the exclusion list (`git show v0.0.9:.github/workflows/checks.yml`). **The specs that
   drive a screen are still gated by
   nothing**, and neither is `frontend/scripts/pw-smoke.mjs`. Those need a running app and a
   database, so they remain a genuinely larger job — but the cheap half is no longer an argument for

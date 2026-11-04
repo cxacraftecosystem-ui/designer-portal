@@ -17,7 +17,12 @@ Kotlin + Jetpack Compose Android client for the same FastAPI backend used by the
 - "Document using grid": length + breadth from one top-down photo, height from a side-on photo (`POST /api/media/analyze-measurement`), auto-filling the fields
 - Split long audio/video into `PART_1`, `PART_2`, … (re-mux at sync frames) before streaming upload, so each part stays under the transcription/upload limits and large videos never exhaust the heap
 - Preview previously-uploaded media with uploader/date provenance and a **Save to device** download
-- Create questionnaire interviews with `POST /api/questionnaire/interviews`
+- Create questionnaire interviews with `POST /api/questionnaire/interviews`; their recordings carry chips (section, form, artisans, dates, workshop, language, duration), and tapping one filters the list, offline too (0.0.4)
+- Tick **Transcribe and translate** per audio or video file at upload, or once for the batch; the choice travels through the offline outbox, and a master admin's auto switches pre-tick and lock it. Settings carries the auto switches and the backfill switch beside Voice Isolator (0.0.10)
+- Read a recording's transcript: Original, English or Side by side, the playing word lit (a video's transcript plays in a video player), reading mode, timeline marks, auto-follow; an opened transcript stays readable offline (0.0.4 to 0.0.10)
+- Edit or regenerate a transcript's summary, and Refine transcript or Refine & translate under a stored transcript (0.0.10)
+- Tool rows name every artisan linked to the tool, by the rule in `shared/tool-scope-vectors.json` (0.0.11)
+- Open a workshop's **AI suggestions**: every machine suggestion with its decision history, and transcripts registered as layers (0.0.10)
 - Send `Authorization: Bearer <token>` on every protected API call
 - Requests camera, audio and location permissions for field capture workflows
 
@@ -83,6 +88,11 @@ The Android OAuth client ID configured for the package is:
 ```
 
 ## Required password change
+
+> **Version numbers in this section are the old line's.** "0.0.6 to 0.0.15" and "the next build after
+> 0.0.15" name builds from before the version line was reset to 0.0.1 on 21 Oct 2026. Every build on
+> the new line (0.0.1, versionCode 27, through 0.0.11, versionCode 36) was cut after 2026-10-09 and
+> carries everything below.
 
 Accounts are provisioned on the web only (Users page); this app has no screens for creating accounts, setting someone's password or requiring a change. An account carrying `mustChangePassword` is held on the gate screen after sign-in — "Set your own password" on builds 0.0.6 to 0.0.15, "Set a new password" in the source since 2026-10-09; the gate screen dates from build 0.0.6. Since 2026-10-09 the server enforces the flag: while it is set, every route outside a short allow-list answers `401` with `X-Password-Change-Required: 1`. Treating that `401` as a live session rather than an expired one — keeping the token and every queued record, scan and photo, pausing the outbox, design-workshop and join-card sends and resuming them as soon as the new password is saved, re-reading `/me` and showing the gate — is in the source since 2026-10-09 and arrives with the next build published after 0.0.15, the latest published version as of that date (`appVersionName` in `app/build.gradle.kts`, tag `v0.0.15`). Builds 0.0.2 to 0.0.5 have no gate screen at all, so their users change the password on the web first.
 

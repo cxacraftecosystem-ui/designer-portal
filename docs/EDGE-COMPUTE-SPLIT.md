@@ -35,8 +35,8 @@ The rule this document therefore enforces on every surface:
    `frontend/components/designworkshop/PhotoMeasureField.tsx` and
    `android/app/src/main/java/com/designprototype/workshop/ui/designworkshop/DwPhotoMeasureField.kt`.
 5. **Do not queue a machine reading.** `ENQUEUEABLE_PROCESSING_REQUESTS` in
-   `backend/app/api/routes/media.py` refuses it by name, and its comment carries the incident: a
-   background worker once wrote a vision model's `lengthInches` straight onto a costed, printed
+   `backend/app/api/routes/media.py` refuses it by name. Its comment carried the incident until the
+   0.0.10 strip (`git show v0.0.9:backend/app/api/routes/media.py`): a background worker once wrote a vision model's `lengthInches` straight onto a costed, printed
    dimension nobody had ever seen.
 
 ---

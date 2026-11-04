@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-0.0.10-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.10">
+  <img src="https://img.shields.io/badge/Release-0.0.11-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.11">
   <img src="https://img.shields.io/badge/Web-Next.js_16-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Web: Next.js 16">
   <img src="https://img.shields.io/badge/API-FastAPI_·_Python_3.15-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="API: FastAPI on Python 3.15">
   <img src="https://img.shields.io/badge/Android-Kotlin_+_Compose-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Android: Kotlin and Compose">
@@ -302,7 +302,7 @@ stateDiagram-v2
 
 | Android | |
 |---|---|
-| Version | **0.0.10**, versionCode 35 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
+| Version | **0.0.11**, versionCode 36 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
 | Toolchain | AGP 9.5, Gradle 9.8.2, Kotlin 2.4, Compose, R8 with a 4 GB Gradle heap |
 | Network | CloudFront over HTTPS, dual-stack, so IPv6-only mobile networks work |
 | Updates | in-app release check against the published APK; `publish-android.yml` refuses a code at or below the live one |
@@ -347,8 +347,9 @@ The optimisations that made the box fit, each measured before it shipped:
 | Separate queue worker | heavy jobs never share a process with requests |
 
 **Backups.** `backup-db.yml` dumps the public schema nightly to S3 (21:17 UTC), keeps one a week for a
-year, and a second run (09:23 UTC) fails if the newest dump is older than its slot plus six hours
-(`scripts/ci/backup_freshness.sh`). The bucket replicates to Hyderabad. `monitor.yml` probes the API,
+year, and a second run (09:23 UTC) fails unless the dump the schedule says should exist by now is there:
+today's IST date once IST is past the 02:47 slot plus six hours of grace, yesterday's before that
+(`scripts/ci/backup_freshness.sh`, 0.0.9). The bucket replicates to Hyderabad. `monitor.yml` probes the API,
 its readiness and the web sign-in every 15 minutes and opens an issue on an outage.
 
 ## <img src="docs/readme-kit/assets/icons/shield-check.svg" width="32" align="top" alt="">&nbsp; Security
@@ -411,7 +412,7 @@ One release per platform at a time: everything is batched, checked once and depl
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/timeline-dark.svg">
-  <img src="docs/readme-kit/assets/timeline-light.svg" width="100%" alt="Releases: 0.0.3 one questionnaire engine, 0.0.4 the transcript pipeline, 0.0.6 the viewer, 0.0.7 latest runtimes, 0.0.9 old transcripts and the Data page, 0.0.10 video and the upload choice">
+  <img src="docs/readme-kit/assets/timeline-light.svg" width="100%" alt="Releases: 0.0.4 the transcript pipeline, 0.0.6 the viewer, 0.0.7 latest runtimes, 0.0.9 old transcripts and the Data page, 0.0.10 video and the upload choice, 0.0.11 tools across workshops">
 </picture>
 
 | Release | Live | Android code | What shipped |
@@ -423,7 +424,8 @@ One release per platform at a time: everything is batched, checked once and depl
 | 0.0.6 | 1 Nov 2026 | 32 | clean previews, coverage hover, reading mode, marks, auto-follow, transcripts in the data browser, temp-file fix (D37) |
 | 0.0.7 | 1 Nov 2026 | 33 | Python 3.15.2, Node 26, AGP 9.5, Gradle 9.8.2, Next 16.4 |
 | 0.0.9 | 3 Nov 2026 | 34 | old transcripts translate (D38), Data page report on click (D39) |
-| 0.0.10 | Nov 2026 | 35 | video transcription, the upload choice, admin switches, backfill switch (off, D40), Gemini 3.8 Flash first with GPT-6 Luna and Claude Sonnet 5.5 only when selected, refine on every client, AI suggestions on Android, no comments in code, the README kit |
+| 0.0.10 | 4 Nov 2026 | 35 | video transcription, the upload choice, admin switches, backfill switch (off, D40), Gemini 3.8 Flash first with GPT-6 Luna and Claude Sonnet 5.5 only when selected, refine on every client, AI suggestions on Android, no comments in code, the README kit |
+| 0.0.11 | 4 Nov 2026 | 36 | a tool linked to several artisans shows under every workshop those artisans belong to, on every read surface; web and Android tool rows name every linked artisan |
 
 ## <img src="docs/readme-kit/assets/icons/box.svg" width="32" align="top" alt="">&nbsp; Built with
 
@@ -502,7 +504,7 @@ wins and this file is the one to fix.
 | Claim | Kept true by |
 |---|---|
 | Links and repository paths | `node docs/tools/check-docs.mjs` resolves them |
-| Images, `<picture>` pairs, every mermaid block | `readme-check.yml`: the kit is rebuilt and diffed, every SVG checked, every diagram rendered by mermaid-cli, the page rendered by `gh api markdown` |
+| Images, `<picture>` pairs, every mermaid block | `readme-check.yml`: the kit is rebuilt and diffed, every SVG checked, every diagram rendered by mermaid-cli and opened on github.com with Playwright (an error, a raw tag or entity, or a clipped label fails), the page rendered by `gh api markdown` |
 | Model names and defaults | `backend/app/services/ai_providers.py` and `backend/app/transcription/transcript/gemini.py` |
 | The transcript contract and strings | `shared/transcript-contract.json`, `shared/strings/transcript.json`, pinned by `backend/tests/test_transcript_contract.py` |
 | The questionnaire feature counts | `shared/questionnaire-features.json`, checked by `backend/tests/test_questionnaire_feature_parity.py` |

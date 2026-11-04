@@ -8,6 +8,12 @@ layer on top of it, and the exact state machine every record moves through.
 UI, and neither is a control. Every rule below is enforced server-side, and the client copies exist
 only so a user is not offered a button that will 403.
 
+> **Docstrings quoted here are history.** Since the 0.0.10 comment strip the source carries no
+> comments or docstrings. Where this page says a function's docstring states or argues something, it
+> quotes the source at tag `v0.0.9` (`git show v0.0.9:<file>`); the rule itself is still enforced by
+> the code and the tests each section names, and the reasons that still bind are in
+> [INVARIANTS.md](INVARIANTS.md).
+
 Sister documents: [SECURITY.md](SECURITY.md) for how the identity behind these checks is
 established, [DATA_MODEL.md](DATA_MODEL.md) for the tables, [WALKTHROUGH.md](WALKTHROUGH.md) for what
 this feels like to a researcher.
@@ -593,6 +599,8 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | Rank the **transcription providers** | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜⁷ | ⬜⁷ | ⬜⁷ | ✅ | ✅ |
 | Read / set **API key values** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 | Repository **app settings** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
+| Read the **transcription settings** and the backfill estimate (`GET /settings/transcription`, `/settings/transcription/backfill`) | `require_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ |
+| Change the **transcription switches**: pause, all new audio, all new video, the backfill, Voice Isolator (`PUT /settings/transcription`, 0.0.10) | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 | Publish an **Android OTA release** | `require_master_admin` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 
 ¹¹ **The inspector's own surface and its only write — and since 2026-10-09 both follow the ROW, not
@@ -2560,7 +2568,7 @@ new caller fails until it is held or the reason it needs no hold is written down
 ties the designer-picker rule to the server's create code — a create form offers the reader, and an
 existing workshop's picker leaves the reader out on the web's own side, since the web sends no
 `workshopId`.
-Rule 5's door list is the docstring of `refuse_a_holders_write` in
+Rule 5's door list was the docstring of `refuse_a_holders_write` (at tag `v0.0.9`) in
 `backend/app/services/design_workshop_posts.py`, and the one exemption is the single caller passing
 `barred_to_post_holders=False`. The tells that this section has rotted are a write path that creates
 a viewer, oversight or inspection row without passing through `design_workshop_posts`, and a door that
@@ -2781,7 +2789,7 @@ mechanical standing behind it.
 | §4.7's five designer directories (OQ-1) | `grep -rn "workshop_capable_accounts\|assignable_designers_payload" backend/app` finds every door. `backend/tests/test_sanction_order_gate.py` pins the fifth one's gate, its `include_admins=False` narrowing, and — in the other direction — that `is_admin` and `OVERSIGHT_ASSIGNER_ROLES` did NOT grow to accommodate it. The optional `workshopId` on `/design-workshops/eligible-viewers` and `/design-workshop-oversight/designers` (2026-10-09) is pinned in `backend/tests/test_admin_serve_as.py`: without a database by `test_the_designer_directories_leave_the_caller_out_only_for_a_workshop_that_exists` and `test_the_directory_queries_leave_the_caller_out_inside_the_where`, and over Postgres by `test_the_designer_pickers_leave_the_reader_out_only_for_a_workshop_that_exists`. |
 | The gate named in each matrix row | Re-derive with §6's step 1 across `backend/app/api/routes/*.py`. A route whose dependency changed but whose row did not is the failure mode this column exists to catch. |
 | The state machine (§3) | `RecordStatus` in `backend/prisma/schema.prisma` for the states; `set_review_status`, `apply_status_policy_update` and `resubmit_status` for the transitions. |
-| The late-submission gate (§3.3) | `backend/app/services/workshop_access.py` — `enforce_workshop_submission`, `stamp_workshop_submission`, `pin_pending_if_late`. The four numbered properties are each a docstring paragraph there. |
+| The late-submission gate (§3.3) | `backend/app/services/workshop_access.py` — `enforce_workshop_submission`, `stamp_workshop_submission`, `pin_pending_if_late`. The four numbered properties were each a docstring paragraph there until the 0.0.10 strip (`git show v0.0.9:backend/app/services/workshop_access.py`). |
 | Design-workshop viewer grants (§4.4) | `backend/app/services/design_workshop_viewers.py` and `backend/app/api/routes/design_workshop_viewers.py`; the "three ways in" are the three clauses of `load_workshop_or_404` in `backend/app/services/design_workshops.py`, and the model's own reasoning is on `DesignWorkshopViewer` in `backend/prisma/schema.prisma`. `backend/tests/test_design_workshop_viewers.py` asserts the two refusals — delete and re-granting — rather than the routes that happen to enforce them today |
 | The **media** half of a grant (§4.4.1's `MediaFile` row, added 2026-08-27) | `_design_workshop_media_ids` in `backend/app/services/records.py`, which is deliberately the ONE spelling of "the design workshops this account may open": the download filter (`_design_workshop_media_branches`) and the `url` gate (`media_url_scope`) both read it, and the defect that produced this row was those two answering differently. `backend/tests/test_media_entitlement.py` asserts both directions — a grantee is shown this workshop's recordings, a designer with no grant is refused the very same file. The day those two gates stop sharing that helper, this row and §4.4.1 are the first things to distrust |
 | The questionnaire visibility that follows (§4.4.4) | `_works_on_this_questionnaires_workshop` and `_visible_questionnaire_where` in `backend/app/api/routes/questionnaire_forms.py`. The three boundaries are each pinned by a test; the `/options` asymmetry is not, and is the row of §4.4.4 most likely to change |
