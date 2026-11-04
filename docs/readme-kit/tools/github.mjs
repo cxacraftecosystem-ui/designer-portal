@@ -46,6 +46,17 @@ function lint(block) {
   const found = [];
   for (const { n, text } of block.body) {
     const t = text.trim();
+    const init = t.match(/^%%\{\s*init:\s*(\{.*\})\s*\}%%$/);
+    if (init) {
+      let cfg = null;
+      try {
+        cfg = JSON.parse(init[1]);
+      } catch {
+        found.push({ line: n, detail: `the %%{init}%% directive is not valid JSON: ${t.slice(0, 120)}` });
+      }
+      const tv = cfg && cfg.themeVariables;
+      if (tv && tv.fontFamily && tv.fontFamily !== cfg.fontFamily) found.push({ line: n, detail: `themeVariables.fontFamily without the same top-level "fontFamily": github.com draws the labels in its own font while mermaid sizes every box for the top-level one, so text is clipped on Windows and macOS; set the stack as the top-level "fontFamily" (README_STYLE.md, Mermaid)` });
+    }
     if (!t || t.startsWith("%%")) continue;
     const entity = t.match(/&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);/);
     if (entity) found.push({ line: n, detail: `"${entity[0]}" is decoded by GitHub before mermaid reads it; write mermaid's own entity code (#lt; #gt; #quot; #amp;) instead: ${t.slice(0, 120)}` });
@@ -238,7 +249,29 @@ async function shoot(page, section, path) {
   if (h > VIEW.height) await page.setViewportSize(VIEW);
 }
 
-const browser = await chromium.launch();
+function viewerFonts() {
+  if (process.platform !== "linux") return { env: {}, note: `${process.platform} system fonts` };
+  let listed = "";
+  try {
+    listed = execFileSync("fc-list", [":", "family"], { encoding: "utf8" });
+  } catch {
+    return { env: {}, note: "fc-list is missing, so the system font map is used" };
+  }
+  const have = new Set(listed.split("\n").flatMap((l) => l.split(",")).map((f) => f.trim().toLowerCase()).filter(Boolean));
+  const pick = (names) => names.find((f) => have.has(f.toLowerCase()));
+  const narrow = pick(["Liberation Sans Narrow", "Nimbus Sans Narrow", "DejaVu Sans Condensed", "Ubuntu Condensed", "Noto Sans Condensed"]);
+  const wide = pick(["Liberation Sans", "Arimo", "Nimbus Sans", "FreeSans"]);
+  if (!narrow || !wide) return { env: {}, note: `no narrow and wide sans pair among ${have.size} families, so the system font map is used` };
+  const alias = (family, face) => `<match target="pattern"><test qual="any" name="family" ignore-blanks="true"><string>${family}</string></test><edit name="family" mode="prepend" binding="strong"><string>${face}</string></edit></match>`;
+  const conf = `<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig><include ignore_missing="yes">/etc/fonts/fonts.conf</include>${["trebuchet ms", "verdana"].map((f) => alias(f, narrow)).join("")}${["helvetica", "arial", "freesans", "clean"].map((f) => alias(f, wide)).join("")}</fontconfig>\n`;
+  const file = join(out, "fonts.conf");
+  writeFileSync(file, conf);
+  return { env: { FONTCONFIG_FILE: file }, note: `"trebuchet ms" and verdana drawn in ${narrow}, Helvetica and Arial in ${wide}, as Windows and macOS draw them narrower and wider` };
+}
+
+const fonts = viewerFonts();
+console.log(`fonts: ${fonts.note}`);
+const browser = await chromium.launch({ env: { ...process.env, ...fonts.env } });
 const context = await browser.newContext({ viewport: VIEW, colorScheme: "light", deviceScaleFactor: 1 });
 const page = await context.newPage();
 const results = [];
