@@ -2571,6 +2571,13 @@ caller is releasing themselves; re-check all three with
 `grep -rn "separation_refusals\|refuse_a_holders_write(\|refuse_a_holders_media_write(\|assert_may_write_a_record_filed_under(\|_refuse_its_workshops_holder(\|_upload_as_filed(\|self_release_refusal(\|barred_to_post_holders" backend/app`.
 
 
+### Data page routes (0.0.12)
+
+Every `/api/data/*` route, including the stats, multi-select manifest, preview, thumbnail, transcript,
+transcript zip, languages and Browse by type routes added in 0.0.12, needs dataset-download access
+(`require_dataset_downloader`) and reads only the media the caller's access scope reaches.
+Removed recordings answer 404. See [DATA_EXPLORER.md](DATA_EXPLORER.md).
+
 ## 5. Route guards on the web client
 
 The client's half of gating is declared **once**, in `ROUTE_GUARDS` in `frontend/lib/permissions.ts`,

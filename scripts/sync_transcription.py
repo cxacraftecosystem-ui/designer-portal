@@ -56,6 +56,13 @@ SHARED_FILES_EXTRA = (
     "backend/tests/test_media_transcribe_choice.py",
 )
 FIXTURE_DIR = "backend/tests/fixtures/transcript"
+EXPLORER_DIR = "backend/app/services/data_explorer"
+EXPLORER_FILES = (
+    "backend/app/api/routes/data_explorer.py",
+    "shared/data-explorer-contract.json",
+    "backend/tests/test_data_explorer_units.py",
+    "backend/tests/test_data_explorer_contract.py",
+)
 
 
 def shared_files(root: Path) -> list[str]:
@@ -67,7 +74,12 @@ def shared_files(root: Path) -> list[str]:
     fixtures = sorted(
         path.relative_to(root).as_posix() for path in (root / FIXTURE_DIR).glob("*.json")
     )
-    return package + list(SHARED_FILES_EXTRA) + fixtures
+    explorer = sorted(
+        path.relative_to(root).as_posix()
+        for path in (root / EXPLORER_DIR).glob("*.py")
+        if "__pycache__" not in path.parts
+    )
+    return package + list(SHARED_FILES_EXTRA) + fixtures + explorer + list(EXPLORER_FILES)
 
 
 def digest(path: Path) -> str:

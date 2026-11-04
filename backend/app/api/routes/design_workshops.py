@@ -669,12 +669,19 @@ async def _keep_dictation(
         return None
 
 
+DICTATION_ALLOWANCE_MAX_AGE_SECONDS = 60
+
+
 @router.get("/dictation-allowance")
 async def get_dictation_allowance(
     current_user: Any = Depends(get_current_user),
-) -> dict[str, Any]:
+) -> JSONResponse:
     _require_designer(current_user)
-    return dictation_cap.allowance_payload(await dictation_cap.load_allowance(current_user.id))
+    payload = dictation_cap.allowance_payload(await dictation_cap.load_allowance(current_user.id))
+    return JSONResponse(
+        payload,
+        headers={"Cache-Control": f"private, max-age={DICTATION_ALLOWANCE_MAX_AGE_SECONDS}"},
+    )
 
 
 @router.get("/ai-verb-allowance")

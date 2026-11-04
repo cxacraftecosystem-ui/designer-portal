@@ -96,11 +96,11 @@ def configured_cap(row: Any) -> int | None:
 
 
 async def load_allowance(user_id: str, *, now: datetime | None = None) -> Allowance:
+    import asyncio
+
     day = ist_day(now)
-    settings_row = await _settings_row()
-    return Allowance(
-        day=day, limit=configured_cap(settings_row), used=await _used_today(user_id, day)
-    )
+    settings_row, used = await asyncio.gather(_settings_row(), _used_today(user_id, day))
+    return Allowance(day=day, limit=configured_cap(settings_row), used=used)
 
 
 async def _settings_row() -> Any | None:
