@@ -8,6 +8,7 @@
 <path d="M110 92 H1090" stroke="#DCD7EE" stroke-width="4" stroke-linecap="round" fill="none"/>
 <path class="prog" d="M110 92 H1090" stroke="url(#pg)" stroke-width="4" stroke-linecap="round" fill="none"/>
 <path class="flow" d="M110 92 H1090" stroke="#FFFFFF" stroke-opacity=".9" stroke-width="2" stroke-linecap="round" fill="none"/>
+<g class="smil"><circle r="6" fill="#CD9200" filter="url(#glow)"><animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.7;1" calcMode="linear" path="M110 92 H1090"/></circle></g>
 <g class="rise r0">
 <circle class="ring" style="animation-delay:0s" cx="110" cy="92" r="36" fill="none" stroke="#762CB1" stroke-width="2"/>
 <circle cx="110" cy="92" r="36" fill="#FFFFFF" stroke="#E7D5FE" stroke-width="2"/>
@@ -58,5 +59,4 @@
 <text x="1090" y="158" class="d" fill="#1E1B2E" font-size="17" font-weight="700" text-anchor="middle">Archive</text>
 <text x="1090" y="182" class="s" fill="#615D7A" font-size="13" text-anchor="middle">Exports for the Ministry</text>
 </g>
-<g class="smil"><circle r="6" fill="#CD9200" filter="url(#glow)"><animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.7;1" calcMode="linear" path="M110 92 H1090"/></circle></g>
 </svg>

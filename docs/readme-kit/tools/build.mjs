@@ -216,8 +216,8 @@ ${textLines(sub, x, Y + 90, 19, `class="s" fill="${t.ink500}" font-size="13" tex
   const body = `<path d="${track}" stroke="${t.s300}" stroke-width="4" stroke-linecap="round" fill="none"/>
 <path class="prog" d="${track}" stroke="url(#pg)" stroke-width="4" stroke-linecap="round" fill="none"/>
 <path class="flow" d="${track}" stroke="${t.card}" stroke-opacity=".9" stroke-width="2" stroke-linecap="round" fill="none"/>
-${nodes}
-<g class="smil"><circle r="6" fill="${t.gold}" filter="url(#glow)"><animateMotion dur="${D}s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;${r(((D - hold) / D) * 1000) / 1000};1" calcMode="linear" path="${track}"/></circle></g>`;
+<g class="smil"><circle r="6" fill="${t.gold}" filter="url(#glow)"><animateMotion dur="${D}s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;${r(((D - hold) / D) * 1000) / 1000};1" calcMode="linear" path="${track}"/></circle></g>
+${nodes}`;
   return doc(W, H, c.label, defs, css, body);
 }
 
