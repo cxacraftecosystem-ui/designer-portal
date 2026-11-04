@@ -268,9 +268,9 @@ work is on both clients.
 
 | Export | How | Notes |
 |---|---|---|
-| Data browser | `/data`: workshops, users and media types as folders | zip assembled in the browser; audio converted to `.mp4` |
-| Data page report | *Load tables* on click | JSON preview of 200 rows a sheet; the `.xlsx` stays complete; one build at a time, `503` + `Retry-After` when busy (D39) |
-| Transcripts | a sheet in every report, `.md` / `.docx` / `.srt` / `.vtt` per recording | the hand-added English travels with every copy |
+| Data browser | `/data`: workshops, users and media types as folders | sizes before download, multi-select, streamed zips, previews and thumbnails; removed recordings never ship; audio streamed to `.mp4` with the original as fallback ([DATA_EXPLORER.md](docs/DATA_EXPLORER.md)) |
+| Data page report | *Load tables* on click | JSON preview of 200 rows a sheet; search runs over every row on the server; one sheet as `.csv`; the `.xlsx` stays complete; one build at a time, `503` + `Retry-After` when busy (D39) |
+| Transcripts | a sheet in every report, `.md` / `.docx` / `.srt` / `.vtt` per recording, or all formats in one zip per recording or per folder | the hand-added English travels with every copy |
 | Datasets | `/api/datasets/{name}.ndjson` and `.csv`, streamed, keyset-paged | `X-Dataset-Total` proves completeness; admin credentials only |
 | Questionnaires | workbook export, artisan record CSV, corpus export | |
 | Ministry packs | monthly registers-only pack | off until D8 |

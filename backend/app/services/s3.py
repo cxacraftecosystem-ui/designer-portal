@@ -137,22 +137,55 @@ def presign_get_url(
     expires_in: int = 900,
     disposition: str = "attachment",
 ) -> str:
+    return presign_get_url_aged(
+        object_key,
+        filename=filename,
+        mime_type=mime_type,
+        expires_in=expires_in,
+        disposition=disposition,
+    )[0]
+
+
+def presign_get_url_aged(
+    object_key: str,
+    *,
+    filename: str,
+    mime_type: str,
+    expires_in: int = 900,
+    disposition: str = "attachment",
+) -> tuple[str, int]:
+    from app.services.data_explorer import signing
+
     settings = get_settings()
     kind = "inline" if disposition == "inline" else "attachment"
-    return _client().generate_presigned_url(
-        ClientMethod="get_object",
-        Params={
-            "Bucket": settings.aws_s3_bucket,
-            "Key": object_key,
-            "ResponseContentType": mime_type,
-            "ResponseContentDisposition": naming.content_disposition(
-                filename, inline=kind == "inline"
-            ),
-        },
-        ExpiresIn=expires_in,
-        HttpMethod="GET",
+    key = (
+        object_key,
+        settings.aws_s3_bucket,
+        settings.aws_s3_endpoint,
+        settings.aws_region,
+        settings.aws_access_key_id,
+        filename,
+        mime_type,
+        kind,
+        int(expires_in),
     )
 
+    def sign() -> str:
+        return _client().generate_presigned_url(
+            ClientMethod="get_object",
+            Params={
+                "Bucket": settings.aws_s3_bucket,
+                "Key": object_key,
+                "ResponseContentType": mime_type,
+                "ResponseContentDisposition": naming.content_disposition(
+                    filename, inline=kind == "inline"
+                ),
+            },
+            ExpiresIn=expires_in,
+            HttpMethod="GET",
+        )
+
+    return signing.cached(key, int(expires_in), sign)
 
 def create_multipart_upload(object_key: str, mime_type: str) -> str:
     response = _client().create_multipart_upload(

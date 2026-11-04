@@ -490,10 +490,10 @@ async def _design_workshop_media_ids(user_id: str) -> list[str]:
 
     if not user_id:
         return []
-    rows = await db.designworkshop.find_many(
-        where={"deletedAt": None, **visible_to_clause(user_id)}
+    rows = await db.designworkshop.group_by(
+        by=["id"], where={"deletedAt": None, **visible_to_clause(user_id)}
     )
-    return [row.id for row in rows]
+    return [str(row["id"]) for row in rows]
 
 
 async def own_rows_where(user: Any, owner_field: str = "createdById") -> dict[str, Any]:

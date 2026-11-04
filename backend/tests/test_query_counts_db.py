@@ -70,7 +70,10 @@ def test_the_export_sweep_skips_the_stale_lock_recovery_between_minutes_and_stil
             data={"requestedById": owner.id, "status": exports.READY, "expiresAt": long_ago}
         )
         try:
+            exports._last_purge["at"] = float("-inf")
             async with count_statements() as between:
+                await exports.recover_and_purge(recover=False)
+            async with count_statements() as again:
                 await exports.recover_and_purge(recover=False)
             after_between = {
                 row.id: row.status
@@ -81,6 +84,7 @@ def test_the_export_sweep_skips_the_stale_lock_recovery_between_minutes_and_stil
             stale_after = await db.ministrydataexport.find_unique(where={"id": stale.id})
             return {
                 "between": between.value,
+                "again": again.value,
                 "minute": minute.value,
                 "after_between": after_between,
                 "stale_after": stale_after.status,
@@ -98,6 +102,7 @@ def test_the_export_sweep_skips_the_stale_lock_recovery_between_minutes_and_stil
     assert seen["after_between"][seen["stale"]] == "RUNNING"
     assert seen["stale_after"] == "QUEUED"
     assert seen["between"] <= 3, seen
+    assert seen["again"] == 0, seen
     assert seen["minute"] > seen["between"], seen
 
 

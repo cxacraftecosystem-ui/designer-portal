@@ -261,7 +261,7 @@ async def dataset_manifest(
         if media_vis:
             media_where = {"AND": [media_where, media_vis]}
         media = await db.mediafile.find_many(
-            where=media_where, take=MEDIA_TAKE, order=_EXPORT_ORDER
+            where={"AND": [media_where, {"removedAt": None}]}, take=MEDIA_TAKE, order=_EXPORT_ORDER
         )
         truncated = truncated or len(media) >= MEDIA_TAKE
 
@@ -567,7 +567,7 @@ def _require_dataset_download(current_user: Any) -> None:
         )
 
 
-_CSV_INCLUDE = {"media": True, "createdBy": True, "workshop": True}
+_CSV_INCLUDE = {"media": {"where": {"removedAt": None}}, "createdBy": True, "workshop": True}
 
 
 @router.get("/products.csv")
@@ -602,7 +602,7 @@ _ARTISAN_CSV_INCLUDE = {
     "craft": True,
     "location": True,
     "createdBy": True,
-    "media": True,
+    "media": {"where": {"removedAt": None}},
     "workshops": {"include": {"workshop": True}},
 }
 
@@ -625,7 +625,7 @@ async def export_workshops(current_user: Any = Depends(get_current_user)) -> Res
     _require_dataset_download(current_user)
     records = await db.workshop.find_many(
         where=await owned_or_granted_where(current_user),
-        include={"createdBy": True, "media": True},
+        include={"createdBy": True, "media": {"where": {"removedAt": None}}},
         take=EXPORT_TAKE,
         order=_EXPORT_ORDER,
     )
