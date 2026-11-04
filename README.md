@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-0.0.11-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.11">
+  <img src="https://img.shields.io/badge/Release-0.0.12-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.12">
   <img src="https://img.shields.io/badge/Web-Next.js_16-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Web: Next.js 16">
   <img src="https://img.shields.io/badge/API-FastAPI_·_Python_3.15-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="API: FastAPI on Python 3.15">
   <img src="https://img.shields.io/badge/Android-Kotlin_+_Compose-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Android: Kotlin and Compose">
@@ -303,7 +303,7 @@ stateDiagram-v2
 
 | Android | |
 |---|---|
-| Version | **0.0.11**, versionCode 36 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
+| Version | **0.0.12**, versionCode 37 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
 | Toolchain | AGP 9.5, Gradle 9.8.2, Kotlin 2.4, Compose, R8 with a 4 GB Gradle heap |
 | Network | CloudFront over HTTPS, dual-stack, so IPv6-only mobile networks work |
 | Updates | in-app release check against the published APK; `publish-android.yml` refuses a code at or below the live one |
@@ -427,6 +427,7 @@ One release per platform at a time: everything is batched, checked once and depl
 | 0.0.9 | 3 Nov 2026 | 34 | old transcripts translate (D38), Data page report on click (D39) |
 | 0.0.10 | 4 Nov 2026 | 35 | video transcription, the upload choice, admin switches, backfill switch (off, D40), Gemini 3.8 Flash first with GPT-6 Luna and Claude Sonnet 5.5 only when selected, refine on every client, AI suggestions on Android, no comments in code, the README kit |
 | 0.0.11 | 4 Nov 2026 | 36 | a tool linked to several artisans shows under every workshop those artisans belong to, on every read surface; web and Android tool rows name every linked artisan |
+| 0.0.12 | 5 Nov 2026 | 37 | the data explorer: tree first with search as its toolbar and every download in one place, sizes before a download, multi-select, thumbnails and previews, table search and a CSV per sheet, all transcript formats in one zip, removed recordings never ship, audio as `.mp4` with the original as fallback, downloads that stream and resume |
 
 ## <img src="docs/readme-kit/assets/icons/box.svg" width="32" align="top" alt="">&nbsp; Built with
 
