@@ -319,9 +319,6 @@ jobs:
           for v in BOX_PYTHON_VERSION BOX_PYTHON_BUILD BOX_PYTHON_URL BOX_PYTHON_SHA256; do
             [ -n "${!v:-}" ] || { echo "::error::$v is empty; the job-level env block of this workflow is missing it."; exit 1; }
           done
-          # ONE FACT WRITTEN FOUR WAYS, CHECKED FOR AGREEMENT BEFORE A BYTE IS FETCHED: an edit that
-          # moves the version and forgets the URL would otherwise unpack one Python into a directory
-          # named for another, and every check below would pass on the wrong interpreter.
           want_url="https://github.com/astral-sh/python-build-standalone/releases/download/${BOX_PYTHON_BUILD}/cpython-${BOX_PYTHON_VERSION}%2B${BOX_PYTHON_BUILD}-x86_64-unknown-linux-gnu-install_only.tar.gz"
           [ "$BOX_PYTHON_URL" = "$want_url" ] || { echo "::error::BOX_PYTHON_URL is not python-build-standalone ${BOX_PYTHON_BUILD}'s install_only x86_64-unknown-linux-gnu build of CPython ${BOX_PYTHON_VERSION}; expected $want_url. Change the four BOX_PYTHON_* values together."; exit 1; }
           case "$BOX_PYTHON_SHA256" in
@@ -357,9 +354,6 @@ jobs:
           minor="${BOX_PYTHON_VERSION%.*}"
           home="/opt/cpython/${BOX_PYTHON_VERSION}+${BOX_PYTHON_BUILD}"
           py="$home/bin/python${minor}"
-          # PROVED, NOT TRUSTED: the implementation and the exact version, that it runs from where it
-          # was put, and the compiled modules a venv build and this app lean on. `-I` so no PYTHON*
-          # variable in this shell can point the check somewhere else.
           prove() {
             "$1" -I -c 'import sys, os, platform, ssl, sqlite3, lzma, bz2, zlib, ctypes, decimal, hashlib, ensurepip, venv; want, prefix = sys.argv[1], sys.argv[2]; assert platform.python_implementation() == "CPython" and platform.python_version() == want, "this is %s %s, not CPython %s" % (platform.python_implementation(), platform.python_version(), want); assert os.path.realpath(sys.base_prefix) == os.path.realpath(prefix), "it runs from %s, not %s" % (sys.base_prefix, prefix); ctypes.CDLL(None); hashlib.sha256(b""); print("interpreter: CPython", platform.python_version(), "from", sys.base_prefix, "| ssl:", ssl.OPENSSL_VERSION, "| sqlite", sqlite3.sqlite_version)' "$BOX_PYTHON_VERSION" "$2"
           }
@@ -388,11 +382,9 @@ jobs:
             sudo tar -xzf "$stage/python.tar.gz" -C "$stage" --no-same-owner
             sudo rm -f "$stage/python.tar.gz"
             [ -x "$stage/python/bin/python${minor}" ] || { echo "::error::the verified archive has no python/bin/python${minor}; it is not an install_only build."; exit 1; }
-            # One process, not -j: this runs once per pin, and a pool is one more thing to go wrong.
             sudo "$stage/python/bin/python${minor}" -I -m compileall -q "$stage/python/lib/python${minor}"
             printf '%s\n' "$BOX_PYTHON_SHA256" | sudo tee "$stage/python/.pbs-sha256" >/dev/null
             printf '%s\n' "$BOX_PYTHON_URL" | sudo tee "$stage/python/.pbs-url" >/dev/null
-            # LAST, so they cover everything above, whatever umask sudo ran it under.
             sudo chown -R root:root "$stage/python"
             sudo chmod -R go-w "$stage/python"
             prove "$stage/python/bin/python${minor}" "$stage/python"
@@ -403,9 +395,6 @@ jobs:
           fi
           prove "$py" "$home"
 
-          # WHAT THE ROLLBACK TARGETS RUN, PRINTED EVERY DEPLOY: each released tree's interpreter, and a
-          # warning for any that will not run, since pointing `current` at it would leave both units
-          # unable to start. Nothing here removes or changes one.
           shopt -s nullglob
           for d in /home/ubuntu/app/releases/*/; do
             [ -e "${d}.released" ] || continue
@@ -427,25 +416,11 @@ jobs:
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-          # `set -u` above catches an UNSET SHA; it does not catch an EMPTY one, and empty is the
-          # failure this has. If the "Name this deploy's release directory" step is ever deleted or
-          # renamed, `${{ env.REL_ID }}` resolves to the empty string, every path below becomes
-          # `/home/ubuntu/app/releases//backend`, `mkdir -p` creates it without a word, and the
-          # deploy goes green into a directory nobody meant. One line stops that here, in the first
-          # block that touches a release path, rather than at the symlink flip.
           [ -n "${SHA:-}" ] || { echo "::error::the release id is empty — the 'Name this deploy's release directory' step did not run or did not write REL_ID. Refusing to build a release at /home/ubuntu/app/releases//backend."; exit 1; }
           APP=/home/ubuntu/app
           REL="$APP/releases/$SHA"
           mkdir -p "$APP/releases"
 
-          # ── THE ONE-TIME MIGRATION SHIM ──────────────────────────────────────────────────
-          # `ln -s` to the legacy tree rather than `cp -a` of it, deliberately. A copy would
-          # duplicate a venv whose scripts carry absolute paths to the directory they were built
-          # in, and would take minutes of disk I/O on a box that is serving traffic, to produce a
-          # bootstrap release nothing will point at again after today. The symlink makes
-          # `current/backend` resolve to exactly the tree that is running RIGHT NOW — which is the
-          # only property the shim needs — and costs nothing. `rm -rf releases/bootstrap` later
-          # removes the link and not the legacy tree; rm does not follow symlinks.
           if [ ! -e "$APP/current" ] && [ -d "$APP/backend" ]; then
             echo "first run on a box with the old layout: seeding releases/bootstrap from $APP/backend"
             mkdir -p "$APP/releases/bootstrap"
@@ -454,23 +429,6 @@ jobs:
             mv -Tf "$APP/current.tmp" "$APP/current"
           fi
           if [ ! -e "$APP/current" ]; then
-            # 2026-09-17: this used to point `current` at THIS RUN'S release directory. That was
-            # harmless while it was only a dangling placeholder — and it stopped being harmless the
-            # moment the sync step started refusing to `rsync --delete` into whatever `current`
-            # resolves to. `mkdir -p "$REL/backend"` made the target real, so on a rebuilt box
-            # `readlink -f current` canonicalized to exactly the rsync destination, the guard would
-            # have fired, and NO DEPLOY TO A FRESHLY REBUILT BOX COULD EVER SUCCEED: a
-            # disaster-recovery path broken by a safety check, which is the worst possible place to
-            # put one. Per-run naming does not save it — the shim and the rsync are in the same run
-            # and share one release id.
-            #
-            # An EMPTY bootstrap release keeps the only property the shim actually needs — that
-            # `current` resolves to something, so the drop-ins below are not written against a path
-            # that does not exist — and it can never collide with a release directory, because no
-            # deploy is ever named `bootstrap`. It is the same name the legacy branch above uses,
-            # deliberately: one bootstrap concept, not two. It carries no interpreter, so the
-            # backfill below will not offer it as a rollback target; `current` moves off it at the
-            # flip, and the prune's second pass reclaims it.
             echo "no legacy tree either — pointing current at an empty bootstrap release"
             mkdir -p "$APP/releases/bootstrap/backend"
             ln -sfn "$APP/releases/bootstrap" "$APP/current.tmp"
@@ -479,26 +437,6 @@ jobs:
           mkdir -p "$REL/backend"
           echo "current -> $(readlink "$APP/current")"
 
-          # ─── WHO IS A ROLLBACK CANDIDATE, WRITTEN DOWN ONCE A DEPLOY ────────────────────────
-          # 2026-09-17: the prune step at the end of this job ranks rollback candidates by a
-          # `.released` marker rather than by mtime — see its comment for why per-attempt directories
-          # broke the old "keep three" rule. Whatever `current` resolves to right now has by
-          # definition been live, so mark it. This also covers the recovery action this file
-          # documents but does not perform: a hand rollback over SSM does not go through `flip()`,
-          # and this is where the release an operator deliberately moved onto gets its marker back.
-          #
-          # THE TWO TESTS ARE NOT DECORATION, AND NEITHER IS A NAME TEST. A rollback target is a
-          # directory somebody can point `current` at and restart into, so it must have its own
-          # interpreter AND its own tree:
-          #   • the EMPTY bootstrap on a rebuilt box has no interpreter — marking it would offer a
-          #     directory with no code as one of the three candidates `ls -lt releases/` lists, and
-          #     picking it takes the API down with the documented recovery command, on a box that was
-          #     just rebuilt. That is the exact shape of failure this whole change removes;
-          #   • the LEGACY bootstrap passes `-x` THROUGH ITS SYMLINK to /home/ubuntu/app/backend, so
-          #     `-x` alone is not enough. It is a pointer at a pre-layout tree whose venv came from
-          #     unpinned ranges and whose Prisma client predates the release layout — not a release,
-          #     and not something to hand an operator mid-incident. `! -L` is what separates them.
-          # A box that has never completed a deploy has no rollback target, and saying so is honest.
           cur="$(readlink -f "$APP/current")"
           if [ -x "$cur/backend/.venv/bin/python" ] && [ ! -L "$cur/backend" ]; then
             touch "$cur/.released" 2>/dev/null || true
@@ -506,25 +444,6 @@ jobs:
             echo "not marking $cur as a rollback candidate: it is a bootstrap pointer, not a release this pipeline built"
           fi
 
-          # ONE TIME ONLY, AND THE SENTINEL IS WHAT MAKES IT ONE TIME. Every directory already on
-          # this box predates the marker, so the prune's second pass would read all of them as
-          # "built, never went live" and sweep the entire rollback history on the first deploy after
-          # this change — leaving one candidate where the policy promises three.
-          #
-          # WITHOUT THE SENTINEL THIS RULE WOULD BE PERMANENT AND WRONG: an attempt that failed AT
-          # the migration has a complete venv too, and marking those every run would put half-built
-          # trees straight back into the ranking, which is the defect the marker exists to remove.
-          # The sentinel is written even if this run later fails, which is deliberate and harmless:
-          # the markers were written in the same block and survive on disk. Do NOT "fix" this by
-          # moving the sentinel after the flip — that makes the one-time pass run again on every
-          # failed deploy, which is exactly the permanence it exists to prevent.
-          #
-          # `touch -r "$d"`, NOT A BARE `touch`. The prune ranks releases by their marker's mtime, so
-          # stamping every backfilled marker with this instant would tell it that five old releases
-          # all went live in the same second, in whatever order `find` happened to walk them.
-          # Inheriting the directory's timestamp keeps the real chronology. Measured on a mock tree:
-          # with a bare touch the first post-change prune deleted the INCUMBENT release, because two
-          # older directories marked a fraction of a second later outranked it.
           if [ ! -e "$APP/.released-backfill-done" ]; then
             find "$APP/releases" -maxdepth 1 -mindepth 1 -type d -print \
               | while IFS= read -r d; do
@@ -539,54 +458,12 @@ jobs:
             : > "$APP/.released-backfill-done"
           fi
 
-          # ── SYSTEMD: DROP-INS, NOT REPLACEMENT UNITS ─────────────────────────────────────
-          # The base units are written by infra/terraform/user_data.sh at FIRST BOOT ONLY, so the
-          # live box's copies are whatever was laid down the day it was created — possibly with a
-          # hand edit on top from the months this pipeline could not reach the box at all.
-          # Overwriting them wholesale would silently discard that. Drop-ins override exactly the
-          # directives that had to move and leave everything else — KillMode=control-group,
-          # RestartSec=10, TimeoutStopSec, the Description — exactly as it was. Undoing this is
-          # `rm -rf /etc/systemd/system/fieldrepo*.service.d && systemctl daemon-reload`.
-          #
-          # user_data.sh has been updated to bake the same paths and limits into the base units, so
-          # a REBUILT box matches a deployed one without needing this step to have run. The two are
-          # deliberately redundant; they are not allowed to disagree.
-          #
-          # ── THE QUEUE FLAG IS RESTATED HERE, AND IT IS NOT THE GUARANTEE IT LOOKS LIKE ────────
-          # THE PRECEDENCE TRUTH FIRST, BECAUSE THIS COMMENT USED TO STATE IT BACKWARDS. It said
-          # systemd applies Environment= and EnvironmentFile= "in the order they appear across the
-          # merged unit — LATER WINS", and therefore that putting `Environment=…=false` after the
-          # EnvironmentFile= line kept `false` on the winning side. systemd does not work that way.
-          # systemd.exec(5) is explicit: the files named by EnvironmentFile= are read shortly before
-          # the process is executed and "settings from these files override settings made with
-          # Environment=" — WHATEVER THE TEXTUAL ORDER. Order decides only which of several
-          # EnvironmentFile= lines wins against the others. So a `.env` carrying
-          # MEDIA_QUEUE_WORKER_ENABLED=true beats the line below, in this drop-in and in the base
-          # unit alike, and always has.
-          #
-          # WHAT THE LINE IS STILL FOR. It is the DEFAULT for a `.env` that omits the key, and that
-          # is worth having: `app/core/config.py` now defaults the flag to false too, so this is
-          # documentation and defence-in-depth rather than the only thing standing between uvicorn
-          # and a second queue drain. What it is NOT is protection against a `.env` that sets the
-          # key. Keep it; do not rely on it; do not delete it because "the .env does not set it".
-          #
-          # SO THE CONVENTION IS ENFORCED BY THE PIPELINE INSTEAD. The step named "Refuse a .env
-          # that would start a second queue drain", immediately after the .env is written, fails the
-          # deploy if the secret ever gains a truthy value for this key — which is the only place
-          # the guarantee can actually be made, because it is the only place that can see the file.
-          # What it prevents is a second drain inside uvicorn beside fieldrepo-queue: two ffmpeg
-          # workloads and two paid transcription runs on a 1 GiB box sized for one, a starved
-          # health-ping, a SIGKILLed worker, orphaned Prisma query-engines, and a pooler at its
-          # client ceiling answering 500 to every login. user_data.sh tells the same story from the
-          # base unit's side.
           changed=0
           write_dropin() {
             dir="/etc/systemd/system/$1.d"
             sudo mkdir -p "$dir"
             tmp="$(mktemp)"
             cat > "$tmp"
-            # `cmp` rather than an unconditional copy so a redeploy that changes nothing does not
-            # daemon-reload for nothing, and so the log says which of these actually moved.
             if sudo cmp -s "$tmp" "$dir/$2"; then
               echo "unchanged $dir/$2"
             else
@@ -598,10 +475,6 @@ jobs:
             rm -f "$tmp"
           }
 
-          # 2026-10-19: the API runs as fieldrepo-api@<port> (backend/deploy/blue_green.sh installs that
-          # template, memory ceiling included), and the first blue/green release removes the
-          # single-port fieldrepo.service and these drop-ins. So they are written only while that unit
-          # is still there, never recreated for a unit that no longer exists.
           legacy_api=no
           if [ -f /etc/systemd/system/fieldrepo.service ]; then legacy_api=yes; fi
           if [ "$legacy_api" = yes ]; then
@@ -627,90 +500,6 @@ jobs:
           ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
           CONF
 
-          # ── THE MEMORY GUARDRAILS ────────────────────────────────────────────────────────
-          # This is a t3.micro: 1 GiB of RAM and a 2 GiB swap file. The queue worker runs ffmpeg and
-          # AI transcription, and a single large audio job can take it well past what is left after
-          # uvicorn, Postgres client buffers and the kernel. Unbounded, the kernel's OOM killer picks
-          # the victim — and it does not pick the greedy one, it picks by badness score, which on
-          # this box has meant uvicorn dying because the QUEUE was hungry. The API then 502s for a
-          # reason that appears nowhere in its own logs.
-          #
-          # MemoryHigh is a SOFT ceiling: over it the cgroup is throttled and reclaimed aggressively,
-          # so a heavy job gets slow instead of getting everything else killed. MemoryMax is the hard
-          # stop and only the queue has one — over it the queue's own process is killed, which is
-          # recoverable (Restart=always, and the job is retried) in a way that losing uvicorn is not.
-          # uvicorn deliberately has NO MemoryMax: killing the API to save memory is the outcome
-          # these limits exist to prevent.
-          #
-          # ─── RESIZED FOR t3.small ON 2026-09-17, AND THE OLD NUMBERS WERE A TOURNIQUET ───────
-          #
-          # These were 500M (API) and 400M/550M (queue): "chosen so the two soft ceilings plus
-          # headroom fit inside 1 GiB", and explicitly "a first setting, not a measurement". The
-          # measurement finally arrived, and it says the first setting was too small for the API.
-          #
-          # WHAT HAPPENED. The backend deploy failed on 2026-09-17 because the API would not answer
-          # /health on its own loopback inside five minutes. The box was thrashing — 1 GiB in swap,
-          # ~14 MB/s paging both ways, 85% iowait — and `systemctl status fieldrepo` showed why:
-          #
-          #     Memory: 499.9M (high: 500.0M available: 100.0K peak: 500.4M swap: 483.9M)
-          #
-          # Pinned to the ceiling, with 484 MB of the cgroup pushed into swap. The instant the
-          # ceiling was raised the same process settled at 634 MB and the service came up in under
-          # 25 seconds instead of six minutes. THE API WANTS ~634 MB. It was never given it, so it
-          # ran every request through swap and called that normal.
-          #
-          # This is why the box moved to t3.small the same day (infra/terraform/main.tf carries the
-          # vmstat figures): 634 MB for uvicorn alone does not fit in 911 MiB beside a 400M queue
-          # worker, nginx and the kernel, and no arrangement of soft ceilings makes it fit. Raising
-          # these on the 1 GiB box would have swapped a throttled API for an OOM-killed one.
-          #
-          # THE SIZING, ON 1906 MiB OF USABLE RAM. 1000M soft for the API — ~1.6x its measured
-          # 634 MB, so ordinary variation never reaches the ceiling. 800M/1100M for the queue,
-          # holding roughly the old 5:4 ratio. The two soft ceilings total 1800M, which is deliberate
-          # and is the same bet the old numbers made: MemoryHigh is a ceiling on ONE cgroup, not a
-          # reservation, and these two do not peak together. The reasoning below about WHICH unit
-          # carries the hard stop is unchanged and still right.
-          #
-          # STILL NOT A FINAL ANSWER FOR THE QUEUE. 400M was never observed to be hit; it was
-          # inherited arithmetic, and 800M is that arithmetic doubled. If real transcription work
-          # thrashes, read the memory line in `systemctl status fieldrepo-queue` and raise it from
-          # the number there — the way the API's was finally set.
-          #
-          # ─── AND PYTHON 3.14 MOVED BOTH BASELINES UP, 2026-10-09 — RE-READ THEM AFTER ITS FIRST DEPLOY
-          # The 634 MB above was measured on 3.12. Importing the generated Prisma client — which both
-          # units do at start — holds ~170 MiB more on 3.14 even with the fix in
-          # scripts/generate_prisma_client.py: 727 MiB against 557 MiB right after the import,
-          # measured in identical containers. Read on the box over SSM the same day, idle on 3.12:
-          # the API at 686 MB and the queue at 585 MB, `memory.events` all zero. So expect the API
-          # near ~865 MB, still under its 1000M soft ceiling (and it has no hard one), and the
-          # queue's IDLE footprint near ~765 MB, about 75 MB under its own 800M soft ceiling — a job
-          # starts throttled — but nearly 400 MB under the 1100M hard stop, which counts RAM and not
-          # swap. Nothing here was raised on an estimate; read both `systemctl status` memory lines
-          # after the first 3.14 deploy and set these from them, exactly as this comment asks for the
-          # queue. The extra ~356 MB also comes out of the box's MemAvailable, which the app's
-          # memory_budget reads to size its media reads — docs/OPEN_FINDINGS.md has that half.
-          #
-          # THE BOX IS BEING REBUILT AS A t3.medium (4 GiB), decided the same day as the owner's answer
-          # to that ~356 MB: infra/terraform/main.tf declares it, for the Ubuntu 26.04 rebuild that
-          # replaces this t3.small blue/green. These ceilings are deliberately the SAME on it. They cap
-          # one unit each and were set from per-process readings, not from the size of the box, so
-          # they move only when the readings asked for above are taken on the new box.
-          # ─── AND THEN THE BASELINE FELL BY ~1.3 GB PER PROCESS, 2026-10-19 ──────────────────────
-          # Read on the t3.medium over SSM, idle, almost empty database: the API at 956 MB RSS plus
-          # 623 MB in swap, the queue at 802 MB plus 731 MB in swap (pinned at its 800M MemoryHigh),
-          # 2.1 GB of the box in swap. Nearly all of it was ONE module: the generated prisma/types.py,
-          # ~180,000 TypedDicts that every importing process held (~1.43 GB measured in a container).
-          # scripts/generate_prisma_client.py now moves them to types.pyi, which only type checkers
-          # read, and the same container measures the API at ~250 MB and the queue at ~190 MB after
-          # start. These ceilings are deliberately left where they are: they now sit well above both
-          # processes, and they move when the box's own `systemctl status` lines say so.
-          #
-          # MALLOC_ARENA_MAX=2 is in both units' 10-release-layout.conf above (and in the API unit
-          # template in backend/deploy/blue_green.sh and infra/terraform/user_data.sh). glibc gives
-          # each thread that allocates its own malloc arena, up to 8 per core, and memory freed in one
-          # arena is not reusable by another; the API's asyncio.to_thread pool and the queue's media
-          # work are exactly that pattern. Two arenas cap the fragmentation at no measurable cost to a
-          # process that is single-threaded where it matters.
           if [ "$legacy_api" = yes ]; then
           write_dropin fieldrepo.service memory.conf <<'CONF'
           [Service]
@@ -742,18 +531,8 @@ jobs:
           set -euo pipefail
           APP=/home/ubuntu/app
 
-          # `set -u` catches an UNSET id and not an EMPTY one, and empty is the failure this has:
-          # `releases//backend` is a path rsync and `mkdir -p` both accept without a word, and the
-          # whole deploy would then build, verify and flip into a directory nobody meant.
           [ -n "${SHA:-}" ] || { echo "::error::the release id is empty — the 'Name this deploy's release directory' step did not run or did not write REL_ID. Refusing to rsync into /home/ubuntu/app/releases//backend."; exit 1; }
 
-          # `[ -d ]` AND NOT a test on `readlink -f`'s output. `readlink -f` needs only the PARENT to
-          # exist, and `releases/` is created unconditionally by infra/terraform/user_data.sh — so it
-          # prints a plausible path and exits 0 for a directory that is not there, and a check
-          # written that way would be dead code under a comment claiming it fires. rsync is not
-          # invoked with `--mkpath`, so this component is made by "Prepare the release layout and the
-          # systemd units" several steps earlier; if that ordering ever breaks, this says so in one
-          # line instead of a bare "No such file or directory" from the far end of an ssh pipe.
           [ -d "$APP/releases/$SHA" ] || { echo "::error::$APP/releases/$SHA does not exist. It is created by 'Prepare the release layout and the systemd units'; that step did not run, or the release id changed between the two."; exit 1; }
 
           dest="$(readlink -f "$APP/releases/$SHA")"
@@ -791,9 +570,6 @@ jobs:
             echo "::error::the release .env is missing or empty after the write step — the BACKEND_ENV secret is unset or the pipe into it failed. This box would boot with no DATABASE_URL."
             exit 1
           fi
-          # `tr -d` strips quotes first so MEDIA_QUEUE_WORKER_ENABLED="true" is caught as well as
-          # the bare form; the anchored tail is what keeps `t` from matching a word starting with t.
-          # The truthy set is the one pydantic-settings accepts for a bool.
           if tr -d "\"'" < .env \
             | grep -Eiq '^[[:space:]]*(export[[:space:]]+)?MEDIA_QUEUE_WORKER_ENABLED[[:space:]]*=[[:space:]]*(1|t|y|on|yes|true)[[:space:]]*$'; then
             echo "::error::BACKEND_ENV sets MEDIA_QUEUE_WORKER_ENABLED to a true value. On this box the .env WINS over the systemd drop-in (EnvironmentFile overrides Environment, whatever the order), so uvicorn would drain the media queue alongside fieldrepo-queue: two ffmpeg workloads and two billed transcription runs on a 1 GiB box, a SIGKILLed web worker and orphaned query-engines. Remove the key from the secret, or set it to false."
@@ -808,107 +584,18 @@ jobs:
         run: |
           ssh ubuntu@${{ secrets.EC2_HOST }} "SHA='$SHA' bash -s" <<'REMOTE'
           set -euo pipefail
-          # 2026-09-03: the release layout moved this file. It is edited in the release directory,
-          # BEFORE the symlink flip, so the origins land in the .env the new code will read and the
-          # currently-serving release's .env is never touched by a deploy that may yet fail.
           cd "/home/ubuntu/app/releases/$SHA/backend"
-          # The step above writes this file with `printf '%s'`, which emits NO trailing newline, so a
-          # bare `>>` glues the new key onto the end of whatever the last line is and silently
-          # corrupts that variable. Guarantee the newline first. (This is not hypothetical: the first
-          # version of this step did exactly that, and `grep -c` then found zero matches.)
           [ -s .env ] && [ -n "$(tail -c1 .env)" ] && printf '\n' >> .env
-          # Drop any inherited value, so this is authoritative rather than additive.
           sed -i '/^BACKEND_CORS_ORIGINS=/d' .env
-          # ── THESE ARE THIS PORTAL'S ORIGINS, AND THE LIST THAT STOOD HERE WAS THE OTHER PRODUCT'S ──
-          #
-          # This line read `https://field-repository.vercel.app,http://localhost:3000` — the FIELD
-          # REPOSITORY's domain, inherited when this repo was derived from that one, like the rest of
-          # this workflow. The paragraph that stood here argued at length that the pre-rebrand name
-          # was "still the real origin the browser sends" and that correcting it would remove the only
-          # allowed origin. Every word of that is true OF THE OTHER REPOSITORY. Here it named a host
-          # this portal is never served from.
-          #
-          # IT WAS INVISIBLE UNTIL THE DEPLOY WORKED. The step had never run: SSH ingress was pinned
-          # to an operator's home address, so every CI deploy died before reaching this line and the
-          # box kept the origins written by hand at provisioning. The first successful run of this
-          # workflow — the same change that fixed the SSH window — is what finally executed it, and
-          # because the `sed -i` above deletes any inherited value to make this authoritative, it
-          # replaced the correct list with the wrong one and broke login on the live site. A fix and
-          # a regression in one push, which is what an untested step does the moment it starts running.
-          #
-          # ONE VERCEL HOST, and the second one that used to be here was never this application.
-          #
-          # This list read `designer-repository.vercel.app,design-repository.vercel.app` and the
-          # comment above it said "both answer 200 today" — which was measured at the ROOT PATH, and
-          # Vercel answers 200 at `/` for a subdomain serving nothing at all. Probed properly on
-          # 2026-08-23: `design-repository.vercel.app/login` is a **404**, and `vercel alias ls` does
-          # not list that host against any project in this team. It was a plausible misspelling of
-          # this portal's own alias that got written down, and then defended by a check too weak to
-          # notice — the same misspelling reached docs/CI.md, both deploy workflows, and the Android
-          # handset's "open the web portal" button, which had already been repointed once.
-          #
-          # Dropping a live origin IS how this breaks again, so the rule the old comment stated still
-          # stands and is worth keeping: the failure is silent from the server's side, because a
-          # rejected preflight is a 400 the API considers correct and the browser reports only
-          # "failed to fetch". Add a new domain here in the same change that adds it in Vercel, and
-          # keep an old one until its alias is actually retired. What changed is only that this
-          # particular host had no alias to retire.
-          #
-          # NOT LISTED, deliberately: `design-repository-kappa.vercel.app`, the domain Vercel generated
-          # for this project. This paragraph said it "DOES serve an older deployment of this app", and
-          # that was wrong. Measured 2026-10-09 through the Vercel API, it is the project's ONLY project
-          # domain, so `vercel deploy --prod` moves it onto every new deployment and it serves the
-          # CURRENT build (except after an Instant Rollback, which stops `--prod` moving any project
-          # domain until a promote; docs/DEPLOYMENT_VERCEL.md §3.1). `designer-repository.vercel.app`
-          # is the one that was hand-set, and only deploy-frontend.yml's `vercel alias set` step
-          # moves it. The decision stands for a better
-          # reason than the one given: nobody is given kappa as an address, and the dashboard change
-          # agreed on 2026-10-09 is to turn it into a 308 redirect to `designer-repository.vercel.app`.
-          # A redirected host never sends a preflight of its own, so listing it would only add a second
-          # origin that can reach the API.
           printf 'BACKEND_CORS_ORIGINS=%s\n' 'https://designer-repository.vercel.app,http://localhost:3000' >> .env
-          # Assert the key landed on a line of its own. `grep -q` rather than `grep -c`: a count of
-          # zero exits 1, which under `set -e` fails the step with no explanation of what was wrong.
           grep -q '^BACKEND_CORS_ORIGINS=' .env || { echo "CORS origins did not land on their own line"; exit 1; }
           echo "CORS origins pinned"
 
-          # ── THE LINK ORIGIN, PINNED BESIDE THE CORS ORIGIN — 2026-10-09 ──────────────────────
-          #
-          # Every set-password, invite and sanction link the API issues is built as
-          # `${NEXT_PUBLIC_APP_URL}/set-password?token=…` (`link_for` in
-          # backend/app/services/credential_links.py). backend/app/core/config.py defaults that
-          # setting to `http://localhost:3000` and validates nothing more. So a BACKEND_ENV that drops
-          # the line, or names any host but the production alias, issues links that land on a
-          # developer's laptop or on an origin the CORS list above refuses, where every call the page
-          # makes fails its preflight. Nothing would go red: the deploy, /health and the CORS
-          # assertion all pass, and the first person to notice would be somebody who cannot set a
-          # password. Account provisioning (2026-10-09) lets ministry admins issue these links as well
-          # as admins, for the accounts they create, which made the gap worth closing.
-          #
-          # The origin must be the FIRST entry of the CORS list above, written out again rather than
-          # derived, in the same style. If the production alias ever changes, change both lines in one
-          # commit. Pinned for the reasons the CORS block gives: it is public, and a secret nobody can
-          # print cannot be edited one line at a time. Same delete-then-append, so this value wins
-          # over anything BACKEND_ENV carried. Same newline guarantee, which the CORS `printf` above
-          # has just restored.
           sed -i '/^NEXT_PUBLIC_APP_URL=/d' .env
           printf 'NEXT_PUBLIC_APP_URL=%s\n' 'https://designer-repository.vercel.app' >> .env
-          # `-x` matches the WHOLE line and `-F` reads the pattern literally, so this asserts the value
-          # as well as the placement: a trailing slash, a quote or a glued neighbour all fail here
-          # rather than in somebody's inbox.
           grep -qxF 'NEXT_PUBLIC_APP_URL=https://designer-repository.vercel.app' .env || { echo "link origin did not land on its own line"; exit 1; }
           echo "link origin pinned"
 
-          # ── WHICH X-Forwarded-For ENTRY IS THE CLIENT — 2026-10-17 ──────────────────────────────
-          #
-          # "Forgot your password?" limits per client address (backend/app/scale/rate_limit.py,
-          # `client_address`), counted from the RIGHT of X-Forwarded-For because the left is
-          # whatever the caller typed. Production is CloudFront -> nginx -> uvicorn: CloudFront
-          # appends the viewer, nginx appends the CloudFront edge, so the client is 2nd from the
-          # right. The origin is locked to CloudFront (its security group admits only CloudFront's
-          # origin-facing ranges, and nginx answers 403 without CloudFront's X-Origin-Verify header:
-          # "Require CloudFront's origin header in nginx" below), so every request came through an edge. The code's default
-          # is also 2 since 2026-10-17; this pin keeps the box explicit whatever BACKEND_ENV says.
           sed -i '/^FORWARDED_CLIENT_HOPS=/d' .env
           printf 'FORWARDED_CLIENT_HOPS=%s\n' '2' >> .env
           grep -qxF 'FORWARDED_CLIENT_HOPS=2' .env || { echo "forwarded hops did not land on their own line"; exit 1; }
@@ -1362,16 +1049,12 @@ jobs:
             echo "Prisma CLI Node already pinned: $want at $dir"
           else
             echo "building $dir (Node $NODE_PIN, prebuilt from nodejs.org) — found '${have:-nothing}'"
-            # Rebuilt from scratch: a directory that exists but does not answer the version is a
-            # half-finished build, and prisma-client-py would otherwise use it as it stands.
             rm -rf "$dir"
             mkdir -p "$(dirname "$dir")"
             "/home/ubuntu/app/releases/$SHA/backend/.venv/bin/python" -m nodeenv --prebuilt --node="$NODE_PIN" "$dir"
           fi
           got="$("$dir/bin/node" --version 2>&1)" || { echo "::error::$dir/bin/node does not start: $got"; exit 1; }
           [ "$got" = "$want" ] || { echo "::error::$dir/bin/node answers $got, not $want."; exit 1; }
-          # npm's shebang is `#!/usr/bin/env node` and this box has no Node on PATH, so it is asked
-          # with the env's own bin first — the PATH prisma-client-py itself gives the CLI.
           npm_version="$(PATH="$dir/bin:$PATH" "$dir/bin/npm" --version 2>&1)" || { echo "::error::npm in $dir does not start: $npm_version"; exit 1; }
           echo "Prisma CLI Node: $got, npm $npm_version ($dir)"
           REMOTE
@@ -1388,40 +1071,6 @@ jobs:
           APP=/home/ubuntu/app
           REL="$APP/releases/$SHA"
           cd "$REL/backend"
-          # ─── A TICK ON THE WIRE WHILE A QUIET COMMAND RUNS ──────────────────────────────────
-          #
-          # 2026-09-17. This is the step the audit reached for first, for a reason visible in the
-          # log rather than in the code: from this `cd` to the last echo it can go minutes without
-          # printing a single character. Importing this client is megabytes of generated Python on a
-          # t3.micro, and `connect()` starts the query-engine subprocess and then waits on a pooler
-          # that may be in another region. Neither says anything while it works, so the deploy log
-          # shows a step start, a long nothing, and — twice on 2026-09-17 — `client_loop: send
-          # disconnect: Broken pipe` with exit 255 at 286.8 s and 281.2 s of silence.
-          #
-          # SILENCE IS BOTH THE SYMPTOM AND (ON THE LEADING HYPOTHESIS) THE CAUSE, which is why one
-          # change addresses both. A line every 30 s puts bytes on the SSH channel, so no NAT or
-          # SNAT entry in the path can age out under a command that is merely slow — and it leaves a
-          # timestamped trail, so the next drop says WHICH command was running and for how long
-          # instead of leaving a four-minute hole for somebody to subtract timestamps across. The
-          # keepalives written into ~/.ssh/config at the top of this job are the transport half of
-          # the same fix; this is the half that is also evidence. Neither alone would have told us
-          # anything on 2026-09-17.
-          #
-          # STDERR, NOT STDOUT, AND THAT IS LOAD-BEARING. One ssh in this file — `site="$(ssh …)"`,
-          # a few lines above — captures a remote command's stdout and uses it as a FILESYSTEM PATH.
-          # A heartbeat on stdout would one day be appended to a path and produce an error nobody
-          # could read. Actions interleaves a step's stdout and stderr in the log, so stderr costs
-          # nothing in readability and removes the whole class of accident.
-          #
-          # IT KILLS ITSELF IF THE SHELL IT IS TICKING FOR GOES AWAY. `kill -0 "$ka_parent"` is
-          # re-checked every cycle and a `trap` on EXIT stops it on every ordinary path. Without the
-          # parent check, a dropped connection would leave a subshell on the box sleeping and
-          # printing into a closed descriptor forever — one per failed deploy, which is exactly the
-          # kind of litter a diagnostic must never become.
-          #
-          # 30 SECONDS. The interval has to be a small fraction of the shortest idle timeout
-          # anywhere in the path; the shortest anybody has named is the four-minute Azure SNAT
-          # default, so this is an eightfold margin for a handful of lines.
           ka_pid=""
           ka_start() {
             ka_label="$1"
@@ -1434,18 +1083,6 @@ jobs:
               done ) &
             ka_pid=$!
           }
-          # THE `sleep` IS REAPED BEFORE THE SUBSHELL, AND THAT ORDER IS THE POINT. `kill $ka_pid`
-          # ends the subshell but NOT the `sleep 30` it forked and is blocked in; that orphan is
-          # reparented with this session's stderr still open, and sshd does not close a channel while
-          # anything still holds it. A heartbeat added to stop SSH sessions dying would otherwise
-          # hold one open for up to a full interval after the work finished — and leave a stray
-          # process on the box on every failure path. `pkill` is in procps and is on this image;
-          # both calls are `|| true`-guarded so its absence could never fail a deploy.
-          #
-          # WRITTEN AS AN `if`, NOT AS `[ -n "$ka_pid" ] && kill …`. This heredoc runs under `set -e`
-          # and an `&&` chain whose test is false returns 1 — as the last command of a function that
-          # would end the whole step. A deploy failed by its own heartbeat being switched off is a
-          # failure nobody would find quickly. The explicit `return 0` states the same rule twice.
           ka_stop() {
             if [ -n "${ka_pid:-}" ]; then
               pkill -TERM -P "$ka_pid" 2>/dev/null || true
@@ -1456,84 +1093,9 @@ jobs:
             return 0
           }
           trap 'ka_stop' EXIT
-          # The bytecode in this venv is the runner's, written beside the sources it was compiled from
-          # and shipped with them in one rsync (2026-10-19). It used to be deleted here because the
-          # client was copied OVER an existing venv, so old .pyc files could outlive their sources;
-          # nothing is copied over a shipped venv, and keeping it spares the box compiling the
-          # generated client while the live release is still serving.
-          # ─── THE CLIENT MUST BE IN *THIS* RELEASE'S VENV, AND THAT IS ASSERTED ────────────────
-          #
-          # WHAT HAPPENED ON 2026-09-14, WHICH IS WHY THIS BLOCK EXISTS. The deploy of 1557d93 took
-          # the copied-venv path and then reported:
-          #
-          #   dependencies unchanged since /home/ubuntu/app/releases/b9b35bb… — copying its venv
-          #   ✔ Generated Prisma Client Python to ./../../b9b35bb…/backend/.venv/…/site-packages/prisma
-          #
-          # READ THE SECOND LINE AGAIN: generate wrote the client into the PREVIOUS release. The
-          # release being deployed kept the client that was copied into it -- generated on
-          # 2026-09-03, before SanctionOrder and AnnualPlanEntry existed. Every route that touches
-          # a model added since answered `AttributeError` -> a 500 reading "Something went wrong on
-          # the server. The error has been logged." /api/design-workshops and /api/sanction-orders
-          # were down for a day; /api/users was fine, because it predates that schema. Nothing in
-          # the deploy went red: rsync, generate, migrate, the symlink flip and the readiness probe
-          # all passed, because none of them ever asked WHERE the client landed.
-          #
-          # The check is the one question that matters and it is asked of the interpreter that will
-          # actually serve traffic: import prisma, and see where it resolves. A path outside this
-          # release means the app is about to run somebody else's client. Comparing the schema the
-          # generator embedded beside it against this release's schema then catches the other half
-          # -- a client that IS in the right place but was generated from an older tree, which is
-          # the same outage with a different cause. (The engine loads THAT copy of schema.prisma,
-          # not backend/prisma/schema.prisma, so it is the file that decides what the queries may
-          # name.)
-          #
-          # THERE IS NO SELF-HEAL HERE, AND THAT IS DELIBERATE. An earlier version of this block
-          # rebuilt the venv and re-ran `prisma generate` on the box when the check failed. That is
-          # now the one thing this box must never be asked to do -- it is what gets OOM-killed. If
-          # the client that just arrived from the runner is not the right one, the rsync or the
-          # venv is wrong, and both are the runner's to fix: fail, keep the symlink where it is, and
-          # let the box go on serving the last release that passed this same check.
-          # ─── THE QUERY ENGINE BINARY, WHICH `generate` USED TO FETCH AS A SIDE EFFECT ────────
-          #
-          # MOVING GENERATION TO THE RUNNER TOOK THIS WITH IT, and the release that shipped without
-          # it started, served, and failed every single request:
-          #
-          #   Background DB reconnect failed: Expected .../prisma-query-engine-debian-openssl-3.0.x
-          #   ... to exist but none were found or could not be executed.
-          #   Try running prisma py fetch
-          #
-          # The client is PURE PYTHON and travels; the engine is a PLATFORM BINARY and does not. The
-          # paths it searched even included `/home/runner/.cache/...` -- the runner's home, carried
-          # in from the machine that generated the client -- which is the clearest possible sign
-          # that a binary cannot be shipped this way and has to be fetched where it will run.
-          #
-          # `py fetch` DOWNLOADS, it does not generate: no schema is parsed and nothing is built in
-          # memory, so this is not the step that gets OOM-killed. It is a no-op once the cache holds
-          # this version, which is every deploy after the first.
-          # `prisma py fetch` WAS HERE AND DID NOT WORK -- see the runner step's note. The engine
-          # now arrives by rsync from the runner that generated the matching client.
 
-          # ─── THE CLIENT MUST CARRY THE PYTHON 3.14 IMPORT FIX, CHECKED BEFORE ANYTHING IMPORTS IT ──
-          # 2026-10-09. The runner's generator adds `from __future__ import annotations` to types.py
-          # (scripts/generate_prisma_client.py); without it every import of this client on 3.14 costs
-          # minutes and more than a gigabyte, which on this box means the import checks below — and
-          # every later start of both units — run into MemoryHigh and the queue's MemoryMax. `--check`
-          # reads the file through find_spec and imports nothing, so a client shipped without the fix
-          # fails here in a second instead of stalling the deploy for half an hour first.
           ./.venv/bin/python scripts/generate_prisma_client.py --check || { echo "::error::the Prisma client in this release is not the one scripts/generate_prisma_client.py writes (the Python 3.14 import fix and the types.py/types.pyi split); the runner's build step did not run it. Not flipping."; exit 1; }
 
-          # ─── AN ENGINE NAME THIS BOX'S CLIENT WILL LOOK FOR, ON ANY OpenSSL 3 (2026-10-09) ─────────
-          # The engine arrives named for the runner's target, `prisma-query-engine-debian-openssl-3.0.x`
-          # — Prisma's own CLI files every OpenSSL 3.x host under 3.0.x, because libssl.so.3 keeps its
-          # ABI across 3.x. prisma-client-py's RUNTIME does not: it names the file it looks for in the
-          # working directory after `openssl version` verbatim (prisma/binaries/platform.py), so on an
-          # OpenSSL 3.5 host — Ubuntu 26.04, which infra/terraform/main.tf now builds a replacement box
-          # from — it would look for `…-3.5.x`, find nothing, and the connect check below would refuse
-          # the flip on every deploy to that box. On today's 24.04 box (OpenSSL 3.0) the two names are
-          # the same file and this does nothing. The name is computed here the way platform.py computes
-          # it, so nothing has to import the client to learn it. It is the SYSTEM `openssl` binary that
-          # decides, not the interpreter: the pinned CPython bundles OpenSSL 3.5.9 for its own `ssl`
-          # module, and platform.py never asks it — so on 24.04 the name stays `…-3.0.x`.
           ssl_minor="$( { openssl version -v 2>/dev/null || true; } | sed -nE 's/^OpenSSL ([0-9]+\.[0-9]+)\.[0-9]+.*/\1/p')"
           box_engine="prisma-query-engine-debian-openssl-${ssl_minor:-1.1}.x"
           if [ ! -e "$box_engine" ] && [ -x prisma-query-engine-debian-openssl-3.0.x ] && [ "${ssl_minor%%.*}" = "3" ]; then
@@ -1547,15 +1109,6 @@ jobs:
             echo "::error::prisma client resolved to $client_dir, which is outside $REL. Refusing to deploy a release that would import another release's client."
             exit 1
           fi
-          # SAME SEMANTIC COMPARISON AS ON THE RUNNER, and for the same reason: the file the box now
-          # holds is the GENERATOR'S copy of the schema, which is not promised to be byte-identical
-          # to `prisma/schema.prisma` in the tree beside it. What must be true is that it declares
-          # the same models and enums -- that is what the query engine reads it for, and a
-          # disagreement there is the AttributeError that took /api/design-workshops down.
-          # ANCHORED AT COLUMN 0 AND REQUIRING THE BRACE. `^[[:space:]]*model` also matches a FIELD named
-          # `model` -- schema.prisma:2130 is `  model String?` -- which made the import check below
-          # demand an accessor called `string`. A declaration in this grammar is never indented and
-          # always opens a block, so both halves of that are load-bearing.
           names() { grep -oE '^(model|enum) [A-Za-z0-9_]+ *\{' "$1" | awk '{print $1, $2}' | sort; }
           if ! diff <(names "$client_dir/schema.prisma") <(names prisma/schema.prisma) > /tmp/schemadiff; then
             echo "::error::$client_dir/schema.prisma declares different models/enums than this release's prisma/schema.prisma. The query engine reads that copy, so anything it does not declare fails at runtime with AttributeError."
@@ -1563,63 +1116,14 @@ jobs:
             head -40 /tmp/schemadiff
             exit 1
           fi
-          # AND IT MUST ACTUALLY IMPORT AND CARRY THE MODELS. Comparing schema.prisma proves what the
-          # ENGINE will be told; it does not prove the generated MODULES beside it are complete. A
-          # half-copied client passes the schema comparison and then fails every route at runtime,
-          # which is the same outage wearing a different hat. Instantiating Prisma exercises the
-          # generated `client.py`, `models.py`, `actions.py` and `types.py` in one line, and the
-          # model accessors are checked by name against the schema so a missing one is named here
-          # rather than discovered by a designer.
-          # ONE LINE, AND BOTH REASONS ARE THE CONTAINER IT LIVES IN. A nested heredoc cannot close
-          # inside this one (an indented terminator does not end an unindented `<<`), and a `-c`
-          # program cannot be indented either, because Python would read the leading spaces of each
-          # continuation line as an IndentationError -- while YAML's block scalar forbids putting
-          # them at column 0. Semicolons are what is left.
-          #
-          # WHAT IT PROVES, THAT THE SCHEMA COMPARISON ABOVE DOES NOT. That check reads the file the
-          # ENGINE will be handed; it says nothing about whether the generated MODULES beside it
-          # arrived intact. A half-copied client passes it and then fails every route at runtime --
-          # the same outage wearing a different hat. Instantiating Prisma exercises client.py,
-          # models.py, actions.py and types.py together, and every model in this release's schema is
-          # then checked by name, so a missing accessor is named HERE rather than found by a user.
-          # THE EXIT STATUS IS CARRIED BY HAND, because the heartbeat has to be stopped BETWEEN the
-          # command and the decision about it. `cmd || rc=$?` is the form that survives `set -e`
-          # (the left-hand side of `||` is a tested command, so a non-zero status is not fatal
-          # there), and `rc=0` is initialised first because under `set -u` an unset `rc` would abort
-          # the step on the SUCCESS path — the failure mode that looks least like its own cause. The
-          # one-liner below prints its own `::error::` before exiting 1, so `exit "$rc"` is the
-          # whole decision.
           ka_start "prisma client import + model accessor check"
           rc=0
           ./.venv/bin/python -c 'import re,sys,pathlib;from prisma import Prisma;schema=pathlib.Path("prisma/schema.prisma").read_text(encoding="utf-8");models=sorted({m.lower() for m in re.findall(r"^model ([A-Za-z0-9_]+) *\{",schema,re.M)});missing=[m for m in models if not hasattr(Prisma(),m)];print(("::error::the installed client is missing %d model accessor(s): %s"%(len(missing),", ".join(missing[:12]))) if missing else ("client instantiates and carries all %d model accessors"%len(models)));sys.exit(1 if missing else 0)' || rc=$?
           ka_stop
           [ "$rc" -eq 0 ] || exit "$rc"
 
-          # AND THE ENGINE IS ASSERTED, not assumed. `py fetch` exiting 0 is not the same claim as
-          # "the binary this platform needs is on disk and runnable" -- the release that took the
-          # site down proved the two can differ, and the difference only showed up as a 500 on every
-          # route after the symlink had already flipped.
-          # ASSERTED BY CONNECTING, NOT BY GUESSING A FILENAME. The first version of this check
-          # looked for `prisma-query-engine-*` on disk and failed a deploy whose fetch had plainly
-          # just succeeded ("Downloaded binaries to .../binaries/5.17.0/393aa..."), because the
-          # engine's name and location are prisma's business and not a contract this file gets to
-          # assume. Guessing the artefact is how a check ends up testing itself.
-          #
-          # Opening a connection is the thing that actually has to work, and it is what failed in
-          # production: the app started, served, and answered every request with "Not connected to
-          # the query engine". `connect()` starts the engine binary and speaks to the database, so
-          # it exercises the fetch, the binary's executability and the DSN in one call -- and it
-          # runs BEFORE the symlink flips, so a box that cannot reach its database keeps serving the
-          # release that can.
           echo "engine cache:"; ls -la "$HOME/.cache/prisma-python/binaries"/*/* 2>/dev/null | head -20 || true
           set -a; . ./.env; set +a
-          # NO `disconnect()`, AND ITS ABSENCE IS THE FIX RATHER THAN A SHORTCUT. The first version
-          # called `asyncio.run()` twice -- once for connect, once for disconnect -- and the second
-          # raised `RuntimeError: Event loop is closed` AFTER printing "the database answered". A
-          # prisma connection is bound to the loop that opened it, so the teardown ran against a
-          # loop that no longer existed, and a release whose engine and database were both healthy
-          # was reported broken. The process exits on the next line and takes the engine subprocess
-          # with it; there is nothing for a disconnect to release that the exit does not.
           ka_start "prisma connect(): starting the query engine and reaching the pooler"
           rc=0
           ./.venv/bin/python -c 'import asyncio;from prisma import Prisma;asyncio.run(Prisma().connect());print("query engine started and the database answered")' || rc=$?
@@ -1643,19 +1147,6 @@ jobs:
           set -euo pipefail
           APP=/home/ubuntu/app
 
-          # ─── DECIDED FIRST, BECAUSE NOTHING BELOW MAY DELETE IT: WHAT IS BEING SERVED ───────
-          # Resolved once, as an absolute path, and compared as one. This step used to compare
-          # BASENAMES, which gives the same answer only while `current` points inside releases/ —
-          # true today, and exactly the kind of "true today" that a hand rollback or a future layout
-          # change turns into a deleted live tree with no warning in between.
-          #
-          # `[ ! -d ]` AND NOT JUST `[ -z ]`: `readlink -f` on a DANGLING symlink prints the target
-          # path and exits 0, so an emptiness test alone sails straight past the one state this
-          # guard exists for. Checked on the box's own coreutils, not assumed.
-          #
-          # IF WE CANNOT TELL WHAT IS LIVE, WE DELETE NOTHING — a warning, not a failure. The
-          # release above has already flipped and answered /health, so failing here would report a
-          # good release as broken, which is the lie this pipeline keeps being taught not to tell.
           live=""
           [ -e "$APP/current" ] && live="$(readlink -f "$APP/current" 2>/dev/null || true)"
           if [ -z "$live" ] || [ ! -d "$live" ]; then
@@ -1666,11 +1157,6 @@ jobs:
 
           cd "$APP/releases"
 
-          # ONE definition of "this is the tree being served", used by BOTH passes, resolved on both
-          # sides so a release reached through any symlink still compares equal.
-          # 2026-10-19: AND NEVER A RELEASE A PORT'S SLOT POINTS AT. The previous release stays behind
-          # the idle port's /home/ubuntu/app/slot-<port> link as the instant rollback target, so it is
-          # protected exactly like `current`, whatever its rank.
           slot_8000="$(readlink -f "$APP/slot-8000" 2>/dev/null || true)"
           slot_8001="$(readlink -f "$APP/slot-8001" 2>/dev/null || true)"
           is_live() {
@@ -1679,11 +1165,6 @@ jobs:
             [ "$r" = "$live" ] || [ "$r" = "$slot_8000" ] || [ "$r" = "$slot_8001" ]
           }
 
-          # A DIRECTORY THIS USER CANNOT DELETE IS A WARNING, NEVER A FAILED DEPLOY. On 2026-10-19 a
-          # release folder owned by root (left by a hand recovery run as root) made `rm -rf` fail here,
-          # and `set -e` turned a deploy that had already switched and answered /health red. So: as
-          # ubuntu, then with sudo (ubuntu has passwordless sudo on these boxes), and if both fail, a
-          # warning naming the directory. Only ever a path under releases/, never `current` or a slot.
           prune() {
             if rm -rf -- "$1" 2>/dev/null; then return 0; fi
             if sudo -n rm -rf -- "$1" 2>/dev/null; then echo "pruned $1 with sudo: something in it was not ubuntu's"; return 0; fi
@@ -1691,39 +1172,8 @@ jobs:
             return 0
           }
 
-          # Named once because it is used twice, and a bound written out twice is a bound that will
-          # one day disagree with itself.
           keep_released=3
 
-          # ─── PASS 1 · ROLLBACK CANDIDATES, RANKED BY WHEN THEY WENT LIVE ────────────────────
-          #
-          # "THREE RELEASES", NOT "THREE DIRECTORIES", AND THE DIFFERENCE IS NEW ON 2026-09-17.
-          # Release directories used to be named for the commit, so N directories meant N deployed
-          # commits — a re-run landed back in the same one. They are named per RUN ATTEMPT now, so
-          # the three attempts of run 35145291959 would have left THREE directories, two of which
-          # were never flipped onto and have no complete venv. This step does not run on a failed run
-          # (no `if:`, so it is `success()`), so the next successful deploy would have found those
-          # orphans among the three newest and deleted the last known-good release to make room for
-          # them. Pointing `current` at a half-built tree and restarting is the DOCUMENTED rollback,
-          # so that would have taken the API down with no way back except another full deploy —
-          # precisely what the release layout exists to prevent.
-          #
-          # SO THE RANKING IS OVER `.released` MARKERS, AND BY THE MARKER'S OWN mtime RATHER THAN THE
-          # DIRECTORY'S. The marker is written at the instant of the flip, so its timestamp IS "when
-          # this release went live", which is the order this policy wants. A directory's mtime is
-          # not: creating a file inside a directory updates it, so the one-time backfill in the
-          # layout step re-stamps every directory it visits and reorders the whole set by the order
-          # `find` happened to walk it. Measured on a mock tree rather than reasoned about: ranked by
-          # directory mtime, the first post-change prune deleted the INCUMBENT release, because two
-          # four-day-old ones marked a fraction of a second later outranked it. Ranked by marker
-          # mtime, on the identical tree, it deleted the genuinely oldest and kept the incumbent.
-          #
-          # find/sort rather than `ls -t`: a glob over an empty directory is an error under `set -e`,
-          # and this has to be safe on a box where releases/ has just been created.
-          #
-          # Every branch is an explicit `if`, never `[ … ] && continue`: under `set -e` a false `&&`
-          # as the last command of a loop body ends the whole step, and a prune that stops halfway is
-          # a prune that silently keeps growing.
           find . -mindepth 2 -maxdepth 2 -type f -name .released -printf '%T@ %h\n' \
             | sort -rn \
             | cut -d' ' -f2- \
@@ -1731,49 +1181,11 @@ jobs:
             | tail -n "+$((keep_released + 1))" \
             | while IFS= read -r d; do
                 if [ -z "$d" ]; then continue; fi
-                # `current` IS NEVER PRUNED, whatever its age or its rank. Not theoretical: a deploy
-                # that failed its migration, or an operator who has rolled back by hand, leaves
-                # `current` pointing at a release OLDER than the newest three — so it lands in this
-                # list, and without this line the next run deletes the code the box is executing.
                 if is_live "$d"; then echo "keeping $d (current, or behind a port's slot)"; continue; fi
                 echo "pruning $d (went live, but is older than the $keep_released newest that did)"
                 prune "$d"
               done
 
-          # ─── PASS 2 · TREES THAT WERE BUILT AND NEVER SERVED ────────────────────────────────
-          # A cancelled run, or an attempt of a run that failed before the flip. They are not
-          # rollback targets — no complete venv is guaranteed, and "point `current` at it and
-          # restart" is the documented recovery — so leaving them in the ranking is worse than
-          # useless. Each also carries the `.env` it was deployed with, in plaintext at mode 600;
-          # docs/SECURITY.md's rotation runbook counts these.
-          #
-          # `| sort` IS A BARRIER AND NOT AN ORDERING. sort must read all of find's output before it
-          # emits a byte, so every `rm -rf` below happens after find has exited. Without it the loop
-          # unlinks directories find has not stat'd yet — and `! -newermt` forces it to stat every
-          # entry — so find exits 1 on an ENOENT it caused, `pipefail` makes that the pipeline's
-          # status, and `set -e` turns a green, flipped, health-checked deploy red at random. PASS 1
-          # gets this free from its ranking sort; this pass has to ask for it.
-          #
-          # AN HOUR OF GRACE, AND THE REASON IS NOT A CONCURRENT DEPLOY. `concurrency: deploy-backend`
-          # with `cancel-in-progress: false` at the top of this file QUEUES a second run rather than
-          # overlapping it, so this step cannot be deleting a directory another run of this workflow
-          # is filling. The hour buys the other two things: a window in which a human can still open
-          # a failed attempt and read what went wrong, and cover for a `.released` touch that failed.
-          # It does NOT bound a directory whose mtime is in the future (clock skew, or a timestamp
-          # rsync preserved) — such a directory is never matched here at all. That is disk, not
-          # danger, and it is written down rather than discovered.
-          #
-          # `.keep` IS THE HUMAN SAYING "I AM USING THIS", because an hour is a guess about how long
-          # somebody needs and a time window cannot express "in use". backend/DEPLOY_AWS.md's manual
-          # recovery procedure builds `releases/manual` by hand with a `cp -a` that can easily outlast
-          # the window, and a deploy queued during that incident would otherwise delete the tree being
-          # built. That runbook now touches this file as its second step.
-          #
-          # `bootstrap` is swept by this pass once `current` has moved off it, which is intended:
-          # `releases/bootstrap/backend` is either a SYMLINK to the legacy /home/ubuntu/app/backend
-          # tree or an empty directory, and `rm -rf` removes the link and never what it points at.
-          # This finally automates the cleanup the shim above has been describing as manual since
-          # 2026-09-03.
           find . -maxdepth 1 -mindepth 1 -type d ! -newermt '-60 minutes' -printf '%f\n' \
             | sort \
             | while IFS= read -r d; do
@@ -1795,13 +1207,10 @@ jobs:
           ssh ubuntu@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
           set -euo pipefail
 
-          # The port nginx proxies to since 2026-10-19 (8000 or 8001; backend/deploy/blue_green.sh).
           port="$(sed -nE 's#^[[:space:]]*proxy_pass http://127\.0\.0\.1:([0-9]+);.*#\1#p' /etc/nginx/sites-available/fieldrepo | head -n1)"
           case "$port" in 8000|8001) ;; *) echo "::error::nginx proxies to '${port:-nothing}', not 8000 or 8001"; exit 1 ;; esac
           echo "live port: $port"
 
-          # 1. READY, not merely up. `/health` deliberately avoids the database, so a wrong DSN
-          #    produces a green deploy and a dead site; `/health/ready` is the endpoint that connects.
           ready="$(curl -fsS "http://127.0.0.1:${port}/health/ready")"
           echo "readiness: ${ready}"
           case "$ready" in
@@ -1809,13 +1218,9 @@ jobs:
             *) echo "::error::the API is running but reports no database connection: ${ready}"; exit 1 ;;
           esac
 
-          # 2. The production origin is allowed. This is a real preflight, answered by the same
-          #    middleware a browser talks to, so it cannot pass on a list that merely looks right.
           origin="https://designer-repository.vercel.app"
           hdr="$(curl -s -D - -o /dev/null --max-time 20 -X OPTIONS "http://127.0.0.1:${port}/api/auth/login" -H "Origin: ${origin}" -H "Access-Control-Request-Method: POST")"
           echo "${hdr}" | head -1
-          # No `$` anchor: curl prints headers with CRLF endings, so the line ends in a
-          # carriage return and an end-anchored pattern can never match it.
           if ! echo "${hdr}" | grep -qi "^access-control-allow-origin: ${origin}"; then
             echo "::error::the API refuses CORS for ${origin}, so no browser on the live site can call it. Every request fails the preflight with 'Disallowed CORS origin' and the user sees only 'failed to fetch'."
             echo "::error::BACKEND_CORS_ORIGINS on the server is: $(grep -E "^BACKEND_CORS_ORIGINS=" /home/ubuntu/app/current/backend/.env 2>/dev/null || echo "<not found in the current release's .env>")"
@@ -1843,9 +1248,6 @@ jobs:
           if [ -z "$el" ]; then
             echo "ElevenLabs: no key in the live .env (skipped)"
           else
-            # POST speech-to-text with NO audio: the one scope the pipeline uses, refused by validation
-            # (400/422) before anything is transcribed or billed. Each portal's key is restricted to
-            # speech-to-text, so a read such as GET /v1/models answers 401 missing_permissions (31 Oct).
             code="$(curl -s -o "$body" -w '%{http_code}' --max-time 30 -H @<(printf 'xi-api-key: %s\n' "$el") -F model_id=scribe_v2 https://api.elevenlabs.io/v1/speech-to-text || true)"
             echo "ElevenLabs POST /v1/speech-to-text (no audio): HTTP ${code:-000}"
             case "$code" in
@@ -1882,13 +1284,6 @@ jobs:
           ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o ConnectTimeout=20 \
             "ubuntu@${{ secrets.EC2_HOST }}" 'bash -s' <<'REMOTE'
           set +e
-          # THE JOURNALS ARE SCRUBBED, AND THE RULE AT THE .env CHECK ABOVE IS WHY: a deploy log is
-          # not the place to leak a secret while diagnosing one. BACKEND_ENV is ONE multi-line
-          # secret, so Actions masks the whole blob and NOT the DSN inside it — a prisma or asyncpg
-          # connection error that echoes its connection string would otherwise print in clear, on
-          # the log of a failed deploy, which is the log everyone opens. Anything that looks like a
-          # URL with credentials, a JWT, or a long opaque provider key is replaced here rather than
-          # trusted not to appear.
           scrub() { sed -E -e 's#([a-z+]+)://[^:@/[:space:]]+:[^@[:space:]]+@#\1://***:***@#g' \
                            -e 's#eyJ[A-Za-z0-9_-]{10,}#<jwt-redacted>#g' \
                            -e 's#(sk-|AIza|AKIA)[A-Za-z0-9_-]{8,}#<key-redacted>#g'; }
