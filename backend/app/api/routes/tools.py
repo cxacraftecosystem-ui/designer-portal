@@ -33,6 +33,11 @@ from app.services.record_design_workshop import (
     assert_may_write_a_record_filed_under,
     assert_payload_workshop,
 )
+from app.services.record_filters import (
+    tool_artisan_clause,
+    tool_craft_clause,
+    tool_workshop_clause,
+)
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -286,13 +291,13 @@ async def list_tools(
             prose_contains("remarks", search),
         ]
     if craftId:
-        where["craftId"] = craftId
+        where.setdefault("AND", []).append(tool_craft_clause([craftId]))
     if artisanId:
-        where["artisanId"] = artisanId
+        where.setdefault("AND", []).append(tool_artisan_clause([artisanId]))
     if designWorkshopId:
         where["designWorkshopId"] = designWorkshopId
     if workshopId:
-        where["workshopId"] = workshopId
+        where.setdefault("AND", []).append(tool_workshop_clause([workshopId], False, vis))
     if place:
         where["place"] = contains(place)
     if maker:
