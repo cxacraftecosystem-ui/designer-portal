@@ -77,10 +77,10 @@ metadata row, not 400 MB of bandwidth.
 
 ## 2. The production request path
 
-Worth drawing in full, because the two facts that dominate this system's behaviour are both
-invisible in the logical diagram above: **the database is in a different AWS region from the web
-box**, and **the box is a single burstable EC2 instance** — a t3.micro when this was drawn, a t3.small
-from 2026-09-17, and a t3.medium from the Ubuntu 26.04 rebuild declared on 2026-10-09.
+Worth drawing in full, because the two facts that dominated this system's behaviour are both
+invisible in the logical diagram above: **the database was in a different AWS region from the web
+box** until 2026-09-02 (it is co-located now), and **the box is a single burstable EC2 instance** — a t3.micro when this was drawn, a t3.small
+from 2026-09-17, and a t3.medium since the Ubuntu 26.04 rebuild went live on 2026-10-10.
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","secondaryColor":"#FAEECD","secondaryTextColor":"#1E1B2E","secondaryBorderColor":"#CD9200","tertiaryColor":"#F3F1FA","tertiaryTextColor":"#1E1B2E","tertiaryBorderColor":"#A7A3BC","mainBkg":"#F2E9FE","nodeBorder":"#9148D2","nodeTextColor":"#1E1B2E","lineColor":"#AA69E9","textColor":"#857F9E","edgeLabelBackground":"#F9F5FF","clusterBkg":"#F9F5FF","clusterBorder":"#D6B6FB","titleColor":"#762CB1","noteBkgColor":"#FAEECD","noteTextColor":"#1E1B2E","noteBorderColor":"#CD9200","actorBkg":"#F2E9FE","actorBorder":"#9148D2","actorTextColor":"#1E1B2E","actorLineColor":"#AA69E9","signalColor":"#AA69E9","signalTextColor":"#857F9E","labelBoxBkgColor":"#F2E9FE","labelBoxBorderColor":"#9148D2","labelTextColor":"#1E1B2E","loopTextColor":"#857F9E","activationBkgColor":"#E7D5FE","activationBorderColor":"#9148D2","sequenceNumberColor":"#FFFFFF","transitionColor":"#AA69E9","transitionLabelColor":"#857F9E","stateLabelColor":"#1E1B2E","stateBkg":"#F2E9FE","compositeBackground":"#F9F5FF","compositeTitleBackground":"#F2E9FE","attributeBackgroundColorOdd":"#FFFFFF","attributeBackgroundColorEven":"#F9F5FF","relationColor":"#AA69E9","relationLabelBackground":"#F9F5FF","relationLabelColor":"#1E1B2E"}}}%%
@@ -91,20 +91,20 @@ flowchart TB
   subgraph edge["AWS edge"]
     CF["CloudFront distribution<br/>d3ekigkotd1xa2.cloudfront.net<br/>TLS 1.2+ · IPv4 and IPv6"]
   end
-  subgraph ec2["EC2 · ap-south-1 · 2 burstable vCPU · t3.small 2 GiB, t3.medium 4 GiB from the 26.04 rebuild"]
+  subgraph ec2["EC2 · ap-south-1 · t3.medium · 4 GiB · Ubuntu 26.04 since 2026-10-10"]
     NX["nginx :80<br/>client_max_body_size 200M<br/>proxy_read_timeout 300s"]
-    UV["uvicorn :8000 on 127.0.0.1<br/><b>--workers 1</b>"]
+    UV["fieldrepo-api@8000 or @8001<br/>blue/green, one uvicorn worker each"]
     QW["fieldrepo-queue<br/>python -m app.worker"]
     PE[Prisma query engine]
   end
   subgraph remote["Elsewhere"]
-    PG[("PostgreSQL<br/>managed, pooled<br/><b>different region</b>")]
+    PG[("PostgreSQL<br/>managed, session pooler<br/>co-located since 2026-09-02")]
     S3[(S3 bucket)]
   end
 
   B -->|"HTTPS"| CF
-  CF -->|"plaintext HTTP inside AWS — risk P1"| NX
-  NX -->|loopback| UV
+  CF -->|"HTTP inside AWS, origin locked to CloudFront"| NX
+  NX -->|"loopback, the live port"| UV
   UV --> PE
   QW --> PE
   PE -->|"TLS, sslmode=require<br/><b>~1–2 ms per round trip</b><br/><i>(was ~200–400 ms until 2026-09-02)</i>"| PG
@@ -638,7 +638,7 @@ flowchart TB
   end
   subgraph aws["AWS ap-south-1"]
     CF2[CloudFront]
-    E["EC2 t3.small, t3.medium from the 26.04 rebuild<br/>nginx + uvicorn(1) + fieldrepo-queue"]
+    E["EC2 t3.medium since 2026-10-10<br/>nginx + fieldrepo-api@8000/8001 + fieldrepo-queue"]
     S3B[(S3 media bucket)]
   end
   subgraph sb["Managed PostgreSQL — co-located since 2026-09-02"]

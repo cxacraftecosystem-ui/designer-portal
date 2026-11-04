@@ -182,9 +182,10 @@ sentence names a provider, it is either (a) describing a past incident, in which
 the date and be written in the past tense, or (b) wrong.
 
 **What the runtime code knows about the provider: nothing, as of 2026-08-22.** Both files that touch
-the DSN say so in their own headers — `backend/app/core/config.py`'s reads "THIS FILE NAMES NO
-DATABASE PROVIDER, AND MUST NOT LEARN ONE", and `backend/app/core/db.py`'s reads "THIS MODULE KNOWS
-THAT THE DATABASE IS POSTGRESQL AND NOTHING ELSE ABOUT IT". Each of them **used to** know one:
+the DSN said so in their own headers until the 0.0.10 comment strip — `backend/app/core/config.py`'s
+read "THIS FILE NAMES NO DATABASE PROVIDER, AND MUST NOT LEARN ONE", and `backend/app/core/db.py`'s read
+"THIS MODULE KNOWS THAT THE DATABASE IS POSTGRESQL AND NOTHING ELSE ABOUT IT". The rule now lives in
+[INVARIANTS.md](INVARIANTS.md) §3. Each of them **used to** know one:
 `build_runtime_database_url` matched the host suffix `.pooler.supabase.com` and rewrote `:5432` to
 `:6543`, and the pool ceiling rode on that same match — so when the deployment moved, the ceiling
 silently stopped applying. Every decision either file makes now turns on **shape** (is the host
@@ -338,7 +339,7 @@ uploads still succeed — transcripts and grid measurements simply stay empty.
 | `OPENAI_CHAT_MODEL` | No | `gpt-6-luna` | No | Rewrites raw transcripts into clean interviewer/interviewee dialogue. |
 | `GEMINI_API_KEY` | No | unset | **Yes** | Single legacy key for grid measurement. |
 | `GEMINI_API_KEYS` | No | `""` | **Yes** | Any number of comma- or newline-separated keys; the worker rotates and fails over across them. Combined with `GEMINI_API_KEY` and de-duplicated. |
-| `GEMINI_MEASUREMENT_MODEL` | No | `gemini-2.5-flash-lite` | No | Pin an id that still exists — `gemini-1.5-flash` now 404s. |
+| `GEMINI_MEASUREMENT_MODEL` | No | `gemini-3.8-flash` | No | Grid measurement, photo captions and identity OCR. A 404 on the configured id falls back to `gemini-3.7-flash` (0.0.10). |
 | `NEXT_PUBLIC_MAPTILER_API_KEY` | No | unset | No | Read by the backend only so one `.env` can feed both apps; the browser gets it from the frontend build. |
 
 > **`ELEVENLABS_STT_MODEL` defaults to `scribe_v2`** (since 31 Oct 2026; it used to read `scribe_v1`

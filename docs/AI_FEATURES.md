@@ -90,8 +90,10 @@ correctly.
 
 ### The honest recommendation for the production box
 
-Production is one **t3.micro: 2 burstable vCPU, 1 GiB of RAM total**, already running uvicorn, the
-Prisma query engine and the media queue worker behind nginx behind CloudFront.
+Production is one **t3.medium: 2 burstable vCPU, 4 GiB of RAM** (since 2026-10-10; a t3.micro with
+1 GiB when the measurements below were taken), already running the API, the Prisma query engine and the
+media queue worker behind nginx behind CloudFront. The local matting figures below still rule it out:
+one matte wants most of the queue's 1,100 MB ceiling.
 
 - **Do not run `rembg_local` there.** Measured on a laptop, `import rembg` alone took the process
   from 35 MB to 167 MB, building a U2Net session took it to 564 MB, and a single 1.9-megapixel

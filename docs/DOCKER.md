@@ -5,7 +5,7 @@ stack that runs them next to PostgreSQL 17, an S3-compatible object store (Silo,
 MinIO — the service is still called `minio`) and (optionally) Redis 8.
 
 Production does **not** use any of this. The API runs from a systemd unit on a single EC2
-t3.micro behind nginx behind CloudFront (`docs/ARCHITECTURE.md`), and the web app is built by
+t3.medium (since 2026-10-10) behind nginx behind CloudFront (`docs/ARCHITECTURE.md`), and the web app is built by
 Vercel's own pipeline (`docs/DEPLOYMENT_VERCEL.md`). These images exist so the whole stack can be
 brought up on one machine, and so there is a tested answer ready the day either of those two
 hosts has to change.

@@ -353,9 +353,30 @@ its readiness and the web sign-in every 15 minutes and opens an issue on an outa
 
 ## <img src="docs/readme-kit/assets/icons/shield-check.svg" width="32" align="top" alt="">&nbsp; Security
 
+Eleven tiers, strictly ordered. Each inherits everything below it, and you act only on someone ranked
+strictly below you. Per-user grants (`canManageQuestionnaire`, `canReview`, `canViewProvenance`,
+`canDownloadDataset`) lift one capability for a lower tier.
+
+| Tier | Rank | Powers |
+| --- | --- | --- |
+| `MASTER_ADMIN` | 60 | Reserved for `MASTER_ADMIN_EMAIL`. Everything, plus provider keys, repository settings and app releases. |
+| `ADMIN` | 50 | Delete accounts and records, grant capabilities, decide who may sign in, grant workshop access, approve late submissions. |
+| `MINISTRY_ADMIN` | 48 | **Not an admin.** Provisions password accounts below it, names a workshop's posts, reviews and rewrites records from Regional Director down. |
+| `REGIONAL_DIRECTOR` | 45 | An assistant director's powers, one tier wider. Reads stage data on screen; cannot export it. |
+| `ASSISTANT_DIRECTOR` | 42 | First tier that may rewrite a professor's record. Runs a workshop it holds. |
+| `PROFESSOR` | 40 | Craft, workshop and questionnaire management, dataset download, editing records of anyone below. |
+| `INSPECTOR` | 37 | Inspector / Reviewer: approves, rejects and sends back designers' work. Does not run workshops or sign reports. |
+| `DESIGNER` | 35 | Runs workshops and signs the report: the 22 stages, custom sections, AI layers, exports. |
+| `RESEARCHER` | 30 | Creates and edits their own records, runs questionnaire interviews. |
+| `FIELD_CONTRIBUTOR` | 20 | Populates existing records. Cannot create them. |
+| `CROWDSOURCE_VOLUNTEER` | 10 | Default for new Google accounts. Uploads media, answers questionnaires, comments. |
+
+Running a workshop is a set (`DESIGN_WORKSHOP_ROLES`), not a rank floor: a professor outranks a
+designer and still cannot run one. Whoever inspects or supervises a workshop never writes it. The full
+matrix and the review state machine: [PERMISSIONS.md](docs/PERMISSIONS.md).
+
 | Control | State |
 |---|---|
-| Roles | eleven tiers, Master Admin to Crowdsource Volunteer; you act only on people ranked below you ([PERMISSIONS.md](docs/PERMISSIONS.md)) |
 | Two-factor sign-in | TOTP, six-box code entry; the secret is encrypted with `TWO_FACTOR_ENCRYPTION_KEY` (GitHub secret, SSM backup) |
 | Sessions | a password change ends every other session; temporary passwords must be changed first |
 | Consent | one append-only `Consent` ledger shared by both portals; opt-out, re-read before every send |
@@ -402,7 +423,7 @@ One release per platform at a time: everything is batched, checked once and depl
 | 0.0.6 | 1 Nov 2026 | 32 | clean previews, coverage hover, reading mode, marks, auto-follow, transcripts in the data browser, temp-file fix (D37) |
 | 0.0.7 | 1 Nov 2026 | 33 | Python 3.15.2, Node 26, AGP 9.5, Gradle 9.8.2, Next 16.4 |
 | 0.0.9 | 3 Nov 2026 | 34 | old transcripts translate (D38), Data page report on click (D39) |
-| 0.0.10 | Nov 2026 | 35 | video transcription, the upload choice, admin switches, backfill switch (off), GPT-6 Luna and Claude Sonnet 5.5 defaults, refine on the web, AI suggestions on Android, no comments in code, the README kit |
+| 0.0.10 | Nov 2026 | 35 | video transcription, the upload choice, admin switches, backfill switch (off, D40), Gemini 3.8 Flash first with GPT-6 Luna and Claude Sonnet 5.5 only when selected, refine on the web, AI suggestions on Android, no comments in code, the README kit |
 
 ## <img src="docs/readme-kit/assets/icons/box.svg" width="32" align="top" alt="">&nbsp; Built with
 
@@ -470,6 +491,7 @@ seeded password must be changed at first sign-in.
 | How is data protected? | [SECURITY.md](docs/SECURITY.md), [AADHAAR.md](docs/AADHAAR.md) |
 | How do I hand it to a designer? | [RESEARCHER_GUIDE.md](docs/RESEARCHER_GUIDE.md), [WALKTHROUGH.md](docs/WALKTHROUGH.md) |
 | How many models, routes, tests? | [REPO_FACTS.md](docs/REPO_FACTS.md), generated; no count is written by hand |
+| Why is the code the way it is, now that it has no comments? | [INVARIANTS.md](docs/INVARIANTS.md) |
 | How is this README built? | [readme-kit/README_STYLE.md](docs/readme-kit/README_STYLE.md) |
 
 ## How this document is kept true
@@ -485,6 +507,7 @@ wins and this file is the one to fix.
 | The transcript contract and strings | `shared/transcript-contract.json`, `shared/strings/transcript.json`, pinned by `backend/tests/test_transcript_contract.py` |
 | The questionnaire feature counts | `shared/questionnaire-features.json`, checked by `backend/tests/test_questionnaire_feature_parity.py` |
 | Counts of models, routes, tests | not stated here; [REPO_FACTS.md](docs/REPO_FACTS.md) is generated |
+| The Tier / Rank / Powers table | `backend/tests/test_role_ladder_parity.py` against `ROLE_RANK` in `backend/app/core/deps.py` |
 | Box sizes, memory, swap, the Python build | read on the boxes through SSM on 4 Nov 2026; `deploy-backend.yml` pins the Python build |
 | The release table | the tags and `android/app/build.gradle.kts` (`appVersionName`, `appVersionCode`) |
 

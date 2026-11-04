@@ -431,10 +431,9 @@ updated to bake the same paths and limits into the base units, so a **rebuilt** 
 deployed one without this step ever having run; the two are deliberately redundant and are not
 allowed to disagree.
 
-**The memory limits, and why they are asymmetric.** The box running on 2026-10-09 is a **t3.small**
-— 2 GiB of RAM and a 2 GiB swap file — and the Ubuntu 26.04 rebuild declared that day in
-`infra/terraform/main.tf` is a **t3.medium** (4 GiB) with the same limits, kept until they are re-read
-there. The queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer
+**The memory limits, and why they are asymmetric.** The box is a **t3.medium** (4 GiB of RAM and a
+2 GiB swap file, Ubuntu 26.04, live since 2026-10-10; read from the AWS console on 2026-11-04). The
+limits are the ones set for the **t3.small** (2 GiB) it replaced, kept until they are re-read there. The queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer
 picks by badness score, which on this box has meant **uvicorn dying because the queue was hungry**,
 with the API then 502-ing for a reason that appears nowhere in its own logs. So `fieldrepo` gets
 `MemoryHigh=1000M` and deliberately **no** `MemoryMax`: killing the API to save memory is the outcome
