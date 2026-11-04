@@ -9,7 +9,7 @@ clients build against that file. This page explains what each part does and why.
 
 | Item | What the server does now |
 |---|---|
-| A1 | Removed recordings (`MediaFile.removedAt` set) never appear in the tree, a manifest, a zip, a report, a dataset or a CSV |
+| A1 | Removed recordings (`MediaFile.removedAt` set) never appear in the tree, a manifest, a zip, a report, a dataset, a CSV or a transcript download in any format |
 | A2 | Folder listings load media without the three transcript columns, through a slim Prisma model (`backend/app/services/data_explorer/slim.py`), and mark "has a transcript" with one cheap query per folder |
 | A3 | `GET /data/tree?slim=1` leaves transcript text out. A transcript is fetched when it is opened, from `GET /data/media/{media_id}/transcript` |
 | A4 | One zip walk loads each workshop, its linked artisans and its design-workshop stages once (`walk.memo`) |
@@ -17,7 +17,7 @@ clients build against that file. This page explains what each part does and why.
 | A6 | The JSON table preview cuts transcript cells to 2,000 characters. The `.xlsx` and `.csv` stay complete |
 | A7 | "Has a transcript" is `"transcriptText" IS NOT NULL AND "transcriptText" <> ''`. Saved transcripts were confirmed trimmed and non-blank in both production databases on 4 Nov 2026 |
 | A9 | Working out a user's access loads design-workshop ids only |
-| A10 | Audio converts to `.mp4` by streaming through ffmpeg. AAC is copied without re-encoding, one conversion runs at a time, and every outcome is counted. With `fallback=original` a failed conversion sends the original under its real name (`X-Conversion: original`) |
+| A10 | Audio converts to `.mp4` by streaming through ffmpeg. AAC is copied without re-encoding, one conversion runs at a time, and every outcome is counted. A failed conversion sends the original under its real name (`X-Conversion: original`) unless the request says `fallback=none`. `format=original` always sends the stored file |
 | A11 | nginx logs `$request_time` and `$upstream_response_time` for every request to `/var/log/nginx/response-times.log` (path only, never the query string) |
 | A12 | The Ministry export clean-up runs every ten minutes instead of on every worker pass |
 | A13 | A signed download link is reused for half its life, so a browser can cache a repeat play or download (`backend/app/services/data_explorer/signing.py`) |

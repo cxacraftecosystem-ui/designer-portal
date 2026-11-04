@@ -356,3 +356,63 @@ def test_table_search_finds_a_row_past_the_preview_and_a_sheet_downloads_as_csv(
     assert seen["csv"][0] == 200 and f"needle-{STAMP}" in seen["csv"][1]
     assert seen["csv"][1].startswith("﻿")
     assert seen["no_sheet"] == 422
+
+
+def test_browse_by_workshop_lists_a_tool_reached_only_through_a_linked_artisan():
+    async def work() -> dict[str, Any]:
+        seed = await _seed()
+        other = await db.workshop.create(
+            data={"title": f"Sanganer {STAMP}", "date": datetime.now(UTC), "place": "Sanganer", "createdById": seed["admin"].id}
+        )
+        member = await db.artisan.create(
+            data={"name": f"Ramesh {STAMP}", "place": "Sanganer", "createdById": seed["admin"].id}
+        )
+        await db.workshopartisan.create(data={"workshopId": other.id, "artisanId": member.id})
+        tool = await db.tooldocumentation.create(
+            data={
+                "craftName": "Block printing",
+                "place": "Bagru",
+                "artisanName": seed["artisan"].name,
+                "toolkitName": f"Shared block {STAMP}",
+                "createdById": seed["admin"].id,
+                "artisanId": seed["artisan"].id,
+                "workshopId": seed["workshop"].id,
+            }
+        )
+        await db.toolartisan.create_many(
+            data=[{"toolId": tool.id, "artisanId": a} for a in (seed["artisan"].id, member.id)]
+        )
+        try:
+            headers = _auth(seed["admin"])
+            async with asgi_client() as client:
+
+                async def listed(kind: str, workshop_id: str) -> list[str]:
+                    page = await client.get(
+                        "/api/data/browse",
+                        params={"type": kind, "q": STAMP, "workshopIds": workshop_id},
+                        headers=headers,
+                    )
+                    return [item["id"] for item in page.json()["items"]]
+
+                return {
+                    "tool_home": await listed("tool", seed["workshop"].id),
+                    "tool_other": await listed("tool", other.id),
+                    "artisan_other": await listed("artisan", other.id),
+                    "ids": {"tool": tool.id, "member": member.id},
+                }
+        finally:
+            for step in (
+                db.toolartisan.delete_many(where={"toolId": tool.id}),
+                db.tooldocumentation.delete_many(where={"id": tool.id}),
+                db.workshopartisan.delete_many(where={"artisanId": member.id}),
+                db.artisan.delete_many(where={"id": member.id}),
+                db.workshop.delete_many(where={"id": other.id}),
+            ):
+                with contextlib.suppress(Exception):
+                    await step
+            await _cleanup(seed)
+
+    seen = _private(work)
+    assert seen["tool_home"] == [seen["ids"]["tool"]]
+    assert seen["tool_other"] == [seen["ids"]["tool"]]
+    assert seen["artisan_other"] == [seen["ids"]["member"]]
