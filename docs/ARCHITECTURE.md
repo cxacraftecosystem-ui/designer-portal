@@ -413,7 +413,13 @@ tiles, so there is never a search box without a map to move.
 
 ## 6. Transcription: three providers, with failover
 
-Not Whisper. Whisper is the **third** provider, and on a deployment with an ElevenLabs key it is
+Since 0.0.4 (31 Oct 2026) a transcribed recording is stored as **turns** (speaker, words, timings)
+in a `TranscriptVersion`, and a second queue step writes the English of every turn with Gemini 3.8
+Flash, plus the summary, quotes and craft terms. That pipeline, its switches, the upload choice and
+the video path are in [TRANSCRIPT_PIPELINE.md](TRANSCRIPT_PIPELINE.md). This section is the first
+step: which speech-to-text provider hears the audio.
+
+Not Whisper. Scribe v2 is first, Whisper is the **third** provider, and on a deployment with an ElevenLabs key it is
 usually never called.
 
 ```mermaid
@@ -703,11 +709,11 @@ than one you leave alone.
 | Counts (models, endpoints, code volume) | Not stated here. Generated into [REPO_FACTS.md](REPO_FACTS.md). |
 | §5.1's "never writes the record" | Structural, and that is why it is stated as structural: the claim holds exactly as long as `PlaceHit` in `frontend/lib/placeSearch.ts` carries no address field. A `state`, `district` or `pincode` added to that type falsifies the section, and would do it silently — the type is the enforcement. |
 | §2.1 latency table | Re-measure, do not trust. `for u in /health /health/ready /api/artisans; do curl -s -o /dev/null -w "$u %{time_total}\n" https://d3ekigkotd1xa2.cloudfront.net$u; done` — take a median of five and **re-date the table**. Numbers with no date are the ones that mislead. |
-| §2.2 the sequential-waves finding | [SCALABILITY.md](SCALABILITY.md) §1 and §3, and the long comment above `load_relations` in `backend/app/services/records.py`. Re-derive wave counts with the proxy method described in SCALABILITY.md §13. |
-| §2.3 one uvicorn worker | `infra/terraform/user_data.sh` — the `ExecStart` line and the comment above it. |
+| §2.2 the sequential-waves finding | [SCALABILITY.md](SCALABILITY.md) §1 and §3, and `load_relations` in `backend/app/services/records.py` (its long comment is at tag `v0.0.9`). Re-derive wave counts with the proxy method described in SCALABILITY.md §13. |
+| §2.3 one uvicorn worker | `infra/terraform/user_data.sh` — the `ExecStart` line; the reason is [INVARIANTS.md](INVARIANTS.md) §1. |
 | §4 authentication | `backend/app/core/deps.py` (`get_current_user`, `resolve_user`) and `backend/app/core/security.py`. |
 | §6 the provider chain | `backend/app/services/ai.py` (`transcription_provider_chain`, `_transcribe_sync`, `_AUTH_STATUSES`, `_DEFER_STATUSES`) and `backend/app/services/media_queue.py`. `backend/tests/test_stt_providers.py` covers the failover cases. Default order is generated into [REPO_FACTS.md](REPO_FACTS.md). |
-| §7 the offline outbox | `frontend/lib/offline.ts` (module docstring) and `android/app/src/main/java/com/designprototype/workshop/data/Offline.kt`. |
+| §7 the offline outbox | `frontend/lib/offline.ts` and `android/app/src/main/java/com/designprototype/workshop/data/Offline.kt`. |
 | The stage registry (intro) | `backend/app/services/stage_schema.py` — `STAGES`, `Tier`, `FieldSpec`, and `validate_registry`, which the tests run. Storage shape: `DesignWorkshop` / `DwStageEntry` in `backend/prisma/schema.prisma` and `promoted_columns`. |
 | Report rendering (intro) | `backend/app/services/report_model.py` is the shared model; `report_docx.py` and `report_pdf.py` render it server-side, and `DocxWriter.kt` / `PdfWriter.kt` / `ReportModel.kt` under `android/app/src/main/java/com/designprototype/workshop/report/` are the on-device port. If a block type is added to the model, every one of those has to gain a branch or the outputs drift — the Kotlin side has no compiler link to the Python side. |
 | §8–§9 hierarchy and lifecycle | `backend/prisma/schema.prisma`; the authority for transitions is [PERMISSIONS.md](PERMISSIONS.md). |

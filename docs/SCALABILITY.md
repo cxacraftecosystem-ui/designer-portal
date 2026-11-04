@@ -5,6 +5,9 @@
 > 2 Sep 2026, and since 10 Oct 2026 the box is a 4 GiB t3.medium on Ubuntu 26.04 that releases blue/green,
 > with the API at 281 MB and the worker at 186 MB PSS (measured 4 Nov 2026). Every bound written for 1 GiB
 > still holds; read "1 GiB" below as the design ceiling, not the box.
+>
+> **Docstrings and comments cited below are history.** The source has carried none since the 0.0.10
+> comment strip; a docstring or comment named here is read at tag `v0.0.9` (`git show v0.0.9:<file>`).
 
 What this system runs into as it grows, ranked by *when* each thing starts to hurt rather than by
 how interesting it is. Every entry carries the evidence it rests on, the scale at which it begins
