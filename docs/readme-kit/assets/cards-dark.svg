@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" role="img" aria-label="What the portal does: capture, offline, reports, review, media and access">
+<title>What the portal does: capture, offline, reports, review, media and access</title>
+<defs>
+<style>.d{font-family:'Plus Jakarta Sans','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}.s{font-family:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}.m{font-family:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace}.rise{animation:rise .9s cubic-bezier(.2,.7,.2,1) both}@keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}.shine{animation:shine 5.6s cubic-bezier(.5,0,.3,1) infinite}@keyframes shine{0%{transform:translateX(0)}45%,100%{transform:translateX(562.7px)}}.r0{animation-delay:0.1s}.r1{animation-delay:0.2s}.r2{animation-delay:0.3s}.r3{animation-delay:0.5s}.r4{animation-delay:0.6s}.r5{animation-delay:0.7s}@media (prefers-reduced-motion:reduce){*{animation:none!important}.smil{display:none}.sweep{fill:url(#still)}}</style>
+<radialGradient id="halo"><stop offset="0" stop-color="#AA69E9" stop-opacity=".16"/><stop offset="1" stop-color="#AA69E9" stop-opacity="0"/></radialGradient>
+<linearGradient id="glint" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#C090F5" stop-opacity="0"/><stop offset=".5" stop-color="#C090F5"/><stop offset="1" stop-color="#E0AF43" stop-opacity="0"/></linearGradient>
+<clipPath id="k0"><rect x="6" y="6" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k1"><rect x="408.7" y="6" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k2"><rect x="811.3" y="6" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k3"><rect x="6" y="240" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k4"><rect x="408.7" y="240" width="382.7" height="214" rx="18"/></clipPath>
+<clipPath id="k5"><rect x="811.3" y="240" width="382.7" height="214" rx="18"/></clipPath>
+</defs>
+<g class="rise r0">
+<rect x="6" y="6" width="382.7" height="214" rx="18" fill="#1A1725" stroke="#342E47"/>
+<g clip-path="url(#k0)"><circle cx="358.7" cy="26" r="120" fill="url(#halo)"/><rect x="6" y="6" width="382.7" height="3" fill="#5F1C93"/><rect class="shine" style="animation-delay:0s" x="-174" y="6" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="30" y="30" width="48" height="48" rx="14" fill="#2F0D4B" stroke="#5F1C93"/>
+<g transform="translate(42 42) scale(1)" fill="none" stroke="#D6B6FB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></g>
+<text x="364.7" y="52" class="m" fill="#9E98B2" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">CAPTURE</text>
+<text x="30" y="116" class="d" fill="#F2F0F9" font-size="20" font-weight="700" letter-spacing="-.3">Every stage, one form</text>
+<text x="30" y="146" class="s" fill="#9E98B2" font-size="15">The stage set is declared once, as data,</text><text x="30" y="169" class="s" fill="#9E98B2" font-size="15">and drives the capture form, the</text><text x="30" y="192" class="s" fill="#9E98B2" font-size="15">completeness gate and the report.</text>
+</g>
+<g class="rise r1">
+<rect x="408.7" y="6" width="382.7" height="214" rx="18" fill="#1A1725" stroke="#342E47"/>
+<g clip-path="url(#k1)"><circle cx="761.3" cy="26" r="120" fill="url(#halo)"/><rect x="408.7" y="6" width="382.7" height="3" fill="#5F1C93"/><rect class="shine" style="animation-delay:0.7s" x="228.7" y="6" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="432.7" y="30" width="48" height="48" rx="14" fill="#2F0D4B" stroke="#5F1C93"/>
+<g transform="translate(444.7 42) scale(1)" fill="none" stroke="#D6B6FB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/></g>
+<text x="767.3" y="52" class="m" fill="#9E98B2" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">OFFLINE</text>
+<text x="432.7" y="116" class="d" fill="#F2F0F9" font-size="20" font-weight="700" letter-spacing="-.3">No signal, no problem</text>
+<text x="432.7" y="146" class="s" fill="#9E98B2" font-size="15">The Android app records, queues and</text><text x="432.7" y="169" class="s" fill="#9E98B2" font-size="15">writes the finished report on the phone,</text><text x="432.7" y="192" class="s" fill="#9E98B2" font-size="15">then syncs when it can.</text>
+</g>
+<g class="rise r2">
+<rect x="811.3" y="6" width="382.7" height="214" rx="18" fill="#1A1725" stroke="#342E47"/>
+<g clip-path="url(#k2)"><circle cx="1164" cy="26" r="120" fill="url(#halo)"/><rect x="811.3" y="6" width="382.7" height="3" fill="#5F1C93"/><rect class="shine" style="animation-delay:1.4s" x="631.3" y="6" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="835.3" y="30" width="48" height="48" rx="14" fill="#2F0D4B" stroke="#5F1C93"/>
+<g transform="translate(847.3 42) scale(1)" fill="none" stroke="#D6B6FB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></g>
+<text x="1170" y="52" class="m" fill="#9E98B2" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">REPORTS</text>
+<text x="835.3" y="116" class="d" fill="#F2F0F9" font-size="20" font-weight="700" letter-spacing="-.3">.docx and PDF</text>
+<text x="835.3" y="146" class="s" fill="#9E98B2" font-size="15">One shared document model renders prose,</text><text x="835.3" y="169" class="s" fill="#9E98B2" font-size="15">tables and photographs to Word and PDF,</text><text x="835.3" y="192" class="s" fill="#9E98B2" font-size="15">on the server and on the phone.</text>
+</g>
+<g class="rise r3">
+<rect x="6" y="240" width="382.7" height="214" rx="18" fill="#1A1725" stroke="#342E47"/>
+<g clip-path="url(#k3)"><circle cx="358.7" cy="260" r="120" fill="url(#halo)"/><rect x="6" y="240" width="382.7" height="3" fill="#5F1C93"/><rect class="shine" style="animation-delay:2.1s" x="-174" y="240" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="30" y="264" width="48" height="48" rx="14" fill="#2F0D4B" stroke="#5F1C93"/>
+<g transform="translate(42 276) scale(1)" fill="none" stroke="#D6B6FB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></g>
+<text x="364.7" y="286" class="m" fill="#9E98B2" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">REVIEW</text>
+<text x="30" y="350" class="d" fill="#F2F0F9" font-size="20" font-weight="700" letter-spacing="-.3">Rounds and inspection</text>
+<text x="30" y="380" class="s" fill="#9E98B2" font-size="15">Reviewers rate, comment and clear each</text><text x="30" y="403" class="s" fill="#9E98B2" font-size="15">round, and every decision is kept with</text><text x="30" y="426" class="s" fill="#9E98B2" font-size="15">who made it and when.</text>
+</g>
+<g class="rise r4">
+<rect x="408.7" y="240" width="382.7" height="214" rx="18" fill="#1A1725" stroke="#342E47"/>
+<g clip-path="url(#k4)"><circle cx="761.3" cy="260" r="120" fill="url(#halo)"/><rect x="408.7" y="240" width="382.7" height="3" fill="#5F1C93"/><rect class="shine" style="animation-delay:2.8s" x="228.7" y="240" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="432.7" y="264" width="48" height="48" rx="14" fill="#2F0D4B" stroke="#5F1C93"/>
+<g transform="translate(444.7 276) scale(1)" fill="none" stroke="#D6B6FB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></g>
+<text x="767.3" y="286" class="m" fill="#9E98B2" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">MEDIA</text>
+<text x="432.7" y="350" class="d" fill="#F2F0F9" font-size="20" font-weight="700" letter-spacing="-.3">Interviews that transcribe</text>
+<text x="432.7" y="380" class="s" fill="#9E98B2" font-size="15">Recordings, photos and video upload</text><text x="432.7" y="403" class="s" fill="#9E98B2" font-size="15">resumably and interviews come back as</text><text x="432.7" y="426" class="s" fill="#9E98B2" font-size="15">editable, speaker-labelled transcripts.</text>
+</g>
+<g class="rise r5">
+<rect x="811.3" y="240" width="382.7" height="214" rx="18" fill="#1A1725" stroke="#342E47"/>
+<g clip-path="url(#k5)"><circle cx="1164" cy="260" r="120" fill="url(#halo)"/><rect x="811.3" y="240" width="382.7" height="3" fill="#5F1C93"/><rect class="shine" style="animation-delay:3.5s" x="631.3" y="240" width="180" height="3" fill="url(#glint)"/></g>
+<rect x="835.3" y="264" width="48" height="48" rx="14" fill="#2F0D4B" stroke="#5F1C93"/>
+<g transform="translate(847.3 276) scale(1)" fill="none" stroke="#D6B6FB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></g>
+<text x="1170" y="286" class="m" fill="#9E98B2" font-size="11" font-weight="600" letter-spacing="1.2" text-anchor="end">ACCESS</text>
+<text x="835.3" y="350" class="d" fill="#F2F0F9" font-size="20" font-weight="700" letter-spacing="-.3">Who may do what</text>
+<text x="835.3" y="380" class="s" fill="#9E98B2" font-size="15">Roles, consent and scoped data grants</text><text x="835.3" y="403" class="s" fill="#9E98B2" font-size="15">are enforced on every route, web and</text><text x="835.3" y="426" class="s" fill="#9E98B2" font-size="15">Android alike.</text>
+</g>
+</svg>

@@ -1,0 +1,59 @@
+{
+  "hero": {
+    "eyebrow": "AI CoE · IIT Kharagpur",
+    "name": "Design Prototype Workshop",
+    "titleWrap": 17,
+    "tagline": "Capture every stage of a craft design workshop on a phone or in the browser, and leave with the finished report, even where there is no signal.",
+    "chips": ["Next.js", "FastAPI", "Kotlin + Compose", "Postgres", "Offline-first"],
+    "motifCaption": "warp · weft · record",
+    "label": "Design Prototype Workshop: capture every stage of a craft design workshop and leave with the finished report"
+  },
+  "cards": {
+    "label": "What the portal does: capture, offline, reports, review, media and access",
+    "columns": 3,
+    "items": [
+      { "icon": "smartphone", "tag": "Capture", "title": "Every stage, one form", "body": "The stage set is declared once, as data, and drives the capture form, the completeness gate and the report." },
+      { "icon": "wifi-off", "tag": "Offline", "title": "No signal, no problem", "body": "The Android app records, queues and writes the finished report on the phone, then syncs when it can." },
+      { "icon": "file-text", "tag": "Reports", "title": ".docx and PDF", "body": "One shared document model renders prose, tables and photographs to Word and PDF, on the server and on the phone." },
+      { "icon": "badge-check", "tag": "Review", "title": "Rounds and inspection", "body": "Reviewers rate, comment and clear each round, and every decision is kept with who made it and when." },
+      { "icon": "mic", "tag": "Media", "title": "Interviews that transcribe", "body": "Recordings, photos and video upload resumably and interviews come back as editable, speaker-labelled transcripts." },
+      { "icon": "shield-check", "tag": "Access", "title": "Who may do what", "body": "Roles, consent and scoped data grants are enforced on every route, web and Android alike." }
+    ]
+  },
+  "pipeline": {
+    "label": "How a workshop flows: capture, sync, review, report, archive",
+    "stages": [
+      { "icon": "camera", "title": "Capture", "sub": "Stages, photos and voice on site" },
+      { "icon": "cloud", "title": "Sync", "sub": "Resumable uploads when a signal returns" },
+      { "icon": "badge-check", "title": "Review", "sub": "Rounds, ratings and clearance" },
+      { "icon": "file-text", "title": "Report", "sub": "Word and PDF from one model" },
+      { "icon": "landmark", "title": "Archive", "sub": "Exports for the Ministry" }
+    ]
+  },
+  "stats": {
+    "label": "At a glance: three capture tiers, two clients, two report formats, reports offline",
+    "tiles": [
+      { "icon": "layers", "kicker": "Tiers", "value": "3", "label": "Basic, Standard and Advanced" },
+      { "icon": "smartphone", "kicker": "Clients", "value": "2", "label": "Web and Android, one API" },
+      { "icon": "file-text", "kicker": "Formats", "value": "2", "label": "Word and PDF reports" },
+      { "icon": "wifi-off", "kicker": "Offline", "value": "100", "unit": "%", "label": "Report built on the phone" }
+    ]
+  },
+  "timeline": {
+    "label": "A workshop from sanction to report",
+    "items": [
+      { "date": "Plan", "title": "Sanction", "sub": "Order, designers and artisans" },
+      { "date": "Day 1", "title": "Kick-off", "sub": "Baseline and craft study" },
+      { "date": "Rounds", "title": "Prototypes", "sub": "Sketches to samples", "now": true },
+      { "date": "Review", "title": "Inspection", "sub": "Ratings and clearance" },
+      { "date": "Close", "title": "Report", "sub": "Word, PDF and exports" }
+    ]
+  },
+  "divider": { "label": "Section divider" },
+  "footer": {
+    "title": "Made for the people who make things by hand.",
+    "sub": "AI CoE · IIT Kharagpur · Ministry of Textiles",
+    "label": "Made for the people who make things by hand. AI CoE, IIT Kharagpur, Ministry of Textiles."
+  },
+  "icons": "all"
+}
