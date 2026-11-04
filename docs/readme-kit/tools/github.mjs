@@ -30,16 +30,29 @@ function mermaidBlocks(text) {
   lines.forEach((line, i) => {
     if (!open) {
       const m = line.match(/^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)/);
-      if (m) open = { fence: m[1], lang: m[2].toLowerCase(), line: i + 1 };
+      if (m) open = { fence: m[1], lang: m[2].toLowerCase(), line: i + 1, body: [] };
       return;
     }
     const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
     if (close && close[1][0] === open.fence[0] && close[1].length >= open.fence.length) {
-      if (open.lang === "mermaid") blocks.push(open.line);
+      if (open.lang === "mermaid") blocks.push({ line: open.line, body: open.body });
       open = null;
-    }
+    } else open.body.push({ n: i + 1, text: line });
   });
   return blocks;
+}
+
+function lint(block) {
+  const found = [];
+  for (const { n, text } of block.body) {
+    const t = text.trim();
+    if (!t || t.startsWith("%%")) continue;
+    const entity = t.match(/&(?:[a-zA-Z]+|#\d+|#x[0-9a-fA-F]+);/);
+    if (entity) found.push({ line: n, detail: `"${entity[0]}" is decoded by GitHub before mermaid reads it; write mermaid's own entity code (#lt; #gt; #quot; #amp;) instead: ${t.slice(0, 120)}` });
+    const bare = t.replace(/"[^"]*"/g, '""').replace(/#[a-zA-Z0-9]+;/g, "");
+    if (/;\s*\S/.test(bare)) found.push({ line: n, detail: `a ";" ends the mermaid statement, so the rest of the label becomes stray nodes: ${t.slice(0, 120)}` });
+  }
+  return found;
 }
 
 const tracked = execFileSync("git", ["ls-files", "-z", "--", "*.md"], { cwd: REPO, encoding: "utf8" })
@@ -49,6 +62,8 @@ const tracked = execFileSync("git", ["ls-files", "-z", "--", "*.md"], { cwd: REP
 const files = tracked
   .map((f) => ({ file: f, lines: mermaidBlocks(readFileSync(join(REPO, f), "utf8")) }))
   .filter((f) => f.lines.length && (!only.length || only.includes(f.file)));
+const lintErrors = files.flatMap(({ file, lines }) => lines.flatMap((b) => lint(b).map((e) => ({ file, ...e }))));
+for (const f of files) f.lines = f.lines.map((b) => b.line);
 
 const slug = (f) => f.replace(/[^A-Za-z0-9._-]+/g, "_");
 const blobUrl = (f) => `https://github.com/${repo}/blob/${sha}/${f.split("/").map(encodeURIComponent).join("/")}`;
@@ -106,11 +121,28 @@ async function inspect(section) {
   return { state: "ok", detail: `${inner.svg.role || "svg"} ${Math.round(inner.svg.w)}x${Math.round(inner.svg.h)}` };
 }
 
+const VIEW = { width: 1280, height: 1000 };
+
+async function shoot(page, section, path) {
+  const box = await section.boundingBox().catch(() => null);
+  const h = box ? Math.ceil(box.height) + 80 : VIEW.height;
+  if (h > VIEW.height) await page.setViewportSize({ width: VIEW.width, height: Math.min(h, 16000) });
+  await section.evaluate((el) => el.scrollIntoView({ block: "start" })).catch(() => {});
+  await page.waitForTimeout(h > VIEW.height ? 1500 : 300);
+  await section.screenshot({ path }).catch(() => {});
+  if (h > VIEW.height) await page.setViewportSize(VIEW);
+}
+
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, colorScheme: "light", deviceScaleFactor: 1 });
+const context = await browser.newContext({ viewport: VIEW, colorScheme: "light", deviceScaleFactor: 1 });
 const page = await context.newPage();
 const results = [];
 let failed = 0;
+for (const e of lintErrors) {
+  failed += 1;
+  results.push({ file: e.file, line: e.line, state: "error", detail: e.detail });
+  console.log(`::error file=${e.file},line=${e.line}::${e.detail}`);
+}
 
 for (const { file, lines } of files) {
   const url = blobUrl(file);
@@ -146,7 +178,7 @@ for (const { file, lines } of files) {
       r = await inspect(section).catch((e) => ({ state: "error", detail: String(e) }));
     }
     if (r.state === "pending") r = { state: "error", detail: `no diagram after ${WAIT_MS / 1000}s${r.detail ? ` (${r.detail})` : ""}` };
-    await section.screenshot({ path: join(out, `${slug(file)}-L${line}.png`) }).catch(() => {});
+    await shoot(page, section, join(out, `${slug(file)}-L${line}.png`));
     results.push({ file, line, ...r });
     if (r.state === "ok") console.log(`ok    ${file}:${line}  ${r.detail}`);
     else {
@@ -154,8 +186,12 @@ for (const { file, lines } of files) {
       console.log(`::error file=${file},line=${line}::GitHub cannot render this mermaid block: ${r.detail.replace(/\s+/g, " ")}`);
     }
   }
+  const full = await page.evaluate(() => document.documentElement.scrollHeight);
+  await page.setViewportSize({ width: VIEW.width, height: Math.min(Math.max(full, VIEW.height), 16000) });
   await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(1500);
   await page.screenshot({ path: join(out, `${slug(file)}.png`), fullPage: true }).catch(() => {});
+  await page.setViewportSize(VIEW);
 }
 
 await browser.close();
