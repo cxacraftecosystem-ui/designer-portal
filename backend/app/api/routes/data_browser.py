@@ -29,8 +29,13 @@ from app.services import (
     transcript_portal,
 )
 from app.services.concurrency import gather_reads
-from app.services.data_explorer import report_tools, slim, tree as explorer_tree, walk as explorer_walk
 from app.services.custom_sections import load_definition_or_empty
+from app.services.data_explorer import (
+    report_tools,
+    slim,
+    tree as explorer_tree,
+    walk as explorer_walk,
+)
 from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_MEDIA_TAG
 from app.services.media_naming import (
     RESERVED_NAMES as _RESERVED_NAMES,

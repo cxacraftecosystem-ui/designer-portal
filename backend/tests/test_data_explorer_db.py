@@ -229,7 +229,7 @@ def test_a_large_folder_manifest_stays_within_a_memory_bound():
                     _now, peak = tracemalloc.get_traced_memory()
                 finally:
                     tracemalloc.stop()
-            lines = [line for line in response.text.splitlines() if line.strip()]
+            lines = [line for line in response.text.splitlines() if '"mediaType": "IMAGE"' in line]
             return len(lines), peak
         finally:
             await _cleanup(seed)

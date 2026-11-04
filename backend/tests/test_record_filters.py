@@ -108,6 +108,10 @@ def test_the_workshop_arm_is_the_tag_pair_and_is_absent_when_there_is_nothing_to
             self.calls.append(kwargs)
             return self._rows
 
+        async def group_by(self, **kwargs: Any) -> list[dict[str, Any]]:
+            self.calls.append(kwargs)
+            return [{"id": row.id} for row in self._rows]
+
     fake = _DB([SimpleNamespace(id="dw-1"), SimpleNamespace(id="dw-2")])
     monkeypatch.setattr(records, "db", fake)
 
